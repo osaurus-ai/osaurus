@@ -193,6 +193,35 @@ struct MultimodalContentPartTests {
         try? FileManager.default.removeItem(at: u)
     }
 
+    @Test("mapOpenAIChatToMLX uses local live audio samples when present")
+    func mapping_usesLocalLiveAudioSamples() throws {
+        let fallbackBytes = Data([0x52, 0x49, 0x46, 0x46])
+        let message = ChatMessage(
+            role: "user",
+            text: "hear both",
+            imageData: [],
+            audios: [
+                (data: fallbackBytes, format: "wav"),
+                (data: fallbackBytes, format: "wav"),
+            ],
+            localAudioSamples: [
+                nil,
+                LocalAudioSamples(samples: [0.1, -0.2, 0.3], sampleRate: 16_000),
+            ],
+            videos: []
+        )
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([message])
+
+        #expect(mapped[0].audios.count == 2)
+        guard case .samples(let samples, let sampleRate) = mapped[0].audios[1] else {
+            Issue.record("second audio input should use local live samples")
+            return
+        }
+        #expect(samples == [0.1, -0.2, 0.3])
+        #expect(sampleRate == 16_000)
+    }
+
     /// Locks in the fix for a shared-helper bug where the audio mediatype
     /// canonicalization table (`mp4 → m4a`) ran unconditionally in
     /// `materializeMediaDataUrl` — meaning a `data:video/mp4;base64,...`

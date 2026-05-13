@@ -588,9 +588,11 @@ final class ChatSession: ObservableObject {
     ) -> ChatMessage {
         let messageText = buildUserMessageText(content: content, attachments: attachments)
         let imageData = supportsImages ? attachments.images : []
-        let audios: [(data: Data, format: String)] = supportsAudio
+        let audioPayloads = supportsAudio
             ? attachments.compactMap(audioPayload)
             : []
+        let audios = audioPayloads.map { (data: $0.data, format: $0.format) }
+        let localAudioSamples = audioPayloads.map(\.localSamples)
         let videos: [(data: Data, mimeSubtype: String)] = supportsVideo
             ? attachments.compactMap(videoPayload)
             : []
@@ -601,6 +603,7 @@ final class ChatSession: ObservableObject {
                 text: messageText,
                 imageData: imageData,
                 audios: audios,
+                localAudioSamples: localAudioSamples,
                 videos: videos
             )
         }
@@ -608,12 +611,20 @@ final class ChatSession: ObservableObject {
         return ChatMessage(role: "user", content: messageText)
     }
 
-    private static func audioPayload(from attachment: Attachment) -> (data: Data, format: String)? {
+    private static func audioPayload(from attachment: Attachment) -> (
+        data: Data,
+        format: String,
+        localSamples: LocalAudioSamples?
+    )? {
         guard attachment.isAudio, let data = attachment.loadAudioData() else { return nil }
         let format = attachment.audioFormat?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        return (data, (format?.isEmpty == false) ? format! : "wav")
+        return (
+            data,
+            (format?.isEmpty == false) ? format! : "wav",
+            LiveVoiceAudioInputRegistry.shared.samples(for: attachment.id)
+        )
     }
 
     private static func videoPayload(from attachment: Attachment) -> (data: Data, mimeSubtype: String)? {

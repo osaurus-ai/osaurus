@@ -874,11 +874,18 @@ extension FloatingInputCard {
                 let fullMessage = existing.isEmpty ? cleanedMessage : "\(existing) \(cleanedMessage)"
 
                 if let voiceAudioData {
-                    pendingAttachments.append(.audio(
+                    let voiceAttachment = Attachment.audio(
                         voiceAudioData,
                         format: "wav",
                         filename: "voice-input.wav"
-                    ))
+                    )
+                    if let voiceSnapshot {
+                        LiveVoiceAudioInputRegistry.shared.store(
+                            snapshot: voiceSnapshot,
+                            for: voiceAttachment.id
+                        )
+                    }
+                    pendingAttachments.append(voiceAttachment)
                 }
 
                 // try to paste. if it fails (permissions), we fall back to direct text setting

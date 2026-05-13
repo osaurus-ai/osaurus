@@ -1336,6 +1336,7 @@ public actor ModelRuntime {
         if audioMetrics.inputCount > 0 {
             trace?.set("input_audio_count", audioMetrics.inputCount)
             trace?.set("input_audio_materialized_count", audioMetrics.materializedCount)
+            trace?.set("input_audio_local_sample_count", audioMetrics.localSampleCount)
             trace?.set("input_audio_bytes", audioMetrics.byteCount)
             trace?.set("input_audio_materialize_ms", audioMetrics.materializeMs)
             trace?.mark("input_audio_materialize_done")
@@ -1414,15 +1415,15 @@ public actor ModelRuntime {
     }
 
     /// Extract `[UserInput.Audio]` from `input_audio` content parts. The
-    /// OpenAI shape is `{data: <base64>, format: "wav"|"mp3"|...}`; we
-    /// materialize a temp file with that extension and hand the URL to vmlx
-    /// so `nemotronOmniLoadAudioFile` (AVAudioConverter → 16 kHz mono Float32)
-    /// drives the decode end-to-end. Going through a file URL keeps the path
-    /// uniform across formats — there is no in-memory `[Float]` decode here
-    /// because we'd have to duplicate vmlx's AVAudioConverter rig and lose
-    /// resampling fidelity in the process.
+    /// OpenAI wire shape is `{data: <base64>, format: "wav"|"mp3"|...}`; for
+    /// remote/API requests we materialize a temp file with that extension and
+    /// let vmlx run its normal AVAudioConverter decode. Live in-app voice may
+    /// also carry local PCM samples aligned to the same audio part, in which
+    /// case we hand those samples directly to vmlx and keep the encoded bytes
+    /// only as the portable history/fallback representation.
     private struct AudioMaterializationMetrics {
         var inputCount = 0
+        var localSampleCount = 0
         var materializedCount = 0
         var byteCount = 0
         var materializeMs = 0
@@ -1432,13 +1433,19 @@ public actor ModelRuntime {
         from message: ChatMessage,
         metrics: inout AudioMaterializationMetrics
     ) -> [MLXLMCommon.UserInput.Audio] {
-        let inputs = message.audioInputs
+        let inputs = message.audioInputsWithLocalSamples
         guard !inputs.isEmpty else { return [] }
 
         var sources: [MLXLMCommon.UserInput.Audio] = []
         let startedAt = CFAbsoluteTimeGetCurrent()
         metrics.inputCount += inputs.count
-        for (data, format) in inputs {
+        for (data, format, localSamples) in inputs {
+            if let localSamples {
+                metrics.localSampleCount += 1
+                sources.append(.samples(localSamples.samples, sampleRate: localSamples.sampleRate))
+                continue
+            }
+
             let ext = format.lowercased()
             // Synthesize a `data:audio/<format>;base64,<data>` URL so we can
             // reuse the same materializer the video path uses. The audio data

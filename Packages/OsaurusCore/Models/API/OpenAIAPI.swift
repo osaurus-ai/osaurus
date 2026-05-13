@@ -143,6 +143,11 @@ struct ModelsResponse: Codable, Sendable {
     }
 }
 
+struct LocalAudioSamples: Sendable, Equatable {
+    let samples: [Float]
+    let sampleRate: Int
+}
+
 // MARK: - Multimodal Content Parts
 
 /// OpenAI-compatible content part for multimodal messages.
@@ -245,6 +250,11 @@ struct ChatMessage: Codable, Sendable {
     let content: String?
     /// Multimodal content parts (images, text) - populated when content is an array
     let contentParts: [MessageContentPart]?
+    /// In-process live voice samples aligned to audio input parts. This is
+    /// deliberately not Codable: OpenAI-compatible JSON keeps the portable
+    /// `input_audio` payload, while local MLX requests can bypass the
+    /// WAV/base64/temp-file round trip.
+    let localAudioSamples: [LocalAudioSamples?]
     /// Present when assistant requests tool invocations
     let tool_calls: [ToolCall]?
     /// Required for role=="tool" messages to associate with a prior tool call
@@ -283,10 +293,17 @@ struct ChatMessage: Codable, Sendable {
     /// because vmlx's `nemotronOmniLoadAudioFile` keys decoder selection on
     /// the URL extension via AVAudioConverter.
     var audioInputs: [(data: String, format: String)] {
+        audioInputsWithLocalSamples.map { (data: $0.data, format: $0.format) }
+    }
+
+    var audioInputsWithLocalSamples: [(data: String, format: String, localSamples: LocalAudioSamples?)] {
         guard let parts = contentParts else { return [] }
+        var audioIndex = 0
         return parts.compactMap { part in
             if case .audioInput(let data, let format) = part {
-                return (data, format)
+                let local = audioIndex < localAudioSamples.count ? localAudioSamples[audioIndex] : nil
+                audioIndex += 1
+                return (data, format, local)
             }
             return nil
         }
@@ -320,6 +337,7 @@ extension ChatMessage {
         self.tool_calls = try? container.decode([ToolCall].self, forKey: .tool_calls)
         self.tool_call_id = try? container.decode(String.self, forKey: .tool_call_id)
         self.reasoning_content = try? container.decode(String.self, forKey: .reasoning_content)
+        self.localAudioSamples = []
 
         if let stringContent = try? container.decode(String.self, forKey: .content) {
             self.content = stringContent
@@ -374,6 +392,7 @@ extension ChatMessage {
         self.role = role
         self.content = content
         self.contentParts = nil
+        self.localAudioSamples = []
         self.tool_calls = nil
         self.tool_call_id = nil
         self.reasoning_content = nil
@@ -392,6 +411,7 @@ extension ChatMessage {
         self.role = role
         self.content = content
         self.contentParts = nil
+        self.localAudioSamples = []
         self.tool_calls = tool_calls
         self.tool_call_id = tool_call_id
         self.reasoning_content = reasoning_content
@@ -416,6 +436,7 @@ extension ChatMessage {
 
         self.contentParts = parts.isEmpty ? nil : parts
         self.content = text.isEmpty ? nil : text
+        self.localAudioSamples = []
         self.tool_calls = nil
         self.tool_call_id = nil
         self.reasoning_content = nil
@@ -434,6 +455,7 @@ extension ChatMessage {
         text: String,
         imageData: [Data],
         audios: [(data: Data, format: String)],
+        localAudioSamples: [LocalAudioSamples?] = [],
         videos: [(data: Data, mimeSubtype: String)]
     ) {
         self.role = role
@@ -469,6 +491,7 @@ extension ChatMessage {
 
         self.contentParts = parts.isEmpty ? nil : parts
         self.content = text.isEmpty ? nil : text
+        self.localAudioSamples = localAudioSamples
         self.tool_calls = nil
         self.tool_call_id = nil
         self.reasoning_content = nil
