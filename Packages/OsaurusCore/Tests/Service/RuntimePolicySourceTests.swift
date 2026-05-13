@@ -97,10 +97,15 @@ struct RuntimePolicySourceTests {
         // retained live PCM buffer plus a streaming cursor for VAD/call-mode
         // polling without losing the final full-turn waveform. `638024b`
         // adds a tracked OmniAudioLatencyBench for raw PCM vs pre-encoded
-        // Parakeet call-mode measurements.
-        #expect(manifest.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
-        #expect(workspaceResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
-        #expect(appResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
+        // Parakeet call-mode measurements. `fb8fb39` makes Omni media cache
+        // restore token-aware and records prompt/media topology in the bench
+        // output.
+        let currentVmlxRevision = "fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e"
+        #expect(manifest.contains(currentVmlxRevision))
+        #expect(workspaceResolved.contains(currentVmlxRevision))
+        #expect(appResolved.contains(currentVmlxRevision))
+        #expect(!workspaceResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
+        #expect(!appResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
         #expect(!workspaceResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
         #expect(!appResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
         #expect(!workspaceResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))

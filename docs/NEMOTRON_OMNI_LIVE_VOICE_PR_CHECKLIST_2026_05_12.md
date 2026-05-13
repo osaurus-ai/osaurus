@@ -115,6 +115,22 @@ cache restore token-aware. Omni audio support is gated by
   `MLXArray` fixture in the SwiftPM test process currently fails to load
   `default.metallib`; production embeddings are produced inside
   `ModelContainer.perform`.
+- A gated real-model integration test now exists for the resident live voice
+  pre-encode path. It requires a local Nemotron Omni bundle, an audio fixture,
+  and an MLX metallib from the app build:
+  `OSAURUS_RUN_REAL_OMNI_PREENCODE=1 OSU_MODELS_DIR=<models-root>
+  OSAURUS_OMNI_MODEL=<local-omni-id> OSAURUS_OMNI_AUDIO=<audio-file>
+  OSAURUS_MLX_METALLIB=<default.metallib>
+  DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+  --package-path Packages/OsaurusCore --filter
+  LiveVoiceResidentPreencodeIntegrationTests`. The test warms a resident
+  Nemotron Omni model, runs `preencodeLiveVoiceAudioIfResident(...)` on a real
+  audio file, checks `status=stored`, checks exact source sample count/rate
+  metadata, verifies a fresh `.preEncoded` registry lookup, and verifies the
+  stale-count guard rejects mismatched samples. Local run with
+  `OSAURUS_MLX_METALLIB` passed with `warm_ms=2838`, `samples=80620`,
+  `encode_ms=1289`, `embedding_shape=[63, 2688]`, and max RSS about
+  `13.1 GB`.
 - `OmniAudioLatencyBench` on `Nemotron-Omni-Nano-JANGTQ-CRACK` measured the
   Osaurus BatchEngine path at `1514.1 ms` raw PCM first semantic delta on
   turn 1, `1498.6 ms` raw PCM on turn 2, `208.9 ms` pre-encoded Parakeet on
