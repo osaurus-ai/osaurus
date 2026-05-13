@@ -2,7 +2,8 @@
 //  CentralRepositoryManager.swift
 //  osaurus
 //
-//  Manages the central plugin repository, including cloning, refreshing, and querying plugin specifications.
+//  Manages the local copy of the central plugin specs repository.
+//  Refreshes via GitHub's source-archive endpoint (no `git` binary required).
 //
 
 import Foundation
@@ -25,125 +26,268 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         branch: nil
     )
 
-    private func tapCloneDirectory() -> URL {
-        ToolsPaths.pluginSpecsRoot().appendingPathComponent("central", isDirectory: true)
-    }
+    // MARK: - Public API
 
-    /// Refreshes the local clone of the central plugin repository.
-    /// Returns `true` if git operations succeeded, `false` if they failed (e.g. network unreachable).
-    /// When a fast-forward pull fails (e.g. after a force-push), the broken clone is
-    /// deleted and re-cloned so the cache never stays permanently stale.
+    /// Refreshes the local copy of the central plugin repository.
+    ///
+    /// Downloads a source-archive zip from GitHub and atomically swaps it in.
+    /// No `git` binary is required, so users without Xcode Command Line Tools
+    /// can still browse and install plugins.
+    ///
+    /// Returns `true` on success. On any failure (network, malformed archive,
+    /// missing `plugins/` dir) the existing on-disk copy is left untouched.
     @discardableResult
     public func refresh() -> Bool {
+        do {
+            try performRefresh()
+            return true
+        } catch {
+            NSLog("[Osaurus] Registry refresh failed: %@", String(describing: error))
+            return false
+        }
+    }
+
+    public func listAllSpecs() -> [PluginSpec] {
+        decodeSpecs(in: pluginsDirectory(under: centralCloneDirectory))
+    }
+
+    public func spec(for pluginId: String) -> PluginSpec? {
+        listAllSpecs().first { $0.plugin_id == pluginId }
+    }
+
+    // MARK: - Refresh pipeline
+
+    private func performRefresh() throws {
         let fm = FileManager.default
         let root = ToolsPaths.pluginSpecsRoot()
-        if !fm.fileExists(atPath: root.path) {
-            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try fm.createDirectoryIfNeeded(at: root)
+
+        let archiveURL = try archiveZipURL()
+
+        // Stage the download + extraction in a sibling temp dir under the same parent
+        // so the final atomic swap stays on a single volume.
+        let stagingDir = root.appendingPathComponent(
+            "\(Path.stagingPrefix)\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fm.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: stagingDir) }
+
+        let zipURL = stagingDir.appendingPathComponent(Path.archiveZip, isDirectory: false)
+        try downloadFile(from: archiveURL, to: zipURL)
+
+        let extractDir = stagingDir.appendingPathComponent(Path.extracted, isDirectory: true)
+        try fm.createDirectory(at: extractDir, withIntermediateDirectories: true)
+        try unzip(zipURL: zipURL, to: extractDir)
+
+        // GitHub source archives wrap their contents in a single top-level directory
+        // named `<repo>-<branch>/`.
+        guard let innerRoot = locateInnerArchiveRoot(in: extractDir) else {
+            throw RefreshError.malformedArchive("no inner directory inside \(extractDir.path)")
         }
-        let cloneDir = tapCloneDirectory()
-        if fm.fileExists(atPath: cloneDir.appendingPathComponent(".git").path) {
-            let (fetchStatus, _) = runGit(in: cloneDir, args: ["fetch", "--all", "--tags"])
-            let (pullStatus, _) = runGit(in: cloneDir, args: ["pull", "--ff-only", "origin"])
-            if let branch = central.branch {
-                _ = runGit(in: cloneDir, args: ["checkout", branch])
-            }
-            if fetchStatus == 0 && pullStatus == 0 && validateCloneIntegrity(cloneDir) {
-                return true
-            }
-            NSLog(
-                "[Osaurus] Registry pull failed or integrity check failed (fetch=%d, pull=%d), re-cloning",
-                fetchStatus,
-                pullStatus
+
+        // Integrity check: the inner root must contain a `plugins/` directory with at
+        // least one JSON file that decodes as a valid `PluginSpec`. Prevents accidentally
+        // installing an unrelated repository as the registry.
+        guard !decodeSpecs(in: pluginsDirectory(under: innerRoot)).isEmpty else {
+            throw RefreshError.malformedArchive(
+                "no decodable plugin specs under \(innerRoot.path)/\(Path.plugins)"
             )
-            try? fm.removeItem(at: cloneDir)
-            return cloneFresh(root: root, cloneDir: cloneDir)
-        } else {
-            return cloneFresh(root: root, cloneDir: cloneDir)
         }
+
+        try replaceDirectoryAtomically(at: centralCloneDirectory, with: innerRoot)
     }
 
-    private func cloneFresh(root: URL, cloneDir: URL) -> Bool {
-        var args = ["clone", "--depth", "1", central.url, cloneDir.path]
-        if let branch = central.branch {
-            args = ["clone", "--depth", "1", "--branch", branch, central.url, cloneDir.path]
-        }
-        let (status, _) = runGit(in: root, args: args)
-        return status == 0
+    // MARK: - URL derivation
+
+    /// Builds the GitHub source-archive URL for the configured central repo + branch.
+    /// e.g. `https://github.com/osaurus-ai/osaurus-tools.git` + `main`
+    /// →    `https://github.com/osaurus-ai/osaurus-tools/archive/refs/heads/main.zip`
+    /// Branch defaults to `main` when `CentralRepository.branch` is `nil`.
+    private func archiveZipURL() throws -> URL {
+        guard let comps = URLComponents(string: central.url),
+            let host = comps.host?.lowercased(),
+            host == "github.com" || host.hasSuffix(".github.com")
+        else { throw RefreshError.unsupportedURL(central.url) }
+
+        var path = comps.path
+        if path.hasSuffix(".git") { path = String(path.dropLast(4)) }
+        let segments = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard segments.count >= 2 else { throw RefreshError.unsupportedURL(central.url) }
+
+        let owner = String(segments[0])
+        let repo = String(segments[1])
+        let branch = central.branch ?? "main"
+        let encodedBranch =
+            branch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? branch
+
+        guard
+            let url = URL(
+                string: "https://github.com/\(owner)/\(repo)/archive/refs/heads/\(encodedBranch).zip"
+            )
+        else { throw RefreshError.unsupportedURL(central.url) }
+        return url
     }
 
-    private func runGit(in directory: URL, args: [String]) -> (Int32, String) {
+    // MARK: - Download / unzip
+
+    /// Synchronously downloads `url` to `destination`. Callers invoke `refresh()`
+    /// from a background thread (e.g. `Task.detached`) so blocking is acceptable.
+    private func downloadFile(from url: URL, to destination: URL) throws {
+        let outcome = SyncDownloadOutcome()
+        let semaphore = DispatchSemaphore(value: 0)
+        URLSession.shared.downloadTask(with: url) { tempURL, response, error in
+            defer { semaphore.signal() }
+            if let error {
+                outcome.error = error
+                return
+            }
+            if let http = response as? HTTPURLResponse,
+                !(200 ..< 300).contains(http.statusCode)
+            {
+                outcome.error = RefreshError.httpStatus(http.statusCode)
+                return
+            }
+            guard let tempURL else {
+                outcome.error = RefreshError.malformedArchive("URLSession returned no temp file")
+                return
+            }
+            do {
+                try? FileManager.default.removeItem(at: destination)
+                try FileManager.default.moveItem(at: tempURL, to: destination)
+            } catch {
+                outcome.error = error
+            }
+        }.resume()
+        semaphore.wait()
+        if let error = outcome.error { throw error }
+    }
+
+    private func unzip(zipURL: URL, to destination: URL) throws {
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        task.arguments = ["git"] + args
-        task.currentDirectoryURL = directory
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        task.arguments = ["-o", "-q", zipURL.path, "-d", destination.path]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
-        do {
-            try task.run()
-            task.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let s = String(data: data, encoding: .utf8) ?? ""
-            return (task.terminationStatus, s)
-        } catch {
-            return (-1, "\(error)")
+        try task.run()
+        task.waitUntilExit()
+        guard task.terminationStatus == 0 else {
+            let stderr = pipe.fileHandleForReading.readDataToEndOfFile()
+            let message = String(data: stderr, encoding: .utf8) ?? "unknown error"
+            throw RefreshError.unzipFailed(Int(task.terminationStatus), message)
         }
     }
 
-    /// The `plugins/` directory must exist and contain at least one
-    /// JSON file that decodes as a valid `PluginSpec`.
-    private func validateCloneIntegrity(_ cloneDir: URL) -> Bool {
+    /// Finds the single top-level directory inside an extracted GitHub source archive.
+    /// Prefers a directory that already contains `plugins/`; otherwise falls back
+    /// to the only subdirectory present.
+    private func locateInnerArchiveRoot(in directory: URL) -> URL? {
         let fm = FileManager.default
-        let pluginsDir = cloneDir.appendingPathComponent("plugins", isDirectory: true)
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: pluginsDir.path, isDirectory: &isDir), isDir.boolValue,
+        let entries =
+            (try? fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+        let dirs = entries.filter(\.hasDirectoryPath)
+        return dirs.first(where: {
+            fm.fileExists(atPath: $0.appendingPathComponent(Path.plugins).path)
+        }) ?? dirs.first
+    }
+
+    /// Atomically replaces (or creates) `destination` with the directory at `source`.
+    /// When `destination` already exists, uses `FileManager.replaceItemAt` so a failed
+    /// swap can't leave a half-written tree visible to readers calling `listAllSpecs()`.
+    private func replaceDirectoryAtomically(at destination: URL, with source: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectoryIfNeeded(at: destination.deletingLastPathComponent())
+        if fm.fileExists(atPath: destination.path) {
+            _ = try fm.replaceItemAt(destination, withItemAt: source)
+        } else {
+            try fm.moveItem(at: source, to: destination)
+        }
+    }
+
+    /// Walks `pluginsDir` and returns every `*.json` file that decodes as a `PluginSpec`.
+    /// Shared by integrity checking and public listing.
+    private func decodeSpecs(in pluginsDir: URL) -> [PluginSpec] {
+        let fm = FileManager.default
+        guard
             let enumerator = fm.enumerator(
                 at: pluginsDir,
                 includingPropertiesForKeys: [.isRegularFileKey],
                 options: [.skipsHiddenFiles]
             )
-        else {
-            NSLog("[Osaurus] Clone integrity check failed for %@", cloneDir.path)
-            return false
-        }
-        for case let fileURL as URL in enumerator {
-            if fileURL.pathExtension.lowercased() == "json",
-                let data = try? Data(contentsOf: fileURL),
-                (try? JSONDecoder().decode(PluginSpec.self, from: data)) != nil
-            {
-                return true
-            }
-        }
-        NSLog("[Osaurus] Clone integrity check failed: no valid spec JSON in %@", pluginsDir.path)
-        return false
-    }
+        else { return [] }
 
-    public func listAllSpecs() -> [PluginSpec] {
-        let fm = FileManager.default
+        let decoder = JSONDecoder()
         var specs: [PluginSpec] = []
-        let base = tapCloneDirectory().appendingPathComponent("plugins", isDirectory: true)
-        guard
-            let enumr = fm.enumerator(
-                at: base,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsHiddenFiles]
-            )
-        else {
-            return specs
-        }
-        for case let fileURL as URL in enumr {
-            if fileURL.pathExtension.lowercased() == "json" {
-                if let data = try? Data(contentsOf: fileURL),
-                    let spec = try? JSONDecoder().decode(PluginSpec.self, from: data)
-                {
-                    specs.append(spec)
-                }
+        for case let fileURL as URL in enumerator
+        where fileURL.pathExtension.lowercased() == "json" {
+            if let data = try? Data(contentsOf: fileURL),
+                let spec = try? decoder.decode(PluginSpec.self, from: data)
+            {
+                specs.append(spec)
             }
         }
         return specs
     }
 
-    public func spec(for pluginId: String) -> PluginSpec? {
-        return listAllSpecs().first(where: { $0.plugin_id == pluginId })
+    // MARK: - Paths
+
+    private var centralCloneDirectory: URL {
+        ToolsPaths.pluginSpecsRoot().appendingPathComponent(Path.central, isDirectory: true)
+    }
+
+    private func pluginsDirectory(under root: URL) -> URL {
+        root.appendingPathComponent(Path.plugins, isDirectory: true)
+    }
+
+    private enum Path {
+        static let central = "central"
+        static let plugins = "plugins"
+        static let archiveZip = "archive.zip"
+        static let extracted = "extracted"
+        static let stagingPrefix = "central.staging-"
+    }
+}
+
+// MARK: - Errors
+
+private enum RefreshError: Error, CustomStringConvertible {
+    case unsupportedURL(String)
+    case httpStatus(Int)
+    case unzipFailed(Int, String)
+    case malformedArchive(String)
+
+    var description: String {
+        switch self {
+        case .unsupportedURL(let url):
+            return "unsupported central registry URL: \(url) (only github.com is supported)"
+        case .httpStatus(let code):
+            return "registry archive download returned HTTP \(code)"
+        case .unzipFailed(let code, let msg):
+            return "unzip exited with code \(code): \(msg)"
+        case .malformedArchive(let detail):
+            return "malformed archive: \(detail)"
+        }
+    }
+}
+
+// MARK: - Concurrency helpers
+
+/// Scratch storage shared between a URLSession callback and a thread waiting on
+/// a `DispatchSemaphore`. Marked `@unchecked Sendable` because the semaphore
+/// provides the happens-before ordering Swift's checker can't see.
+private final class SyncDownloadOutcome: @unchecked Sendable {
+    var error: Error?
+}
+
+extension FileManager {
+    fileprivate func createDirectoryIfNeeded(at url: URL) throws {
+        if !fileExists(atPath: url.path) {
+            try createDirectory(at: url, withIntermediateDirectories: true)
+        }
     }
 }
