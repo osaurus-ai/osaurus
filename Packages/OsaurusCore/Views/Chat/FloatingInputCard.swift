@@ -2266,27 +2266,29 @@ extension FloatingInputCard {
     }
 
     /// Capability-gated UTType allowlist for both the file picker and
-    /// the drop zone. Resolves from `selectedModel`; non-multimodal
-    /// models stay at images + documents only. Audio appears only for
-    /// Nemotron-3-Nano-Omni; video appears for Qwen-VL family +
-    /// SmolVLM 2 + Nemotron-Omni.
+    /// the drop zone. Resolves from `selectedModel` plus the session's
+    /// already-known image support bit. Text-only models keep document
+    /// attach support but reject image/audio/video media.
     ///
     /// See `Models/Configuration/ModelMediaCapabilities.swift` for the
     /// substring/regex matcher; tests pin the boundary at
     /// `ModelMediaCapabilitiesMCDCTests`.
     private var mediaCapabilities: ModelMediaCapabilities.Capabilities {
-        guard let modelId = selectedModel else { return .imageOnly }
-        return ModelMediaCapabilities.from(modelId: modelId)
+        ModelMediaCapabilities.composerCapabilities(
+            modelId: selectedModel,
+            fallbackSupportsImages: supportsImages
+        )
     }
 
-    /// UTTypes the drop zone advertises. Image + fileURL always — image
-    /// is universally supported across multimodal models, fileURL covers
-    /// document parsing. Audio + movie/video are conditional on the
-    /// loaded model's capabilities so users can't drop a wav onto a
-    /// dense LLM and have it silently ignored.
+    /// UTTypes the drop zone advertises. `fileURL` stays enabled for
+    /// documents, while image/audio/video are advertised only when the
+    /// selected model can consume them.
     private var dropAcceptedTypes: [UTType] {
-        var types: [UTType] = [UTType.image, UTType.fileURL]
+        var types: [UTType] = [UTType.fileURL]
         let cap = mediaCapabilities
+        if cap.supportsImage {
+            types.append(.image)
+        }
         if cap.supportsAudio {
             types.append(.audio)
             // explicit common audio formats so HEIF-style "any audio"
@@ -2309,9 +2311,12 @@ extension FloatingInputCard {
     /// only). Picker shows audio/video formats only when the loaded
     /// model can actually consume them.
     private var pickerAllowedTypes: [UTType] {
-        var types: [UTType] = [UTType.image]
-        types.append(contentsOf: DocumentParser.supportedDocumentTypes)
+        var types: [UTType] = []
         let cap = mediaCapabilities
+        if cap.supportsImage {
+            types.append(.image)
+        }
+        types.append(contentsOf: DocumentParser.supportedDocumentTypes)
         if cap.supportsAudio {
             types.append(.audio)
             types.append(.mp3)
@@ -2353,8 +2358,18 @@ extension FloatingInputCard {
         let ext = url.pathExtension.lowercased()
         let cap = mediaCapabilities
 
-        // Image fast path — universally supported among VLMs.
+        // Image fast path — only for image-capable models.
         if DocumentParser.isImageFile(url: url) {
+            guard cap.supportsImage else {
+                ToastManager.shared.error(
+                    "Cannot attach \(url.lastPathComponent)",
+                    message:
+                        cap.anyMedia
+                        ? "The current model supports \(cap.summary) only."
+                        : "The current model is text-only."
+                )
+                return
+            }
             if let data = try? Data(contentsOf: url), data.count <= maxImageSize,
                 let nsImage = NSImage(data: data),
                 let pngData = nsImage.pngData()
@@ -2455,7 +2470,9 @@ extension FloatingInputCard {
         let cap = mediaCapabilities
 
         for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            if cap.supportsImage,
+                provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+            {
                 handled = true
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
                     guard let data = data, error == nil, data.count <= maxImageSize else { return }
@@ -2567,7 +2584,7 @@ extension FloatingInputCard {
         }
         .background(
             PasteboardImageMonitor(
-                supportsImages: supportsImages,
+                supportsImages: mediaCapabilities.supportsImage,
                 onImagePaste: { imageData in
                     withAnimation(theme.springAnimation()) {
                         pendingAttachments.append(.image(imageData))

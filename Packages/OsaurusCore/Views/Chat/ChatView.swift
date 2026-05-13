@@ -399,6 +399,7 @@ final class ChatSession: ObservableObject {
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }
         if model.lowercased() == "foundation" { return false }
+        if ModelMediaCapabilities.from(modelId: model).supportsImage { return true }
         guard let option = pickerItems.first(where: { $0.id == model }) else { return false }
         if case .remote = option.source { return true }
         return option.isVLM

@@ -90,6 +90,31 @@ struct ChatAttachmentSecurityTests {
         #expect(message.videoUrls.isEmpty)
     }
 
+    @Test func buildUserChatMessage_gatesImagesByModelSupport() {
+        let image = Attachment.image(Data([0x89, 0x50, 0x4E, 0x47]))
+
+        let dropped = ChatSession.buildUserChatMessage(
+            content: "plain",
+            attachments: [image],
+            supportsImages: false,
+            supportsAudio: false,
+            supportsVideo: false
+        )
+        #expect(dropped.content == "plain")
+        #expect(dropped.contentParts == nil)
+        #expect(dropped.imageUrls.isEmpty)
+
+        let forwarded = ChatSession.buildUserChatMessage(
+            content: "look",
+            attachments: [image],
+            supportsImages: true,
+            supportsAudio: false,
+            supportsVideo: false
+        )
+        #expect(forwarded.imageUrls.count == 1)
+        #expect(forwarded.imageUrls[0].hasPrefix("data:image/png;base64,"))
+    }
+
     @Test func buildUserChatMessage_alignsLocalLiveAudioSamplesWithAudioInputs() {
         let droppedAudio = Attachment.audio(Data([0x01]), format: "wav", filename: "dropped.wav")
         let liveAudio = Attachment.audio(Data([0x02, 0x03]), format: "wav", filename: "voice.wav")
