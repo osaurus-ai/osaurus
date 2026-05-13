@@ -1583,9 +1583,9 @@ struct AgentDetailView: View {
     private var configureTabContent: some View {
         tabHelperText(DetailTab.configure.helperText)
         identitySection
+        voiceSection
         systemPromptSection
         defaultModelSection
-        voiceSection
         advancedSettingsDisclosure
     }
 
