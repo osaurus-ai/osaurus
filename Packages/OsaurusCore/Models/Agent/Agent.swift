@@ -111,6 +111,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// `OsaurusPaths.agents()/avatars/`. When set, takes precedence over
     /// `avatar` in the avatar UI. nil = no custom image.
     public var customAvatarFilename: String?
+    /// auto-speak assistant turns after streaming. overrides per-chat toggle.
+    public var autoSpeak: Bool?
+    /// per-agent PocketTTS voice override. nil = use global voice.
+    public var ttsVoice: String?
 
     public init(
         id: UUID = UUID(),
@@ -137,7 +141,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         disableTools: Bool? = nil,
         disableMemory: Bool? = nil,
         avatar: String? = nil,
-        customAvatarFilename: String? = nil
+        customAvatarFilename: String? = nil,
+        autoSpeak: Bool? = nil,
+        ttsVoice: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -164,6 +170,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.disableMemory = disableMemory
         self.avatar = avatar
         self.customAvatarFilename = customAvatarFilename
+        self.autoSpeak = autoSpeak
+        self.ttsVoice = ttsVoice
     }
 
     // MARK: - Custom avatar resolution
@@ -261,6 +269,8 @@ extension Agent {
         disableMemory = try c.decodeIfPresent(Bool.self, forKey: .disableMemory)
         avatar = try c.decodeIfPresent(String.self, forKey: .avatar)
         customAvatarFilename = try c.decodeIfPresent(String.self, forKey: .customAvatarFilename)
+        autoSpeak = try c.decodeIfPresent(Bool.self, forKey: .autoSpeak)
+        ttsVoice = try c.decodeIfPresent(String.self, forKey: .ttsVoice)
     }
 }
 

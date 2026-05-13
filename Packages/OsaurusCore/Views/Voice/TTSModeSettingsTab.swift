@@ -17,23 +17,12 @@ struct TTSModeSettingsTab: View {
     @State private var previewText: String = "Hello from Osaurus. Text to speech is now ready."
     @State private var previewMessageId = UUID()
 
-    /// Built-in PocketTTS voices hosted on HuggingFace (kyutai/pocket-tts).
-    /// Each is downloaded on first use.
-    private static let availableVoices: [String] = [
-        "alba", "anna", "azelma", "bill_boerst", "caro_davy", "charles",
-        "cosette", "eponine", "eve", "fantine", "george", "jane",
-        "javert", "jean", "marius", "mary", "michael", "paul",
-        "peter_yearsley", "stuart_bell", "vera",
-    ]
-
     private func displayName(for voice: String) -> String {
-        voice.split(separator: "_")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
+        PocketTTSVoiceCatalog.displayName(for: voice)
     }
 
     private var voiceMenuOptions: [String] {
-        let builtIn = Self.availableVoices
+        let builtIn = PocketTTSVoiceCatalog.availableVoices
         let current = config.voice.trimmingCharacters(in: .whitespacesAndNewlines)
         if !current.isEmpty && !builtIn.contains(current) {
             return [current] + builtIn

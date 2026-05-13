@@ -91,7 +91,7 @@ public final class TTSService: ObservableObject {
     /// Toggle speech for a given message. Tapping the currently-playing
     /// message stops playback; tapping a different message switches to it.
     /// If the model isn't downloaded yet, posts `.openTTSSettingsRequested`.
-    public func toggleSpeak(text: String, messageId: UUID) {
+    public func toggleSpeak(text: String, messageId: UUID, voiceOverride: String? = nil) {
         if playingMessageId == messageId {
             stop()
             return
@@ -112,12 +112,12 @@ public final class TTSService: ObservableObject {
 
         stop()
         playingMessageId = messageId
-        startPlayback(text: plain, messageId: messageId)
+        startPlayback(text: plain, messageId: messageId, voiceOverride: voiceOverride)
     }
 
     /// Fire-and-forget playback for the `speak` tool. Sets
     /// `activeSpeakCallId` so the row spinner runs until audio drains
-    public func startToolPlayback(text: String, messageId: UUID, callId: String) throws {
+    public func startToolPlayback(text: String, messageId: UUID, callId: String, voiceOverride: String? = nil) throws {
         guard isModelReady else {
             if Self.pocketTtsModelsExistOnDisk() {
                 ensureModelLoaded()
@@ -132,7 +132,7 @@ public final class TTSService: ObservableObject {
         stop()
         playingMessageId = messageId
         activeSpeakCallId = callId
-        startPlayback(text: plain, messageId: messageId)
+        startPlayback(text: plain, messageId: messageId, voiceOverride: voiceOverride)
     }
 
     /// Stop any in-flight synthesis and clear playback state.
@@ -223,7 +223,7 @@ public final class TTSService: ObservableObject {
 
     // MARK: - Playback
 
-    private func startPlayback(text: String, messageId: UUID) {
+    private func startPlayback(text: String, messageId: UUID, voiceOverride: String? = nil) {
         do {
             try configureEngineIfNeeded()
         } catch {
@@ -242,7 +242,8 @@ public final class TTSService: ObservableObject {
         playerNode.play()
 
         let config = TTSConfigurationStore.load()
-        let voice = config.voice
+        let trimmedOverride = voiceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let voice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.voice)
         let temperature = Float(config.temperature)
 
         playbackTask = Task { [weak self] in
@@ -328,6 +329,23 @@ public final class TTSService: ObservableObject {
         if !audioEngine.isRunning {
             try audioEngine.start()
         }
+    }
+}
+
+/// built-in PocketTTS voices (kyutai/pocket-tts on HuggingFace). shared by
+/// the TTS settings tab and the per-agent voice picker.
+public enum PocketTTSVoiceCatalog {
+    public static let availableVoices: [String] = [
+        "alba", "anna", "azelma", "bill_boerst", "caro_davy", "charles",
+        "cosette", "eponine", "eve", "fantine", "george", "jane",
+        "javert", "jean", "marius", "mary", "michael", "paul",
+        "peter_yearsley", "stuart_bell", "vera",
+    ]
+
+    public static func displayName(for voice: String) -> String {
+        voice.split(separator: "_")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
     }
 }
 
