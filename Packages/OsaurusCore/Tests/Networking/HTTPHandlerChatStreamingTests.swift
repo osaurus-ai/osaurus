@@ -229,7 +229,13 @@ struct HTTPHandlerChatStreamingTests {
             > {
                 AsyncThrowingStream { continuation in
                     continuation.yield("hello")
-                    continuation.yield(StreamingStatsHint.encode(tokenCount: 77, tokensPerSecond: 12.5))
+                    continuation.yield(
+                        StreamingStatsHint.encode(
+                            tokenCount: 77,
+                            tokensPerSecond: 12.5,
+                            stopReason: "length"
+                        )
+                    )
                     continuation.finish()
                 }
             }
@@ -259,6 +265,7 @@ struct HTTPHandlerChatStreamingTests {
         #expect(status == 200)
         #expect(body.contains("\"content\":\"hello\""))
         #expect(body.contains("\"completion_tokens\":77"))
+        #expect(body.contains("\"finish_reason\":\"length\""))
         #expect(!body.contains("\u{FFFE}"))
     }
 

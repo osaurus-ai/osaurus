@@ -1194,12 +1194,18 @@ public actor ModelRuntime {
             var scrubber = ThinkTagScrubber()
             do {
                 for try await ev in events {
-                    if case .completionInfo(let tokenCount, let tokensPerSecond, let unclosedReasoning) = ev {
+                    if case .completionInfo(
+                        let tokenCount,
+                        let tokensPerSecond,
+                        let unclosedReasoning,
+                        let stopReason
+                    ) = ev {
                         continuation.yield(
                             StreamingStatsHint.encode(
                                 tokenCount: tokenCount,
                                 tokensPerSecond: tokensPerSecond,
-                                unclosedReasoning: unclosedReasoning
+                                unclosedReasoning: unclosedReasoning,
+                                stopReason: stopReason
                             )
                         )
                         continue

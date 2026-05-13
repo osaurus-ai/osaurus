@@ -122,6 +122,22 @@ struct StreamingHintTests {
         #expect(decoded?.unclosedReasoning == true)
     }
 
+    @Test func statsHint_encode_includesStopReasonWhenPresent() {
+        let encoded = StreamingStatsHint.encode(
+            tokenCount: 300,
+            tokensPerSecond: 5.25,
+            stopReason: "length"
+        )
+        #expect(encoded.hasSuffix(";stop=length"))
+    }
+
+    @Test func statsHint_decode_recoversStopReasonAlongsideUnclosedFlag() {
+        let payload = "\u{FFFE}stats:10;5.0;futureflag,unclosed,stop=length"
+        let decoded = StreamingStatsHint.decode(payload)
+        #expect(decoded?.unclosedReasoning == true)
+        #expect(decoded?.stopReason == "length")
+    }
+
     // Issue #856 regression: the sentinel must NEVER appear in the
     // visible text of an assistant message. ChatView filters it out
     // before render. Here we lock in the contract that the decoder

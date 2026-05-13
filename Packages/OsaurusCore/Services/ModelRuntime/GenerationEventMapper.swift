@@ -88,7 +88,8 @@ enum GenerationEventMapper {
                                 tokensPerSecond: info.tokensPerSecond,
                                 unclosedReasoning: suppressUnclosedReasoning
                                     ? false
-                                    : info.unclosedReasoning
+                                    : info.unclosedReasoning,
+                                stopReason: Self.openAIStopReason(from: info.stopReason)
                             )
                         )
                         continue
@@ -161,7 +162,8 @@ enum GenerationEventMapper {
                         .completionInfo(
                             tokenCount: estimatedTextTokens,
                             tokensPerSecond: 0,
-                            unclosedReasoning: sawReasoning && !suppressUnclosedReasoning
+                            unclosedReasoning: sawReasoning && !suppressUnclosedReasoning,
+                            stopReason: nil
                         )
                     )
                 }
@@ -198,6 +200,17 @@ enum GenerationEventMapper {
             id: .exclusive,
             "prompt: \(info.promptTokenCount, privacy: .public) tok \(info.promptTokensPerSecond, privacy: .public) tok/s | gen: \(info.generationTokenCount, privacy: .public) tok \(info.tokensPerSecond, privacy: .public) tok/s"
         )
+    }
+
+    private static func openAIStopReason(from stopReason: GenerateStopReason) -> String {
+        switch stopReason {
+        case .stop:
+            return "stop"
+        case .length:
+            return "length"
+        case .cancelled:
+            return "cancelled"
+        }
     }
 
     /// Convert vmlx's `[String: JSONValue]` argument map to a compact JSON

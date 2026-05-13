@@ -149,7 +149,8 @@ enum ModelProfileRegistry {
 /// three intentional modes:
 /// - instruct: closed `</think>` assistant tail, answer on content rail
 /// - reasoning: open `<think>` assistant tail, normal reasoning split
-/// - max: open `<think>` tail plus the DSV4 max-reasoning preface
+/// - max: public API/UI compatibility selector; vmlx normalizes it to the
+///   stable high-thinking rail by default unless raw max is explicitly enabled
 struct DSV4ReasoningProfile: ModelProfile {
     static let displayName = "DSV4 Reasoning"
 

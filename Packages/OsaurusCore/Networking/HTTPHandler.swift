@@ -3477,6 +3477,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.mark("http_stream_chat_ready")
                     var accumulatedContent = ""
                     var authoritativeCompletionTokens: Int?
+                    var streamFinishReason = "stop"
                     for try await delta in stream {
                         if let reasoning = StreamingReasoningHint.decode(delta) {
                             httpTrace.markFirstSemanticDelta("reasoning")
@@ -3493,6 +3494,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         if let stats = StreamingStatsHint.decode(delta) {
                             authoritativeCompletionTokens = stats.tokenCount
+                            if let stopReason = stats.stopReason {
+                                streamFinishReason = stopReason
+                            }
                             continue
                         }
                         if StreamingToolHint.isSentinel(delta) { continue }
@@ -3514,9 +3518,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         authoritativeCompletionTokens ?? TokenEstimator.estimate(accumulatedContent)
                     httpTrace.set("http_prompt_tokens_estimate", promptTokens)
                     httpTrace.set("http_completion_tokens", completionTokens)
+                    let finalStreamFinishReason = streamFinishReason
                     hop {
-                        writerBound.value.writeFinish(
-                            model,
+                        writerBound.value.writeFinishWithReason(
+                            finalStreamFinishReason,
+                            model: model,
                             responseId: responseId,
                             created: created,
                             context: ctx.value
@@ -3534,7 +3540,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         writerBound.value.writeEnd(ctx.value)
                     }
                     httpTrace.mark("http_sse_finish_written")
-                    httpTrace.emit(finishReason: "stop", responseStatus: 200)
+                    httpTrace.emit(finishReason: finalStreamFinishReason, responseStatus: 200)
                     if persistOnSuccess {
                         var finalMessages = priorMessages
                         if !accumulatedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -3561,7 +3567,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         model: logModel,
                         temperature: logTemperature,
                         maxTokens: logMaxTokens,
-                        finishReason: .stop
+                        finishReason: RequestLog.FinishReason(rawValue: finalStreamFinishReason) ?? .stop
                     )
                 } catch let invs as ServiceToolInvocations {
                     // Multi-tool MLX completion: emit one tool_call delta
