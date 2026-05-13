@@ -336,6 +336,34 @@ struct MLXBatchAdapterTests {
             MLXBatchAdapter.additionalContext(for: unspecified, modelName: modelName)["enable_thinking"] as? Bool
                 == true
         )
+
+        let staleOffEffort = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: [
+                    "reasoningEffort": .string("no_think"),
+                    "disableThinking": .bool(true),
+                ]
+            ),
+            modelName: modelName
+        )
+        #expect(staleOffEffort["enable_thinking"] as? Bool == false)
+        #expect(
+            staleOffEffort["reasoning_effort"] == nil,
+            "direct/off aliases should not add a second cache-scope signal when generic thinking is disabled"
+        )
+
+        let apiReasoningEffort = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["reasoningEffort": .string("high")]
+            ),
+            modelName: modelName
+        )
+        #expect(apiReasoningEffort["enable_thinking"] as? Bool == true)
+        #expect(apiReasoningEffort["reasoning_effort"] as? String == "high")
     }
 
     @Test func additionalContext_mapsReasoningEffortToTemplateKwarg() {
@@ -487,6 +515,17 @@ struct MLXBatchAdapterTests {
                     modelName: modelName
                 )["enable_thinking"] as? Bool == false
             )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(
+                        temperature: nil,
+                        maxTokens: 16,
+                        modelOptions: ["reasoningEffort": .string("high")]
+                    ),
+                    modelName: modelName
+                )["reasoning_effort"] == nil,
+                "Ling is a non-reasoning Osaurus profile; stale effort values must not fragment cache or reach the Bailing directive bridge"
+            )
         }
 
         for modelName in ["linguistics-model-7b", "darling-llm"] {
@@ -534,6 +573,28 @@ struct MLXBatchAdapterTests {
                 )["enable_thinking"] as? Bool == true,
                 "ZAYA must honor explicit thinking opt-in: \(modelName)"
             )
+
+            let directOff = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("instruct")]
+                ),
+                modelName: modelName
+            )
+            #expect(directOff["enable_thinking"] as? Bool == false)
+            #expect(directOff["reasoning_effort"] == nil)
+
+            let apiReasoning = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("high")]
+                ),
+                modelName: modelName
+            )
+            #expect(apiReasoning["enable_thinking"] as? Bool == true)
+            #expect(apiReasoning["reasoning_effort"] as? String == "high")
         }
 
         // Boundary regression guards: names that contain `zaya` as a
@@ -584,6 +645,28 @@ struct MLXBatchAdapterTests {
                 )["enable_thinking"] as? Bool == true,
                 "Nemotron Omni must honor explicit thinking opt-in: \(modelName)"
             )
+
+            let directOff = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("no_think")]
+                ),
+                modelName: modelName
+            )
+            #expect(directOff["enable_thinking"] as? Bool == false)
+            #expect(directOff["reasoning_effort"] == nil)
+
+            let apiReasoning = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("high")]
+                ),
+                modelName: modelName
+            )
+            #expect(apiReasoning["enable_thinking"] as? Bool == true)
+            #expect(apiReasoning["reasoning_effort"] as? String == "high")
         }
     }
 

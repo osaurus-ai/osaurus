@@ -168,8 +168,10 @@ public actor RemoteProviderService: ToolCapableService {
     /// field is DeepSeek-specific and only injected for DeepSeek hosts to avoid
     /// 422s on strict schemas.
     ///
-    /// Non-DSV4 models pass through unchanged so this is safe to call
-    /// unconditionally from `buildChatRequest`.
+    /// Direct/off aliases (`instruct`, `no_think`, `none`, etc.) are internal
+    /// local-runtime controls, not portable OpenAI-compatible wire values. They
+    /// are stripped for every remote model; DSV4 on DeepSeek additionally gets
+    /// the provider-specific `thinking.disabled` object.
     static func dsv4RemoteEffort(
         host: String,
         model: String,
@@ -178,14 +180,17 @@ public actor RemoteProviderService: ToolCapableService {
         let normalized = effort?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard
-            normalized == "instruct",
-            DSV4ReasoningProfile.matches(modelId: model)
-        else {
-            return (effort, nil)
+        let isDirectRailEffort: Bool
+        switch normalized {
+        case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
+            isDirectRailEffort = true
+        default:
+            isDirectRailEffort = false
         }
+        guard isDirectRailEffort else { return (effort, nil) }
         let thinking =
             host.lowercased().contains("deepseek")
+            && DSV4ReasoningProfile.matches(modelId: model)
             ? ThinkingConfig(type: "disabled") : nil
         return (nil, thinking)
     }

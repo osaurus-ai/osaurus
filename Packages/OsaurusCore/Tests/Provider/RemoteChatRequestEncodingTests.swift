@@ -411,15 +411,19 @@ struct RemoteChatRequestEncodingTests {
         #expect(translated.thinking == nil)
     }
 
-    @Test func dsv4RemoteEffort_passesThroughWhenTranslationDoesNotApply() throws {
-        // Non-DSV4 model: effort flows through verbatim regardless of host.
-        let nonDSV4 = RemoteProviderService.dsv4RemoteEffort(
-            host: "api.deepseek.com",
-            model: "gpt-5.5",
-            effort: "instruct"
-        )
-        #expect(nonDSV4.effort == "instruct")
-        #expect(nonDSV4.thinking == nil)
+    @Test func dsv4RemoteEffort_stripsDirectRailAliasesForAllRemoteModels() throws {
+        // Direct/off aliases are local runtime controls. Public remote schemas
+        // reject them as `reasoning_effort` values, even when the model is not
+        // a local DSV4 bundle.
+        for effort in ["instruct", "none", "no_think", "off", "disabled", "false"] {
+            let nonDSV4 = RemoteProviderService.dsv4RemoteEffort(
+                host: "api.openai.com",
+                model: "gpt-5.5",
+                effort: effort
+            )
+            #expect(nonDSV4.effort == nil)
+            #expect(nonDSV4.thinking == nil)
+        }
 
         // Nil effort: nothing to translate, nothing to inject.
         let nilEffort = RemoteProviderService.dsv4RemoteEffort(

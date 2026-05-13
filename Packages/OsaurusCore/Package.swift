@@ -275,9 +275,12 @@ let package = Package(
         // refreshes the live Parakeet/RADIO integration docs consumed by the
         // Osaurus voice path. `81c8ef7` adds the OmniAudioChunkStabilityBench
         // proof that current Parakeet embeddings are not chunk-concat safe.
+        // `4365651` decodes nested ZAYA/JANGTQ-K routed-expert mxtq bit
+        // metadata, including separate fused gate/up and down-projection
+        // widths, without falling back to config parse failure.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "81c8ef7389c031292287801f761957c681d086ea"
+            revision: "4365651d9245ad983094717bb2886a64635a5b38"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-

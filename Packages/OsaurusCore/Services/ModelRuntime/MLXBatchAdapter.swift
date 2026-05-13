@@ -459,6 +459,9 @@ struct MLXBatchAdapter {
             return normalized.isEmpty ? nil : normalized
         }()
         let disableThinking = generation.modelOptions["disableThinking"]?.boolValue
+        let directRailReasoningEffort = Self.isDirectRailReasoningEffort(normalizedReasoningEffort)
+        let hasPositiveReasoningEffort =
+            normalizedReasoningEffort != nil && !directRailReasoningEffort
 
         if DSV4ReasoningProfile.matches(modelId: modelName) {
             let effort: String
@@ -494,31 +497,56 @@ struct MLXBatchAdapter {
             return context
         }
 
-        if ModelFamilyNames.isZayaVLFamily(modelName) {
-            return context
-        }
-
-        if let normalizedReasoningEffort {
-            context["reasoning_effort"] = normalizedReasoningEffort
-        }
         if ModelFamilyNames.isLingFamily(modelName) {
             context["enable_thinking"] = false
             return context
         }
+
+        if ModelFamilyNames.isZayaVLFamily(modelName) {
+            return context
+        }
+
         if let disableThinking {
             context["enable_thinking"] = !disableThinking
+            if !disableThinking, let normalizedReasoningEffort {
+                context["reasoning_effort"] = normalizedReasoningEffort
+            }
             return context
         }
         if ModelFamilyNames.isNemotronOmniFamily(modelName) {
-            context["enable_thinking"] = false
+            context["enable_thinking"] = hasPositiveReasoningEffort
+            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["reasoning_effort"] = normalizedReasoningEffort
+            }
             return context
         }
         if ModelFamilyNames.isZayaFamily(modelName) {
+            context["enable_thinking"] = hasPositiveReasoningEffort
+            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["reasoning_effort"] = normalizedReasoningEffort
+            }
+            return context
+        }
+
+        if let normalizedReasoningEffort, !directRailReasoningEffort {
+            context["reasoning_effort"] = normalizedReasoningEffort
+        }
+        if directRailReasoningEffort {
             context["enable_thinking"] = false
             return context
         }
         context["enable_thinking"] = true
         return context
+    }
+
+    private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
+        guard let value else { return false }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
+            return true
+        default:
+            return false
+        }
     }
 
     static func shouldEnableCompiledBatchDecode(modelName: String, maxBatchSize: Int) -> Bool {
