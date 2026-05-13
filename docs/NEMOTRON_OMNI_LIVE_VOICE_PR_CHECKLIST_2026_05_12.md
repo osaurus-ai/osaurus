@@ -101,14 +101,18 @@ encoded Parakeet chunks are not safe to concatenate. Omni audio support is gated
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
   --package-path Packages/OsaurusCore
   --filter 'RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening|RemoteChatRequestEncodingTests/deepSeekProvider_dropsLocalInstructReasoningEffort|RemoteChatRequestEncodingTests/deepSeekProvider_preservesAcceptedReasoningEfforts|MLXBatchAdapterTests/additionalContext_defaultsNemotronOmniThinkingOffButHonorsExplicitOptIn'`.
-- Parakeet/RADIO source/push/doc check passed for the live library pin:
-  `vmlx-swift-lm` contains `NemotronHParakeetEncoder`,
+- Parakeet/RADIO source/push/doc checks have passed repeatedly for the live
+  library pin, including after the rebased Osaurus head `54330b43` was pushed:
+  `git ls-remote origin refs/heads/main` for `vmlx-swift-lm` returns
+  `81c8ef7389c031292287801f761957c681d086ea`; `git grep` against the committed
+  `vmlx-swift-lm` tree confirms `NemotronHParakeetEncoder`,
   `remapParakeetWeights`, `NemotronHRADIOVisionModel`,
   `remapRadioWeights`, `OmniAudioChunkStabilityBench`,
   `PARAKEET-RADIO-INTEGRATION.md`, and
-  `docs/benchmarks/omni-audio-chunk-stability-2026-05-13.md`; Osaurus
-  resolves `https://github.com/osaurus-ai/vmlx-swift-lm` at
-  `81c8ef7389c031292287801f761957c681d086ea`.
+  `docs/benchmarks/omni-audio-chunk-stability-2026-05-13.md`; Osaurus pins the
+  same revision in `Packages/OsaurusCore/Package.swift` and
+  `Packages/OsaurusCore/Package.resolved`; the Osaurus-resolved checkout also
+  contains the same encoder functions and docs.
 - Focused UI/API attachment regression tests passed:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
   --filter 'ChatAttachmentSecurityTests|MultimodalContentPartTests'`.
@@ -163,6 +167,12 @@ encoded Parakeet chunks are not safe to concatenate. Omni audio support is gated
   This rechecked the local PCM bridge together with multimodal
   audio/video mapping, the Nemotron Omni pre-encode adapter helper, and the
   DeepSeek remote `reasoning_effort` guard.
+- After rebase onto `osaurus/main` `acbf75cc`, the post-rebase focused package
+  suite passed with `48` tests in `6` suites:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+  --package-path Packages/OsaurusCore --filter
+  'RemoteChatRequestEncodingTests|RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening|MultimodalContentPartTests/mapping_audioWavDecodesToSamples|MaterializeMediaDataUrlMCDCTests|MLXBatchAdapterTests/preencodeAudioSources_replacesRawAudioAndCountsInputs|LiveVoiceResidentPreencodeIntegrationTests'`.
+  The gated real-model test skipped in this default run, as intended.
 - After the resident live-preencode scheduler landed, the same broader focused
   suite passed again with `46` tests in `4` suites. The two direct `.preEncoded`
   mapping tests are present but disabled because constructing a standalone
@@ -185,10 +195,13 @@ encoded Parakeet chunks are not safe to concatenate. Omni audio support is gated
   submit path by storing the final PCM snapshot under the same attachment id,
   building `ChatSession.buildUserChatMessage(...)`, and requiring
   `ModelRuntime.mapOpenAIChatToMLX(...)` to consume `.preEncoded` audio.
-  Local run with `OSAURUS_MLX_METALLIB` passed after the composer-submit
-  assertion with `warm_ms=2807`, `samples=80620`, `encode_ms=1312`,
-  `embedding_shape=[63, 2688]`, and `composer_submit=preencoded`. Earlier run
-  before the composer-submit assertion recorded max RSS about `13.1 GB`.
+  Local run with `OSAURUS_MLX_METALLIB` passed again after the rebase at
+  `54330b43` with `warm_ms=2780`, `samples=80620`, `encode_ms=1310`,
+  `embedding_shape=[63, 2688]`, and `composer_submit=preencoded`. The prior
+  post-composer assertion run also passed with `warm_ms=2807`,
+  `samples=80620`, `encode_ms=1312`, `embedding_shape=[63, 2688]`, and
+  `composer_submit=preencoded`; earlier run before the composer-submit
+  assertion recorded max RSS about `13.1 GB`.
 - `OmniAudioLatencyBench` on `Nemotron-Omni-Nano-JANGTQ-CRACK` measured the
   Osaurus BatchEngine path at `1514.1 ms` raw PCM first semantic delta on
   turn 1, `1498.6 ms` raw PCM on turn 2, `208.9 ms` pre-encoded Parakeet on
