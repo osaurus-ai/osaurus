@@ -279,12 +279,12 @@ let package = Package(
         // metadata, including separate fused gate/up and down-projection
         // widths, without falling back to config parse failure.
         // `f728718` fixes DSV4 Flash HSA selection for long prompts by masking
-        // future compressed pool chunks before indexer top-k, preventing the
-        // 3-4K-token degradation caused by selecting rows the later attention
-        // mask would discard.
+        // future compressed pool chunks before indexer top-k. `6561a72`
+        // preserves ratio-4 overlap-compressor state across decode calls so
+        // long-tail DSV4 generation keeps the previous complete pool window.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "f72871888e951929a11f7aabe14d9ea9024f1773"
+            revision: "6561a72f93d6cd5e0202e8067b53fed5cf21a660"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-

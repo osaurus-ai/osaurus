@@ -104,8 +104,11 @@ struct RuntimePolicySourceTests {
         // OmniAudioChunkStabilityBench proof that current Parakeet embeddings
         // cannot be concatenated safely across independently encoded chunks.
         // `f728718` fixes DSV4 Flash long-prompt HSA selection by masking
-        // future compressed-pool chunks before indexer top-k.
-        let currentVmlxRevision = "f72871888e951929a11f7aabe14d9ea9024f1773"
+        // future compressed-pool chunks before indexer top-k. `6561a72`
+        // preserves DSV4's ratio-4 overlap-compressor state across decode
+        // calls, preventing the previous complete pool window from being
+        // zeroed after a single-token generation boundary.
+        let currentVmlxRevision = "6561a72f93d6cd5e0202e8067b53fed5cf21a660"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
