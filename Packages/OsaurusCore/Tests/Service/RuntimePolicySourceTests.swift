@@ -103,7 +103,9 @@ struct RuntimePolicySourceTests {
         // consumed by Osaurus live-voice work. `81c8ef7` adds the
         // OmniAudioChunkStabilityBench proof that current Parakeet embeddings
         // cannot be concatenated safely across independently encoded chunks.
-        let currentVmlxRevision = "81c8ef7389c031292287801f761957c681d086ea"
+        // `f728718` fixes DSV4 Flash long-prompt HSA selection by masking
+        // future compressed-pool chunks before indexer top-k.
+        let currentVmlxRevision = "f72871888e951929a11f7aabe14d9ea9024f1773"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))

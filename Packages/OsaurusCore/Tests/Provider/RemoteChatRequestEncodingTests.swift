@@ -252,6 +252,35 @@ struct RemoteChatRequestEncodingTests {
         }
     }
 
+    @Test func remoteChatReasoningControls_deepSeekNormalizesAndFiltersEfforts() throws {
+        let accepted = RemoteProviderService.remoteChatReasoningControls(
+            providerType: .openaiLegacy,
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro",
+            effort: "  MAX  "
+        )
+        #expect(accepted.effort == "max")
+        #expect(accepted.thinking == nil)
+
+        let direct = RemoteProviderService.remoteChatReasoningControls(
+            providerType: .openaiLegacy,
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro",
+            effort: "instruct"
+        )
+        #expect(direct.effort == nil)
+        #expect(direct.thinking == ThinkingConfig(type: "disabled"))
+
+        let unknown = RemoteProviderService.remoteChatReasoningControls(
+            providerType: .openaiLegacy,
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro",
+            effort: "reasoning"
+        )
+        #expect(unknown.effort == nil)
+        #expect(unknown.thinking == nil)
+    }
+
     // MARK: - `reasoning_content` echo (issue #959)
 
     @Test func chatMessage_encode_includesReasoningContentWhenPresent() throws {
@@ -395,6 +424,17 @@ struct RemoteChatRequestEncodingTests {
             #expect(translated.effort == effort)
             #expect(translated.thinking == nil)
         }
+    }
+
+    @Test func dsv4RemoteEffort_normalizesAcceptedEffortCasing() throws {
+        let translated = RemoteProviderService.dsv4RemoteEffort(
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro",
+            effort: "  HIGH  "
+        )
+
+        #expect(translated.effort == "high")
+        #expect(translated.thinking == nil)
     }
 
     @Test func dsv4RemoteEffort_nonDeepSeekHost_stripsInstructWithoutThinkingField() throws {

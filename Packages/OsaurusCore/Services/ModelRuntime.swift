@@ -839,7 +839,8 @@ public actor ModelRuntime {
     /// Installs the cache coordinator on a freshly-loaded holder.
     ///
     /// `enableCaching(config:)` constructs the coordinator with our
-    /// recommended knobs (paged + L2 disk + TurboQuant default + 8K window).
+    /// recommended knobs (paged + L2 disk, fp16 KV by default, 64K rotating
+    /// cap for callers that do not provide `maxKVSize`).
     /// vmlx's `BatchEngine.admitPendingRequests` auto-flips
     /// `coordinator.isHybrid` on first slot admission for any model whose
     /// per-layer cache list contains a `MambaCache` or `ArraysCache` — that

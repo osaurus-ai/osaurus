@@ -177,9 +177,13 @@ public actor RemoteProviderService: ToolCapableService {
         model: String,
         effort: String?
     ) -> (effort: String?, thinking: ThinkingConfig?) {
-        let normalized = effort?
+        guard let normalized = effort?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+            .lowercased(), !normalized.isEmpty
+        else {
+            return (nil, nil)
+        }
+
         let isDirectRailEffort: Bool
         switch normalized {
         case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
@@ -187,12 +191,27 @@ public actor RemoteProviderService: ToolCapableService {
         default:
             isDirectRailEffort = false
         }
-        guard isDirectRailEffort else { return (effort, nil) }
+        guard isDirectRailEffort else { return (normalized, nil) }
         let thinking =
             host.lowercased().contains("deepseek")
             && DSV4ReasoningProfile.matches(modelId: model)
             ? ThinkingConfig(type: "disabled") : nil
         return (nil, thinking)
+    }
+
+    static func remoteChatReasoningControls(
+        providerType: RemoteProviderType,
+        host: String,
+        model: String,
+        effort: String?
+    ) -> (effort: String?, thinking: ThinkingConfig?) {
+        let translated = Self.dsv4RemoteEffort(host: host, model: model, effort: effort)
+        let providerAcceptedEffort = Self.chatCompletionsReasoningEffort(
+            providerType: providerType,
+            host: host,
+            effort: translated.effort
+        )
+        return (providerAcceptedEffort, translated.thinking)
     }
 
     static func effectiveRequestProviderType(
@@ -1697,7 +1716,8 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
     ) -> RemoteChatRequest {
-        let (effortValue, thinking) = Self.dsv4RemoteEffort(
+        let (effortValue, thinking) = Self.remoteChatReasoningControls(
+            providerType: provider.providerType,
             host: provider.host,
             model: model,
             effort: parameters.modelOptions["reasoningEffort"]?.stringValue

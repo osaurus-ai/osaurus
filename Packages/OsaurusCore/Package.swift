@@ -278,9 +278,13 @@ let package = Package(
         // `4365651` decodes nested ZAYA/JANGTQ-K routed-expert mxtq bit
         // metadata, including separate fused gate/up and down-projection
         // widths, without falling back to config parse failure.
+        // `f728718` fixes DSV4 Flash HSA selection for long prompts by masking
+        // future compressed pool chunks before indexer top-k, preventing the
+        // 3-4K-token degradation caused by selecting rows the later attention
+        // mask would discard.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "4365651d9245ad983094717bb2886a64635a5b38"
+            revision: "f72871888e951929a11f7aabe14d9ea9024f1773"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-
