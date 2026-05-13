@@ -113,5 +113,6 @@ struct ChatAttachmentSecurityTests {
         #expect(inputs[0].localSamples == nil)
         #expect(inputs[1].localSamples?.samples == [0.25, -0.5])
         #expect(inputs[1].localSamples?.sampleRate == 16_000)
+        #expect(inputs[1].localSamples?.preencodedAttachmentId == liveAudio.id)
     }
 }

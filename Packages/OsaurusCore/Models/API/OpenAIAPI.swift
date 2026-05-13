@@ -146,6 +146,17 @@ struct ModelsResponse: Codable, Sendable {
 struct LocalAudioSamples: Sendable, Equatable {
     let samples: [Float]
     let sampleRate: Int
+    let preencodedAttachmentId: UUID?
+
+    init(
+        samples: [Float],
+        sampleRate: Int,
+        preencodedAttachmentId: UUID? = nil
+    ) {
+        self.samples = samples
+        self.sampleRate = sampleRate
+        self.preencodedAttachmentId = preencodedAttachmentId
+    }
 }
 
 // MARK: - Multimodal Content Parts

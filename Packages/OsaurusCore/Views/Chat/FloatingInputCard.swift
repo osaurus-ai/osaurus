@@ -174,6 +174,10 @@ struct FloatingInputCard: View {
     @State private var lastConfirmedLength: Int = 0
 
     @State private var pauseTimerCancellable: AnyCancellable? = nil
+    @State private var liveVoiceAttachmentId: UUID?
+    @State private var liveVoicePreencodeTask: Task<Void, Never>?
+    @State private var lastLiveVoicePreencodeAt: Date = .distantPast
+    @State private var lastLiveVoicePreencodeSampleCount: Int = 0
 
     // TextEditor should grow up to ~6 lines before scrolling
     private var inputFontSize: CGFloat { CGFloat(theme.bodySize) }
@@ -428,6 +432,7 @@ struct FloatingInputCard: View {
                     print("[FloatingInputCard] onDisappear: Stopping active voice recording")
                     // Don't use cancelVoiceInput() here as it forces continuous mode off.
                     // Instead, just stop recording but preserve the mode.
+                    cancelLiveVoicePreencodeSession(removeRegistryEntry: true)
                     Task {
                         _ = await speechService.stopStreamingTranscription()
                         speechService.clearTranscription()
@@ -521,6 +526,7 @@ struct FloatingInputCard: View {
                             checkForPause()
                             checkForSilenceTimeout()
                             handlePauseCountdown()
+                            scheduleLiveVoicePreencodeIfNeeded()
                         }
                 } else {
                     pauseTimerCancellable = nil
@@ -660,6 +666,9 @@ extension FloatingInputCard {
         if speechService.isRecording {
             print("[FloatingInputCard] startVoiceInput: Recording already active, ensuring UI is visible")
             showVoiceOverlay = true
+            if liveVoiceAttachmentId == nil {
+                beginLiveVoicePreencodeSession()
+            }
             if voiceInputState == .idle {
                 voiceInputState = .recording
                 lastVoiceActivityTime = Date()
@@ -674,6 +683,7 @@ extension FloatingInputCard {
         // Show overlay immediately for visual feedback, but don't set recording state yet.
         // Recording state will be set when speechService.isRecording becomes true.
         showVoiceOverlay = true
+        beginLiveVoicePreencodeSession()
 
         Task {
             do {
@@ -704,11 +714,90 @@ extension FloatingInputCard {
         }
     }
 
+    private func beginLiveVoicePreencodeSession() {
+        if let oldId = liveVoiceAttachmentId {
+            LiveVoiceAudioInputRegistry.shared.remove(for: oldId)
+        }
+        liveVoicePreencodeTask?.cancel()
+        liveVoicePreencodeTask = nil
+        liveVoiceAttachmentId = UUID()
+        lastLiveVoicePreencodeAt = .distantPast
+        lastLiveVoicePreencodeSampleCount = 0
+    }
+
+    private func cancelLiveVoicePreencodeSession(removeRegistryEntry: Bool) {
+        liveVoicePreencodeTask?.cancel()
+        liveVoicePreencodeTask = nil
+        if removeRegistryEntry, let id = liveVoiceAttachmentId {
+            LiveVoiceAudioInputRegistry.shared.remove(for: id)
+        }
+        liveVoiceAttachmentId = nil
+        lastLiveVoicePreencodeAt = .distantPast
+        lastLiveVoicePreencodeSampleCount = 0
+    }
+
+    @discardableResult
+    private func scheduleLiveVoicePreencodeIfNeeded(
+        force: Bool = false,
+        snapshot providedSnapshot: LiveVoiceAudioSnapshot? = nil,
+        attachmentId providedAttachmentId: UUID? = nil
+    ) -> Task<Void, Never>? {
+        guard mediaCapabilities.supportsAudio,
+            let modelName = selectedModel,
+            ModelFamilyNames.isNemotronOmniFamily(modelName)
+        else {
+            return nil
+        }
+
+        guard let snapshot = providedSnapshot ?? speechService.currentLiveAudioSnapshot(),
+            !snapshot.samples.isEmpty
+        else {
+            return nil
+        }
+
+        let attachmentId: UUID
+        if let providedAttachmentId {
+            attachmentId = providedAttachmentId
+        } else if let existing = liveVoiceAttachmentId {
+            attachmentId = existing
+        } else {
+            let newId = UUID()
+            liveVoiceAttachmentId = newId
+            attachmentId = newId
+        }
+
+        let sampleCount = snapshot.samples.count
+        let minSampleDelta = max(4_000, snapshot.sampleRate / 2)
+        if !force {
+            guard sampleCount >= minSampleDelta else { return nil }
+            guard Date().timeIntervalSince(lastLiveVoicePreencodeAt) >= 0.75 else { return nil }
+            guard sampleCount - lastLiveVoicePreencodeSampleCount >= minSampleDelta else { return nil }
+        }
+
+        lastLiveVoicePreencodeAt = Date()
+        lastLiveVoicePreencodeSampleCount = sampleCount
+
+        let samples = snapshot.samples
+        let sampleRate = snapshot.sampleRate
+        let task = Task.detached(priority: .utility) {
+            let result = await ModelRuntime.shared.preencodeLiveVoiceAudioIfResident(
+                modelName: modelName,
+                attachmentId: attachmentId,
+                samples: samples,
+                sampleRate: sampleRate
+            )
+            print("[Osaurus][LiveVoice] preencode_status=\(result.status.rawValue) samples=\(result.sampleCount) sample_rate=\(result.sampleRate) encode_ms=\(result.encodeMs) message=\(result.message ?? "")")
+        }
+        liveVoicePreencodeTask = task
+        return task
+    }
+
     private func cancelVoiceInput() {
         print("[FloatingInputCard] User cancelled voice input - disabling continuous mode")
         hasDetectedSpeechThisTurn = false
         lastConfirmedLength = 0
         isContinuousVoiceMode = false
+        cancelLiveVoicePreencodeSession(removeRegistryEntry: true)
         Task {
             _ = await speechService.stopStreamingTranscription()
             speechService.clearTranscription()
@@ -830,6 +919,7 @@ extension FloatingInputCard {
     }
 
     private func stopVoiceInputFromTimeout() {
+        cancelLiveVoicePreencodeSession(removeRegistryEntry: true)
         Task {
             _ = await speechService.stopStreamingTranscription(force: false)
             speechService.clearTranscription()
@@ -847,6 +937,15 @@ extension FloatingInputCard {
         let wavEncodeStart = CFAbsoluteTimeGetCurrent()
         let voiceAudioData = voiceSnapshot?.wavData()
         let wavEncodeMs = Int((CFAbsoluteTimeGetCurrent() - wavEncodeStart) * 1000)
+        let voiceAttachmentId = liveVoiceAttachmentId ?? UUID()
+        liveVoiceAttachmentId = voiceAttachmentId
+        let finalPreencodeTask = voiceSnapshot.flatMap {
+            scheduleLiveVoicePreencodeIfNeeded(
+                force: true,
+                snapshot: $0,
+                attachmentId: voiceAttachmentId
+            )
+        }
         if mediaCapabilities.supportsAudio {
             let wavBytes = voiceAudioData?.count ?? 0
             let durationMs = Int((voiceSnapshot?.durationSeconds ?? 0) * 1000)
@@ -865,6 +964,7 @@ extension FloatingInputCard {
             print("[FloatingInputCard] Invoking cleanup for voice message (\(message.count) chars)")
             let cleanedMessage = await TranscriptionCleanupService.shared.clean(message)
             print("[FloatingInputCard] Cleanup done. Original: \(message) | Cleaned: \(cleanedMessage)")
+            await finalPreencodeTask?.value
 
             await MainActor.run {
                 voiceInputState = .idle
@@ -874,10 +974,13 @@ extension FloatingInputCard {
                 let fullMessage = existing.isEmpty ? cleanedMessage : "\(existing) \(cleanedMessage)"
 
                 if let voiceAudioData {
-                    let voiceAttachment = Attachment.audio(
-                        voiceAudioData,
-                        format: "wav",
-                        filename: "voice-input.wav"
+                    let voiceAttachment = Attachment(
+                        id: voiceAttachmentId,
+                        kind: .audio(
+                            voiceAudioData,
+                            format: "wav",
+                            filename: "voice-input.wav"
+                        )
                     )
                     if let voiceSnapshot {
                         LiveVoiceAudioInputRegistry.shared.store(
@@ -905,6 +1008,7 @@ extension FloatingInputCard {
                     text = ""
                     onSend(fullMessage)
                 }
+                cancelLiveVoicePreencodeSession(removeRegistryEntry: voiceAudioData == nil)
             }
         }
     }

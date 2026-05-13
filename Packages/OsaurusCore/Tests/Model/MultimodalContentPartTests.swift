@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import MLX
 import MLXLMCommon
 import Testing
 
@@ -219,6 +220,92 @@ struct MultimodalContentPartTests {
             return
         }
         #expect(samples == [0.1, -0.2, 0.3])
+        #expect(sampleRate == 16_000)
+    }
+
+    @Test(
+        "mapOpenAIChatToMLX prefers fresh preencoded live audio",
+        .disabled("Requires an MLXArray fixture; local SwiftPM tests cannot load default.metallib.")
+    )
+    func mapping_prefersFreshPreencodedLiveAudio() throws {
+        let attachmentId = UUID()
+        let samples: [Float] = [0.1, -0.2, 0.3]
+        let embedding = MLXArray.zeros([2, 4])
+        LiveVoiceAudioInputRegistry.shared.store(samples: samples, sampleRate: 16_000, for: attachmentId)
+        LiveVoiceAudioInputRegistry.shared.storePreencoded(
+            samples: samples,
+            sampleRate: 16_000,
+            embedding: embedding,
+            encodeMs: 12,
+            for: attachmentId
+        )
+        defer { LiveVoiceAudioInputRegistry.shared.removeAll() }
+
+        let message = ChatMessage(
+            role: "user",
+            text: "hear preencoded",
+            imageData: [],
+            audios: [(data: Data([0x52, 0x49, 0x46, 0x46]), format: "wav")],
+            localAudioSamples: [
+                LocalAudioSamples(
+                    samples: samples,
+                    sampleRate: 16_000,
+                    preencodedAttachmentId: attachmentId
+                )
+            ],
+            videos: []
+        )
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([message])
+
+        guard case .preEncoded(let mappedSamples, let sampleRate, let mappedEmbedding) = mapped[0].audios[0] else {
+            Issue.record("fresh live audio embedding should be forwarded as preEncoded")
+            return
+        }
+        #expect(mappedSamples == samples)
+        #expect(sampleRate == 16_000)
+        #expect(mappedEmbedding.shape == embedding.shape)
+    }
+
+    @Test(
+        "mapOpenAIChatToMLX ignores stale preencoded live audio",
+        .disabled("Requires an MLXArray fixture; local SwiftPM tests cannot load default.metallib.")
+    )
+    func mapping_ignoresStalePreencodedLiveAudio() throws {
+        let attachmentId = UUID()
+        LiveVoiceAudioInputRegistry.shared.store(samples: [0.1], sampleRate: 16_000, for: attachmentId)
+        LiveVoiceAudioInputRegistry.shared.storePreencoded(
+            samples: [0.1],
+            sampleRate: 16_000,
+            embedding: MLXArray.zeros([1, 4]),
+            encodeMs: 12,
+            for: attachmentId
+        )
+        defer { LiveVoiceAudioInputRegistry.shared.removeAll() }
+
+        let freshSamples: [Float] = [0.1, -0.2]
+        let message = ChatMessage(
+            role: "user",
+            text: "hear fresh",
+            imageData: [],
+            audios: [(data: Data([0x52, 0x49, 0x46, 0x46]), format: "wav")],
+            localAudioSamples: [
+                LocalAudioSamples(
+                    samples: freshSamples,
+                    sampleRate: 16_000,
+                    preencodedAttachmentId: attachmentId
+                )
+            ],
+            videos: []
+        )
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([message])
+
+        guard case .samples(let mappedSamples, let sampleRate) = mapped[0].audios[0] else {
+            Issue.record("stale live audio embedding should fall back to samples")
+            return
+        }
+        #expect(mappedSamples == freshSamples)
         #expect(sampleRate == 16_000)
     }
 

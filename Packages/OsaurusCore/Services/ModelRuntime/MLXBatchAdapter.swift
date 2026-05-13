@@ -403,7 +403,7 @@ struct MLXBatchAdapter {
         return result.chat
     }
 
-    private static func preencodedAudio(
+    static func preencodedAudio(
         _ audio: MLXLMCommon.UserInput.Audio,
         using omni: NemotronHOmni
     ) throws -> MLXLMCommon.UserInput.Audio? {

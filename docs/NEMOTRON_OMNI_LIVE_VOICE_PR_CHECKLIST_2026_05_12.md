@@ -20,6 +20,10 @@ cache restore token-aware. Omni audio support is gated by
   generated audio attachment id in `LiveVoiceAudioInputRegistry`, and appends
   the WAV as `Attachment.audio(..., format: "wav")` when the selected model
   supports audio.
+- `FloatingInputCard` now creates a stable live voice attachment id at recording
+  start, periodically asks the resident Nemotron Omni runtime to pre-encode
+  retained PCM snapshots while capture is active, and force-runs one final
+  pre-encode during transcript cleanup before the chat message is submitted.
 - `ChatSession.buildUserChatMessage(...)` converts supported image/audio/video
   attachments into multimodal `ChatMessage` content parts. This closes the UI
   bridge gap where live voice appended `Attachment.audio` but the in-app
@@ -27,11 +31,19 @@ cache restore token-aware. Omni audio support is gated by
 - `ChatMessage` carries optional in-process `LocalAudioSamples` aligned to each
   OpenAI `input_audio` content part. The JSON-visible message still retains
   the portable base64 audio fallback for persistence and remote providers.
+- `LiveVoiceAudioInputRegistry` can retain a fresh `.preEncoded` audio embedding
+  for the same attachment id. `ModelRuntime` only consumes it when the stored
+  source sample count and sample rate exactly match the final local PCM, so a
+  stale periodic pre-encode cannot silently drop the tail of the user's speech.
 - `ModelRuntime.extractAudioSources(from:)` maps aligned local PCM to
   `UserInput.Audio.samples` so current in-app voice turns avoid the
-  WAV/base64/temp-file re-decode path. API/remote requests without local PCM
-  still materialize `input_audio` into a temp audio file and hand
-  `UserInput.Audio.url` to vMLX.
+  WAV/base64/temp-file re-decode path, and maps fresh live pre-encoded audio to
+  `UserInput.Audio.preEncoded` so vMLX skips request-time Parakeet. API/remote
+  requests without local PCM still materialize `input_audio` into a temp audio
+  file and hand `UserInput.Audio.url` to vMLX.
+- `ModelRuntime.preencodeLiveVoiceAudioIfResident(...)` pre-encodes against the
+  already-resident model only. It does not cold-load a multi-GB Omni model from
+  the voice UI; call-mode setups should keep the target model resident.
 - `MLXBatchAdapter` now detects Nemotron Omni models and converts raw
   `UserInput.Audio` sources to `.preEncoded` audio embeddings before
   `processor.prepare(input:)`. Existing `.preEncoded` audio is preserved, which
@@ -45,7 +57,8 @@ cache restore token-aware. Omni audio support is gated by
     `sample_rate`, and `duration_ms` when a voice turn is captured.
   - `TTFTTrace` records `input_audio_count`, `input_audio_materialized_count`,
     `input_audio_bytes`, `input_audio_local_sample_count`,
-    `input_audio_materialize_ms`, `prompt_prepare_ms`,
+    `input_audio_local_preencoded_count`, `input_audio_materialize_ms`,
+    `prompt_prepare_ms`,
     `processor_prepare_ms`, `omni_audio_preencode_input_count`,
     `omni_audio_preencode_converted_count`,
     `omni_audio_preencode_existing_count`, `omni_audio_preencode_ms`,
@@ -96,6 +109,12 @@ cache restore token-aware. Omni audio support is gated by
   This rechecked the local PCM bridge together with multimodal
   audio/video mapping, the Nemotron Omni pre-encode adapter helper, and the
   DeepSeek remote `reasoning_effort` guard.
+- After the resident live-preencode scheduler landed, the same broader focused
+  suite passed again with `46` tests in `4` suites. The two direct `.preEncoded`
+  mapping tests are present but disabled because constructing a standalone
+  `MLXArray` fixture in the SwiftPM test process currently fails to load
+  `default.metallib`; production embeddings are produced inside
+  `ModelContainer.perform`.
 - `OmniAudioLatencyBench` on `Nemotron-Omni-Nano-JANGTQ-CRACK` measured the
   Osaurus BatchEngine path at `1514.1 ms` raw PCM first semantic delta on
   turn 1, `1498.6 ms` raw PCM on turn 2, `208.9 ms` pre-encoded Parakeet on
@@ -209,8 +228,9 @@ cache restore token-aware. Omni audio support is gated by
      attachment.
   4. Confirm the vMLX request includes `input_audio`.
   5. Confirm response stream starts and `/tmp/osaurus_ttft_trace.log` includes
-     `input_audio_local_sample_count`, `input_audio_materialize_ms`,
-     `prompt_prepare_ms`, `first_token_ms`, and `first_chunk_ms`.
+     `input_audio_local_sample_count`, `input_audio_local_preencoded_count`,
+     `input_audio_materialize_ms`, `prompt_prepare_ms`, `first_token_ms`, and
+     `first_chunk_ms`.
 - Negative smoke:
   1. Select a text-only model.
   2. Send a voice message.
@@ -219,11 +239,12 @@ cache restore token-aware. Omni audio support is gated by
 
 ## Remaining Work
 
-- Add true live-during-speech pre-encoded audio emission from the Osaurus voice
-  component. Current in-app voice turns can now bypass WAV/temp-file re-decode
-  by carrying local PCM to `UserInput.Audio.samples`, and the adapter preserves
-  `.preEncoded` audio, but the request still pays Nemotron audio encoding
-  before the stream is returned.
+- Replace periodic full-snapshot pre-encoding with true causal/incremental
+  Parakeet embedding accumulation if the encoder can be made chunk-safe.
+  Current in-app voice turns can pre-encode against the resident model while
+  capture/cleanup is active and submit fresh `.preEncoded` audio at endpoint,
+  but the implementation intentionally rejects stale embeddings instead of
+  concatenating chunk outputs that may not match full-context Conformer output.
 - Add TTFAB coverage once a TTS backend is selected. Current evidence covers
   speech input into model output text, not first output audio byte.
 - Keep audio attachment spillover and temp-file cleanup under review for longer

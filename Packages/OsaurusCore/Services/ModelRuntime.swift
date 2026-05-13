@@ -37,6 +37,23 @@ public actor ModelRuntime {
         let isCurrent: Bool
     }
 
+    struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
+        enum Status: String, Sendable {
+            case stored
+            case skippedNoSamples
+            case skippedUnsupportedModel
+            case skippedModelNotResident
+            case skippedModelUnavailable
+            case failed
+        }
+
+        let status: Status
+        let sampleCount: Int
+        let sampleRate: Int
+        let encodeMs: Int
+        let message: String?
+    }
+
     private final class SessionHolder: NSObject, @unchecked Sendable {
         let name: String
         let container: ModelContainer
@@ -117,6 +134,127 @@ public actor ModelRuntime {
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
             return lhs.name < rhs.name
         }
+    }
+
+    func preencodeLiveVoiceAudioIfResident(
+        modelName: String,
+        attachmentId: UUID,
+        samples: [Float],
+        sampleRate: Int
+    ) async -> LiveVoiceAudioPreencodeResult {
+        guard !samples.isEmpty, sampleRate > 0 else {
+            return LiveVoiceAudioPreencodeResult(
+                status: .skippedNoSamples,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: nil
+            )
+        }
+
+        guard ModelFamilyNames.isNemotronOmniFamily(modelName) else {
+            return LiveVoiceAudioPreencodeResult(
+                status: .skippedUnsupportedModel,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: nil
+            )
+        }
+
+        guard let holder = modelCache[modelName]
+            ?? modelCache.values.first(where: {
+                $0.name.caseInsensitiveCompare(modelName) == .orderedSame
+            })
+        else {
+            return LiveVoiceAudioPreencodeResult(
+                status: .skippedModelNotResident,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: nil
+            )
+        }
+
+        await ModelLease.shared.acquire(holder.name)
+        let soloLease = await MLXBatchAdapter.Registry.shared.acquireSoloLease(for: holder.name)
+
+        final class OutBox: @unchecked Sendable {
+            var result: LiveVoiceAudioPreencodeResult?
+        }
+        let box = OutBox()
+
+        do {
+            try await holder.container.perform { context in
+                guard let omni = context.model as? NemotronHOmni else {
+                    box.result = LiveVoiceAudioPreencodeResult(
+                        status: .skippedModelUnavailable,
+                        sampleCount: samples.count,
+                        sampleRate: sampleRate,
+                        encodeMs: 0,
+                        message: "Resident model is not NemotronHOmni"
+                    )
+                    return
+                }
+
+                let startedAt = CFAbsoluteTimeGetCurrent()
+                guard case .preEncoded(let encodedSamples, let encodedSampleRate, let embedding) =
+                    try MLXBatchAdapter.preencodedAudio(
+                        .samples(samples, sampleRate: sampleRate),
+                        using: omni
+                    )
+                else {
+                    box.result = LiveVoiceAudioPreencodeResult(
+                        status: .skippedModelUnavailable,
+                        sampleCount: samples.count,
+                        sampleRate: sampleRate,
+                        encodeMs: 0,
+                        message: "Nemotron audio encoder returned no embedding"
+                    )
+                    return
+                }
+
+                let encodeMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+                LiveVoiceAudioInputRegistry.shared.storePreencoded(
+                    samples: encodedSamples,
+                    sampleRate: encodedSampleRate,
+                    sourceSampleCount: samples.count,
+                    sourceSampleRate: sampleRate,
+                    embedding: embedding,
+                    encodeMs: encodeMs,
+                    for: attachmentId
+                )
+                box.result = LiveVoiceAudioPreencodeResult(
+                    status: .stored,
+                    sampleCount: samples.count,
+                    sampleRate: sampleRate,
+                    encodeMs: encodeMs,
+                    message: nil
+                )
+            }
+        } catch {
+            await soloLease.release()
+            await ModelLease.shared.release(holder.name)
+            return LiveVoiceAudioPreencodeResult(
+                status: .failed,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: String(describing: error)
+            )
+        }
+
+        await soloLease.release()
+        await ModelLease.shared.release(holder.name)
+
+        return box.result
+            ?? LiveVoiceAudioPreencodeResult(
+                status: .skippedModelUnavailable,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: nil
+            )
     }
 
     // MARK: - Model lifecycle
@@ -1337,6 +1475,7 @@ public actor ModelRuntime {
             trace?.set("input_audio_count", audioMetrics.inputCount)
             trace?.set("input_audio_materialized_count", audioMetrics.materializedCount)
             trace?.set("input_audio_local_sample_count", audioMetrics.localSampleCount)
+            trace?.set("input_audio_local_preencoded_count", audioMetrics.localPreencodedCount)
             trace?.set("input_audio_bytes", audioMetrics.byteCount)
             trace?.set("input_audio_materialize_ms", audioMetrics.materializeMs)
             trace?.mark("input_audio_materialize_done")
@@ -1424,6 +1563,7 @@ public actor ModelRuntime {
     private struct AudioMaterializationMetrics {
         var inputCount = 0
         var localSampleCount = 0
+        var localPreencodedCount = 0
         var materializedCount = 0
         var byteCount = 0
         var materializeMs = 0
@@ -1441,6 +1581,18 @@ public actor ModelRuntime {
         metrics.inputCount += inputs.count
         for (data, format, localSamples) in inputs {
             if let localSamples {
+                if let attachmentId = localSamples.preencodedAttachmentId,
+                    let preencoded = LiveVoiceAudioInputRegistry.shared.freshPreencodedAudio(
+                        for: attachmentId,
+                        sourceSampleCount: localSamples.samples.count,
+                        sampleRate: localSamples.sampleRate
+                    )
+                {
+                    metrics.localPreencodedCount += 1
+                    sources.append(preencoded)
+                    continue
+                }
+
                 metrics.localSampleCount += 1
                 sources.append(.samples(localSamples.samples, sampleRate: localSamples.sampleRate))
                 continue
