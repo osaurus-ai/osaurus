@@ -76,6 +76,7 @@ public final class MCPProviderManager: ObservableObject {
             disconnect(providerId: provider.id)
         }
 
+        let previous = configuration.provider(id: provider.id)
         configuration.update(provider)
         MCPProviderConfigurationStore.save(configuration)
 
@@ -86,6 +87,11 @@ public final class MCPProviderManager: ObservableObject {
             } else {
                 MCPProviderKeychain.saveToken(token, for: provider.id)
             }
+        }
+
+        // If the user switched away from OAuth, drop any cached tokens for this provider.
+        if previous?.authType == .oauth && provider.authType != .oauth {
+            MCPProviderKeychain.deleteOAuthTokens(for: provider.id)
         }
 
         // Reconnect if was connected and still enabled
@@ -139,6 +145,11 @@ public final class MCPProviderManager: ObservableObject {
         guard let provider = configuration.provider(id: providerId) else {
             throw MCPProviderError.providerNotFound
         }
+        try await performConnect(provider: provider, allowOAuthRetry: true)
+    }
+
+    private func performConnect(provider: MCPProvider, allowOAuthRetry: Bool) async throws {
+        let providerId = provider.id
 
         guard provider.enabled else {
             throw MCPProviderError.providerDisabled
@@ -148,11 +159,15 @@ public final class MCPProviderManager: ObservableObject {
         var state = providerStates[providerId] ?? MCPProviderState(providerId: providerId)
         state.isConnecting = true
         state.lastError = nil
+        // Clear any stale "needs auth" state from a prior attempt — we'll re-set it below
+        // if this attempt also surfaces a 401.
+        state.requiresAuth = false
+        state.resourceMetadataURL = nil
         providerStates[providerId] = state
 
         do {
             // Create authenticated transport
-            let transport = try createTransport(for: provider)
+            let transport = try await createTransport(for: provider)
 
             // Create MCP client
             let client = MCP.Client(
@@ -175,6 +190,8 @@ public final class MCPProviderManager: ObservableObject {
                 updatedState.isConnected = true
                 updatedState.lastConnectedAt = Date()
                 updatedState.lastError = nil
+                updatedState.requiresAuth = false
+                updatedState.resourceMetadataURL = nil
                 providerStates[providerId] = updatedState
                 print(
                     "[Osaurus] MCP Provider '\(provider.name)': Connected with \(updatedState.discoveredToolCount) tools"
@@ -183,10 +200,38 @@ public final class MCPProviderManager: ObservableObject {
             notifyStatusChanged()
 
         } catch {
-            // Update state with error - reset tool discovery state to match disconnect behavior
+            // Probe the server for an auth challenge so we can: (a) classify the error
+            // as "needs sign in" for the UI and (b) trigger a single refresh+retry on
+            // bad-token cases per the MCP spec's bounded-retry guidance.
+            let challenge = await probeAuthChallenge(for: provider)
+
+            if let challenge {
+                // Try one refresh+retry for OAuth providers when we already have tokens.
+                if allowOAuthRetry,
+                    provider.authType == .oauth,
+                    let tokens = MCPProviderKeychain.getOAuthTokens(for: providerId),
+                    tokens.refreshToken?.isEmpty == false
+                {
+                    do {
+                        _ = try await MCPOAuthService.refresh(provider: provider, tokens: tokens)
+                        // Re-enter without retry budget so we can't loop.
+                        try await performConnect(provider: provider, allowOAuthRetry: false)
+                        return
+                    } catch {
+                        // Fall through and surface the original auth challenge.
+                    }
+                }
+
+                state.requiresAuth = true
+                state.resourceMetadataURL = challenge.resourceMetadataURL
+                state.lastError =
+                    challenge.errorDescription ?? challenge.error ?? "Server requires sign in"
+            } else {
+                state.lastError = error.localizedDescription
+            }
+
             state.isConnecting = false
             state.isConnected = false
-            state.lastError = error.localizedDescription
             state.discoveredToolCount = 0
             state.discoveredToolNames = []
             providerStates[providerId] = state
@@ -226,6 +271,10 @@ public final class MCPProviderManager: ObservableObject {
             state.isConnecting = false
             state.discoveredToolCount = 0
             state.discoveredToolNames = []
+            // Disconnecting clears any "needs auth" flag; the next connect attempt
+            // will re-detect it if the server still demands sign-in.
+            state.requiresAuth = false
+            state.resourceMetadataURL = nil
             providerStates[providerId] = state
         }
 
@@ -359,9 +408,54 @@ public final class MCPProviderManager: ObservableObject {
         return tools.count
     }
 
+    // MARK: - OAuth
+
+    /// Run the OAuth sign-in flow for an existing provider, persist tokens + cached
+    /// `MCPOAuthConfig`, and (optionally) trigger a reconnect.
+    @discardableResult
+    public func oauthSignIn(providerId: UUID, reconnect: Bool = true) async throws -> MCPOAuthSignInResult {
+        guard var provider = configuration.provider(id: providerId) else {
+            throw MCPProviderError.providerNotFound
+        }
+
+        // Use any cached resource_metadata hint from the last 401 to skip well-known probing.
+        let hint = providerStates[providerId]?.resourceMetadataURL
+            .map { MCPBearerChallenge(resourceMetadataURL: $0) }
+
+        // Make sure the provider record reflects the OAuth auth type *before* sign-in,
+        // so any client_id we cache survives even if the user toggled the picker.
+        if provider.authType != .oauth {
+            provider.authType = .oauth
+        }
+
+        let result = try await MCPOAuthService.signIn(provider: provider, hint: hint, persist: true)
+
+        // Persist refreshed config back into the provider record.
+        provider.oauth = result.config
+        configuration.update(provider)
+        MCPProviderConfigurationStore.save(configuration)
+
+        // Clear the "needs sign in" badge.
+        if var state = providerStates[providerId] {
+            state.requiresAuth = false
+            state.resourceMetadataURL = nil
+            state.lastError = nil
+            providerStates[providerId] = state
+        }
+        notifyStatusChanged()
+
+        if reconnect && provider.enabled {
+            Task { try? await connect(providerId: providerId) }
+        }
+        return result
+    }
+
     // MARK: - Private Helpers
 
-    private func createTransport(for provider: MCPProvider) throws -> HTTPClientTransport {
+    /// Build the `URLSessionConfiguration` for a provider, including any cached
+    /// auth headers. OAuth refresh-before-connect happens inside this method so
+    /// every entrypoint (connect / testConnection) goes through the same gate.
+    private func createTransport(for provider: MCPProvider) async throws -> HTTPClientTransport {
         guard let endpoint = URL(string: provider.url) else {
             throw MCPProviderError.invalidURL
         }
@@ -370,8 +464,16 @@ public final class MCPProviderManager: ObservableObject {
 
         // Build headers
         var headers = provider.resolvedHeaders()
-        if let token = provider.getToken(), !token.isEmpty {
-            headers["Authorization"] = "Bearer \(token)"
+        switch provider.authType {
+        case .oauth:
+            let tokens = try await ensureFreshOAuthTokens(for: provider)
+            headers["Authorization"] = "Bearer \(tokens.accessToken)"
+        case .bearerToken:
+            if let token = provider.getToken(), !token.isEmpty {
+                headers["Authorization"] = "Bearer \(token)"
+            }
+        case .none:
+            break
         }
 
         if !headers.isEmpty {
@@ -386,6 +488,73 @@ public final class MCPProviderManager: ObservableObject {
             configuration: urlConfig,
             streaming: provider.streamingEnabled
         )
+    }
+
+    /// Refresh OAuth tokens proactively if they are at-or-near expiry.
+    private func ensureFreshOAuthTokens(for provider: MCPProvider) async throws -> MCPOAuthTokens {
+        guard let tokens = MCPProviderKeychain.getOAuthTokens(for: provider.id) else {
+            throw MCPProviderError.connectionFailed("Sign in required")
+        }
+        guard tokens.isExpired else { return tokens }
+
+        // Skip refresh attempts when we know we have no refresh token to spend.
+        guard let rt = tokens.refreshToken, !rt.isEmpty else {
+            throw MCPProviderError.connectionFailed("Session expired — please sign in again")
+        }
+        do {
+            return try await MCPOAuthService.refresh(provider: provider, tokens: tokens)
+        } catch {
+            throw MCPProviderError.connectionFailed(
+                "Could not refresh OAuth tokens: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Issue a low-cost POST against the server's MCP endpoint to capture an auth
+    /// challenge, if any. The Swift MCP SDK doesn't expose response headers on its
+    /// error type, so this is the cheapest correct way to know whether a 401 came
+    /// from an OAuth-protected server.
+    private nonisolated func probeAuthChallenge(for provider: MCPProvider) async -> MCPBearerChallenge? {
+        guard let endpoint = URL(string: provider.url) else { return nil }
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        // Use any saved auth so we can distinguish "wrong/expired token" 401 from
+        // "no token at all" 401 (the WWW-Authenticate header is the same either way,
+        // but sending the existing token avoids tripping rate-limits on the empty path).
+        for (key, value) in provider.resolvedHeaders() {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        switch provider.authType {
+        case .oauth:
+            if let tokens = MCPProviderKeychain.getOAuthTokens(for: provider.id) {
+                request.setValue("Bearer \(tokens.accessToken)", forHTTPHeaderField: "Authorization")
+            }
+        case .bearerToken:
+            if let token = MCPProviderKeychain.getToken(for: provider.id), !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+        case .none:
+            break
+        }
+        // A minimal JSON-RPC initialize payload — most MCP servers will hit auth
+        // before they even attempt to parse it, so the body is mostly cosmetic.
+        request.httpBody = Data("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}".utf8)
+        request.timeoutInterval = 10
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return nil }
+            guard http.statusCode == 401 || http.statusCode == 403 else { return nil }
+            let header =
+                http.value(forHTTPHeaderField: "WWW-Authenticate")
+                ?? http.value(forHTTPHeaderField: "www-authenticate")
+            return MCPWWWAuthenticate.parseBearer(header)
+        } catch {
+            return nil
+        }
     }
 
     private func discoverTools(for providerId: UUID, client: MCP.Client, provider: MCPProvider) async throws {

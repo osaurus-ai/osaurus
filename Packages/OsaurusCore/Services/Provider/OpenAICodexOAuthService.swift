@@ -6,10 +6,7 @@
 //
 
 import AppKit
-import CryptoKit
 import Foundation
-import Network
-import Security
 
 public enum OpenAICodexOAuthError: LocalizedError, Sendable {
     case invalidAuthorizationCallback
@@ -75,16 +72,8 @@ public enum OpenAICodexOAuthService {
         let state = makeState()
         let url = authorizationURL(codeChallenge: pkce.challenge, state: state)
 
-        let callbackURL = try await authorize(url: url, state: state)
-        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-            components.queryItems?.first(where: { $0.name == "state" })?.value == state,
-            let code = components.queryItems?.first(where: { $0.name == "code" })?.value,
-            !code.isEmpty
-        else {
-            throw OpenAICodexOAuthError.invalidAuthorizationCallback
-        }
-
-        return try await exchangeAuthorizationCode(code, verifier: pkce.verifier)
+        let callback = try await authorize(url: url, state: state)
+        return try await exchangeAuthorizationCode(callback.code, verifier: pkce.verifier)
     }
 
     public static func refresh(_ tokens: RemoteProviderOAuthTokens) async throws -> RemoteProviderOAuthTokens {
@@ -115,26 +104,22 @@ public enum OpenAICodexOAuthService {
     }
 
     public static func makePKCEPair() throws -> (verifier: String, challenge: String) {
-        var random = [UInt8](repeating: 0, count: 32)
-        let status = SecRandomCopyBytes(kSecRandomDefault, random.count, &random)
-        guard status == errSecSuccess else { throw OpenAICodexOAuthError.invalidPKCE }
-
-        let verifier = base64URLEncoded(Data(random))
-        let digest = SHA256.hash(data: Data(verifier.utf8))
-        let challenge = base64URLEncoded(Data(digest))
-        return (verifier, challenge)
+        do {
+            let pair = try PKCE.makePair()
+            return (pair.verifier, pair.challenge)
+        } catch {
+            throw OpenAICodexOAuthError.invalidPKCE
+        }
     }
 
     public static func makeState() -> String {
-        var random = [UInt8](repeating: 0, count: 16)
-        _ = SecRandomCopyBytes(kSecRandomDefault, random.count, &random)
-        return random.map { String(format: "%02x", $0) }.joined()
+        PKCE.makeState()
     }
 
     public static func extractAccountId(from accessToken: String) -> String? {
         let parts = accessToken.split(separator: ".")
         guard parts.count == 3,
-            let payload = decodeBase64URL(String(parts[1])),
+            let payload = PKCE.decodeBase64URL(String(parts[1])),
             let json = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
             let auth = json["https://api.openai.com/auth"] as? [String: Any],
             let accountId = auth["chatgpt_account_id"] as? String,
@@ -163,7 +148,7 @@ public enum OpenAICodexOAuthService {
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = formURLEncoded(form).data(using: .utf8)
+        request.httpBody = OAuthFormEncoding.encode(form).data(using: .utf8)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -196,177 +181,31 @@ public enum OpenAICodexOAuthService {
     }
 
     @MainActor
-    private static func authorize(url: URL, state: String) async throws -> URL {
-        let server = try OAuthLoopbackServer(expectedState: state)
-        try server.start()
+    private static func authorize(url: URL, state: String) async throws -> OAuthCallbackResult {
+        // Codex registered http://localhost:1455/auth/callback as the only redirect URI,
+        // so we have to keep this port fixed even though RFC 8252 prefers ephemeral ports.
+        let server: OAuthLoopbackServer
+        do {
+            server = try OAuthLoopbackServer(
+                expectedState: state,
+                port: .fixed(1455),
+                callbackPath: "/auth/callback"
+            )
+            try server.start()
+        } catch {
+            throw OpenAICodexOAuthError.invalidAuthorizationCallback
+        }
         defer { server.stop() }
 
         guard NSWorkspace.shared.open(url) else {
             throw OpenAICodexOAuthError.invalidAuthorizationCallback
         }
 
-        return try await server.waitForCallback()
-    }
-
-    private static func formURLEncoded(_ values: [String: String]) -> String {
-        values
-            .map { key, value in
-                "\(percentEncode(key))=\(percentEncode(value))"
-            }
-            .sorted()
-            .joined(separator: "&")
-    }
-
-    private static func percentEncode(_ value: String) -> String {
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove(charactersIn: "&=+")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
-    }
-
-    private static func base64URLEncoded(_ data: Data) -> String {
-        data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-
-    private static func decodeBase64URL(_ value: String) -> Data? {
-        var base64 =
-            value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let padding = (4 - base64.count % 4) % 4
-        base64.append(String(repeating: "=", count: padding))
-        return Data(base64Encoded: base64)
-    }
-}
-
-private final class OAuthLoopbackServer: @unchecked Sendable {
-    private let expectedState: String
-    private let listener: NWListener
-    private let queue = DispatchQueue(label: "ai.osaurus.openai-oauth-loopback")
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<URL, Error>?
-    private var pendingResult: Result<URL, Error>?
-    private var isCompleted = false
-
-    init(expectedState: String) throws {
-        self.expectedState = expectedState
-        listener = try NWListener(using: .tcp, on: 1455)
-    }
-
-    func start() throws {
-        listener.newConnectionHandler = { [weak self] connection in
-            self?.handle(connection)
-        }
-        listener.stateUpdateHandler = { [weak self] state in
-            if case .failed = state {
-                self?.complete(.failure(OpenAICodexOAuthError.invalidAuthorizationCallback))
-            }
-        }
-        listener.start(queue: queue)
-    }
-
-    func waitForCallback() async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            if let pendingResult {
-                self.pendingResult = nil
-                lock.unlock()
-                continuation.resume(with: pendingResult)
-                return
-            }
-            self.continuation = continuation
-            lock.unlock()
+        do {
+            return try await server.waitForCallback()
+        } catch {
+            throw OpenAICodexOAuthError.invalidAuthorizationCallback
         }
     }
 
-    func stop() {
-        listener.cancel()
-    }
-
-    private func handle(_ connection: NWConnection) {
-        connection.start(queue: queue)
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
-            guard let self else { return }
-            let result = parseCallback(from: data)
-            sendResponse(for: result, on: connection)
-            complete(result)
-        }
-    }
-
-    private func parseCallback(from data: Data?) -> Result<URL, Error> {
-        guard let data,
-            let request = String(data: data, encoding: .utf8),
-            let requestLine = request.components(separatedBy: "\r\n").first,
-            requestLine.hasPrefix("GET ")
-        else {
-            return .failure(OpenAICodexOAuthError.invalidAuthorizationCallback)
-        }
-
-        let parts = requestLine.split(separator: " ")
-        guard parts.count >= 2,
-            let callbackURL = URL(string: "http://localhost:1455" + parts[1])
-        else {
-            return .failure(OpenAICodexOAuthError.invalidAuthorizationCallback)
-        }
-
-        let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
-        let state = components?.queryItems?.first(where: { $0.name == "state" })?.value
-        let code = components?.queryItems?.first(where: { $0.name == "code" })?.value
-        guard state == expectedState, code?.isEmpty == false else {
-            return .failure(OpenAICodexOAuthError.invalidAuthorizationCallback)
-        }
-
-        return .success(callbackURL)
-    }
-
-    private func sendResponse(for result: Result<URL, Error>, on connection: NWConnection) {
-        let success = {
-            if case .success = result { return true }
-            return false
-        }()
-        let title = success ? "Sign-in complete" : "Sign-in failed"
-        let message =
-            success
-            ? "You can return to Osaurus."
-            : "Osaurus could not complete the ChatGPT sign-in. Please try again."
-        let body = """
-            <!doctype html><html><head><meta charset="utf-8"><title>\(title)</title></head>
-            <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 32px;">
-            <h1>\(title)</h1><p>\(message)</p><script>window.close();</script></body></html>
-            """
-        let status = success ? "200 OK" : "400 Bad Request"
-        let response = [
-            "HTTP/1.1 \(status)",
-            "Content-Type: text/html; charset=utf-8",
-            "Content-Length: \(body.utf8.count)",
-            "Connection: close",
-            "",
-            body,
-        ].joined(separator: "\r\n")
-        connection.send(
-            content: Data(response.utf8),
-            completion: .contentProcessed { _ in
-                connection.cancel()
-            }
-        )
-    }
-
-    private func complete(_ result: Result<URL, Error>) {
-        lock.lock()
-        guard !isCompleted else {
-            lock.unlock()
-            return
-        }
-        isCompleted = true
-        if let continuation {
-            self.continuation = nil
-            lock.unlock()
-            continuation.resume(with: result)
-        } else {
-            pendingResult = result
-            lock.unlock()
-        }
-    }
 }

@@ -36,6 +36,9 @@ struct ProvidersView: View {
                             onDisconnect: { manager.disconnect(providerId: provider.id) },
                             onToggleEnabled: { enabled in
                                 manager.setEnabled(enabled, for: provider.id)
+                            },
+                            onSignIn: {
+                                Task { try? await manager.oauthSignIn(providerId: provider.id) }
                             }
                         )
                     }
@@ -134,6 +137,7 @@ private struct ProviderCard: View {
     let onConnect: () -> Void
     let onDisconnect: () -> Void
     let onToggleEnabled: (Bool) -> Void
+    let onSignIn: () -> Void
 
     @State private var isExpanded = false
     @State private var isHovering = false
@@ -146,6 +150,10 @@ private struct ProviderCard: View {
 
     private var isConnecting: Bool {
         state?.isConnecting ?? false
+    }
+
+    private var requiresAuth: Bool {
+        state?.requiresAuth ?? false
     }
 
     var body: some View {
@@ -277,8 +285,45 @@ private struct ProviderCard: View {
                 }
             }
 
-            // Error message
-            if let error = state?.lastError, !isConnected {
+            // Sign-in required prompt — shown for OAuth providers (or any provider that
+            // hit a 401 with WWW-Authenticate). Sits above the generic error so the
+            // CTA is the obvious next action.
+            if requiresAuth {
+                HStack(spacing: 10) {
+                    Image(systemName: "person.badge.key.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Sign in required", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text("This server requires OAuth sign in to provide tools.", bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    Button(action: onSignIn) {
+                        Text("Sign In", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.accentColor)
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.orange.opacity(0.10))
+                )
+            } else if let error = state?.lastError, !isConnected {
+                // Error message (only when not already showing the sign-in CTA)
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 12))
@@ -481,6 +526,10 @@ private struct ProviderEditSheet: View {
     let provider: MCPProvider?
     let onSave: (MCPProvider, String?) -> Void
 
+    /// Stable identity for "draft" providers (sheet not yet saved). Reused so OAuth
+    /// tokens persisted to Keychain mid-flow stay tied to the provider once saved.
+    @State private var draftId: UUID = UUID()
+
     @State private var name: String = ""
     @State private var url: String = ""
     @State private var token: String = ""
@@ -489,12 +538,35 @@ private struct ProviderEditSheet: View {
     @State private var discoveryTimeout: Double = 20
     @State private var toolCallTimeout: Double = 45
     @State private var autoConnect: Bool = true
+    @State private var authType: MCPProviderAuthType = .bearerToken
+    @State private var oauthConfig: MCPOAuthConfig?
 
     @State private var isTesting: Bool = false
     @State private var testResult: TestResult?
     @State private var showAdvanced: Bool = false
 
+    @State private var isSigningIn: Bool = false
+    @State private var oauthError: String?
+    /// Whether OAuth tokens are currently present for this provider — drives the
+    /// "Sign In" vs "Re-authenticate" button label and the green check badge.
+    @State private var isOAuthSignedIn: Bool = false
+
+    /// The template currently driving the prefilled fields, or `nil` for a freeform
+    /// "Custom" provider. Only meaningful in add-mode; editing an existing provider
+    /// keeps this `nil` and shows the unfiltered editor.
+    @State private var selectedTemplateId: String?
+
     private var isEditing: Bool { provider != nil }
+
+    /// Resolves the provider id used for OAuth flows (existing or fresh draft).
+    private var effectiveProviderId: UUID { provider?.id ?? draftId }
+
+    /// Currently applied template, if any. Drives picker-row selection state and
+    /// the "lock the URL field / hide the auth picker" UX simplifications.
+    private var activeTemplate: MCPProviderTemplate? {
+        guard let id = selectedTemplateId else { return nil }
+        return MCPProviderTemplate.allTemplates.first { $0.id == id }
+    }
 
     struct HeaderEntry: Identifiable {
         let id = UUID()
@@ -519,24 +591,45 @@ private struct ProviderEditSheet: View {
                     // Connection section
                     EditorCard(title: "Connection", icon: "link") {
                         VStack(alignment: .leading, spacing: 14) {
+                            if !isEditing {
+                                templateChipRow
+                            }
+
                             MCPStyledTextField(
                                 label: "Name",
                                 placeholder: "My MCP Server",
                                 text: $name
                             )
 
-                            MCPStyledTextField(
-                                label: "URL",
-                                placeholder: "https://mcp.example.com",
-                                text: $url,
-                                isMonospaced: true
-                            )
+                            if activeTemplate != nil {
+                                templateURLDisplay
+                            } else {
+                                MCPStyledTextField(
+                                    label: "URL",
+                                    placeholder: "https://mcp.example.com",
+                                    text: $url,
+                                    isMonospaced: true
+                                )
+                            }
 
-                            MCPStyledSecureField(
-                                label: "Bearer Token",
-                                placeholder: "Optional - stored securely in Keychain",
-                                text: $token
-                            )
+                            // For known templates the auth scheme is fixed by the vendor, so
+                            // hiding the picker removes a "what should I pick?" decision.
+                            if activeTemplate == nil {
+                                authTypePicker
+                            }
+
+                            switch authType {
+                            case .none:
+                                EmptyView()
+                            case .bearerToken:
+                                MCPStyledSecureField(
+                                    label: "Bearer Token",
+                                    placeholder: "Optional - stored securely in Keychain",
+                                    text: $token
+                                )
+                            case .oauth:
+                                oauthSection
+                            }
                         }
                     }
 
@@ -835,6 +928,268 @@ private struct ProviderEditSheet: View {
         )
     }
 
+    // MARK: - Template Picker
+
+    @ViewBuilder
+    private var templateChipRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Text("Template", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                Text("· optional", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    templateChip(
+                        title: "Custom",
+                        systemImage: "slider.horizontal.3",
+                        isSelected: activeTemplate == nil,
+                        action: selectCustom
+                    )
+                    ForEach(MCPProviderTemplate.allTemplates) { template in
+                        templateChip(
+                            title: template.displayName,
+                            systemImage: template.iconSystemName,
+                            isSelected: selectedTemplateId == template.id,
+                            action: { applyTemplate(template) }
+                        )
+                        .help(template.tagline)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func templateChip(
+        title: String,
+        systemImage: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundColor(
+                isSelected ? .white : themeManager.currentTheme.primaryText
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(
+                        isSelected
+                            ? themeManager.currentTheme.accentColor
+                            : themeManager.currentTheme.tertiaryBackground
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(
+                        isSelected
+                            ? Color.clear
+                            : themeManager.currentTheme.primaryBorder,
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    @ViewBuilder
+    private var templateURLDisplay: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("URL", bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+            HStack(spacing: 8) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                Text(url)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.tertiaryBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(themeManager.currentTheme.primaryBorder, lineWidth: 1)
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var authTypePicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Authentication", bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+
+            Picker("Authentication", selection: $authType) {
+                Text("None", bundle: .module).tag(MCPProviderAuthType.none)
+                Text("Bearer Token", bundle: .module).tag(MCPProviderAuthType.bearerToken)
+                Text("OAuth", bundle: .module).tag(MCPProviderAuthType.oauth)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+    }
+
+    // MARK: - Template Application
+
+    /// Apply a template's prefills to the draft. Resets any in-flight OAuth state
+    /// from a previous selection (so the "Signed in" badge from a partially completed
+    /// flow against a different server doesn't leak across templates) and, when the
+    /// template opts in, kicks off the OAuth sign-in flow immediately.
+    private func applyTemplate(_ template: MCPProviderTemplate) {
+        // No-op when re-tapping the same chip — avoids double-launching the browser.
+        guard selectedTemplateId != template.id else { return }
+
+        selectedTemplateId = template.id
+        name = template.displayName
+        url = template.url
+        authType = template.authType
+        resetDraftOAuthState()
+
+        if template.authType == .oauth, template.autoSignInOnApply {
+            signInWithOAuth()
+        }
+    }
+
+    /// Clear template selection and reset to a blank "Custom" draft.
+    private func selectCustom() {
+        guard selectedTemplateId != nil else { return }
+        selectedTemplateId = nil
+        name = ""
+        url = ""
+        authType = .bearerToken
+        resetDraftOAuthState()
+    }
+
+    /// Drop any in-flight OAuth credentials for the current draft id and clear
+    /// the matching UI flags. Safe to call repeatedly; Keychain delete is
+    /// idempotent on missing items.
+    private func resetDraftOAuthState() {
+        token = ""
+        oauthError = nil
+        oauthConfig = nil
+        isOAuthSignedIn = false
+        MCPProviderKeychain.deleteOAuthTokens(for: effectiveProviderId)
+    }
+
+    @ViewBuilder
+    private var oauthSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.badge.key.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                Text("Sign in via the server's OAuth login flow", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+            }
+
+            HStack(spacing: 10) {
+                Button(action: signInWithOAuth) {
+                    HStack(spacing: 6) {
+                        if isSigningIn {
+                            ProgressView().scaleEffect(0.6)
+                        } else {
+                            Image(systemName: isOAuthSignedIn ? "arrow.clockwise" : "person.badge.key")
+                                .font(.system(size: 12))
+                        }
+                        Text(
+                            LocalizedStringKey(isOAuthSignedIn ? "Re-authenticate" : "Sign In"),
+                            bundle: .module
+                        )
+                        .font(.system(size: 12, weight: .semibold))
+                    }
+                }
+                .buttonStyle(MCPPrimaryButtonStyle())
+                .disabled(isSigningIn || url.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                if isOAuthSignedIn {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(themeManager.currentTheme.successColor)
+                        Text("Signed in", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(themeManager.currentTheme.successColor)
+                    }
+                }
+
+                Spacer()
+            }
+
+            if let error = oauthError {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.errorColor)
+                    .lineLimit(3)
+            }
+
+            if let config = oauthConfig, !config.scopes.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "key.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    Text(config.scopes.joined(separator: " "))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    private func signInWithOAuth() {
+        let trimmedURL = url.trimmingCharacters(in: .whitespaces)
+        guard !trimmedURL.isEmpty else { return }
+        isSigningIn = true
+        oauthError = nil
+
+        // Build a draft provider record carrying any client_id we already DCR-registered.
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        let draftProvider = MCPProvider(
+            id: effectiveProviderId,
+            name: trimmedName.isEmpty ? "MCP Provider" : trimmedName,
+            url: trimmedURL,
+            enabled: true,
+            authType: .oauth,
+            oauth: oauthConfig
+        )
+
+        Task { @MainActor in
+            do {
+                let result = try await MCPOAuthService.signIn(provider: draftProvider, hint: nil, persist: true)
+                self.oauthConfig = result.config
+                self.isOAuthSignedIn = true
+                self.isSigningIn = false
+            } catch {
+                self.oauthError = error.localizedDescription
+                self.isSigningIn = false
+            }
+        }
+    }
+
     private var addHeaderButton: some View {
         Button(action: {
             customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
@@ -878,13 +1233,24 @@ private struct ProviderEditSheet: View {
     }
 
     private func loadProvider() {
-        guard let provider = provider else { return }
+        guard let provider = provider else {
+            // For new providers, the draftId stays — anything OAuth-saved during the
+            // sheet ends up on this id and persists through save().
+            return
+        }
+        // Re-use the existing record's id so OAuth tokens already in Keychain match.
+        draftId = provider.id
         name = provider.name
         url = provider.url
         streamingEnabled = provider.streamingEnabled
         discoveryTimeout = provider.discoveryTimeout
         toolCallTimeout = provider.toolCallTimeout
         autoConnect = provider.autoConnect
+        authType = provider.authType
+        oauthConfig = provider.oauth
+        isOAuthSignedIn =
+            provider.authType == .oauth
+            && MCPProviderKeychain.hasOAuthTokens(for: provider.id)
 
         // Load headers
         customHeaders = provider.customHeaders.map { HeaderEntry(key: $0.key, value: $0.value, isSecret: false) }
@@ -902,7 +1268,17 @@ private struct ProviderEditSheet: View {
         testResult = nil
 
         let headers = buildHeaders()
-        let testToken = token.isEmpty ? nil : token
+        let testToken: String?
+        switch authType {
+        case .bearerToken:
+            testToken = token.isEmpty ? nil : token
+        case .oauth:
+            // Use the access token already saved during sign-in (if any) so the test
+            // request can succeed before the user clicks Save.
+            testToken = MCPProviderKeychain.getOAuthTokens(for: effectiveProviderId)?.accessToken
+        case .none:
+            testToken = nil
+        }
 
         Task {
             do {
@@ -941,7 +1317,7 @@ private struct ProviderEditSheet: View {
         }
 
         let updatedProvider = MCPProvider(
-            id: provider?.id ?? UUID(),
+            id: effectiveProviderId,
             name: trimmedName,
             url: trimmedURL,
             enabled: provider?.enabled ?? true,
@@ -950,7 +1326,9 @@ private struct ProviderEditSheet: View {
             discoveryTimeout: discoveryTimeout,
             toolCallTimeout: toolCallTimeout,
             autoConnect: autoConnect,
-            secretHeaderKeys: secretKeys
+            secretHeaderKeys: secretKeys,
+            authType: authType,
+            oauth: authType == .oauth ? oauthConfig : nil
         )
 
         // Save secret header values to Keychain
@@ -958,8 +1336,9 @@ private struct ProviderEditSheet: View {
             MCPProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id)
         }
 
-        // Pass token (empty string means no change, nil means keep existing)
-        let tokenToSave: String? = token.isEmpty ? nil : token
+        // Pass token (empty string means no change, nil means keep existing).
+        // For OAuth this is unused (tokens went through MCPOAuthService directly).
+        let tokenToSave: String? = (authType == .bearerToken && !token.isEmpty) ? token : nil
 
         onSave(updatedProvider, tokenToSave)
         dismiss()
