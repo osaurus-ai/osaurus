@@ -796,6 +796,9 @@ struct AgentDetailView: View {
     @State private var pluginInstructionsMap: [String: String] = [:]
     @State private var disableTools: Bool = false
     @State private var disableMemory: Bool = false
+    @State private var autoSpeak: Bool = false
+    @State private var ttsVoice: String = ""
+    @ObservedObject private var ttsService = TTSService.shared
     @State private var avatar: String? = nil
     /// Drives the title-bar agent picker popover. Tapping the avatar / name in the
     /// header bar reveals the list of other custom agents so the user can jump
@@ -1580,6 +1583,7 @@ struct AgentDetailView: View {
     private var configureTabContent: some View {
         tabHelperText(DetailTab.configure.helperText)
         identitySection
+        voiceSection
         systemPromptSection
         defaultModelSection
         advancedSettingsDisclosure
@@ -2056,6 +2060,103 @@ struct AgentDetailView: View {
             .onChange(of: temperature) { debouncedSave() }
             .onChange(of: maxTokens) { debouncedSave() }
         }
+    }
+
+    // MARK: - Voice
+
+    /// auto-speak toggle + voice override. toggle is gated on the PocketTTS
+    /// model being downloaded.
+    private var voiceSection: some View {
+        AgentDetailSection(title: "Voice", icon: "speaker.wave.2") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Auto Speak Responses", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                        Text(
+                            ttsService.isModelReady
+                                ? "Read replies aloud after streaming completes."
+                                : "Download the PocketTTS model in Voice settings to enable.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $autoSpeak)
+                        .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                        .labelsHidden()
+                        .disabled(!ttsService.isModelReady)
+                        .onChange(of: autoSpeak) { debouncedSave() }
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+
+                if !ttsService.isModelReady {
+                    Button {
+                        NotificationCenter.default.post(
+                            name: .openTTSSettingsRequested, object: nil)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.down.circle")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Open Voice Settings", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if autoSpeak && ttsService.isModelReady {
+                    HStack {
+                        Text("Voice", bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                        Spacer()
+                        Picker("", selection: $ttsVoice) {
+                            Text("Default (global)", bundle: .module).tag("")
+                            ForEach(agentVoiceOptions, id: \.self) { voice in
+                                Text(PocketTTSVoiceCatalog.displayName(for: voice))
+                                    .tag(voice)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(MenuPickerStyle())
+                        .frame(maxWidth: 200)
+                        .onChange(of: ttsVoice) { debouncedSave() }
+                    }
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                }
+            }
+        }
+        .onAppear { ttsService.refreshModelState() }
+    }
+
+    /// built-in catalog plus any stored custom voice (preserves legacy values).
+    private var agentVoiceOptions: [String] {
+        let builtIn = PocketTTSVoiceCatalog.availableVoices
+        let current = ttsVoice.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !current.isEmpty && !builtIn.contains(current) {
+            return [current] + builtIn
+        }
+        return builtIn
     }
 
     // MARK: - Tool Selection
@@ -3693,6 +3794,8 @@ struct AgentDetailView: View {
         workQuickActions = agent.workQuickActions
         disableTools = agent.disableTools ?? false
         disableMemory = agent.disableMemory ?? false
+        autoSpeak = agent.autoSpeak ?? false
+        ttsVoice = agent.ttsVoice ?? ""
         avatar = agent.avatar
         var instrMap: [String: String] = [:]
         let overrides = agent.pluginInstructions ?? [:]
@@ -3830,7 +3933,10 @@ struct AgentDetailView: View {
             disableTools: disableTools ? true : nil,
             disableMemory: disableMemory ? true : nil,
             avatar: avatar,
-            customAvatarFilename: current.customAvatarFilename
+            customAvatarFilename: current.customAvatarFilename,
+            autoSpeak: autoSpeak ? true : nil,
+            ttsVoice: ttsVoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil : ttsVoice
         )
 
         agentManager.update(updated)

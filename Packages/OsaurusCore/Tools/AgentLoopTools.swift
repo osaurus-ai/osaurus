@@ -445,13 +445,16 @@ public final class SpeakTool: OsaurusTool, @unchecked Sendable {
         // still works, just without the bubble/row UI binding.
         let messageId = ChatExecutionContext.currentAssistantTurnId ?? UUID()
         let callId = ChatExecutionContext.currentToolCallId ?? UUID().uuidString
+        let agentId = ChatExecutionContext.currentAgentId
 
         do {
             try await MainActor.run {
+                let agentVoice = agentId.flatMap { AgentManager.shared.agent(for: $0)?.ttsVoice }
                 try TTSService.shared.startToolPlayback(
                     text: trimmed,
                     messageId: messageId,
-                    callId: callId
+                    callId: callId,
+                    voiceOverride: agentVoice
                 )
             }
         } catch TTSPlaybackError.modelNotReady {

@@ -167,6 +167,7 @@ final class ChatSession: ObservableObject {
     // nonisolated(unsafe) allows deinit to access these for cleanup
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
+    nonisolated(unsafe) private var agentAutoSpeakCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
 
@@ -221,6 +222,21 @@ final class ChatSession: ObservableObject {
                 self.currentTodo = await AgentTodoStore.shared.todo(for: sid)
             }
         }
+
+        // when the active agent opts into auto-speak, force the per-session
+        // toggle on and suppress the first-tap prompt. agents that haven't
+        // opted in leave the per-chat toggle alone.
+        agentAutoSpeakCancellable =
+            $agentId
+            .sink { [weak self] newAgentId in
+                guard let self else { return }
+                let id = newAgentId ?? Agent.defaultId
+                let agent = AgentManager.shared.agent(for: id)
+                if agent?.autoSpeak == true {
+                    self.autoSpeakAssistant = true
+                    self.hasAskedAutoSpeak = true
+                }
+            }
 
         // Auto-persist model selection and unload unused models on switch
         modelSelectionCancellable =
@@ -279,6 +295,7 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         modelSelectionCancellable = nil
+        agentAutoSpeakCancellable = nil
         promptQueueCancellable = nil
     }
 
@@ -3042,7 +3059,11 @@ extension ChatView {
             session.hasAskedAutoSpeak = true
             showAutoSpeakPrompt = true
         }
-        TTSService.shared.toggleSpeak(text: turn.visibleContent, messageId: turnId)
+        TTSService.shared.toggleSpeak(
+            text: turn.visibleContent,
+            messageId: turnId,
+            voiceOverride: agentTTSVoiceOverride()
+        )
     }
 
     /// Auto-speak the just-finished assistant turn when the per-session
@@ -3057,7 +3078,17 @@ extension ChatView {
         guard let turn = session.turns.first(where: { $0.id == turnId }),
             !turn.contentIsBlank
         else { return }
-        TTSService.shared.toggleSpeak(text: turn.visibleContent, messageId: turnId)
+        TTSService.shared.toggleSpeak(
+            text: turn.visibleContent,
+            messageId: turnId,
+            voiceOverride: agentTTSVoiceOverride()
+        )
+    }
+
+    /// active agent's voice override, or nil to use the global voice.
+    private func agentTTSVoiceOverride() -> String? {
+        let id = session.agentId ?? Agent.defaultId
+        return AgentManager.shared.agent(for: id)?.ttsVoice
     }
 
     /// Stop any active generation and remove the turn (plus all subsequent turns)
