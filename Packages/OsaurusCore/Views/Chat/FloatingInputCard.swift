@@ -2620,23 +2620,23 @@ struct CachedImageThumbnail: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             if let nsImage = cachedImage {
+                let thumbSize = AttachmentThumbnailLayout.size(for: nsImage, longAxis: size)
                 Image(nsImage: nsImage)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: size, height: size)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: thumbSize.width, height: thumbSize.height)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
                     )
             } else {
-                // Placeholder while loading
+                // Square placeholder — aspect is unknown until decode completes.
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(theme.secondaryBackground)
                     .frame(width: size, height: size)
             }
 
-            // Remove button
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
                     .font(theme.font(size: 16, weight: .regular))
@@ -2653,7 +2653,6 @@ struct CachedImageThumbnail: View {
         .padding(.top, 4)
         .padding(.trailing, 4)
         .task(id: imageData) {
-            // Decode image only once when data changes
             cachedImage = NSImage(data: imageData)
         }
     }

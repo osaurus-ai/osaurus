@@ -2026,17 +2026,8 @@ private final class UserAttachmentThumbnailView: NSView {
 
     override var intrinsicContentSize: NSSize {
         guard let img = image else { return NSSize(width: 96, height: 96) }
-        let size = img.size
-        guard size.width > 0, size.height > 0 else { return NSSize(width: 96, height: 96) }
-
-        let aspectRatio = size.width / size.height
-        if aspectRatio > 1 {
-            // landscape: fixed width 96, height shrinks (to stay within 96x96 box)
-            return NSSize(width: 96, height: max(16, 96 / aspectRatio))
-        } else {
-            // portrait/square: fixed height 96, width shrinks
-            return NSSize(width: max(16, 96 * aspectRatio), height: 96)
-        }
+        // Shared rule with the composer chip — clamped aspect, no crop.
+        return AttachmentThumbnailLayout.size(for: img, longAxis: 96)
     }
 
     override init(frame frameRect: NSRect) {
