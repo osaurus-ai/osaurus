@@ -475,7 +475,10 @@ struct MLXBatchAdapterTests {
             modelName: modelName
         )
         #expect(maxReasoning["enable_thinking"] as? Bool == true)
-        #expect(maxReasoning["reasoning_effort"] as? String == "max")
+        #expect(
+            maxReasoning["reasoning_effort"] as? String == "high",
+            "Osaurus UI Max stays on DSV4's stable high-thinking rail unless raw max diagnostics are explicitly enabled"
+        )
 
         let legacyToggle = MLXBatchAdapter.additionalContext(
             for: GenerationParameters(
