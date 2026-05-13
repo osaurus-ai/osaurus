@@ -101,8 +101,39 @@ struct LiveVoiceResidentPreencodeIntegrationTests {
             ) == nil
         )
 
+        let snapshot = LiveVoiceAudioSnapshot(samples: samples, sampleRate: 16_000)
+        LiveVoiceAudioInputRegistry.shared.store(snapshot: snapshot, for: attachmentId)
+        let audioAttachment = Attachment(
+            id: attachmentId,
+            kind: .audio(snapshot.wavData(), format: "wav", filename: "voice-input.wav")
+        )
+        let chatMessage = await MainActor.run {
+            ChatSession.buildUserChatMessage(
+                content: "What is in this audio?",
+                attachments: [audioAttachment],
+                supportsImages: false,
+                supportsAudio: true,
+                supportsVideo: false
+            )
+        }
+        #expect(chatMessage.audioInputsWithLocalSamples.count == 1)
+        #expect(chatMessage.audioInputsWithLocalSamples[0].localSamples?.preencodedAttachmentId == attachmentId)
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([chatMessage])
+        #expect(mapped.count == 1)
+        #expect(mapped[0].audios.count == 1)
+        guard case .preEncoded(let submittedSamples, let submittedSampleRate, let submittedEmbedding) =
+            mapped[0].audios[0]
+        else {
+            Issue.record("Composer-style audio submit should consume fresh preencoded audio.")
+            return
+        }
+        #expect(submittedSamples.count == samples.count)
+        #expect(submittedSampleRate == 16_000)
+        #expect(submittedEmbedding.shape == embedding.shape)
+
         print(
-            "[Osaurus][LiveVoiceIntegration] model=\(resident.name) warm_ms=\(warmMs) samples=\(samples.count) encode_ms=\(result.encodeMs) embedding_shape=\(embedding.shape)"
+            "[Osaurus][LiveVoiceIntegration] model=\(resident.name) warm_ms=\(warmMs) samples=\(samples.count) encode_ms=\(result.encodeMs) embedding_shape=\(embedding.shape) composer_submit=preencoded"
         )
     }
 

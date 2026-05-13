@@ -180,11 +180,15 @@ encoded Parakeet chunks are not safe to concatenate. Omni audio support is gated
   LiveVoiceResidentPreencodeIntegrationTests`. The test warms a resident
   Nemotron Omni model, runs `preencodeLiveVoiceAudioIfResident(...)` on a real
   audio file, checks `status=stored`, checks exact source sample count/rate
-  metadata, verifies a fresh `.preEncoded` registry lookup, and verifies the
-  stale-count guard rejects mismatched samples. Local run with
-  `OSAURUS_MLX_METALLIB` passed with `warm_ms=2838`, `samples=80620`,
-  `encode_ms=1289`, `embedding_shape=[63, 2688]`, and max RSS about
-  `13.1 GB`.
+  metadata, verifies a fresh `.preEncoded` registry lookup, verifies the
+  stale-count guard rejects mismatched samples, and simulates the composer
+  submit path by storing the final PCM snapshot under the same attachment id,
+  building `ChatSession.buildUserChatMessage(...)`, and requiring
+  `ModelRuntime.mapOpenAIChatToMLX(...)` to consume `.preEncoded` audio.
+  Local run with `OSAURUS_MLX_METALLIB` passed after the composer-submit
+  assertion with `warm_ms=2807`, `samples=80620`, `encode_ms=1312`,
+  `embedding_shape=[63, 2688]`, and `composer_submit=preencoded`. Earlier run
+  before the composer-submit assertion recorded max RSS about `13.1 GB`.
 - `OmniAudioLatencyBench` on `Nemotron-Omni-Nano-JANGTQ-CRACK` measured the
   Osaurus BatchEngine path at `1514.1 ms` raw PCM first semantic delta on
   turn 1, `1498.6 ms` raw PCM on turn 2, `208.9 ms` pre-encoded Parakeet on
@@ -307,6 +311,9 @@ encoded Parakeet chunks are not safe to concatenate. Omni audio support is gated
      `input_audio_local_sample_count`, `input_audio_local_preencoded_count`,
      `input_audio_materialize_ms`, `prompt_prepare_ms`, `first_token_ms`, and
      `first_chunk_ms`.
+  6. The gated real-model test covers the same attachment-id handoff into
+     `ChatSession.buildUserChatMessage(...)`; this manual smoke still covers
+     the actual microphone/paste/overlay UI loop.
 - Negative smoke:
   1. Select a text-only model.
   2. Send a voice message.
