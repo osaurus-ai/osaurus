@@ -3,12 +3,13 @@
 ## Scope
 
 This checklist tracks the Osaurus side of live voice input for Nemotron Omni
-models. This branch pins `vmlx-swift-lm` to `b57fe98`, which can consume
+models. This branch pins `vmlx-swift-lm` to `81c8ef7`, which can consume
 `UserInput.Audio`, preserves pre-encoded Parakeet/audio embeddings, exposes a
 reusable retained live PCM buffer with a streaming cursor for VAD/call-mode
-polling, adds a tracked Omni audio latency bench, and keeps media-placeholder
-cache restore token-aware. The pin also carries the refreshed Parakeet/RADIO
-host-integration docs. Omni audio support is gated by
+polling, adds tracked Omni audio latency and chunk-stability benches, and keeps
+media-placeholder cache restore token-aware. The pin also carries the refreshed
+Parakeet/RADIO host-integration docs and the current proof that independently
+encoded Parakeet chunks are not safe to concatenate. Omni audio support is gated by
 `ModelMediaCapabilities.supportsAudio`.
 
 ## Current Hookups
@@ -49,10 +50,11 @@ host-integration docs. Omni audio support is gated by
   `UserInput.Audio` sources to `.preEncoded` audio embeddings before
   `processor.prepare(input:)`. Existing `.preEncoded` audio is preserved, which
   is the handoff point for a future live Parakeet/sound-projection component.
-- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `b57fe98` so
+- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `81c8ef7` so
   the app consumes the Swift live-voice handoff, live PCM streaming cursor,
-  tracked `OmniAudioLatencyBench` harness, and media-placeholder-aware cache
-  restore guard, plus current Parakeet/RADIO integration documentation.
+  tracked `OmniAudioLatencyBench` and `OmniAudioChunkStabilityBench`
+  harnesses, and media-placeholder-aware cache restore guard, plus current
+  Parakeet/RADIO integration documentation.
 - Live voice timing is now visible in the normal debug path:
   - `FloatingInputCard` logs `snapshot_ms`, `wav_encode_ms`, `wav_bytes`,
     `sample_rate`, and `duration_ms` when a voice turn is captured.
@@ -78,7 +80,8 @@ host-integration docs. Omni audio support is gated by
   `/chat/completions` trace recorder was added. Re-run after the `fb8fb39`
   media-cache pin bump passed with SwiftPM resolving `vmlx-swift-lm` at
   `fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e`. The follow-up `b57fe98` pin
-  adds the refreshed Parakeet/RADIO integration docs. Re-run after the Nemotron Omni
+  adds the refreshed Parakeet/RADIO integration docs, and the `81c8ef7` pin
+  adds the Parakeet chunk-stability bench. Re-run after the Nemotron Omni
   no-thinking default/profile fix also passed under Xcode's Swift toolchain.
 - Focused Xcode-toolchain regression tests passed:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -87,6 +90,11 @@ host-integration docs. Omni audio support is gated by
   `dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK` and
   `nemotron-omni-nano-jangtq-crack`, and the runtime default
   `enable_thinking=false` with explicit opt-in still honored.
+- After the `81c8ef7` vMLX pin bump, the focused pin/provider/profile suite
+  passed again with `4` tests in `3` suites:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+  --package-path Packages/OsaurusCore
+  --filter 'RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening|RemoteChatRequestEncodingTests/deepSeekProvider_dropsLocalInstructReasoningEffort|RemoteChatRequestEncodingTests/deepSeekProvider_preservesAcceptedReasoningEfforts|MLXBatchAdapterTests/additionalContext_defaultsNemotronOmniThinkingOffButHonorsExplicitOptIn'`.
 - Focused UI/API attachment regression tests passed:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
   --filter 'ChatAttachmentSecurityTests|MultimodalContentPartTests'`.
@@ -141,6 +149,11 @@ host-integration docs. Omni audio support is gated by
   placeholders spanning prompt indices `12...74`, and a 64-token cache suffix
   that still contains media tokens. This is not output TTS TTFAB; it measures
   first text delta before a separate TTS model.
+- `OmniAudioChunkStabilityBench` on the same model and 5.0388 s audio fixture
+  measured `10` prefix-vs-next/final comparisons, `10` unstable comparisons,
+  and `stable_tokens_default=0` for every comparison at tolerance `0.01`.
+  This confirms current Parakeet outputs are not prefix-stable and should not
+  be concatenated from independently encoded live chunks.
 - Xcode app build passed from the workspace:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild
   -workspace osaurus.xcworkspace -scheme osaurus -configuration Debug
@@ -149,7 +162,7 @@ host-integration docs. Omni audio support is gated by
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build`.
   Re-run after the `fb8fb39` pin bump passed with the workspace resolver
   checking out `vmlx-swift-lm @ fb8fb39`; the current dependency pin is
-  `vmlx-swift-lm @ b57fe98`. Re-run after the Nemotron Omni
+  `vmlx-swift-lm @ 81c8ef7`. Re-run after the Nemotron Omni
   no-thinking default/profile fix passed.
   Xcode still reports the local CoreSimulator framework mismatch, but the macOS
   app build succeeds.
@@ -255,15 +268,22 @@ host-integration docs. Omni audio support is gated by
   2. Send a voice message.
   3. Confirm no audio attachment is appended; only cleaned transcript text is
      sent.
+- Repeated Parakeet/RADIO source verification before merge:
+  1. Confirm `vmlx-swift-lm` live remote `main` contains commit `81c8ef7`.
+  2. Confirm source contains `NemotronHParakeetEncoder`,
+     `NemotronHRADIOVisionModel`, `extractAudioEmbeds`, `extractImageEmbeds`,
+     and `OmniAudioChunkStabilityBench`.
+  3. Confirm Osaurus `Package.swift` and both `Package.resolved` files pin
+     full revision `81c8ef7389c031292287801f761957c681d086ea`.
+  4. Confirm the Osaurus-resolved checkout contains the same Parakeet/RADIO
+     functions and docs after dependency resolution.
 
 ## Remaining Work
 
-- Replace periodic full-snapshot pre-encoding with true causal/incremental
-  Parakeet embedding accumulation if the encoder can be made chunk-safe.
-  Current in-app voice turns can pre-encode against the resident model while
-  capture/cleanup is active and submit fresh `.preEncoded` audio at endpoint,
-  but the implementation intentionally rejects stale embeddings instead of
-  concatenating chunk outputs that may not match full-context Conformer output.
+- Do not replace periodic full-snapshot pre-encoding with chunk-concatenated
+  Parakeet outputs on the current encoder. The chunk-stability bench shows the
+  outputs are not prefix-stable. Any future causal/incremental path needs a
+  stateful encoder proof with explicit lookahead and rollback semantics.
 - Add TTFAB coverage once a TTS backend is selected. Current evidence covers
   speech input into model output text, not first output audio byte.
 - Keep audio attachment spillover and temp-file cleanup under review for longer

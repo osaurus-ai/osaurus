@@ -100,12 +100,15 @@ struct RuntimePolicySourceTests {
         // Parakeet call-mode measurements. `fb8fb39` makes Omni media cache
         // restore token-aware and records prompt/media topology in the bench
         // output. `b57fe98` refreshes the Parakeet/RADIO integration docs
-        // consumed by Osaurus live-voice work.
-        let currentVmlxRevision = "b57fe98845bd1f678bd8f722dc50dba56f11d029"
+        // consumed by Osaurus live-voice work. `81c8ef7` adds the
+        // OmniAudioChunkStabilityBench proof that current Parakeet embeddings
+        // cannot be concatenated safely across independently encoded chunks.
+        let currentVmlxRevision = "81c8ef7389c031292287801f761957c681d086ea"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
-        #expect(!workspaceResolved.contains("fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e"))
+        #expect(!workspaceResolved.contains("b57fe98845bd1f678bd8f722dc50dba56f11d029"))
+        #expect(!appResolved.contains("b57fe98845bd1f678bd8f722dc50dba56f11d029"))
         #expect(!appResolved.contains("fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e"))
         #expect(!workspaceResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
         #expect(!appResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
