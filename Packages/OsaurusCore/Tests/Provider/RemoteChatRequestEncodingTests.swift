@@ -230,6 +230,28 @@ struct RemoteChatRequestEncodingTests {
         #expect(provider.mergedModelIds(discovered: ["gpt-4.1", "gpt-5.5"]) == ["prod-chat", "gpt-5.5"])
     }
 
+    @Test func deepSeekProvider_dropsLocalInstructReasoningEffort() throws {
+        #expect(
+            RemoteProviderService.chatCompletionsReasoningEffort(
+                providerType: .openaiLegacy,
+                host: "api.deepseek.com",
+                effort: "instruct"
+            ) == nil
+        )
+    }
+
+    @Test func deepSeekProvider_preservesAcceptedReasoningEfforts() throws {
+        for effort in ["low", "medium", "high", "max", "xhigh"] {
+            #expect(
+                RemoteProviderService.chatCompletionsReasoningEffort(
+                    providerType: .openaiLegacy,
+                    host: "api.deepseek.com",
+                    effort: effort
+                ) == effort
+            )
+        }
+    }
+
     // MARK: - `reasoning_content` echo (issue #959)
 
     @Test func chatMessage_encode_includesReasoningContentWhenPresent() throws {

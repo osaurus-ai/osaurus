@@ -116,6 +116,30 @@ public actor RemoteProviderService: ToolCapableService {
         }
     }
 
+    static func chatCompletionsReasoningEffort(
+        providerType: RemoteProviderType,
+        host: String,
+        effort: String?
+    ) -> String? {
+        guard
+            let effort = effort?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            !effort.isEmpty
+        else {
+            return nil
+        }
+
+        switch providerType {
+        case .openaiLegacy, .azureOpenAI:
+            if host.lowercased().contains("deepseek") {
+                let acceptedDeepSeekEfforts: Set<String> = ["low", "medium", "high", "max", "xhigh"]
+                return acceptedDeepSeekEfforts.contains(effort) ? effort : nil
+            }
+            return effort
+        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
+            return effort
+        }
+    }
+
     /// Whether the target provider requires `reasoning_content` to be echoed
     /// back on assistant messages in multi-round conversations. DeepSeek's
     /// thinking mode 400s otherwise (issue #959). Other OpenAI-compat hosts
