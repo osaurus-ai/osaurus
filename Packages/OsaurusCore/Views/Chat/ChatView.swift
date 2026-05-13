@@ -2818,38 +2818,60 @@ struct ChatView: View {
         let blocks = session.visibleBlocks
         let minimapMarkers = buildMinimapMarkers(from: blocks)
 
+        let inlineInsetHeight = agentInlineInsetHeight
+
         return ZStack {
-            VStack(spacing: 8) {
-                agentInlineBlocks
-                IsolatedThreadView(
-                    store: session.visibleBlocksStore,
-                    width: width,
-                    agentName: displayName,
-                    agentAvatar: windowState.cachedActiveAgent.avatar,
-                    agentCustomAvatarPath: windowState.cachedActiveAgent.customAvatarURL?.path,
-                    isStreaming: session.isStreaming,
-                    lastAssistantTurnId: lastAssistantTurnId,
-                    expandedBlocksStore: session.expandedBlocksStore,
-                    scrollToBottomTrigger: scrollToBottomTrigger,
-                    onScrolledToBottom: { isPinnedToBottom = true },
-                    onScrolledAwayFromBottom: { isPinnedToBottom = false },
-                    onCopy: copyTurnContent,
-                    onRegenerate: regenerateTurn,
-                    onEdit: beginEditingTurn,
-                    onDelete: deleteTurn,
-                    onSpeak: speakTurnContent,
-                    editingTurnId: editingTurnId,
-                    editText: $editText,
-                    onConfirmEdit: confirmEditAndRegenerate,
-                    onCancelEdit: cancelEditing,
-                    onUserImagePreview: openUserAttachmentPreview(attachmentId:),
-                    onVisibleTopUserTurnChanged: { turnId in
-                        activeMinimapTurnId = turnId
-                    },
-                    scrollToTurnId: scrollToTurnId,
-                    scrollToTurnTrigger: scrollToTurnTrigger
-                )
+            // Thread reserves a small top inset matching the *collapsed*
+            // pill stack height so the topmost message stays visible
+            // above the floating chrome. Expanded cards float over
+            // content (semi-transparent material lets the conversation
+            // read through). The inset animates with the same spring
+            // as the pill mount/unmount so the thread visibly slides
+            // when the agent emits a todo or completes.
+            IsolatedThreadView(
+                store: session.visibleBlocksStore,
+                width: width,
+                agentName: displayName,
+                agentAvatar: windowState.cachedActiveAgent.avatar,
+                agentCustomAvatarPath: windowState.cachedActiveAgent.customAvatarURL?.path,
+                isStreaming: session.isStreaming,
+                lastAssistantTurnId: lastAssistantTurnId,
+                expandedBlocksStore: session.expandedBlocksStore,
+                scrollToBottomTrigger: scrollToBottomTrigger,
+                onScrolledToBottom: { isPinnedToBottom = true },
+                onScrolledAwayFromBottom: { isPinnedToBottom = false },
+                onCopy: copyTurnContent,
+                onRegenerate: regenerateTurn,
+                onEdit: beginEditingTurn,
+                onDelete: deleteTurn,
+                onSpeak: speakTurnContent,
+                editingTurnId: editingTurnId,
+                editText: $editText,
+                onConfirmEdit: confirmEditAndRegenerate,
+                onCancelEdit: cancelEditing,
+                onUserImagePreview: openUserAttachmentPreview(attachmentId:),
+                onVisibleTopUserTurnChanged: { turnId in
+                    activeMinimapTurnId = turnId
+                },
+                scrollToTurnId: scrollToTurnId,
+                scrollToTurnTrigger: scrollToTurnTrigger
+            )
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Color.clear
+                    .frame(height: inlineInsetHeight)
+                    .animation(theme.springAnimation(), value: inlineInsetHeight)
             }
+
+            // Floating agent-loop chrome (Todo / Done) — top-anchored
+            // overlay. Lives in the ZStack as a sibling to the thread
+            // so it doesn't consume vertical space; pills compact, cards
+            // expand on hover/pin (see `AgentInlineBlocks.swift`).
+            VStack(spacing: AgentInlineBlockMetrics.stackSpacing) {
+                agentInlineBlocks
+            }
+            .padding(.top, 4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(session.lastCompletionSummary != nil || session.currentTodo != nil)
 
             // Minimap overlay — sits at vertical center, right edge
             if minimapMarkers.count >= 2 {
@@ -2904,11 +2926,15 @@ struct ChatView: View {
         }
     }
 
-    /// Inline agent-loop blocks rendered above the message thread. Each
+    /// Floating agent-loop chrome rendered as a top-anchored overlay
+    /// over the message thread (see `messageThread(_:)`). Each block
     /// is gated on the corresponding `@Published` state on
     /// `ChatSession`; nothing renders when the state is nil/empty.
-    /// Order: completion banner first (most recent terminal event),
-    /// then todo (ongoing state).
+    ///
+    /// Order: Todo at the top (compact, persistent state); the Done
+    /// banner sits below the Todo as a translucent overlay. The thread
+    /// inset only reserves space for the Todo pill — the Done banner
+    /// floats over conversation content until the user dismisses it.
     ///
     /// `clarify` used to live here too but has been promoted to a
     /// bottom-pinned overlay (see `promptOverlayLayer`) so the question
@@ -2916,16 +2942,46 @@ struct ChatView: View {
     /// thread.
     @ViewBuilder
     private var agentInlineBlocks: some View {
-        if let summary = session.lastCompletionSummary {
-            InlineCompleteBlock(summary: summary)
-                .padding(.top, 8)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-        }
         if let todo = session.currentTodo {
             InlineTodoBlock(todo: todo)
-                .padding(.top, 8)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(
+                    .opacity
+                        .combined(with: .move(edge: .top))
+                        .combined(with: .scale(scale: 0.96, anchor: .top))
+                )
         }
+        if let summary = session.lastCompletionSummary {
+            InlineCompleteBlock(
+                summary: summary,
+                onDismiss: { [weak session] in
+                    session?.lastCompletionSummary = nil
+                }
+            )
+            // Asymmetric transition: appear with a soft slide+scale so
+            // arrival reads as "new event"; dismiss with pure opacity
+            // so it cleanly fades away when the user clicks ×.
+            .transition(
+                .asymmetric(
+                    insertion: .opacity
+                        .combined(with: .move(edge: .top))
+                        .combined(with: .scale(scale: 0.96, anchor: .top)),
+                    removal: .opacity
+                )
+            )
+        }
+    }
+
+    /// Top safe-area inset reserved for the floating Todo pill so the
+    /// topmost message stays visible underneath it. The Done banner
+    /// (when present) intentionally overlays content beneath the Todo
+    /// — it's a transient notification the user dismisses, not a
+    /// persistent layout fixture, so reserving space for it would just
+    /// chop the visible chat. Returns 0 when no Todo is active.
+    private var agentInlineInsetHeight: CGFloat {
+        guard session.currentTodo != nil else { return 0 }
+        let topPadding: CGFloat = 4
+        let bottomBuffer: CGFloat = 6
+        return topPadding + AgentInlineBlockMetrics.collapsedPillHeight + bottomBuffer
     }
 
 }
