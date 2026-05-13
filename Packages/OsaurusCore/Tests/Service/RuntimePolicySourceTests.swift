@@ -99,11 +99,14 @@ struct RuntimePolicySourceTests {
         // adds a tracked OmniAudioLatencyBench for raw PCM vs pre-encoded
         // Parakeet call-mode measurements. `fb8fb39` makes Omni media cache
         // restore token-aware and records prompt/media topology in the bench
-        // output.
-        let currentVmlxRevision = "fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e"
+        // output. `b57fe98` refreshes the Parakeet/RADIO integration docs
+        // consumed by Osaurus live-voice work.
+        let currentVmlxRevision = "b57fe98845bd1f678bd8f722dc50dba56f11d029"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
+        #expect(!workspaceResolved.contains("fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e"))
+        #expect(!appResolved.contains("fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e"))
         #expect(!workspaceResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
         #expect(!appResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
         #expect(!workspaceResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))

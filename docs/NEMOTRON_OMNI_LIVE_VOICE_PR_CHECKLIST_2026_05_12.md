@@ -3,11 +3,12 @@
 ## Scope
 
 This checklist tracks the Osaurus side of live voice input for Nemotron Omni
-models. This branch pins `vmlx-swift-lm` to `fb8fb39`, which can consume
+models. This branch pins `vmlx-swift-lm` to `b57fe98`, which can consume
 `UserInput.Audio`, preserves pre-encoded Parakeet/audio embeddings, exposes a
 reusable retained live PCM buffer with a streaming cursor for VAD/call-mode
 polling, adds a tracked Omni audio latency bench, and keeps media-placeholder
-cache restore token-aware. Omni audio support is gated by
+cache restore token-aware. The pin also carries the refreshed Parakeet/RADIO
+host-integration docs. Omni audio support is gated by
 `ModelMediaCapabilities.supportsAudio`.
 
 ## Current Hookups
@@ -48,10 +49,10 @@ cache restore token-aware. Omni audio support is gated by
   `UserInput.Audio` sources to `.preEncoded` audio embeddings before
   `processor.prepare(input:)`. Existing `.preEncoded` audio is preserved, which
   is the handoff point for a future live Parakeet/sound-projection component.
-- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `fb8fb39` so
+- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `b57fe98` so
   the app consumes the Swift live-voice handoff, live PCM streaming cursor,
   tracked `OmniAudioLatencyBench` harness, and media-placeholder-aware cache
-  restore guard.
+  restore guard, plus current Parakeet/RADIO integration documentation.
 - Live voice timing is now visible in the normal debug path:
   - `FloatingInputCard` logs `snapshot_ms`, `wav_encode_ms`, `wav_bytes`,
     `sample_rate`, and `duration_ms` when a voice turn is captured.
@@ -76,7 +77,8 @@ cache restore token-aware. Omni audio support is gated by
   TTFT/live-voice timing instrumentation. It also passed after the API-level
   `/chat/completions` trace recorder was added. Re-run after the `fb8fb39`
   media-cache pin bump passed with SwiftPM resolving `vmlx-swift-lm` at
-  `fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e`. Re-run after the Nemotron Omni
+  `fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e`. The follow-up `b57fe98` pin
+  adds the refreshed Parakeet/RADIO integration docs. Re-run after the Nemotron Omni
   no-thinking default/profile fix also passed under Xcode's Swift toolchain.
 - Focused Xcode-toolchain regression tests passed:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -146,7 +148,8 @@ cache restore token-aware. Omni audio support is gated by
   -derivedDataPath build/XcodeDerivedData-livevoice
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build`.
   Re-run after the `fb8fb39` pin bump passed with the workspace resolver
-  checking out `vmlx-swift-lm @ fb8fb39`. Re-run after the Nemotron Omni
+  checking out `vmlx-swift-lm @ fb8fb39`; the current dependency pin is
+  `vmlx-swift-lm @ b57fe98`. Re-run after the Nemotron Omni
   no-thinking default/profile fix passed.
   Xcode still reports the local CoreSimulator framework mismatch, but the macOS
   app build succeeds.

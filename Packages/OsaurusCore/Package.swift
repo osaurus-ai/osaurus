@@ -271,10 +271,12 @@ let package = Package(
         // tracked OmniAudioLatencyBench executable and local call-mode
         // latency evidence for raw PCM vs pre-encoded Parakeet embeddings.
         // `fb8fb39` makes Omni media cache restore token-aware and records
-        // prompt/media topology in the latency bench output.
+        // prompt/media topology in the latency bench output. `b57fe98`
+        // refreshes the live Parakeet/RADIO integration docs consumed by the
+        // Osaurus voice path.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e"
+            revision: "b57fe98845bd1f678bd8f722dc50dba56f11d029"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-
