@@ -95,10 +95,14 @@ struct RuntimePolicySourceTests {
         // `c0f8b3b` adds Nemotron Omni live-voice handoff support and preserves
         // pre-encoded Parakeet/audio embeddings. `e497f61` adds the reusable
         // retained live PCM buffer plus a streaming cursor for VAD/call-mode
-        // polling without losing the final full-turn waveform.
-        #expect(manifest.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
-        #expect(workspaceResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
-        #expect(appResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
+        // polling without losing the final full-turn waveform. `638024b`
+        // adds a tracked OmniAudioLatencyBench for raw PCM vs pre-encoded
+        // Parakeet call-mode measurements.
+        #expect(manifest.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
+        #expect(workspaceResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
+        #expect(appResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
+        #expect(!workspaceResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
+        #expect(!appResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
         #expect(!workspaceResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
         #expect(!appResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
         #expect(!workspaceResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))

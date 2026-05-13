@@ -267,10 +267,12 @@ let package = Package(
         // docs for media-aware cache verification. `e497f61` adds the
         // reusable thread-safe live PCM buffer and recorder streaming cursor
         // needed by real VAD/call-mode polling while preserving the full
-        // retained waveform for the final Omni request.
+        // retained waveform for the final Omni request. `638024b` adds the
+        // tracked OmniAudioLatencyBench executable and local call-mode
+        // latency evidence for raw PCM vs pre-encoded Parakeet embeddings.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "e497f61c3a68c6d70334d8a14a7ad0a58864af9b"
+            revision: "638024bae655b93b1da92385ce9fb4935584fb64"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-

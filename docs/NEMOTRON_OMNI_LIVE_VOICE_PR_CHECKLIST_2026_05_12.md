@@ -3,10 +3,11 @@
 ## Scope
 
 This checklist tracks the Osaurus side of live voice input for Nemotron Omni
-models. This branch pins `vmlx-swift-lm` to `e497f61`, which can consume
+models. This branch pins `vmlx-swift-lm` to `638024b`, which can consume
 `UserInput.Audio`, preserves pre-encoded Parakeet/audio embeddings, and exposes
 a reusable retained live PCM buffer with a streaming cursor for VAD/call-mode
-polling. Omni audio support is gated by `ModelMediaCapabilities.supportsAudio`.
+polling, plus a tracked Omni audio latency bench. Omni audio support is gated
+by `ModelMediaCapabilities.supportsAudio`.
 
 ## Current Hookups
 
@@ -20,8 +21,9 @@ polling. Omni audio support is gated by `ModelMediaCapabilities.supportsAudio`.
   `input_audio` content parts.
 - `ModelRuntime.extractAudioSources(from:)` materializes `input_audio` into a
   temp audio file and hands `UserInput.Audio.url` to vMLX.
-- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `e497f61` so
-  the app consumes the Swift live-voice handoff and live PCM streaming cursor.
+- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `638024b` so
+  the app consumes the Swift live-voice handoff, live PCM streaming cursor,
+  and tracked `OmniAudioLatencyBench` harness.
 - Live voice timing is now visible in the normal debug path:
   - `FloatingInputCard` logs `snapshot_ms`, `wav_encode_ms`, `wav_bytes`,
     `sample_rate`, and `duration_ms` when a voice turn is captured.
@@ -38,9 +40,14 @@ polling. Omni audio support is gated by `ModelMediaCapabilities.supportsAudio`.
 ## Verified Evidence
 
 - `swift build --target OsaurusCore` passed after the live voice snapshot
-  changes, after the `vmlx-swift-lm` pin bump to `e497f61`, and after the
+  changes, after the `vmlx-swift-lm` pin bump to `638024b`, and after the
   TTFT/live-voice timing instrumentation. It also passed after the API-level
   `/chat/completions` trace recorder was added.
+- `OmniAudioLatencyBench` on `Nemotron-Omni-Nano-JANGTQ-CRACK` measured the
+  Osaurus BatchEngine path at `2180.7 ms` raw PCM first semantic delta on
+  turn 1, `1473.8 ms` raw PCM on turn 2, `200.0 ms` pre-encoded Parakeet on
+  turn 1, and `211.9 ms` pre-encoded Parakeet on turn 2. This is not output
+  TTS TTFAB; it measures first text delta before a separate TTS model.
 - Xcode app build passed from the workspace:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild
   -workspace osaurus.xcworkspace -scheme osaurus -configuration Debug
