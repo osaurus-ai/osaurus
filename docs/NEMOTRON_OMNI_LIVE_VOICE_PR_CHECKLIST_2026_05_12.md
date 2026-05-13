@@ -46,7 +46,15 @@ cache restore token-aware. Omni audio support is gated by
   TTFT/live-voice timing instrumentation. It also passed after the API-level
   `/chat/completions` trace recorder was added. Re-run after the `fb8fb39`
   media-cache pin bump passed with SwiftPM resolving `vmlx-swift-lm` at
-  `fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e`.
+  `fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e`. Re-run after the Nemotron Omni
+  no-thinking default/profile fix also passed under Xcode's Swift toolchain.
+- Focused Xcode-toolchain regression tests passed:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+  --filter 'ModelProfileRegistryTests/nemotron3_matchesNemotronProfile|MLXBatchAdapterTests/additionalContext_defaultsNemotronOmniThinkingOffButHonorsExplicitOptIn'`.
+  This covers the shorter live model ids
+  `dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK` and
+  `nemotron-omni-nano-jangtq-crack`, and the runtime default
+  `enable_thinking=false` with explicit opt-in still honored.
 - `OmniAudioLatencyBench` on `Nemotron-Omni-Nano-JANGTQ-CRACK` measured the
   Osaurus BatchEngine path at `1514.1 ms` raw PCM first semantic delta on
   turn 1, `1498.6 ms` raw PCM on turn 2, `208.9 ms` pre-encoded Parakeet on
@@ -62,7 +70,8 @@ cache restore token-aware. Omni audio support is gated by
   -derivedDataPath build/XcodeDerivedData-livevoice
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build`.
   Re-run after the `fb8fb39` pin bump passed with the workspace resolver
-  checking out `vmlx-swift-lm @ fb8fb39`.
+  checking out `vmlx-swift-lm @ fb8fb39`. Re-run after the Nemotron Omni
+  no-thinking default/profile fix passed.
   Xcode still reports the local CoreSimulator framework mismatch, but the macOS
   app build succeeds.
 - No-model-load API trace smoke passed against the same built app on port 4242:
@@ -80,6 +89,31 @@ cache restore token-aware. Omni audio support is gated by
   `/Users/eric/models/dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK`.
   The health endpoint reported the model loaded, and OpenAI-compatible
   `/chat/completions` accepted `input_audio` WAV content.
+- A pre-fix default API smoke exposed the live-call visible-output bug: the
+  model streamed only `reasoning_content` for text/audio turns unless the
+  request explicitly set `enable_thinking=false` / `reasoning_effort=no_think`.
+  Root cause was model-id matching: the live id
+  `nemotron-omni-nano-jangtq-crack` did not match `NemotronThinkingProfile`,
+  so `MLXBatchAdapter` fell through to generic `enable_thinking=true`.
+- Rebuilt-app default API smoke after the fix passed with no request-level
+  thinking overrides:
+  - text cold load: first visible `content` delta `2588.8 ms`, total
+    `2697.9 ms`, no `reasoning_content`; trace shows `load_container_done`
+    `2377.1 ms`, `first_token_ms=62`, and
+    `http_first_semantic_delta_kind=content`.
+  - warm raw WAV audio: first visible `content` delta `3218.8 ms`, total
+    `3574.7 ms`, text `A single electronic beep`, no `reasoning_content`;
+    trace shows `input_audio_materialize_ms=1`, `prompt_prepare_ms=21`,
+    `first_token_ms=109`, and a `3079.8 ms` wait inside
+    `chatengine_streamDeltas_done` before HTTP receives the stream.
+  - warm follow-up retaining the audio turn: first visible `content` delta
+    `3264.6 ms`, total `3409.8 ms`, text `yes`, no `reasoning_content`;
+    trace shows `input_audio_materialize_ms=1`, `prompt_prepare_ms=48`,
+    `first_token_ms=111`, and `http_first_semantic_delta_kind=content`.
+  - process RSS after the three-turn smoke was about `12.4 GiB`
+    (`12723.6 MB` reported by `ps`), with `77128.4 MB` free+speculative VM.
+  Evidence files are under `/tmp/osaurus-live-smoke-evidence/` with the prefix
+  `default_after_patch_`.
 - Warm latency control from the built app:
   - text-only streaming request: first semantic SSE delta at `358.3 ms`, total
     `777.4 ms`.
@@ -91,9 +125,11 @@ cache restore token-aware. Omni audio support is gated by
     `prepareInput` was `38 ms` on the first audio request and `16 ms` on the
     repeated request, while the vMLX `engine.generate(...)` await dominated the
     first semantic delta.
-- `swift test --filter LiveVoiceAudioSnapshotTests` is blocked by the existing
-  local toolchain issue: the package test target imports Swift `Testing`, which
-  is unavailable in this environment.
+- `swift test --filter LiveVoiceAudioSnapshotTests` without `DEVELOPER_DIR`
+  remains blocked by the local Command Line Tools selection: the package test
+  target imports Swift `Testing`, which is unavailable from that path. Use
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` for Swift Testing
+  checks on this machine.
 - vMLX real-model bench passed on the local JANGTQ2 Omni-Nano bundle:
   `build/evidence-20260512/nemotron_omni_live_voice_jangtq2_clean_20260512_155446.log`
   in `vmlx-swift-lm`.

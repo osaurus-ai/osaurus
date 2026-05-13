@@ -513,6 +513,39 @@ struct MLXBatchAdapterTests {
         }
     }
 
+    /// Nemotron Omni call/audio workloads should default to visible assistant
+    /// content instead of spending the first streamed chunks in the hidden
+    /// reasoning rail. Explicit user/API opt-in still enables thinking.
+    @Test func additionalContext_defaultsNemotronOmniThinkingOffButHonorsExplicitOptIn() {
+        let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
+        let userEnabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(false)]
+        )
+
+        for modelName in [
+            "dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK",
+            "nemotron-omni-nano-jangtq-crack",
+            "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == false,
+                "Nemotron Omni should default to no-thinking chat mode: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userEnabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "Nemotron Omni must honor explicit thinking opt-in: \(modelName)"
+            )
+        }
+    }
+
     @Test func additionalContext_doesNotSendThinkingKwargForZayaVLTemplateSidecar() {
         let userEnabled = GenerationParameters(
             temperature: nil,

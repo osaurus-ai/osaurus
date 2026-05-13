@@ -270,7 +270,7 @@ struct NemotronThinkingProfile: ModelProfile {
 
     static func matches(modelId: String) -> Bool {
         let lower = modelId.lowercased()
-        return lower.contains("nemotron-3") && !lower.contains("coder")
+        return ModelFamilyNames.isNemotronOmniFamily(modelId) && !lower.contains("coder")
     }
 
     static let options: [ModelOptionDefinition] = [

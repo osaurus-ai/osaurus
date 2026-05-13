@@ -397,6 +397,10 @@ struct MLXBatchAdapter {
             context["enable_thinking"] = !disableThinking
             return context
         }
+        if ModelFamilyNames.isNemotronOmniFamily(modelName) {
+            context["enable_thinking"] = false
+            return context
+        }
         if ModelFamilyNames.isZayaFamily(modelName) {
             context["enable_thinking"] = false
             return context

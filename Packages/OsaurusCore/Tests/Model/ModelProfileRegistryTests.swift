@@ -106,6 +106,8 @@ struct ModelProfileRegistryTests {
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ",
+            "dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK",
+            "nemotron-omni-nano-jangtq-crack",
             "nemotron-3-nano-omni-30b-a3b-mxfp4",  // case-folded picker form
         ] {
             let profile = ModelProfileRegistry.profile(for: id)
