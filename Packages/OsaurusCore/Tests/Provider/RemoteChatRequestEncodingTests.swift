@@ -338,13 +338,114 @@ struct RemoteChatRequestEncodingTests {
         #expect(stripped[1].reasoning_content == nil)
     }
 
+    // MARK: - DSV4 remote effort translation
+    //
+    // `DSV4ReasoningProfile` defaults `reasoningEffort` to `"instruct"`, but
+    // DeepSeek's public chat API rejects that value: `reasoning_effort` must
+    // be one of `high`/`max` (plus the deprecated `low`/`medium`/`xhigh`
+    // aliases). Reasoning is toggled separately via `thinking.type`. These
+    // tests pin the wire translation so the regression in the bug report
+    // ("unknown variant `instruct`") cannot return silently.
+
+    @Test func dsv4RemoteEffort_deepSeekHost_translatesInstructToThinkingDisabled() throws {
+        // Trims/case-normalizes before matching so persisted values like
+        // "  INSTRUCT  " still translate correctly.
+        for raw in ["instruct", "  INSTRUCT  "] {
+            let translated = RemoteProviderService.dsv4RemoteEffort(
+                host: "api.deepseek.com",
+                model: "deepseek-v4-pro",
+                effort: raw
+            )
+
+            #expect(translated.effort == nil)
+            #expect(translated.thinking == ThinkingConfig(type: "disabled"))
+        }
+    }
+
+    @Test func dsv4RemoteEffort_deepSeekHost_forwardsAcceptedEffortsUntouched() throws {
+        for effort in ["high", "max", "low", "medium", "xhigh"] {
+            let translated = RemoteProviderService.dsv4RemoteEffort(
+                host: "api.deepseek.com",
+                model: "deepseek-v4-pro",
+                effort: effort
+            )
+
+            #expect(translated.effort == effort)
+            #expect(translated.thinking == nil)
+        }
+    }
+
+    @Test func dsv4RemoteEffort_nonDeepSeekHost_stripsInstructWithoutThinkingField() throws {
+        // OpenRouter and other OpenAI-compat hosts that may serve DSV4 IDs
+        // will also reject `"instruct"`, but the DeepSeek-only `thinking`
+        // field must NOT be injected — strict schemas 422 on unknown keys.
+        let translated = RemoteProviderService.dsv4RemoteEffort(
+            host: "openrouter.ai",
+            model: "deepseek/deepseek-v4-pro",
+            effort: "instruct"
+        )
+
+        #expect(translated.effort == nil)
+        #expect(translated.thinking == nil)
+    }
+
+    @Test func dsv4RemoteEffort_passesThroughWhenTranslationDoesNotApply() throws {
+        // Non-DSV4 model: effort flows through verbatim regardless of host.
+        let nonDSV4 = RemoteProviderService.dsv4RemoteEffort(
+            host: "api.deepseek.com",
+            model: "gpt-5.5",
+            effort: "instruct"
+        )
+        #expect(nonDSV4.effort == "instruct")
+        #expect(nonDSV4.thinking == nil)
+
+        // Nil effort: nothing to translate, nothing to inject.
+        let nilEffort = RemoteProviderService.dsv4RemoteEffort(
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro",
+            effort: nil
+        )
+        #expect(nilEffort.effort == nil)
+        #expect(nilEffort.thinking == nil)
+    }
+
+    @Test func encode_thinkingDisabled_emitsThinkingObjectWithoutReasoningEffort() throws {
+        let request = Self.makeRequest(
+            model: "deepseek-v4-pro",
+            maxTokens: 1024,
+            reasoningEffort: nil,
+            thinking: ThinkingConfig(type: "disabled")
+        )
+
+        let payload = try Self.encodeAsDictionary(request)
+        let thinking = try #require(payload["thinking"] as? [String: Any])
+
+        #expect(thinking["type"] as? String == "disabled")
+        #expect(payload["reasoning_effort"] == nil)
+    }
+
+    @Test func encode_nilThinking_omitsKey() throws {
+        let request = Self.makeRequest(
+            model: "deepseek-v4-pro",
+            maxTokens: 1024,
+            reasoningEffort: "high",
+            thinking: nil
+        )
+
+        let payload = try Self.encodeAsDictionary(request)
+
+        #expect(payload["thinking"] == nil)
+        #expect(payload["reasoning_effort"] as? String == "high")
+    }
+
     // MARK: - Fixtures
 
     private static func makeRequest(
         model: String,
         maxTokens: Int?,
         reasoningEffort: String? = nil,
-        tools: [Tool]? = nil
+        tools: [Tool]? = nil,
+        thinking: ThinkingConfig? = nil
     ) -> RemoteChatRequest {
         RemoteChatRequest(
             model: model,
@@ -360,6 +461,7 @@ struct RemoteChatRequestEncodingTests {
             tool_choice: nil,
             reasoning_effort: reasoningEffort,
             reasoning: nil,
+            thinking: thinking,
             modelOptions: [:],
             veniceParameters: nil
         )

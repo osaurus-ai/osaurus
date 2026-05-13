@@ -921,7 +921,7 @@ struct ConfigureAIBody: View {
     /// when available.
     private var localProgressText: String {
         guard let model = state.selectedModel,
-              let metrics = modelManager.downloadMetrics[model.id]
+            let metrics = modelManager.downloadMetrics[model.id]
         else {
             return state.isLocalPaused ? L("Paused") : L("Preparing download...")
         }

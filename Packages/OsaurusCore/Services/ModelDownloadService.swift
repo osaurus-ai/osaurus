@@ -353,7 +353,8 @@ final class ModelDownloadService: ObservableObject {
         let metrics = downloadMetrics[modelId]
         let total = metrics?.totalBytes ?? 0
         let completed = baseBytesBeforeFile + bytesDownloadedInFile
-        let fraction = total > 0
+        let fraction =
+            total > 0
             ? min(1.0, max(0.0, Double(completed) / Double(total)))
             : 0
         downloadStates[modelId] = .paused(progress: fraction)

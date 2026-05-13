@@ -132,6 +132,40 @@ public actor RemoteProviderService: ToolCapableService {
         }
     }
 
+    /// Translate the local DSV4 `reasoningEffort` value into the on-the-wire
+    /// fields the target remote provider actually understands.
+    ///
+    /// `DSV4ReasoningProfile` exposes three modes — `instruct`, `high`, `max` —
+    /// but DeepSeek's public chat API only accepts `reasoning_effort` of
+    /// `high`/`max` (plus `low`/`medium`/`xhigh` aliases) and toggles reasoning
+    /// via a separate `thinking: { type: "enabled"|"disabled" }` object. Other
+    /// OpenAI-compatible hosts that may serve DSV4-style IDs (e.g. OpenRouter)
+    /// will also reject `instruct`, so we strip it everywhere; the `thinking`
+    /// field is DeepSeek-specific and only injected for DeepSeek hosts to avoid
+    /// 422s on strict schemas.
+    ///
+    /// Non-DSV4 models pass through unchanged so this is safe to call
+    /// unconditionally from `buildChatRequest`.
+    static func dsv4RemoteEffort(
+        host: String,
+        model: String,
+        effort: String?
+    ) -> (effort: String?, thinking: ThinkingConfig?) {
+        let normalized = effort?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard
+            normalized == "instruct",
+            DSV4ReasoningProfile.matches(modelId: model)
+        else {
+            return (effort, nil)
+        }
+        let thinking =
+            host.lowercased().contains("deepseek")
+            ? ThinkingConfig(type: "disabled") : nil
+        return (nil, thinking)
+    }
+
     static func effectiveRequestProviderType(
         configuredProviderType: RemoteProviderType,
         request: RemoteChatRequest
@@ -1634,7 +1668,11 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
     ) -> RemoteChatRequest {
-        let effortValue = parameters.modelOptions["reasoningEffort"]?.stringValue
+        let (effortValue, thinking) = Self.dsv4RemoteEffort(
+            host: provider.host,
+            model: model,
+            effort: parameters.modelOptions["reasoningEffort"]?.stringValue
+        )
         let allowsReasoningObject =
             Self.allowsChatCompletionsReasoningObject(
                 providerType: provider.providerType,
@@ -1661,6 +1699,7 @@ public actor RemoteProviderService: ToolCapableService {
             tool_choice: toolChoice,
             reasoning_effort: effortValue,
             reasoning: allowsReasoningObject ? effortValue.map { ReasoningConfig(effort: $0) } : nil,
+            thinking: thinking,
             modelOptions: parameters.modelOptions,
             veniceParameters: buildVeniceParameters(from: parameters.modelOptions)
         )
@@ -2194,6 +2233,15 @@ struct ReasoningConfig: Encodable {
     let effort: String
 }
 
+/// DeepSeek's thinking-mode toggle. Sent as a top-level `thinking` object
+/// with `type` of `"enabled"` or `"disabled"`. DeepSeek's public chat API
+/// does NOT accept `reasoning_effort: "instruct"` (only `high`/`max` plus
+/// the deprecated `low`/`medium`/`xhigh` aliases), so we translate the
+/// local DSV4 `instruct` mode into `thinking.type == "disabled"`.
+struct ThinkingConfig: Encodable, Equatable {
+    let type: String
+}
+
 // Venice-specific parameters injected into the request body for Venice AI providers.
 // See https://docs.venice.ai/api-reference/api-spec
 // Nil values intentionally omit provider-specific flags from the encoded JSON.
@@ -2226,6 +2274,10 @@ struct RemoteChatRequest: Encodable {
     let tool_choice: ToolChoiceOption?
     let reasoning_effort: String?
     let reasoning: ReasoningConfig?
+    /// DeepSeek-only thinking-mode toggle (see `ThinkingConfig`). Encoded
+    /// only when non-nil so other OpenAI-compat providers never see an
+    /// unknown `thinking` field (which 422s on strict schemas).
+    let thinking: ThinkingConfig?
     let modelOptions: [String: ModelOptionValue]
     let veniceParameters: VeniceParameters?
 
@@ -2234,6 +2286,7 @@ struct RemoteChatRequest: Encodable {
         case top_p, frequency_penalty, presence_penalty, stop, tools, tool_choice
         case reasoning_effort
         case reasoning
+        case thinking
         case veniceParameters = "venice_parameters"
     }
 
@@ -2272,6 +2325,7 @@ struct RemoteChatRequest: Encodable {
         try container.encodeIfPresent(tool_choice, forKey: .tool_choice)
         try container.encodeIfPresent(reasoning_effort, forKey: .reasoning_effort)
         try container.encodeIfPresent(reasoning, forKey: .reasoning)
+        try container.encodeIfPresent(thinking, forKey: .thinking)
         try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
         // `modelOptions` is intentionally not in `CodingKeys` — it stays
         // in-process for model-specific feature flags.
