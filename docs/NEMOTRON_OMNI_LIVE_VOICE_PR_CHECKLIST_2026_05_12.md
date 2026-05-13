@@ -24,6 +24,10 @@ cache restore token-aware. Omni audio support is gated by
   send path could still serialize the turn as plain text only.
 - `ModelRuntime.extractAudioSources(from:)` materializes `input_audio` into a
   temp audio file and hands `UserInput.Audio.url` to vMLX.
+- `MLXBatchAdapter` now detects Nemotron Omni models and converts raw
+  `UserInput.Audio` sources to `.preEncoded` audio embeddings before
+  `processor.prepare(input:)`. Existing `.preEncoded` audio is preserved, which
+  is the handoff point for a future live Parakeet/sound-projection component.
 - `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `fb8fb39` so
   the app consumes the Swift live-voice handoff, live PCM streaming cursor,
   tracked `OmniAudioLatencyBench` harness, and media-placeholder-aware cache
@@ -33,8 +37,10 @@ cache restore token-aware. Omni audio support is gated by
     `sample_rate`, and `duration_ms` when a voice turn is captured.
   - `TTFTTrace` records `input_audio_count`, `input_audio_materialized_count`,
     `input_audio_bytes`, `input_audio_materialize_ms`, `prompt_prepare_ms`,
-    `processor_prepare_ms`, `chat_audio_count`, `first_token_ms`, and
-    `first_chunk_ms`.
+    `processor_prepare_ms`, `omni_audio_preencode_input_count`,
+    `omni_audio_preencode_converted_count`,
+    `omni_audio_preencode_existing_count`, `omni_audio_preencode_ms`,
+    `chat_audio_count`, `first_token_ms`, and `first_chunk_ms`.
   - OpenAI-compatible `/chat/completions` debug builds attach the same
     `TTFTTrace` to API requests and emit `/tmp/osaurus_ttft_trace.log` on SSE
     finish, tool-call finish, JSON finish, and handled API errors. This records
@@ -64,6 +70,11 @@ cache restore token-aware. Omni audio support is gated by
   attachments when capabilities allow them, dropping audio/video when
   unsupported, and the existing `input_audio`/`video_url` mapping into vMLX
   `Chat.Message.audios` / `.videos`.
+- Focused adapter pre-encode regression tests passed:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+  --filter MLXBatchAdapterTests/preencodeAudioSources_replacesRawAudioAndCountsInputs`.
+  The helper replaces raw audio sources with encoder output and reports input,
+  converted, and already-preencoded counts without requiring a model load.
 - `OmniAudioLatencyBench` on `Nemotron-Omni-Nano-JANGTQ-CRACK` measured the
   Osaurus BatchEngine path at `1514.1 ms` raw PCM first semantic delta on
   turn 1, `1498.6 ms` raw PCM on turn 2, `208.9 ms` pre-encoded Parakeet on
@@ -123,6 +134,25 @@ cache restore token-aware. Omni audio support is gated by
     (`12723.6 MB` reported by `ps`), with `77128.4 MB` free+speculative VM.
   Evidence files are under `/tmp/osaurus-live-smoke-evidence/` with the prefix
   `default_after_patch_`.
+- Rebuilt-app API smoke after the adapter pre-encode hook passed with no
+  request-level thinking overrides:
+  - cold text warmup: first visible `content` delta `2967.3 ms`, total
+    `3077.8 ms`, visible text `Ready.`, no `reasoning_content`.
+  - warm WAV audio: first visible `content` delta `1634.8 ms`, total
+    `1893.5 ms`, visible text `A guitar is played in this audio.`, no
+    `reasoning_content`; trace shows `input_audio_materialize_ms=0`,
+    `omni_audio_preencode_input_count=1`,
+    `omni_audio_preencode_converted_count=1`,
+    `omni_audio_preencode_existing_count=0`,
+    `omni_audio_preencode_ms=1368`, `processor_prepare_ms=14`, and
+    `first_token_ms=50`.
+  - repeated warm WAV audio: first visible `content` delta `1553.0 ms`, total
+    `1667.1 ms`, visible text `Tick`, no `reasoning_content`; trace shows
+    `omni_audio_preencode_ms=1327`, `processor_prepare_ms=15`, and
+    `first_token_ms=47`.
+  - process RSS after the smoke was about `12.4 GiB` (`12972.5 MB` reported by
+    `ps`). Evidence files are under `/tmp/osaurus-live-smoke-evidence/` with
+    the prefix `preencode_after_patch_`.
 - Warm latency control from the built app:
   - text-only streaming request: first semantic SSE delta at `358.3 ms`, total
     `777.4 ms`.
@@ -168,9 +198,10 @@ cache restore token-aware. Omni audio support is gated by
 
 ## Remaining Work
 
-- Add a direct pre-encoded audio path only after an Osaurus voice component can
-  emit stable Parakeet/sound-projection embeddings. The current WAV path is
-  correct but pays model-side encoding.
+- Add direct live pre-encoded audio emission from the Osaurus voice component.
+  The adapter now preserves `.preEncoded` audio, but the current HTTP/UI WAV
+  path still pays request-prep Nemotron audio encoding before the stream is
+  returned.
 - Add TTFAB coverage once a TTS backend is selected. Current evidence covers
   speech input into model output text, not first output audio byte.
 - Keep audio attachment spillover and temp-file cleanup under review for longer

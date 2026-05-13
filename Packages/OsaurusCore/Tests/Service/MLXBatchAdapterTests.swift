@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 import Testing
 
 @testable import OsaurusCore
@@ -52,6 +53,46 @@ struct MLXBatchAdapterTests {
         // Zero is treated as "unset" — falls back to the compile-friendly
         // default of 1 (was 4 prior to fa694e9e).
         #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 1)
+    }
+
+    @Test func preencodeAudioSources_replacesRawAudioAndCountsInputs() {
+        let rawSamples: [Float] = [0.1, -0.2, 0.3]
+        let chat = [
+            MLXLMCommon.Chat.Message.user(
+                "hear this",
+                audios: [
+                    .samples(rawSamples, sampleRate: 16_000),
+                    .samples([0.4], sampleRate: 8_000),
+                ]
+            )
+        ]
+
+        let result = MLXBatchAdapter.preencodeAudioSources(in: chat) { audio in
+            guard case .samples(let samples, let sampleRate) = audio else {
+                Issue.record("only raw samples should be passed to the encoder")
+                return nil
+            }
+            return .samples(samples.map { $0 + 1 }, sampleRate: sampleRate == 16_000 ? 16_000 : 8_000)
+        }
+
+        #expect(result.inputCount == 2)
+        #expect(result.convertedCount == 2)
+        #expect(result.alreadyPreencodedCount == 0)
+        #expect(result.chat.count == 1)
+        #expect(result.chat[0].audios.count == 2)
+        guard case .samples(let convertedSamples, let convertedRate) = result.chat[0].audios[0] else {
+            Issue.record("raw samples should be replaced by the encoder output")
+            return
+        }
+        #expect(convertedSamples == [1.1, 0.8, 1.3])
+        #expect(convertedRate == 16_000)
+
+        guard case .samples(let secondSamples, let secondRate) = result.chat[0].audios[1] else {
+            Issue.record("second raw sample clip should also be replaced")
+            return
+        }
+        #expect(secondSamples == [1.4])
+        #expect(secondRate == 8_000)
     }
 
     @Test func generateParameters_enableCompiledBatchDecodeForSoloDefault() {

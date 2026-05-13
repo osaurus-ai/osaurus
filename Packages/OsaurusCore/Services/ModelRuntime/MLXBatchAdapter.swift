@@ -43,6 +43,13 @@ struct MLXBatchAdapter {
         let genTask: Task<Void, Never>
     }
 
+    struct AudioPreencodeResult {
+        let chat: [MLXLMCommon.Chat.Message]
+        let inputCount: Int
+        let convertedCount: Int
+        let alreadyPreencodedCount: Int
+    }
+
     struct EffectiveGenerationSettings: Equatable, Sendable {
         let temperature: Float
         let maxTokens: Int
@@ -332,6 +339,111 @@ struct MLXBatchAdapter {
         }
     }
 
+    static func preencodeAudioSources(
+        in chat: [MLXLMCommon.Chat.Message],
+        encode: (MLXLMCommon.UserInput.Audio) throws -> MLXLMCommon.UserInput.Audio?
+    ) rethrows -> AudioPreencodeResult {
+        var inputCount = 0
+        var convertedCount = 0
+        var alreadyPreencodedCount = 0
+
+        let mapped = try chat.map { message in
+            guard !message.audios.isEmpty else { return message }
+            var updated = message
+            updated.audios = try message.audios.map { audio in
+                inputCount += 1
+                if case .preEncoded = audio {
+                    alreadyPreencodedCount += 1
+                    return audio
+                }
+                if let encoded = try encode(audio) {
+                    convertedCount += 1
+                    return encoded
+                }
+                return audio
+            }
+            return updated
+        }
+
+        return AudioPreencodeResult(
+            chat: mapped,
+            inputCount: inputCount,
+            convertedCount: convertedCount,
+            alreadyPreencodedCount: alreadyPreencodedCount
+        )
+    }
+
+    private static func preencodeNemotronOmniAudioIfPossible(
+        in chat: [MLXLMCommon.Chat.Message],
+        modelName: String,
+        model: any LanguageModel,
+        trace: TTFTTrace?
+    ) throws -> [MLXLMCommon.Chat.Message] {
+        guard ModelFamilyNames.isNemotronOmniFamily(modelName),
+            let omni = model as? NemotronHOmni
+        else {
+            return chat
+        }
+
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        let result = try preencodeAudioSources(in: chat) { audio in
+            try preencodedAudio(audio, using: omni)
+        }
+        guard result.inputCount > 0 else { return result.chat }
+
+        let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+        trace?.set("omni_audio_preencode_input_count", result.inputCount)
+        trace?.set("omni_audio_preencode_converted_count", result.convertedCount)
+        trace?.set("omni_audio_preencode_existing_count", result.alreadyPreencodedCount)
+        trace?.set("omni_audio_preencode_ms", elapsedMs)
+        trace?.mark("omni_audio_preencode_done")
+        batchAdapterLog.info(
+            "preencodeAudio: model=\(modelName, privacy: .public) input=\(result.inputCount, privacy: .public) converted=\(result.convertedCount, privacy: .public) existing=\(result.alreadyPreencodedCount, privacy: .public) ms=\(elapsedMs, privacy: .public)"
+        )
+        return result.chat
+    }
+
+    private static func preencodedAudio(
+        _ audio: MLXLMCommon.UserInput.Audio,
+        using omni: NemotronHOmni
+    ) throws -> MLXLMCommon.UserInput.Audio? {
+        let samples16k: [Float]
+        switch audio {
+        case .url(let url):
+            samples16k = try nemotronOmniLoadAudioFile(
+                url,
+                targetSampleRate: Double(omni.config.soundSampleRate)
+            )
+        case .samples(let samples, let sampleRate):
+            samples16k = sampleRate == omni.config.soundSampleRate
+                ? samples
+                : linearResamplePCM(
+                    samples,
+                    fromRate: sampleRate,
+                    toRate: omni.config.soundSampleRate
+                )
+        case .array(let array, let sampleRate):
+            let samples = array.reshaped([-1]).asType(.float32).asArray(Float.self)
+            samples16k = sampleRate == omni.config.soundSampleRate
+                ? samples
+                : linearResamplePCM(
+                    samples,
+                    fromRate: sampleRate,
+                    toRate: omni.config.soundSampleRate
+                )
+        case .preEncoded:
+            return nil
+        }
+
+        let embedding = omni.extractAudioEmbeds(waveform: samples16k)
+        MLX.eval(embedding)
+        return .preEncoded(
+            samples: samples16k,
+            sampleRate: omni.config.soundSampleRate,
+            embedding: embedding
+        )
+    }
+
     // MARK: - Thinking template context
 
     static func additionalContext(
@@ -594,7 +706,13 @@ struct MLXBatchAdapter {
         try await container.perform { (context: MLXLMCommon.ModelContext) in
             box.performEnteredAt = CFAbsoluteTimeGetCurrent()
             trace?.mark("batch_container_perform_entered")
-            let chat = preprocessImages(in: buildChat())
+            var chat = preprocessImages(in: buildChat())
+            chat = try preencodeNemotronOmniAudioIfPossible(
+                in: chat,
+                modelName: modelName,
+                model: context.model,
+                trace: trace
+            )
             box.chatBuiltAt = CFAbsoluteTimeGetCurrent()
             box.chatCount = chat.count
             box.imageCount = chat.reduce(0) { $0 + $1.images.count }
