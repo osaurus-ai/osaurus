@@ -40,9 +40,10 @@ encoded Parakeet chunks are not safe to concatenate. Omni audio support is gated
 - `ModelRuntime.extractAudioSources(from:)` maps aligned local PCM to
   `UserInput.Audio.samples` so current in-app voice turns avoid the
   WAV/base64/temp-file re-decode path, and maps fresh live pre-encoded audio to
-  `UserInput.Audio.preEncoded` so vMLX skips request-time Parakeet. API/remote
-  requests without local PCM still materialize `input_audio` into a temp audio
-  file and hand `UserInput.Audio.url` to vMLX.
+  `UserInput.Audio.preEncoded` so vMLX skips request-time Parakeet. Valid API
+  `input_audio` WAV payloads now decode directly to `UserInput.Audio.samples`;
+  non-WAV and malformed audio still falls back to temp-file
+  `UserInput.Audio.url` materialization for AVAudioConverter coverage.
 - `ModelRuntime.preencodeLiveVoiceAudioIfResident(...)` pre-encodes against the
   already-resident model only. It does not cold-load a multi-GB Omni model from
   the voice UI; call-mode setups should keep the target model resident.
@@ -55,6 +56,11 @@ encoded Parakeet chunks are not safe to concatenate. Omni audio support is gated
   tracked `OmniAudioLatencyBench` and `OmniAudioChunkStabilityBench`
   harnesses, and media-placeholder-aware cache restore guard, plus current
   Parakeet/RADIO integration documentation.
+- Parakeet/RADIO source, function, and documentation verification is an
+  explicit release guard: the source repo must contain the encoder functions
+  and bench/docs, the live remote must contain the pinned commit, Osaurus must
+  resolve the same revision, and this check must be repeated after any final
+  Osaurus commit/push before calling the PR ready.
 - Live voice timing is now visible in the normal debug path:
   - `FloatingInputCard` logs `snapshot_ms`, `wav_encode_ms`, `wav_bytes`,
     `sample_rate`, and `duration_ms` when a voice turn is captured.
@@ -95,6 +101,14 @@ encoded Parakeet chunks are not safe to concatenate. Omni audio support is gated
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
   --package-path Packages/OsaurusCore
   --filter 'RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening|RemoteChatRequestEncodingTests/deepSeekProvider_dropsLocalInstructReasoningEffort|RemoteChatRequestEncodingTests/deepSeekProvider_preservesAcceptedReasoningEfforts|MLXBatchAdapterTests/additionalContext_defaultsNemotronOmniThinkingOffButHonorsExplicitOptIn'`.
+- Parakeet/RADIO source/push/doc check passed for the live library pin:
+  `vmlx-swift-lm` contains `NemotronHParakeetEncoder`,
+  `remapParakeetWeights`, `NemotronHRADIOVisionModel`,
+  `remapRadioWeights`, `OmniAudioChunkStabilityBench`,
+  `PARAKEET-RADIO-INTEGRATION.md`, and
+  `docs/benchmarks/omni-audio-chunk-stability-2026-05-13.md`; Osaurus
+  resolves `https://github.com/osaurus-ai/vmlx-swift-lm` at
+  `81c8ef7389c031292287801f761957c681d086ea`.
 - Focused UI/API attachment regression tests passed:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
   --filter 'ChatAttachmentSecurityTests|MultimodalContentPartTests'`.
@@ -102,6 +116,36 @@ encoded Parakeet chunks are not safe to concatenate. Omni audio support is gated
   attachments when capabilities allow them, dropping audio/video when
   unsupported, and the existing `input_audio`/`video_url` mapping into vMLX
   `Chat.Message.audios` / `.videos`.
+- Focused API WAV side-channel regression test passed:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+  --package-path Packages/OsaurusCore --filter
+  MultimodalContentPartTests/mapping_audioWavDecodesToSamples`.
+  This covers OpenAI-compatible `input_audio` WAV payloads mapping directly to
+  `UserInput.Audio.samples` instead of a temp-file `UserInput.Audio.url`.
+- API WAV side-channel regression set passed:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+  --package-path Packages/OsaurusCore --filter
+  'MultimodalContentPartTests|MaterializeMediaDataUrlMCDCTests|MLXBatchAdapterTests/preencodeAudioSources_replacesRawAudioAndCountsInputs'`.
+  This passed with `25` tests in `3` suites, preserving video/audio temp-file
+  fallback coverage while adding the valid-WAV direct PCM path. The two
+  `.preEncoded` mapping tests remain skipped for the existing standalone
+  `MLXArray`/`default.metallib` fixture limitation.
+- Xcode debug app build passed after the API WAV side-channel change:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild
+  -workspace osaurus.xcworkspace -scheme osaurus -configuration Debug
+  -destination 'platform=macOS,arch=arm64' ... build`. The build resolved
+  `vmlx-swift-lm @ 81c8ef7`.
+- Rebuilt debug app `/chat/completions` smoke passed for an
+  OpenAI-compatible streaming `input_audio` WAV request. The cold-load request
+  returned HTTP `200` and TTFT trace metrics
+  `input_audio_materialized_count=0`, `input_audio_local_sample_count=1`,
+  `omni_audio_preencode_converted_count=1`, `load_container_done=2388.6 ms`,
+  `prompt_prepare_ms=1447`, and `first_token_ms=75`. A resident repeat also
+  returned HTTP `200` with `load_container_done=0.1 ms`,
+  `input_audio_materialized_count=0`, `input_audio_local_sample_count=1`,
+  `omni_audio_preencode_converted_count=1`, `prompt_prepare_ms=1415`, and
+  `first_token_ms=71`. This proves valid API WAV now reaches the same local
+  PCM side channel as in-app voice before the Parakeet pre-encode adapter.
 - Focused adapter pre-encode regression tests passed:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
   --filter MLXBatchAdapterTests/preencodeAudioSources_replacesRawAudioAndCountsInputs`.

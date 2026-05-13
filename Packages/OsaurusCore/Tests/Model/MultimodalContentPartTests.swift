@@ -194,6 +194,37 @@ struct MultimodalContentPartTests {
         try? FileManager.default.removeItem(at: u)
     }
 
+    @Test("mapOpenAIChatToMLX decodes valid WAV input_audio into samples")
+    func mapping_audioWavDecodesToSamples() throws {
+        let snapshot = LiveVoiceAudioSnapshot(
+            samples: [-1.0, 0.0, 1.0],
+            sampleRate: 16_000)
+        let b64 = snapshot.wavData().base64EncodedString()
+        let json = """
+            [{
+              "role": "user",
+              "content": [
+                {"type": "input_audio", "input_audio": {"data": "\(b64)", "format": "wav"}}
+              ]
+            }]
+            """.data(using: .utf8)!
+
+        let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
+        let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
+
+        #expect(mapped.count == 1)
+        #expect(mapped[0].audios.count == 1)
+        guard case .samples(let samples, let sampleRate) = mapped[0].audios[0] else {
+            Issue.record("valid WAV input_audio should decode directly to .samples")
+            return
+        }
+        #expect(sampleRate == 16_000)
+        #expect(samples.count == 3)
+        #expect(abs(samples[0] - -1.0) < 0.0001)
+        #expect(abs(samples[1]) < 0.0001)
+        #expect(abs(samples[2] - 1.0) < 0.0001)
+    }
+
     @Test("mapOpenAIChatToMLX uses local live audio samples when present")
     func mapping_usesLocalLiveAudioSamples() throws {
         let fallbackBytes = Data([0x52, 0x49, 0x46, 0x46])

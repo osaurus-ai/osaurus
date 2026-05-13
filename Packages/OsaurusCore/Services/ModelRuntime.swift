@@ -1554,12 +1554,14 @@ public actor ModelRuntime {
     }
 
     /// Extract `[UserInput.Audio]` from `input_audio` content parts. The
-    /// OpenAI wire shape is `{data: <base64>, format: "wav"|"mp3"|...}`; for
-    /// remote/API requests we materialize a temp file with that extension and
-    /// let vmlx run its normal AVAudioConverter decode. Live in-app voice may
-    /// also carry local PCM samples aligned to the same audio part, in which
-    /// case we hand those samples directly to vmlx and keep the encoded bytes
-    /// only as the portable history/fallback representation.
+    /// OpenAI wire shape is `{data: <base64>, format: "wav"|"mp3"|...}`. Valid
+    /// WAV payloads decode directly to PCM samples so the Nemotron Omni adapter
+    /// can pre-encode without a temp-file re-decode. Other supported containers
+    /// still materialize to a temp file and let vmlx's AVAudioConverter path
+    /// handle codec-specific decoding. Live in-app voice may also carry local
+    /// PCM samples aligned to the same audio part, in which case we hand those
+    /// samples directly to vmlx and keep the encoded bytes only as the portable
+    /// history/fallback representation.
     private struct AudioMaterializationMetrics {
         var inputCount = 0
         var localSampleCount = 0
@@ -1598,14 +1600,26 @@ public actor ModelRuntime {
                 continue
             }
 
-            let ext = format.lowercased()
+            if let bytes = Data(base64Encoded: data),
+                let decoded = decodeWAVAudioSamples(bytes)
+            {
+                metrics.localSampleCount += 1
+                metrics.byteCount += decoded.byteCount
+                sources.append(.samples(decoded.samples, sampleRate: decoded.sampleRate))
+                continue
+            }
+
+            let ext = format.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                .lowercased()
+            let fallbackExtension = ext.isEmpty ? "wav" : ext
             // Synthesize a `data:audio/<format>;base64,<data>` URL so we can
             // reuse the same materializer the video path uses. The audio data
             // comes in as a bare base64 string from `input_audio.data`, not a
             // data URL — wrap it before handing off so the helper's data-URL
             // parsing applies uniformly.
-            let dataUrl = "data:audio/\(ext);base64,\(data)"
-            if let file = materializeMediaDataUrlResult(dataUrl, defaultExtension: ext.isEmpty ? "wav" : ext) {
+            let dataUrl = "data:audio/\(fallbackExtension);base64,\(data)"
+            if let file = materializeMediaDataUrlResult(dataUrl, defaultExtension: fallbackExtension) {
                 metrics.materializedCount += 1
                 metrics.byteCount += file.byteCount
                 sources.append(.url(file.url))
@@ -1613,6 +1627,163 @@ public actor ModelRuntime {
         }
         metrics.materializeMs += Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
         return sources
+    }
+
+    private struct DecodedAudioSamples {
+        let samples: [Float]
+        let sampleRate: Int
+        let byteCount: Int
+    }
+
+    nonisolated private static func decodeWAVAudioSamples(_ bytes: Data) -> DecodedAudioSamples? {
+        guard bytes.count >= 44 else { return nil }
+        guard ascii(bytes, offset: 0, count: 4) == "RIFF",
+            ascii(bytes, offset: 8, count: 4) == "WAVE"
+        else { return nil }
+
+        var offset = 12
+        var audioFormat: UInt16?
+        var channelCount: UInt16?
+        var sampleRate: Int?
+        var blockAlign: UInt16?
+        var bitsPerSample: UInt16?
+        var dataRange: Range<Int>?
+
+        while offset + 8 <= bytes.count {
+            guard let chunkId = ascii(bytes, offset: offset, count: 4),
+                let chunkSize = readUInt32LE(bytes, offset: offset + 4)
+            else { return nil }
+
+            let chunkStart = offset + 8
+            let chunkEnd = chunkStart + Int(chunkSize)
+            guard chunkEnd <= bytes.count else { return nil }
+
+            switch chunkId {
+            case "fmt ":
+                guard chunkSize >= 16,
+                    let format = readUInt16LE(bytes, offset: chunkStart),
+                    let channels = readUInt16LE(bytes, offset: chunkStart + 2),
+                    let rate = readUInt32LE(bytes, offset: chunkStart + 4),
+                    let align = readUInt16LE(bytes, offset: chunkStart + 12),
+                    let bits = readUInt16LE(bytes, offset: chunkStart + 14)
+                else { return nil }
+                audioFormat = format
+                if format == 0xFFFE, chunkSize >= 40,
+                    let subformat = readUInt16LE(bytes, offset: chunkStart + 24)
+                {
+                    audioFormat = subformat
+                }
+                channelCount = channels
+                sampleRate = Int(rate)
+                blockAlign = align
+                bitsPerSample = bits
+
+            case "data":
+                dataRange = chunkStart ..< chunkEnd
+
+            default:
+                break
+            }
+
+            offset = chunkEnd + (Int(chunkSize) & 1)
+        }
+
+        guard let format = audioFormat,
+            let channels = channelCount,
+            let rate = sampleRate,
+            let align = blockAlign,
+            let bits = bitsPerSample,
+            let range = dataRange,
+            channels > 0,
+            rate > 0,
+            align > 0
+        else { return nil }
+
+        let channelTotal = Int(channels)
+        let bytesPerSample = Int(bits / 8)
+        guard bytesPerSample > 0, Int(align) >= channelTotal * bytesPerSample else { return nil }
+        guard format == 1 || format == 3 else { return nil }
+        if format == 3 {
+            guard bits == 32 else { return nil }
+        } else {
+            guard bits == 8 || bits == 16 || bits == 24 || bits == 32 else { return nil }
+        }
+
+        let frameStride = Int(align)
+        let frameCount = range.count / frameStride
+        guard frameCount > 0 else { return nil }
+
+        var samples: [Float] = []
+        samples.reserveCapacity(frameCount)
+        for frame in 0 ..< frameCount {
+            let frameOffset = range.lowerBound + frame * frameStride
+            var mixed = Float(0)
+            for channel in 0 ..< channelTotal {
+                let sampleOffset = frameOffset + channel * bytesPerSample
+                guard let sample = decodeWAVSample(bytes, offset: sampleOffset, format: format, bits: bits)
+                else { return nil }
+                mixed += sample
+            }
+            samples.append(mixed / Float(channelTotal))
+        }
+
+        return DecodedAudioSamples(samples: samples, sampleRate: rate, byteCount: bytes.count)
+    }
+
+    nonisolated private static func decodeWAVSample(
+        _ bytes: Data,
+        offset: Int,
+        format: UInt16,
+        bits: UInt16
+    ) -> Float? {
+        switch (format, bits) {
+        case (1, 8):
+            guard offset < bytes.count else { return nil }
+            return max(-1, min(1, (Float(bytes[offset]) - 128.0) / 127.0))
+        case (1, 16):
+            guard let raw = readUInt16LE(bytes, offset: offset) else { return nil }
+            return max(-1, min(1, Float(Int16(bitPattern: raw)) / Float(Int16.max)))
+        case (1, 24):
+            guard let raw = readInt24LE(bytes, offset: offset) else { return nil }
+            return max(-1, min(1, Float(raw) / 8_388_607.0))
+        case (1, 32):
+            guard let raw = readUInt32LE(bytes, offset: offset) else { return nil }
+            return max(-1, min(1, Float(Int32(bitPattern: raw)) / Float(Int32.max)))
+        case (3, 32):
+            guard let raw = readUInt32LE(bytes, offset: offset) else { return nil }
+            return Float(bitPattern: raw)
+        default:
+            return nil
+        }
+    }
+
+    nonisolated private static func ascii(_ bytes: Data, offset: Int, count: Int) -> String? {
+        guard offset >= 0, count >= 0, offset + count <= bytes.count else { return nil }
+        return String(data: bytes[offset ..< offset + count], encoding: .ascii)
+    }
+
+    nonisolated private static func readUInt16LE(_ bytes: Data, offset: Int) -> UInt16? {
+        guard offset >= 0, offset + 2 <= bytes.count else { return nil }
+        return UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
+    }
+
+    nonisolated private static func readUInt32LE(_ bytes: Data, offset: Int) -> UInt32? {
+        guard offset >= 0, offset + 4 <= bytes.count else { return nil }
+        return UInt32(bytes[offset])
+            | (UInt32(bytes[offset + 1]) << 8)
+            | (UInt32(bytes[offset + 2]) << 16)
+            | (UInt32(bytes[offset + 3]) << 24)
+    }
+
+    nonisolated private static func readInt24LE(_ bytes: Data, offset: Int) -> Int32? {
+        guard offset >= 0, offset + 3 <= bytes.count else { return nil }
+        var raw = Int32(bytes[offset])
+            | (Int32(bytes[offset + 1]) << 8)
+            | (Int32(bytes[offset + 2]) << 16)
+        if (raw & 0x0080_0000) != 0 {
+            raw |= ~0x00FF_FFFF
+        }
+        return raw
     }
 
     /// Decode a `data:<mediatype>;base64,<bytes>` URL into a temp file URL with

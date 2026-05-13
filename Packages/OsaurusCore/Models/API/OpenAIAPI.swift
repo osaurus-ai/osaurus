@@ -167,11 +167,10 @@ struct LocalAudioSamples: Sendable, Equatable {
 ///   - `text` / `input_text` — plain text
 ///   - `image_url` — `{url, detail?}`. URL may be `data:image/...;base64,...` or `https://...`
 ///   - `input_audio` — `{data: <base64>, format: "wav"|"mp3"|"flac"|...}`. Mirrors the
-///     OpenAI Realtime / GPT-4o audio shape; the audio bytes are written to a temp
-///     file and handed to vmlx as `UserInput.Audio.url(...)` so vmlx's
-///     `nemotronOmniLoadAudioFile` (AVAudioConverter → 16 kHz mono Float32) handles
-///     all decoding. Format strings are passed through to vmlx unchanged — vmlx
-///     uses the file extension, so the format hint becomes the file extension.
+///     OpenAI Realtime / GPT-4o audio shape; valid WAV bytes decode directly to
+///     `UserInput.Audio.samples(...)` for local MLX, while other containers fall
+///     back to a temp file handed to vmlx as `UserInput.Audio.url(...)` so
+///     `nemotronOmniLoadAudioFile` can use AVAudioConverter.
 ///   - `video_url` — `{url}`. Mirrors the convention adopted by LM Studio / Ollama
 ///     for video inputs since OpenAI hasn't published a canonical chat-completions
 ///     video shape. URL may be `data:video/...;base64,...` or `https://...`.
@@ -299,10 +298,9 @@ struct ChatMessage: Codable, Sendable {
     }
 
     /// Extract `(base64, format)` pairs from `input_audio` content parts.
-    /// `format` is whatever the client sent (e.g. `"wav"`, `"mp3"`); we pass
-    /// it through to the file extension when materializing the temp file
-    /// because vmlx's `nemotronOmniLoadAudioFile` keys decoder selection on
-    /// the URL extension via AVAudioConverter.
+    /// `format` is whatever the client sent (e.g. `"wav"`, `"mp3"`); valid
+    /// WAV data can bypass temp-file materialization, and fallback containers
+    /// pass the format through to the temp-file extension for AVAudioConverter.
     var audioInputs: [(data: String, format: String)] {
         audioInputsWithLocalSamples.map { (data: $0.data, format: $0.format) }
     }
@@ -458,8 +456,7 @@ extension ChatMessage {
     /// modality. Audio bytes encode as `input_audio` with explicit
     /// format hint; video bytes encode as `video_url` with
     /// `data:video/<container>` URL. All three flow into the
-    /// OpenAI-compatible JSON shape that vmlx's
-    /// `mapOpenAIChatToMLX` materializes through
+    /// OpenAI-compatible JSON shape that `mapOpenAIChatToMLX` lowers through
     /// `extractAudioSources` / `extractVideoSources`.
     init(
         role: String,
