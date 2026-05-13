@@ -48,6 +48,13 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Task body runs). See `handleChatStreamingChange`.
     private var streamingObserved: Set<UUID> = []
 
+    /// Background-task id keyed by the chat window currently bound to it.
+    /// Populated by `detachChatWindow` and by `openTaskWindow`; consulted
+    /// by `ChatWindowManager` in `windowWillClose` to decide whether to
+    /// skip `cleanup()` (which would otherwise call `session.stop()` and
+    /// kill the in-flight stream).
+    private var taskIdByWindow: [UUID: UUID] = [:]
+
     /// Subject for batching view updates with throttling
     private let viewUpdateSubject = PassthroughSubject<Void, Never>()
     private var viewUpdateCancellable: AnyCancellable?
@@ -75,12 +82,65 @@ public final class BackgroundTaskManager: ObservableObject {
         backgroundTasks[id]
     }
 
+    /// Background-task id (if any) the given window is bound to. Returns
+    /// nil for plain chat windows that were never detached.
+    public func taskId(forWindowId windowId: UUID) -> UUID? {
+        taskIdByWindow[windowId]
+    }
+
+    /// Whether this window is bound to a still-tracked background task.
+    /// False if the window was never detached or its task already finalized.
+    public func isWindowDetachedToBackground(windowId: UUID) -> Bool {
+        guard let id = taskIdByWindow[windowId] else { return false }
+        return backgroundTasks[id] != nil
+    }
+
+    /// Detach a streaming chat window's session into a background task so
+    /// the user can close the window without killing the in-flight stream.
+    /// The detached task surfaces in `NotchView` and can be re-opened via
+    /// `openTaskWindow(_:)`.
+    ///
+    /// No-op if the window doesn't exist, isn't streaming, or was already
+    /// detached.
+    public func detachChatWindow(windowId: UUID) {
+        guard taskIdByWindow[windowId] == nil,
+            let session = ChatWindowManager.shared.windowState(id: windowId)?.session,
+            session.isStreaming
+        else { return }
+
+        // Persist before adopting so the sidebar and `openTaskWindow` reload
+        // path both see a real saved row for this session.
+        session.save()
+
+        let context = ExecutionContext(adopting: session)
+        let state = BackgroundTaskState(
+            id: context.id,
+            taskTitle: session.title,
+            agentId: context.agentId,
+            chatSession: session,
+            executionContext: context,
+            status: .running,
+            currentStep: "Running...",
+            source: .chat,
+            sourcePluginId: nil,
+            externalSessionKey: nil,
+            showToast: true
+        )
+        registerTask(state)
+        observeChatTask(state, session: session)
+        taskIdByWindow[windowId] = state.id
+        print("[BackgroundTaskManager] Detached chat window \(windowId) as task \(state.id)")
+    }
+
     /// Open a window for a background task
     public func openTaskWindow(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
 
         if let context = state.executionContext {
-            ChatWindowManager.shared.createWindowForContext(context, showImmediately: true)
+            let windowId = ChatWindowManager.shared.createWindowForContext(context, showImmediately: true)
+            // Bind window→task so closing this window doesn't kill the
+            // still-running task — gated in `ChatWindowManager.windowWillClose`.
+            taskIdByWindow[windowId] = backgroundId
         }
 
         if !state.status.isActive {
@@ -116,6 +176,9 @@ public final class BackgroundTaskManager: ObservableObject {
         taskObservers.removeValue(forKey: backgroundId)
         chatTurnCounts.removeValue(forKey: backgroundId)
         streamingObserved.remove(backgroundId)
+        // Drop any window→task bindings pointing here so a still-open
+        // window's close path stops thinking the task is alive.
+        taskIdByWindow = taskIdByWindow.filter { $0.value != backgroundId }
 
         state.releaseReferences()
 

@@ -2266,6 +2266,17 @@ struct ChatView: View {
                 primaryButton: .primary("Yes") { session.autoSpeakAssistant = true },
                 secondaryButton: .cancel("No")
             )
+            .themedAlert(
+                "Keep this chat running?",
+                isPresented: $windowState.showCloseConfirmation,
+                message:
+                    "The model is still generating a reply. Continue in the background and track progress in the menu-bar notch, or stop now.",
+                buttons: [
+                    .primary("Continue in Background") { windowState.confirmCloseInBackground() },
+                    .destructive("Stop and Close") { windowState.confirmCloseAndStop() },
+                    .cancel("Cancel"),
+                ]
+            )
             .themedAlertScope(.chat(windowState.windowId))
             .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
             .overlay { promptOverlayLayer }

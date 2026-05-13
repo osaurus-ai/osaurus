@@ -139,11 +139,19 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         window.close()
     }
 
-    /// Check if window close should be allowed. Chat sessions can always
-    /// be safely closed; users keep work running by leaving the window open.
+    /// Gate the close: if the session is mid-stream and not already
+    /// detached to a background task, surface the in-chat confirmation
+    /// overlay and tell AppKit to keep the window open. The user's pick
+    /// (Continue in Background / Stop and Close) re-enters via
+    /// `closeWindow(id:)`, which now passes this gate.
     private func shouldAllowClose(id: UUID) -> Bool {
-        _ = id
-        return true
+        guard let state = windowStates[id] else { return true }
+        if BackgroundTaskManager.shared.isWindowDetachedToBackground(windowId: id) {
+            return true
+        }
+        guard state.session.isStreaming else { return true }
+        state.showCloseConfirmation = true
+        return false
     }
 
     /// Show/focus a window by ID
@@ -502,7 +510,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     fileprivate func windowWillClose(id: UUID) {
         print("[ChatWindowManager] Window \(id) will close")
 
-        let isDetachedToBackground = BackgroundTaskManager.shared.isBackgroundTask(id)
+        let isDetachedToBackground = BackgroundTaskManager.shared.isWindowDetachedToBackground(windowId: id)
 
         // Only invoke save callback and cleanup if NOT detached to background
         // (background task needs the session to keep running)

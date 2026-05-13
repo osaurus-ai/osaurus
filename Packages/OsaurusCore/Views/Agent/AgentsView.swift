@@ -2103,7 +2103,9 @@ struct AgentDetailView: View {
                 if !ttsService.isModelReady {
                     Button {
                         NotificationCenter.default.post(
-                            name: .openTTSSettingsRequested, object: nil)
+                            name: .openTTSSettingsRequested,
+                            object: nil
+                        )
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.down.circle")

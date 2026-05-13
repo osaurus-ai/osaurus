@@ -97,6 +97,20 @@ public final class ExecutionContext: ObservableObject {
     /// `prepare()` re-apply the persisted model once picker items load.
     private var pendingReattachSession: ChatSessionData?
 
+    /// Wrap a live `ChatSession` that's already streaming in a UI window so
+    /// `BackgroundTaskManager.detachChatWindow` can keep the in-flight
+    /// stream alive after the user closes the window. Reuses the existing
+    /// instance verbatim — no new session, no disk hydration — so all
+    /// existing publishers (`isStreaming`, `turns`, `awaitingClarify`, …)
+    /// keep firing uninterrupted.
+    init(adopting session: ChatSession, folderBookmark: Data? = nil) {
+        self.id = session.sessionId ?? UUID()
+        self.agentId = session.agentId ?? Agent.defaultId
+        self.title = session.title
+        self.folderBookmark = folderBookmark
+        self.chatSession = session
+    }
+
     // MARK: - Execution
 
     /// Load picker items. Call before `start(prompt:)`.
