@@ -51,4 +51,42 @@ struct ChatAttachmentSecurityTests {
         let message = ChatSession.buildUserMessageText(content: "", attachments: [attachment])
         #expect(message.contains(#"<attached_document name="attachment">"#))
     }
+
+    @Test func buildUserChatMessage_forwardsAudioAndVideoWhenSupported() {
+        let audio = Attachment.audio(Data([0x01, 0x02, 0x03]), format: "wav", filename: "voice.wav")
+        let video = Attachment.video(Data([0x10, 0x11]), filename: "clip.mov")
+
+        let message = ChatSession.buildUserChatMessage(
+            content: "describe",
+            attachments: [audio, video],
+            supportsImages: false,
+            supportsAudio: true,
+            supportsVideo: true
+        )
+
+        #expect(message.content == "describe")
+        #expect(message.audioInputs.count == 1)
+        #expect(message.audioInputs[0].data == Data([0x01, 0x02, 0x03]).base64EncodedString())
+        #expect(message.audioInputs[0].format == "wav")
+        #expect(message.videoUrls.count == 1)
+        #expect(message.videoUrls[0] == "data:video/quicktime;base64,\(Data([0x10, 0x11]).base64EncodedString())")
+    }
+
+    @Test func buildUserChatMessage_dropsAudioAndVideoWhenUnsupported() {
+        let audio = Attachment.audio(Data([0x01]), format: "wav", filename: "voice.wav")
+        let video = Attachment.video(Data([0x02]), filename: "clip.mp4")
+
+        let message = ChatSession.buildUserChatMessage(
+            content: "plain",
+            attachments: [audio, video],
+            supportsImages: false,
+            supportsAudio: false,
+            supportsVideo: false
+        )
+
+        #expect(message.content == "plain")
+        #expect(message.contentParts == nil)
+        #expect(message.audioInputs.isEmpty)
+        #expect(message.videoUrls.isEmpty)
+    }
 }

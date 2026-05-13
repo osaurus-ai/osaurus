@@ -18,8 +18,10 @@ cache restore token-aware. Omni audio support is gated by
 - `FloatingInputCard.sendVoiceMessage(_:)` captures the WAV before stopping
   transcription and appends it as `Attachment.audio(..., format: "wav")` when
   the selected model supports audio.
-- Existing chat attachment flow converts `Attachment.audio` into
-  `input_audio` content parts.
+- `ChatSession.buildUserChatMessage(...)` converts supported image/audio/video
+  attachments into multimodal `ChatMessage` content parts. This closes the UI
+  bridge gap where live voice appended `Attachment.audio` but the in-app
+  send path could still serialize the turn as plain text only.
 - `ModelRuntime.extractAudioSources(from:)` materializes `input_audio` into a
   temp audio file and hands `UserInput.Audio.url` to vMLX.
 - `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `fb8fb39` so
@@ -55,6 +57,13 @@ cache restore token-aware. Omni audio support is gated by
   `dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK` and
   `nemotron-omni-nano-jangtq-crack`, and the runtime default
   `enable_thinking=false` with explicit opt-in still honored.
+- Focused UI/API attachment regression tests passed:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+  --filter 'ChatAttachmentSecurityTests|MultimodalContentPartTests'`.
+  The tests cover the new user-message builder forwarding audio/video
+  attachments when capabilities allow them, dropping audio/video when
+  unsupported, and the existing `input_audio`/`video_url` mapping into vMLX
+  `Chat.Message.audios` / `.videos`.
 - `OmniAudioLatencyBench` on `Nemotron-Omni-Nano-JANGTQ-CRACK` measured the
   Osaurus BatchEngine path at `1514.1 ms` raw PCM first semantic delta on
   turn 1, `1498.6 ms` raw PCM on turn 2, `208.9 ms` pre-encoded Parakeet on

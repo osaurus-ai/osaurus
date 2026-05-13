@@ -404,6 +404,16 @@ final class ChatSession: ObservableObject {
         return option.isVLM
     }
 
+    var selectedModelSupportsAudio: Bool {
+        guard let model = selectedModel else { return false }
+        return ModelMediaCapabilities.from(modelId: model).supportsAudio
+    }
+
+    var selectedModelSupportsVideo: Bool {
+        guard let model = selectedModel else { return false }
+        return ModelMediaCapabilities.from(modelId: model).supportsVideo
+    }
+
     /// Get the currently selected ModelPickerItem
     var selectedPickerItem: ModelPickerItem? {
         guard let model = selectedModel else { return nil }
@@ -567,6 +577,64 @@ final class ChatSession: ObservableObject {
         }
 
         return parts.joined(separator: "\n\n")
+    }
+
+    static func buildUserChatMessage(
+        content: String,
+        attachments: [Attachment],
+        supportsImages: Bool,
+        supportsAudio: Bool,
+        supportsVideo: Bool
+    ) -> ChatMessage {
+        let messageText = buildUserMessageText(content: content, attachments: attachments)
+        let imageData = supportsImages ? attachments.images : []
+        let audios: [(data: Data, format: String)] = supportsAudio
+            ? attachments.compactMap(audioPayload)
+            : []
+        let videos: [(data: Data, mimeSubtype: String)] = supportsVideo
+            ? attachments.compactMap(videoPayload)
+            : []
+
+        if !imageData.isEmpty || !audios.isEmpty || !videos.isEmpty {
+            return ChatMessage(
+                role: "user",
+                text: messageText,
+                imageData: imageData,
+                audios: audios,
+                videos: videos
+            )
+        }
+
+        return ChatMessage(role: "user", content: messageText)
+    }
+
+    private static func audioPayload(from attachment: Attachment) -> (data: Data, format: String)? {
+        guard attachment.isAudio, let data = attachment.loadAudioData() else { return nil }
+        let format = attachment.audioFormat?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return (data, (format?.isEmpty == false) ? format! : "wav")
+    }
+
+    private static func videoPayload(from attachment: Attachment) -> (data: Data, mimeSubtype: String)? {
+        guard attachment.isVideo, let data = attachment.loadVideoData() else { return nil }
+        return (data, videoMimeSubtype(for: attachment.filename))
+    }
+
+    private static func videoMimeSubtype(for filename: String?) -> String {
+        let ext = ((filename ?? "") as NSString).pathExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch ext {
+        case "mov", "qt", "quicktime":
+            return "quicktime"
+        case "m4v":
+            return "mp4"
+        case "":
+            return "mp4"
+        default:
+            return ext
+        }
     }
 
     private static func escapeAttachmentName(_ raw: String) -> String {
@@ -1671,13 +1739,13 @@ final class ChatSession: ObservableObject {
                             tool_call_id: t.toolCallId
                         )
                     case .user:
-                        let messageText = Self.buildUserMessageText(content: t.content, attachments: t.attachments)
-                        let imageData = selectedModelSupportsImages ? t.attachments.images : []
-                        if !imageData.isEmpty {
-                            return ChatMessage(role: "user", text: messageText, imageData: imageData)
-                        } else {
-                            return ChatMessage(role: t.role.rawValue, content: messageText)
-                        }
+                        return Self.buildUserChatMessage(
+                            content: t.content,
+                            attachments: t.attachments,
+                            supportsImages: selectedModelSupportsImages,
+                            supportsAudio: selectedModelSupportsAudio,
+                            supportsVideo: selectedModelSupportsVideo
+                        )
                     default:
                         return ChatMessage(role: t.role.rawValue, content: t.content)
                     }
