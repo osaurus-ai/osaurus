@@ -177,9 +177,10 @@ public actor RemoteProviderService: ToolCapableService {
         model: String,
         effort: String?
     ) -> (effort: String?, thinking: ThinkingConfig?) {
-        guard let normalized = effort?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased(), !normalized.isEmpty
+        guard
+            let normalized = effort?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased(), !normalized.isEmpty
         else {
             return (nil, nil)
         }
@@ -194,7 +195,7 @@ public actor RemoteProviderService: ToolCapableService {
         guard isDirectRailEffort else { return (normalized, nil) }
         let thinking =
             host.lowercased().contains("deepseek")
-            && DSV4ReasoningProfile.matches(modelId: model)
+                && DSV4ReasoningProfile.matches(modelId: model)
             ? ThinkingConfig(type: "disabled") : nil
         return (nil, thinking)
     }

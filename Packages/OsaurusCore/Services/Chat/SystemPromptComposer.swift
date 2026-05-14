@@ -569,6 +569,28 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // Agent DB onboarding (spec §5.5.3) + schema snapshot (§5.5.5).
+        // Gated on `dbEnabled`; rendered before model-family guidance so
+        // it sits as close to the persona as possible (the agent should
+        // read it before any operational guidance). The snapshot read
+        // can fail when the DB couldn't open (rare); fall back to the
+        // "no tables yet" empty state so the prompt is well-formed even
+        // when state is partially broken.
+        if !effectiveToolsOff, snapshot.dbEnabled {
+            var dbSection = OnboardingPrompt.block
+            let snapshotText = Self.renderSchemaSnapshot(agentId: agentId)
+            if !snapshotText.isEmpty {
+                dbSection += "\n\n" + snapshotText
+            }
+            composer.append(
+                .static(
+                    id: "agentDB",
+                    label: "Agent DB",
+                    content: dbSection
+                )
+            )
+        }
+
         // Per-model-family nudge — small, targeted blocks for known model
         // weaknesses (Gemma over-enumerates, GPT under-acts, etc.). We
         // deliberately ship NO universal "agentic workflow" addendum: it
@@ -777,6 +799,38 @@ public struct SystemPromptComposer: Sendable {
     static let agentLoopToolNames: Set<String> = [
         "todo", "complete", "clarify", "share_artifact",
     ]
+
+    /// Tools belonging to the Agent DB feature (spec §6). Gated on
+    /// `AgentConfigSnapshot.dbEnabled` in `resolveTools` so agents that
+    /// haven't opted in don't see them in the schema or the system
+    /// prompt — keeps tool count + token cost the same as before for
+    /// users who never enable the feature.
+    static let agentDBToolNames: Set<String> = [
+        "db_schema", "db_create_table", "db_alter_table", "db_migrate",
+        "db_insert", "db_upsert", "db_update", "db_delete", "db_restore",
+        "db_query", "db_execute",
+        // Saved views (spec §6.3 / phase 2).
+        "db_define_view", "db_run_view", "db_list_views", "db_drop_view",
+    ]
+
+    /// Render the schema snapshot block injected after the onboarding
+    /// prompt when `dbEnabled` is true. Best-effort: a failure to open
+    /// the DB (e.g. the user just enabled the toggle and the first
+    /// open hasn't run yet) falls back to the empty-state block so the
+    /// agent never sees a half-rendered prompt. Sync because the
+    /// underlying `LocalAgentBridge.schemaSnapshot` is sync.
+    static func renderSchemaSnapshot(agentId: UUID) -> String {
+        do {
+            return try LocalAgentBridge.shared.schemaSnapshot(agentId: agentId)
+        } catch {
+            debugLog(
+                "[Context:agentDB] schema snapshot unavailable for "
+                    + "\(agentId.uuidString): \(error.localizedDescription); "
+                    + "falling back to empty state"
+            )
+            return SchemaSnapshot.emptyStateBlock
+        }
+    }
 
     /// Tools that can mutate the user's filesystem, exec arbitrary code,
     /// or install dependencies. `codeStyleGuidance` and `riskAwareGuidance`
@@ -1191,6 +1245,19 @@ public struct SystemPromptComposer: Sendable {
 
         if !additionalToolNames.isEmpty {
             add(ToolRegistry.shared.specs(forTools: Array(additionalToolNames)))
+        }
+
+        // Agent DB feature (spec §6) is opt-in per agent. The `db_*` tools
+        // are registered as built-ins so they always live in the always-
+        // loaded surface; stripping them here keeps the schema clean for
+        // every agent that hasn't enabled the feature. The system prompt
+        // composer also skips the onboarding block when `dbEnabled` is
+        // false — both gates read from `AgentConfigSnapshot.dbEnabled`,
+        // captured once at the start of compose.
+        if !snapshot.dbEnabled {
+            for name in agentDBToolNames {
+                byName.removeValue(forKey: name)
+            }
         }
 
         return canonicalToolOrder(Array(byName.values))

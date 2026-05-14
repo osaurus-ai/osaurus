@@ -148,6 +148,20 @@ struct AgentsView: View {
                 hasAppeared = true
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
+            // Notification-tap deep-link router (spec §3.3). Resolves
+            // the target agent and surfaces it; `AgentDetailView`
+            // observes the same notification to flip its inner tab
+            // selection so this view stays single-purpose.
+            guard let info = note.userInfo,
+                let agentId = info["agentId"] as? UUID,
+                let target = agentManager.agents.first(where: { $0.id == agentId })
+            else { return }
+            withAnimation(Self.navTransition) {
+                selectedRemoteAgentId = nil
+                selectedAgent = target
+            }
+        }
     }
 
     // MARK: - Grid Content
@@ -682,6 +696,30 @@ private enum DetailTab: String, CaseIterable {
     case sandbox
     case automation
     case memory
+    /// Agent DB feature (spec §5.5 / §7). Visible only when
+    /// `Agent.settings.dbEnabled == true`; the tab strip filters
+    /// these out via `Self.allTabsForAgent`. Order in the strip
+    /// follows the canonical iteration order on `allCases`.
+    case home
+    case schema
+    case data
+    case views
+    case activity
+
+    /// DetailTabs that belong to the Agent DB feature. Hidden from
+    /// the tab strip unless the agent has `settings.dbEnabled`.
+    static let dbTabs: Set<DetailTab> = [.home, .schema, .data, .views, .activity]
+
+    /// Tabs visible for `agent`, in canonical order. We render the
+    /// schema/data/activity trio at the end so they sit visually
+    /// adjacent to memory — both surface "what does this agent
+    /// remember?" but along different axes.
+    static func allTabsForAgent(_ agent: Agent) -> [DetailTab] {
+        if agent.settings.dbEnabled {
+            return DetailTab.allCases
+        }
+        return DetailTab.allCases.filter { !dbTabs.contains($0) }
+    }
 
     var label: String {
         switch self {
@@ -692,6 +730,11 @@ private enum DetailTab: String, CaseIterable {
         case .sandbox: return "Sandbox"
         case .automation: return "Automation"
         case .memory: return "Memory"
+        case .home: return "Home"
+        case .schema: return "Schema"
+        case .data: return "Data"
+        case .views: return "Views"
+        case .activity: return "Activity"
         }
     }
 
@@ -704,6 +747,11 @@ private enum DetailTab: String, CaseIterable {
         case .sandbox: return "shippingbox"
         case .automation: return "clock.badge.checkmark"
         case .memory: return "brain.head.profile"
+        case .home: return "house"
+        case .schema: return "tablecells"
+        case .data: return "square.grid.3x1.below.line.grid.1x2"
+        case .views: return "eye"
+        case .activity: return "waveform.path.ecg"
         }
     }
 
@@ -716,6 +764,16 @@ private enum DetailTab: String, CaseIterable {
         case .sandbox: return "Container-based code execution."
         case .automation: return "Schedules and file watchers for autonomous behavior."
         case .memory: return "Conversation history, pinned facts, and episode summaries."
+        case .home:
+            return "Dashboard of pinned views — the agent's own home screen."
+        case .schema:
+            return "Tables, columns, indexes the agent has created in its private database."
+        case .data:
+            return "Browse, inspect, and export the rows stored in the agent's database."
+        case .views:
+            return "Saved SQL views the agent reuses across runs."
+        case .activity:
+            return "Run history and the audit trail of every write the agent has done."
         }
     }
 }
@@ -796,6 +854,42 @@ struct AgentDetailView: View {
     @State private var pluginInstructionsMap: [String: String] = [:]
     @State private var disableTools: Bool = false
     @State private var disableMemory: Bool = false
+    /// Local mirror of `Agent.settings.dbEnabled` (spec §5.5). The
+    /// Features section binds a toggle to this; `debouncedSave`
+    /// folds it back into the persisted `AgentSettings` block.
+    @State private var dbEnabled: Bool = false
+    /// Bound to the `Delete Data` confirmation dialog. We require an
+    /// explicit confirmation because deleting an agent's DB throws
+    /// away its only copy (the encrypted `db.sqlite`) of the data it
+    /// has accumulated — no Trash, no undo.
+    @State private var showDeleteDBConfirmation: Bool = false
+
+    // MARK: - Bundle export/import state (spec §11.1)
+
+    /// Pending export destination — `nil` when no export is in flight.
+    /// Bound to the passphrase sheet so the user types the seal
+    /// passphrase after picking a destination.
+    @State private var bundleExportDestination: URL? = nil
+    /// Pending import source URL the user picked from `NSOpenPanel`,
+    /// awaiting passphrase entry.
+    @State private var bundleImportSource: URL? = nil
+    /// Passphrase typed into the active sheet. Cleared on dismiss.
+    @State private var bundlePassphraseInput: String = ""
+    /// Confirmation passphrase typed during export, to catch typos
+    /// before we burn through PBKDF2 600k iterations sealing a key
+    /// the user has no hope of remembering.
+    @State private var bundleConfirmPassphraseInput: String = ""
+    /// Held after a successful unpack — drives the review-before-
+    /// activate sheet (manifest contents + Activate / Discard).
+    @State private var bundleImportPreview: AgentBundleService.ImportPreview? = nil
+    /// `true` while the bundle service is running export/unpack
+    /// asynchronously. Disables both bundle buttons to avoid
+    /// double-clicks.
+    @State private var isBundleBusy: Bool = false
+    /// Most-recent error message from a bundle operation. Surfaced
+    /// via `ThemedAlertDialog` (reusing the existing alert host).
+    @State private var bundleErrorMessage: String? = nil
+    @State private var bundleSuccessMessage: String? = nil
     @State private var autoSpeak: Bool = false
     @State private var ttsVoice: String = ""
     @ObservedObject private var ttsService = TTSService.shared
@@ -817,6 +911,17 @@ struct AgentDetailView: View {
     // MARK: - UI State
 
     @State private var selectedTab: AgentTab = .builtIn(.configure)
+    /// Optional saved-view name to focus when the user lands on the
+    /// Views tab via the notification deep-link (spec §3.3). Passed
+    /// through to `ViewsTabView`, which uses it as an initial
+    /// `selection`. Cleared back to `nil` once the user navigates
+    /// elsewhere so re-entering the tab manually doesn't keep
+    /// snapping back to the old view.
+    @State private var pendingFocusedViewName: String? = nil
+    /// Optional table name to pre-select when the user lands on the
+    /// Data tab via the Schema-tab "Browse" deep-link. Same lifecycle
+    /// as `pendingFocusedViewName`.
+    @State private var pendingFocusedTableName: String? = nil
     @State private var hasAppeared = false
     @State private var saveIndicator: String?
     @State private var saveDebounceTask: Task<Void, Never>?
@@ -940,6 +1045,17 @@ struct AgentDetailView: View {
         VStack(spacing: 0) {
             detailHeaderBar
 
+            // Next Run panel (spec §9.4) sits above the tab strip for any
+            // user-created agent. The panel renders one of three banner
+            // shapes — paused, scheduled, or idle — and is the only place
+            // Pause/Resume is reachable at-a-glance. The mode picker
+            // itself moved into the Configure tab; a read-only mode chip
+            // here links back to it.
+            if agent.id != Agent.defaultId {
+                NextRunPanelView(agentId: agent.id)
+                    .environment(\.theme, theme)
+            }
+
             VStack(alignment: .leading, spacing: 0) {
                 tabBar
                     .padding(.horizontal, 20)
@@ -948,13 +1064,39 @@ struct AgentDetailView: View {
                 Divider()
                     .foregroundColor(theme.primaryBorder)
 
-                // Capabilities is the only tab whose body has its own scroll
-                // (NSTableView inside `AgentCapabilityManagerView`). Rendering
-                // it directly — without the outer ScrollView the other tabs
-                // share — keeps the table flush and avoids nested scrolling.
+                // Capabilities + Schema/Data/Activity host their own scrolling
+                // (NSTableView / NSOutlineView). Rendering them directly —
+                // without the outer ScrollView the other tabs share — keeps
+                // their tables flush and avoids nested scrolling.
                 switch selectedTab {
                 case .builtIn(.capabilities):
                     AgentCapabilityManagerView(agentId: agent.id, onDismiss: nil)
+                        .environment(\.theme, themeManager.currentTheme)
+                        .id(selectedTab)
+                case .builtIn(.home):
+                    HomeTabView(agentId: agent.id)
+                        .environment(\.theme, themeManager.currentTheme)
+                        .id(selectedTab)
+                case .builtIn(.schema):
+                    SchemaTabView(agentId: agent.id)
+                        .environment(\.theme, themeManager.currentTheme)
+                        .id(selectedTab)
+                case .builtIn(.data):
+                    DataTabView(
+                        agentId: agent.id,
+                        initialSelectedTable: pendingFocusedTableName
+                    )
+                    .environment(\.theme, themeManager.currentTheme)
+                    .id(selectedTab)
+                case .builtIn(.views):
+                    ViewsTabView(
+                        agentId: agent.id,
+                        initialFocusedViewName: pendingFocusedViewName
+                    )
+                    .environment(\.theme, themeManager.currentTheme)
+                    .id(selectedTab)
+                case .builtIn(.activity):
+                    ActivityTabView(agentId: agent.id)
                         .environment(\.theme, themeManager.currentTheme)
                         .id(selectedTab)
                 default:
@@ -968,6 +1110,7 @@ struct AgentDetailView: View {
                     .animation(nil, value: selectedTab)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -982,6 +1125,58 @@ struct AgentDetailView: View {
                 isInitialLoadComplete = true
             }
             withAnimation { hasAppeared = true }
+        }
+        .onChange(of: dbEnabled) { _, newValue in
+            // Watch the local `@State dbEnabled` (driven by the Configure
+            // tab toggle), not `agent.settings.dbEnabled` — the prop is
+            // frozen at view construction and would never fire. If the
+            // user just turned the DB feature off while sitting on a
+            // DB-only tab, snap back to Configure so they're not
+            // stranded on a tab whose data has just been deleted.
+            if !newValue,
+                case .builtIn(let dt) = selectedTab,
+                DetailTab.dbTabs.contains(dt)
+            {
+                selectedTab = .builtIn(.configure)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
+            // Tab + entity deep-link handler. Used by:
+            //   - `NotifyTool` taps (`tab: "views"`, `viewRef: ...`)
+            //   - `SchemaTabView` "Browse" button (`tab: "data"`,
+            //     `tableRef: ...`)
+            // AgentsView selects the right agent via the same
+            // notification; this handler just flips the inner tab
+            // and stashes the entity name for the destination tab to
+            // pick up on first load.
+            guard let info = note.userInfo,
+                let targetId = info["agentId"] as? UUID,
+                targetId == agent.id
+            else { return }
+            if let tabRaw = info["tab"] as? String,
+                let tab = DetailTab(rawValue: tabRaw),
+                DetailTab.allTabsForAgent(currentAgent).contains(tab)
+            {
+                pendingFocusedViewName = info["viewRef"] as? String
+                pendingFocusedTableName = info["tableRef"] as? String
+                selectedTab = .builtIn(tab)
+            }
+        }
+        .onChange(of: selectedTab) { _, newValue in
+            // Drop any leftover notification-driven focus when the
+            // user navigates to a tab the focus doesn't apply to.
+            // The focused-name state is set together with
+            // `selectedTab` in the deeplink handler above so it
+            // survives this transition exactly once.
+            switch newValue {
+            case .builtIn(.views):
+                pendingFocusedTableName = nil
+            case .builtIn(.data):
+                pendingFocusedViewName = nil
+            default:
+                pendingFocusedViewName = nil
+                pendingFocusedTableName = nil
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
             loadedPluginsRefreshNonce &+= 1
@@ -1017,6 +1212,48 @@ struct AgentDetailView: View {
         .onReceive(ModelPickerItemCache.shared.$items) { options in
             pickerItems = options
         }
+        .sheet(
+            isPresented: Binding(
+                get: { bundleExportDestination != nil },
+                set: { if !$0 { bundleExportDestination = nil } }
+            )
+        ) {
+            bundleExportPassphraseSheet
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { bundleImportSource != nil },
+                set: { if !$0 { bundleImportSource = nil } }
+            )
+        ) {
+            bundleImportPassphraseSheet
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { bundleImportPreview != nil },
+                set: { if !$0 { discardBundlePreview() } }
+            )
+        ) {
+            bundleImportReviewSheet
+        }
+        .themedAlert(
+            "Bundle operation failed",
+            isPresented: Binding(
+                get: { bundleErrorMessage != nil },
+                set: { if !$0 { bundleErrorMessage = nil } }
+            ),
+            message: bundleErrorMessage ?? "",
+            primaryButton: .primary("OK") { bundleErrorMessage = nil }
+        )
+        .themedAlert(
+            "Bundle ready",
+            isPresented: Binding(
+                get: { bundleSuccessMessage != nil },
+                set: { if !$0 { bundleSuccessMessage = nil } }
+            ),
+            message: bundleSuccessMessage ?? "",
+            primaryButton: .primary("OK") { bundleSuccessMessage = nil }
+        )
         .themedAlert(
             "Delete Agent",
             isPresented: $showDeleteConfirm,
@@ -1357,7 +1594,8 @@ struct AgentDetailView: View {
         switch tab {
         case .builtIn(let dt):
             switch dt {
-            case .configure, .capabilities, .customization, .network, .sandbox:
+            case .configure, .capabilities, .customization, .network, .sandbox,
+                .home, .schema, .data, .views, .activity:
                 return nil
             case .automation:
                 let count = linkedSchedules.count + linkedWatchers.count
@@ -1384,7 +1622,13 @@ struct AgentDetailView: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
-                    ForEach(DetailTab.allCases, id: \.self) { tab in
+                    // IMPORTANT: read from `currentAgent`, not the captured
+                    // `agent` prop. The prop is frozen at view construction
+                    // and never reflects toggle changes; `currentAgent`
+                    // re-fetches from `AgentManager` so flipping
+                    // `Enable Database` in Configure causes the DB tabs
+                    // (Home/Schema/Data/Views/Activity) to appear here.
+                    ForEach(DetailTab.allTabsForAgent(currentAgent), id: \.self) { tab in
                         tabButton(for: .builtIn(tab), label: tab.label, icon: tab.icon)
                             .id(AgentTab.builtIn(tab))
                     }
@@ -1586,6 +1830,9 @@ struct AgentDetailView: View {
         voiceSection
         systemPromptSection
         defaultModelSection
+        if agent.id != Agent.defaultId {
+            scheduleSection
+        }
         advancedSettingsDisclosure
     }
 
@@ -1607,6 +1854,15 @@ struct AgentDetailView: View {
             automationTabContent
         case .builtIn(.memory):
             memoryTabContent
+        case .builtIn(.home),
+            .builtIn(.schema),
+            .builtIn(.data),
+            .builtIn(.views),
+            .builtIn(.activity):
+            // Routed at the body level outside the ScrollView (the
+            // DB tabs host their own scrolling); the
+            // ScrollView-wrapping path would force a fixed sizing.
+            EmptyView()
         case .builtIn(.capabilities):
             // Routed at the body level outside the ScrollView; nothing to
             // render here. This branch keeps the switch exhaustive.
@@ -2020,6 +2276,136 @@ struct AgentDetailView: View {
         }
     }
 
+    // MARK: - Scheduling
+
+    /// Schedule-mode picker. Lives in Configure (not the top banner)
+    /// so each option can carry its own description of what it actually
+    /// changes — picking a mode rewrites the agent's `schedule`
+    /// preset via `AgentScheduleSettings.defaults(for:)`. The read-only
+    /// chip in the Next Run banner deep-links here.
+    private var scheduleSection: some View {
+        AgentDetailSection(title: "Scheduling", icon: "calendar.badge.clock") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(
+                    "How often this agent is allowed to run itself in the background. The agent picks its own next time within these bounds.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+                VStack(spacing: 8) {
+                    ForEach(AgentScheduleMode.allCases, id: \.self) { mode in
+                        scheduleModeCard(mode: mode)
+                    }
+                }
+            }
+        }
+    }
+
+    /// One radio-card in the schedule-mode list. Filled circle when
+    /// selected; the body lays out title + tagline + concrete preset
+    /// numbers so the user sees exactly what changing the mode does.
+    @ViewBuilder
+    private func scheduleModeCard(mode: AgentScheduleMode) -> some View {
+        let isSelected = (currentAgent.settings.schedule.mode == mode)
+        Button {
+            selectScheduleMode(mode)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 16))
+                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(Self.scheduleModeTitle(mode))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(Self.scheduleModeTagline(mode))
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    Text(Self.scheduleModePresetSummary(mode))
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? theme.accentColor.opacity(0.08) : theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isSelected ? theme.accentColor.opacity(0.6) : theme.inputBorder,
+                                lineWidth: 1
+                            )
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // TODO(mode-merge): the spec (§9.4 / §13) allows per-field overrides
+    // — horizon, interval, quiet hours — to coexist with the mode preset.
+    // Once those override controls land, change the setter below to MERGE
+    // `AgentScheduleSettings.defaults(for:)` with the user's preserved
+    // overrides instead of overwriting the whole struct. Today the radio
+    // cards are the only authoring surface so the destructive overwrite
+    // is intentional; a no-op review-then-replace once finer-grained
+    // controls ship.
+    private func selectScheduleMode(_ newMode: AgentScheduleMode) {
+        guard var current = agentManager.agent(for: agent.id) else { return }
+        guard current.settings.schedule.mode != newMode else { return }
+        current.settings = AgentSettings(
+            dbEnabled: current.settings.dbEnabled,
+            schedule: AgentScheduleSettings.defaults(for: newMode),
+            limits: current.settings.limits
+        )
+        current.updatedAt = Date()
+        agentManager.update(current)
+        showSaveIndicator()
+    }
+
+    private static func scheduleModeTitle(_ mode: AgentScheduleMode) -> String {
+        switch mode {
+        case .ambient: return "Ambient"
+        case .reactive: return "Reactive"
+        case .project: return "Project"
+        case .manual: return "Manual"
+        }
+    }
+
+    private static func scheduleModeTagline(_ mode: AgentScheduleMode) -> String {
+        switch mode {
+        case .ambient: return "Background helper"
+        case .reactive: return "Quick reflexes"
+        case .project: return "Deep work"
+        case .manual: return "Self-scheduling off"
+        }
+    }
+
+    /// Plain-English summary of the values written by
+    /// `AgentScheduleSettings.defaults(for:)` so the user knows what
+    /// changing modes actually does. Keep in sync with the presets in
+    /// `Agent.swift`.
+    private static func scheduleModePresetSummary(_ mode: AgentScheduleMode) -> String {
+        switch mode {
+        case .ambient:
+            return "Up to 6 runs/day · at most once an hour · quiet 10pm–7am."
+        case .reactive:
+            return "Up to 48 runs/day · as often as every 5 min · no quiet hours."
+        case .project:
+            return "Up to 4 runs/day · at most once an hour · quiet 10pm–7am."
+        case .manual:
+            return "The agent only runs when you ask. Scheduled API calls from the agent are rejected."
+        }
+    }
+
     /// Power-user generation overrides. Tucked inside the Advanced disclosure so
     /// the Configure tab leads with model + capabilities + system prompt for the
     /// 90% case.
@@ -2176,8 +2562,382 @@ struct AgentDetailView: View {
                     subtitle: "Memory will not be injected into prompts or recorded.",
                     isOn: $disableMemory
                 )
+                databaseFeatureRow
             }
         }
+    }
+
+    /// Row for the Agent DB feature (spec §5.5). Houses the on/off
+    /// toggle plus a Delete Data action that wipes the per-agent
+    /// `db.sqlite` (encrypted) and the scheduler-side rows belonging
+    /// to this agent. The Delete action only renders when the agent
+    /// has the feature on, since there's nothing to delete otherwise.
+    @ViewBuilder
+    private var databaseFeatureRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            featureToggleRow(
+                title: "Enable Database",
+                subtitle:
+                    "Give this agent a private encrypted SQLite database to remember structured data across runs.",
+                isOn: $dbEnabled
+            )
+            if dbEnabled, isUsingRemoteProvider {
+                // Spec §5.5.5 / line 340: when the agent's effective
+                // model is a remote (cloud) provider, surface the
+                // schema-leak disclaimer right under the toggle so the
+                // user knows exactly what crosses the wire.
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    Text(
+                        "Schema (table names and column types) is sent with each request. Row data is not.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 2)
+            }
+            if dbEnabled {
+                HStack(spacing: 8) {
+                    Button {
+                        beginBundleExport()
+                    } label: {
+                        Label("Export Bundle…", systemImage: "square.and.arrow.up")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isBundleBusy)
+                    Button {
+                        beginBundleImport()
+                    } label: {
+                        Label("Import Bundle…", systemImage: "square.and.arrow.down")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isBundleBusy)
+                    Spacer()
+                    Button(role: .destructive) {
+                        showDeleteDBConfirmation = true
+                    } label: {
+                        Label("Delete Data", systemImage: "trash")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.red)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete this agent's database?",
+            isPresented: $showDeleteDBConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Data", role: .destructive) {
+                deleteAgentDatabaseData()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This permanently erases the encrypted SQLite database, all "
+                    + "schema artifacts, all scheduled / pause state, and the run "
+                    + "history for this agent. The agent itself stays. This can't "
+                    + "be undone."
+            )
+        }
+    }
+
+    /// Whether the agent's effective model resolves to a connected
+    /// remote provider. Used by the privacy disclaimer under the
+    /// Database toggle (spec §5.5.5) so the warning only shows when
+    /// the schema actually crosses the wire. Local models stay
+    /// silent.
+    private var isUsingRemoteProvider: Bool {
+        guard let model = AgentManager.shared.effectiveModel(for: agent.id) else {
+            return false
+        }
+        return RemoteProviderManager.shared.findService(forModel: model) != nil
+    }
+
+    // MARK: - Bundle export/import (spec §11.1)
+
+    @ViewBuilder
+    private var bundleExportPassphraseSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Seal Bundle", bundle: .module)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            Text(
+                "Choose a passphrase (≥ 8 characters) to encrypt this agent's bundle. You'll need the same passphrase to import it on another Mac.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            SecureField("Passphrase", text: $bundlePassphraseInput)
+                .textFieldStyle(.roundedBorder)
+            SecureField("Confirm passphrase", text: $bundleConfirmPassphraseInput)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    bundleExportDestination = nil
+                    bundlePassphraseInput = ""
+                    bundleConfirmPassphraseInput = ""
+                }
+                .controlSize(.small)
+                Button("Export") {
+                    performBundleExport()
+                }
+                .controlSize(.small)
+                .keyboardShortcut(.defaultAction)
+                .disabled(
+                    bundlePassphraseInput.count < 8
+                        || bundlePassphraseInput != bundleConfirmPassphraseInput
+                )
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+
+    @ViewBuilder
+    private var bundleImportPassphraseSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Open Bundle", bundle: .module)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            if let url = bundleImportSource {
+                Text(url.lastPathComponent)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            Text("Enter the passphrase used when the bundle was exported.", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            SecureField("Passphrase", text: $bundlePassphraseInput)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    bundleImportSource = nil
+                    bundlePassphraseInput = ""
+                }
+                .controlSize(.small)
+                Button("Unlock") {
+                    performBundleImport()
+                }
+                .controlSize(.small)
+                .keyboardShortcut(.defaultAction)
+                .disabled(bundlePassphraseInput.count < 8)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+
+    @ViewBuilder
+    private var bundleImportReviewSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Review Bundle", bundle: .module)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            if let preview = bundleImportPreview {
+                bundleManifestSummary(preview.manifest)
+            }
+            Text(
+                "Activate copies the agent into ~/.osaurus/agents/<id>/, rekeys its database to your local key, and registers the agent for use. Discard wipes the unpacked scratch directory and changes nothing on disk.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Discard", role: .destructive) {
+                    discardBundlePreview()
+                }
+                .controlSize(.small)
+                Button("Activate") {
+                    activateBundlePreview()
+                }
+                .controlSize(.small)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    @ViewBuilder
+    private func bundleManifestSummary(_ manifest: AgentBundleManifest) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("Agent:").font(.system(size: 11, weight: .semibold))
+                Text(manifest.agentName).font(.system(size: 11))
+            }
+            if !manifest.agentDescription.isEmpty {
+                Text(manifest.agentDescription)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 12) {
+                Text("Tables: \(manifest.schemaTables)").font(.system(size: 11))
+                Text("Views: \(manifest.savedViews)").font(.system(size: 11))
+                Spacer()
+            }
+            .foregroundColor(theme.secondaryText)
+            Text("Exported \(manifest.exportedAt.formatted(date: .abbreviated, time: .shortened))")
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground)
+        )
+    }
+
+    private func beginBundleExport() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = []
+        panel.nameFieldStringValue = currentAgent.displayName
+        panel.canCreateDirectories = true
+        panel.title = String(localized: "Export Bundle", bundle: .module)
+        panel.message = String(
+            localized: "Pick a folder for the .osaurus-agent bundle.",
+            bundle: .module
+        )
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        bundleExportDestination = url.deletingLastPathComponent()
+        bundlePassphraseInput = ""
+        bundleConfirmPassphraseInput = ""
+    }
+
+    private func beginBundleImport() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = []
+        panel.title = String(localized: "Import Bundle", bundle: .module)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        bundleImportSource = url
+        bundlePassphraseInput = ""
+    }
+
+    private func performBundleExport() {
+        guard let destination = bundleExportDestination else { return }
+        let passphrase = bundlePassphraseInput
+        bundleExportDestination = nil
+        bundlePassphraseInput = ""
+        bundleConfirmPassphraseInput = ""
+        isBundleBusy = true
+        let agentId = currentAgent.id
+        Task {
+            do {
+                let result = try await AgentBundleService.shared.exportBundle(
+                    agentId: agentId,
+                    passphrase: passphrase,
+                    destinationDirectory: destination
+                )
+                await MainActor.run {
+                    isBundleBusy = false
+                    bundleSuccessMessage = "Bundle saved to \(result.bundleURL.lastPathComponent)."
+                }
+            } catch {
+                await MainActor.run {
+                    isBundleBusy = false
+                    bundleErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func performBundleImport() {
+        guard let source = bundleImportSource else { return }
+        let passphrase = bundlePassphraseInput
+        bundleImportSource = nil
+        bundlePassphraseInput = ""
+        isBundleBusy = true
+        Task {
+            do {
+                let preview = try await AgentBundleService.shared.openBundleForReview(
+                    url: source,
+                    passphrase: passphrase
+                )
+                await MainActor.run {
+                    isBundleBusy = false
+                    bundleImportPreview = preview
+                }
+            } catch {
+                await MainActor.run {
+                    isBundleBusy = false
+                    bundleErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func activateBundlePreview() {
+        guard let preview = bundleImportPreview else { return }
+        bundleImportPreview = nil
+        isBundleBusy = true
+        Task {
+            do {
+                let imported = try await AgentBundleService.shared.activate(preview: preview)
+                await MainActor.run {
+                    isBundleBusy = false
+                    agentManager.refresh()
+                    bundleSuccessMessage = "Imported \(imported.displayName)."
+                }
+            } catch {
+                await MainActor.run {
+                    isBundleBusy = false
+                    bundleErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func discardBundlePreview() {
+        guard let preview = bundleImportPreview else { return }
+        bundleImportPreview = nil
+        AgentBundleService.shared.discard(preview: preview)
+    }
+
+    /// Wipe per-agent persisted DB + scheduler state for this agent.
+    /// Lives here (rather than on `AgentManager`) because the feature
+    /// surface is otherwise self-contained: the agent itself is
+    /// kept and the toggle stays on, so the next write will simply
+    /// re-create the DB lazily.
+    private func deleteAgentDatabaseData() {
+        let agentId = agent.id
+        // The agent itself stays, so we close + drop the disk files
+        // and forget any cached per-agent serial queue. The next DB
+        // write reopens lazily and the agent rebuilds its own
+        // tables from scratch — exactly the cold-start path.
+        do {
+            try AgentDatabaseStore.shared.deleteOnDisk(for: agentId)
+        } catch {
+            print("[Configure] Failed to delete agent DB for \(agentId): \(error)")
+        }
+        do {
+            try SchedulerDatabase.shared.deleteAllForAgent(agentId)
+        } catch {
+            print(
+                "[Configure] Failed to delete scheduler rows for \(agentId): \(error)"
+            )
+        }
+        LocalAgentBridge.shared.forget(agentId: agentId)
     }
 
     private func featureToggleRow(title: LocalizedStringKey, subtitle: LocalizedStringKey, isOn: Binding<Bool>)
@@ -3796,6 +4556,7 @@ struct AgentDetailView: View {
         workQuickActions = agent.workQuickActions
         disableTools = agent.disableTools ?? false
         disableMemory = agent.disableMemory ?? false
+        dbEnabled = agent.settings.dbEnabled
         autoSpeak = agent.autoSpeak ?? false
         ttsVoice = agent.ttsVoice ?? ""
         avatar = agent.avatar
@@ -3938,7 +4699,12 @@ struct AgentDetailView: View {
             customAvatarFilename: current.customAvatarFilename,
             autoSpeak: autoSpeak ? true : nil,
             ttsVoice: ttsVoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? nil : ttsVoice
+                ? nil : ttsVoice,
+            settings: AgentSettings(
+                dbEnabled: dbEnabled,
+                schedule: current.settings.schedule,
+                limits: current.settings.limits
+            )
         )
 
         agentManager.update(updated)

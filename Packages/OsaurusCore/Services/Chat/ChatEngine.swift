@@ -403,6 +403,26 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
+        // Capture the background-task id at construction time (still on
+        // the parent task) so the detached producer below can forward
+        // token-usage deltas to `BackgroundTaskManager.recordUsage(...)`
+        // for mid-stream budget enforcement (spec §11.3). Task-local
+        // values are not visible inside `Task.detached` blocks, so the
+        // capture has to happen here.
+        let bgId = ChatExecutionContext.currentBackgroundId
+        // Forward the input-token count once on stream start. It's a
+        // single fixed value and we want budget overruns to fire as
+        // soon as the request lands, not only after output streams.
+        let initialInputTokens = inputTokens
+        if let bgId, initialInputTokens > 0 {
+            Task { @MainActor in
+                BackgroundTaskManager.shared.recordUsage(
+                    backgroundId: bgId,
+                    tokensInDelta: initialInputTokens
+                )
+            }
+        }
+
         // Create the producer task and store reference for cancellation
         // IMPORTANT: Use Task.detached to run on cooperative thread pool instead of
         // ChatEngine actor's executor. This prevents deadlocks when the MainActor
@@ -426,6 +446,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
             let startTime = Date()
             var outputTokenCount = 0
+            // Track the last cumulative output-token count we forwarded
+            // to `BackgroundTaskManager.recordUsage` so we only ever
+            // post the delta. Provider-emitted `StreamingStatsHint`
+            // payloads are cumulative; the text-delta fallback
+            // increments per chunk — both feed into this counter so
+            // mid-stream budget enforcement sees a monotonically
+            // growing total without double-counting either source.
+            var reportedOutputTokens = 0
             var deltaCount = 0
             var finishReason: InferenceLog.FinishReason = .stop
             var errorMsg: String? = nil
@@ -447,8 +475,23 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 for try await delta in inner {
                     if let stats = StreamingStatsHint.decode(delta) {
                         outputTokenCount = stats.tokenCount
+                        // Stats hint carries the authoritative cumulative
+                        // output-token count from the model runtime. Push
+                        // only the delta since our last report so we
+                        // don't double-count the text-delta estimates
+                        // accumulated below.
+                        if let bgId, outputTokenCount > reportedOutputTokens {
+                            let outDelta = outputTokenCount - reportedOutputTokens
+                            reportedOutputTokens = outputTokenCount
+                            Task { @MainActor in
+                                BackgroundTaskManager.shared.recordUsage(
+                                    backgroundId: bgId,
+                                    tokensOutDelta: outDelta
+                                )
+                            }
+                        }
                         if let stopReason = stats.stopReason,
-                           let loggedReason = InferenceLog.FinishReason(rawValue: stopReason)
+                            let loggedReason = InferenceLog.FinishReason(rawValue: stopReason)
                         {
                             finishReason = loggedReason
                         }
@@ -488,7 +531,24 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
                     // Estimate tokens: each delta chunk is roughly proportional to tokens
                     // More accurate: count whitespace-separated words, or use tokenizer
-                    outputTokenCount += TokenEstimator.estimate(delta)
+                    let estimated = TokenEstimator.estimate(delta)
+                    outputTokenCount += estimated
+                    // Forward the per-delta estimate to the budget
+                    // tracker as well; if a stats hint later arrives
+                    // with a higher cumulative count, the gap will be
+                    // pushed in the hint branch above. The local
+                    // `reportedOutputTokens` watermark prevents this
+                    // text-delta path and the hint path from
+                    // double-counting against each other.
+                    if let bgId, estimated > 0 {
+                        reportedOutputTokens += estimated
+                        Task { @MainActor in
+                            BackgroundTaskManager.shared.recordUsage(
+                                backgroundId: bgId,
+                                tokensOutDelta: estimated
+                            )
+                        }
+                    }
                     continuation.yield(delta)
                 }
 

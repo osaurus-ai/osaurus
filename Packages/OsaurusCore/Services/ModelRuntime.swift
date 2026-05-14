@@ -162,10 +162,11 @@ public actor ModelRuntime {
             )
         }
 
-        guard let holder = modelCache[modelName]
-            ?? modelCache.values.first(where: {
-                $0.name.caseInsensitiveCompare(modelName) == .orderedSame
-            })
+        guard
+            let holder = modelCache[modelName]
+                ?? modelCache.values.first(where: {
+                    $0.name.caseInsensitiveCompare(modelName) == .orderedSame
+                })
         else {
             return LiveVoiceAudioPreencodeResult(
                 status: .skippedModelNotResident,
@@ -198,11 +199,12 @@ public actor ModelRuntime {
                 }
 
                 let startedAt = CFAbsoluteTimeGetCurrent()
-                guard case .preEncoded(let encodedSamples, let encodedSampleRate, let embedding) =
-                    try MLXBatchAdapter.preencodedAudio(
-                        .samples(samples, sampleRate: sampleRate),
-                        using: omni
-                    )
+                guard
+                    case .preEncoded(let encodedSamples, let encodedSampleRate, let embedding) =
+                        try MLXBatchAdapter.preencodedAudio(
+                            .samples(samples, sampleRate: sampleRate),
+                            using: omni
+                        )
                 else {
                     box.result = LiveVoiceAudioPreencodeResult(
                         status: .skippedModelUnavailable,
@@ -1784,7 +1786,8 @@ public actor ModelRuntime {
 
     nonisolated private static func readInt24LE(_ bytes: Data, offset: Int) -> Int32? {
         guard offset >= 0, offset + 3 <= bytes.count else { return nil }
-        var raw = Int32(bytes[offset])
+        var raw =
+            Int32(bytes[offset])
             | (Int32(bytes[offset + 1]) << 8)
             | (Int32(bytes[offset + 2]) << 16)
         if (raw & 0x0080_0000) != 0 {

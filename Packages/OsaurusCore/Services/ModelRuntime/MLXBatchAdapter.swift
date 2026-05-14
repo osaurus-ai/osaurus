@@ -415,7 +415,8 @@ struct MLXBatchAdapter {
                 targetSampleRate: Double(omni.config.soundSampleRate)
             )
         case .samples(let samples, let sampleRate):
-            samples16k = sampleRate == omni.config.soundSampleRate
+            samples16k =
+                sampleRate == omni.config.soundSampleRate
                 ? samples
                 : linearResamplePCM(
                     samples,
@@ -424,7 +425,8 @@ struct MLXBatchAdapter {
                 )
         case .array(let array, let sampleRate):
             let samples = array.reshaped([-1]).asType(.float32).asArray(Float.self)
-            samples16k = sampleRate == omni.config.soundSampleRate
+            samples16k =
+                sampleRate == omni.config.soundSampleRate
                 ? samples
                 : linearResamplePCM(
                     samples,

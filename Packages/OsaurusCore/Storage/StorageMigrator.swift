@@ -479,6 +479,19 @@ public actor StorageMigrator {
             .init(label: "memory", path: OsaurusPaths.memoryDatabaseFile().path),
             .init(label: "methods", path: OsaurusPaths.methodsDatabaseFile().path),
             .init(label: "tool index", path: OsaurusPaths.toolIndexDatabaseFile().path),
+            // Agent DB feature (spec §4.2, §3). Both stores are created
+            // encrypted on first open via `EncryptedSQLiteOpener`, so
+            // `migrateOneDatabase` is a no-op on a healthy install —
+            // they're only listed here for:
+            //   1. `detectKeyMismatch()` coverage (so the Storage panel
+            //      flags them when the user rotates the storage key);
+            //   2. `StorageExportService.rotate(...)` discovery (so the
+            //      DEK rekey hits them along with the four originals);
+            //   3. `StorageMaintenance` PRAGMA optimize/wal_checkpoint/
+            //      VACUUM passes when the handles register themselves.
+            // No new migration step is required because there's no
+            // legacy plaintext file to convert.
+            .init(label: "scheduler", path: OsaurusPaths.schedulerDatabaseFile().path),
         ]
         // Plugin DBs — one per installed plugin. We can discover them
         // by walking `Tools/<pluginId>/data/data.db`.
@@ -500,6 +513,31 @@ public actor StorageMigrator {
                 let dbPath = OsaurusPaths.pluginDatabaseFile(for: pluginId).path
                 if FileManager.default.fileExists(atPath: dbPath) {
                     targets.append(.plugin(id: pluginId, path: dbPath))
+                }
+            }
+        }
+        // Per-agent `db.sqlite` files — one per agent that has opted
+        // in to the Agent DB feature. Discovered by walking
+        // `agents/<UUID>/db.sqlite`. `AgentStore` writes agent
+        // metadata as `agents/<UUID>.json` (siblings of the dirs), so
+        // the directory walk here naturally skips them.
+        let agentsDir = OsaurusPaths.agents()
+        if let entries = try? FileManager.default.contentsOfDirectory(
+            at: agentsDir,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        ) {
+            for entry in entries {
+                let isDir =
+                    (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                guard isDir else { continue }
+                // Only consider UUID-named subdirectories — `avatars/`
+                // and any future side-folders should be ignored.
+                guard UUID(uuidString: entry.lastPathComponent) != nil else { continue }
+                let dbPath = entry.appendingPathComponent("db.sqlite").path
+                if FileManager.default.fileExists(atPath: dbPath) {
+                    targets.append(
+                        .init(label: "agent db \(entry.lastPathComponent)", path: dbPath)
+                    )
                 }
             }
         }

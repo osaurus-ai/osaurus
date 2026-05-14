@@ -87,7 +87,7 @@ struct StorageMigratorTargetFilterTests {
     }
 
     @Test
-    func databaseTargets_alwaysEnrollsCoreFour() async throws {
+    func databaseTargets_alwaysEnrollsCoreSet() async throws {
         try await StoragePathsTestLock.shared.run {
             let root = try Self.setUpTempRoot()
             defer { Self.tearDown(root) }
@@ -95,9 +95,14 @@ struct StorageMigratorTargetFilterTests {
             // Leave the Tools dir empty — only core targets should be
             // enrolled. This catches accidental over-broad filters
             // that drop "chat history" / "memory" / etc.
+            //
+            // `scheduler` was added in the Agent DB / self-scheduling
+            // work (spec §3): the cross-agent `scheduler.sqlite` is
+            // a first-class core target so the Storage settings panel
+            // can rotate its key alongside the other four.
             let targets = StorageMigrator.databaseTargets()
             let labels = Set(targets.map(\.label))
-            #expect(labels == ["chat history", "memory", "methods", "tool index"])
+            #expect(labels == ["chat history", "memory", "methods", "tool index", "scheduler"])
         }
     }
 }

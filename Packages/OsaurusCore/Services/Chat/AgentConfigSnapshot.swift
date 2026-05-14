@@ -58,6 +58,12 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// the default fallback.
     public let systemPrompt: String
 
+    /// Whether the Agent DB feature (spec §5.5) is enabled for this agent.
+    /// Drives both tool gating (the `db_*` tools are filtered out when
+    /// false) and prompt injection (the onboarding block + schema
+    /// snapshot are omitted).
+    public let dbEnabled: Bool
+
     public init(
         toolsDisabled: Bool,
         memoryDisabled: Bool,
@@ -65,7 +71,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         toolMode: ToolSelectionMode,
         model: String?,
         manualToolNames: [String]?,
-        systemPrompt: String
+        systemPrompt: String,
+        dbEnabled: Bool
     ) {
         self.toolsDisabled = toolsDisabled
         self.memoryDisabled = memoryDisabled
@@ -74,6 +81,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.model = model
         self.manualToolNames = manualToolNames
         self.systemPrompt = systemPrompt
+        self.dbEnabled = dbEnabled
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -99,7 +107,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             toolMode: mgr.effectiveToolSelectionMode(for: agentId),
             model: modelOverride ?? mgr.effectiveModel(for: agentId),
             manualToolNames: mgr.effectiveManualToolNames(for: agentId),
-            systemPrompt: mgr.effectiveSystemPrompt(for: agentId)
+            systemPrompt: mgr.effectiveSystemPrompt(for: agentId),
+            dbEnabled: mgr.effectiveDBEnabled(for: agentId)
         )
     }
 }

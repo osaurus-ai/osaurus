@@ -461,8 +461,32 @@ struct BuiltinToolResilienceTests {
         case "integer": return 1
         case "number": return 1.0
         case "boolean": return true
-        case "array": return ["x"]
-        case "object": return [String: Any]()
+        case "array":
+            // Honour `items` when present so array-of-object schemas
+            // (e.g. `db_create_table.columns`) get a structurally-
+            // valid sample. Falls back to `["x"]` when `items` is
+            // missing or not an object schema.
+            if case .object(let itemsSchema)? = propSchema["items"] {
+                return [sampleValue(for: itemsSchema)]
+            }
+            return ["x"]
+        case "object":
+            // Recurse into the object's own `required`/`properties`
+            // pairing so nested object schemas with required keys
+            // (rare today, but on the horizon) produce valid samples.
+            if case .array(let nestedRequired)? = propSchema["required"],
+                case .object(let nestedProps)? = propSchema["properties"]
+            {
+                var obj: [String: Any] = [:]
+                for entry in nestedRequired {
+                    guard case .string(let k) = entry,
+                        case .object(let childSchema)? = nestedProps[k]
+                    else { continue }
+                    obj[k] = sampleValue(for: childSchema)
+                }
+                return obj
+            }
+            return [String: Any]()
         default: return "x"
         }
     }

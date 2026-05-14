@@ -82,6 +82,42 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         center.add(request, withCompletionHandler: nil)
     }
 
+    /// Post a notification on behalf of an agent (Phase 3 `notify` tool).
+    /// Body and title are agent-supplied free text; we prefix the title
+    /// with the agent's display name so the user can disambiguate when
+    /// multiple agents are notifying concurrently. `viewRef` rides in
+    /// `userInfo` so the click handler can deep-link to the Views tab —
+    /// the deep-link wiring lands with the NextRunPanelView in this phase.
+    nonisolated func postAgentEvent(
+        agentId: UUID,
+        agentName: String,
+        title: String,
+        body: String,
+        viewRef: String?
+    ) {
+        // `nonisolated` so any thread (bridge serial queue) can call this
+        // without a queue hop on the hot path; the actual UNNotification
+        // submission still hops to MainActor via Task.
+        Task { @MainActor in
+            let content = UNMutableNotificationContent()
+            content.title = "\(agentName) · \(title)"
+            content.body = body
+            var info: [String: Any] = [
+                "agentId": agentId.uuidString,
+                "source": "agent",
+            ]
+            if let viewRef, !viewRef.isEmpty { info["viewRef"] = viewRef }
+            content.userInfo = info
+
+            let request = UNNotificationRequest(
+                identifier: "agent-\(agentId.uuidString)-\(UUID().uuidString)",
+                content: content,
+                trigger: nil
+            )
+            self.center.add(request, withCompletionHandler: nil)
+        }
+    }
+
     func postPluginUpdatesAvailable(count: Int, pluginNames: [String]) {
         guard count > 0 else { return }
 
@@ -125,6 +161,37 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             response.actionIdentifier == actionOpenId
                 || response.actionIdentifier == UNNotificationDefaultActionIdentifier
         else {
+            return
+        }
+
+        // Agent-originated notification: route to the agent's detail view
+        // with the referenced saved view focused (spec §3.3 — viewRef
+        // deep-link). `postAgentEvent` tags `source: "agent"` on
+        // userInfo; that's our routing key so we don't have to guess
+        // from the agentId alone.
+        if (info["source"] as? String) == "agent",
+            let agentIdString = info["agentId"] as? String,
+            let agentId = UUID(uuidString: agentIdString)
+        {
+            let viewRef = info["viewRef"] as? String
+            Task { @MainActor in
+                AppDelegate.shared?.showManagementWindow(initialTab: .agents)
+                // The Notification.Name is consumed by AgentsView /
+                // AgentDetailView once the management window is in
+                // place. A tiny dispatch_after gives the management
+                // hierarchy time to mount before the notification
+                // fires — without it, the listening views haven't
+                // attached their .onReceive yet on cold-launch.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    var payload: [String: Any] = ["agentId": agentId, "tab": "views"]
+                    if let viewRef, !viewRef.isEmpty { payload["viewRef"] = viewRef }
+                    NotificationCenter.default.post(
+                        name: .agentDetailDeeplink,
+                        object: nil,
+                        userInfo: payload
+                    )
+                }
+            }
             return
         }
 

@@ -786,7 +786,9 @@ extension FloatingInputCard {
                 samples: samples,
                 sampleRate: sampleRate
             )
-            print("[Osaurus][LiveVoice] preencode_status=\(result.status.rawValue) samples=\(result.sampleCount) sample_rate=\(result.sampleRate) encode_ms=\(result.encodeMs) message=\(result.message ?? "")")
+            print(
+                "[Osaurus][LiveVoice] preencode_status=\(result.status.rawValue) samples=\(result.sampleCount) sample_rate=\(result.sampleRate) encode_ms=\(result.encodeMs) message=\(result.message ?? "")"
+            )
         }
         liveVoicePreencodeTask = task
         return task
@@ -949,7 +951,9 @@ extension FloatingInputCard {
         if mediaCapabilities.supportsAudio {
             let wavBytes = voiceAudioData?.count ?? 0
             let durationMs = Int((voiceSnapshot?.durationSeconds ?? 0) * 1000)
-            print("[Osaurus][LiveVoice] snapshot_ms=\(snapshotMs) wav_encode_ms=\(wavEncodeMs) wav_bytes=\(wavBytes) sample_rate=\(voiceSnapshot?.sampleRate ?? 0) duration_ms=\(durationMs)")
+            print(
+                "[Osaurus][LiveVoice] snapshot_ms=\(snapshotMs) wav_encode_ms=\(wavEncodeMs) wav_bytes=\(wavBytes) sample_rate=\(voiceSnapshot?.sampleRate ?? 0) duration_ms=\(durationMs)"
+            )
         }
 
         // show sending state first

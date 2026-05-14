@@ -14,7 +14,8 @@ struct LiveVoiceAudioSnapshotTests {
     func snapshotEncodesWAV() throws {
         let snapshot = LiveVoiceAudioSnapshot(
             samples: [-1.0, 0.0, 1.0],
-            sampleRate: 16_000)
+            sampleRate: 16_000
+        )
 
         let wav = snapshot.wavData()
 

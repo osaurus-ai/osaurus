@@ -1,5 +1,5 @@
 {
-  "originHash" : "2b8c51e0f4bb988e1f78ce77703b6f6665e22a502866c002632abf979f47e522",
+  "originHash" : "78bf1831237aba77bd64606b67d185ed63b4df4735104f9b5a157d27501977b1",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -94,9 +94,10 @@
     {
       "identity" : "jinja",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/osaurus-ai/Jinja.git",
+      "location" : "https://github.com/huggingface/swift-jinja",
       "state" : {
-        "revision" : "58d21aa5b69fdd9eb7e23ce2c3730f47db8e0c9d"
+        "revision" : "0aeefadec459ce8e11a333769950fb86183aca43",
+        "version" : "2.3.5"
       }
     },
     {
@@ -389,7 +390,7 @@
     {
       "identity" : "swift-transformers",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/osaurus-ai/swift-transformers",
+      "location" : "https://github.com/huggingface/swift-transformers.git",
       "state" : {
         "revision" : "087a66b17e482220b94909c5cf98688383ae481a"
       }

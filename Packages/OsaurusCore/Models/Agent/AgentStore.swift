@@ -101,6 +101,18 @@ public enum AgentStore {
             try? FileManager.default.removeItem(at: url)
         }
 
+        // Agent DB feature: drop scheduler rows + the per-agent DB
+        // directory. Each cleanup is best-effort so a missing
+        // scheduler.sqlite (feature not yet initialised) doesn't
+        // block agent deletion.
+        try? SchedulerDatabase.shared.deleteAllForAgent(id)
+        try? AgentDatabaseStore.shared.deleteOnDisk(for: id)
+        // The serial queue + open DB handle inside LocalAgentBridge
+        // outlives `deleteOnDisk` (those live in a separate registry
+        // keyed by agentId). Drop them here so a later create-with-
+        // the-same-id can't re-attach to a stale handle.
+        LocalAgentBridge.shared.forget(agentId: id)
+
         do {
             try FileManager.default.removeItem(at: agentFileURL(for: id))
             return true

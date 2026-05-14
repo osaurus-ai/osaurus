@@ -159,6 +159,47 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Latest draft content sent by the plugin (e.g. for live-update messages).
     public var draftText: String?
 
+    /// `agent_runs.id` row this task is bound to in
+    /// `SchedulerDatabase`. Populated only when the agent has the DB
+    /// feature enabled (spec §5.5). `markCompleted` reads this back to
+    /// stamp the terminal `recordRunEnd` row. `nil` for DB-disabled
+    /// agents and for headless callers that built `BackgroundTaskState`
+    /// without going through `dispatchChat`.
+    public var agentRunId: UUID?
+
+    /// Running token/USD counters for the current run (Phase 4 budget
+    /// enforcement, spec §11.3). Populated by the streaming engine as
+    /// it observes provider usage payloads. `BackgroundTaskManager`
+    /// compares these against `runTokensLimit` / `runCostUSDLimit` on
+    /// every update and cancels the task when exceeded.
+    public var tokensIn: Int = 0
+    public var tokensOut: Int = 0
+    public var costUSD: Double = 0
+    /// Hard ceilings copied from `Agent.settings.limits` at dispatch.
+    /// `nil` disables that dimension. Stored locally so the budget
+    /// check doesn't have to hop back to MainActor mid-stream.
+    public var runTokensLimit: Int?
+    public var runCostUSDLimit: Double?
+    /// Set true by `BackgroundTaskManager` when a budget cap fires;
+    /// `markCompleted` uses this to write a clear error message into
+    /// `agent_runs.error` rather than the generic "cancelled" text.
+    public var budgetExhaustedReason: String?
+
+    /// Returns the first budget dimension that's been exceeded, or
+    /// nil when usage is still under all configured caps.
+    public func budgetExceededReason() -> String? {
+        if let limit = runTokensLimit, limit > 0 {
+            let used = tokensIn + tokensOut
+            if used >= limit {
+                return "token cap (\(used) ≥ \(limit))"
+            }
+        }
+        if let limit = runCostUSDLimit, limit > 0, costUSD >= limit {
+            return String(format: "USD cap (%.4f ≥ %.4f)", costUSD, limit)
+        }
+        return nil
+    }
+
     private let maxActivityItems: Int = 40
 
     init(

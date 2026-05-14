@@ -441,7 +441,7 @@ final class ModelManager: NSObject, ObservableObject {
             guard await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed) else { return nil }
         } else {
             guard Self.nameLooksLikeMLX(trimmed),
-                  await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed)
+                await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed)
             else { return nil }
         }
 

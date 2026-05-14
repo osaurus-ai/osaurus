@@ -198,7 +198,8 @@ struct MultimodalContentPartTests {
     func mapping_audioWavDecodesToSamples() throws {
         let snapshot = LiveVoiceAudioSnapshot(
             samples: [-1.0, 0.0, 1.0],
-            sampleRate: 16_000)
+            sampleRate: 16_000
+        )
         let b64 = snapshot.wavData().base64EncodedString()
         let json = """
             [{

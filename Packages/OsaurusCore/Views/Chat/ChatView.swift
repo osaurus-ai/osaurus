@@ -589,12 +589,14 @@ final class ChatSession: ObservableObject {
     ) -> ChatMessage {
         let messageText = buildUserMessageText(content: content, attachments: attachments)
         let imageData = supportsImages ? attachments.images : []
-        let audioPayloads = supportsAudio
+        let audioPayloads =
+            supportsAudio
             ? attachments.compactMap(audioPayload)
             : []
         let audios = audioPayloads.map { (data: $0.data, format: $0.format) }
         let localAudioSamples = audioPayloads.map(\.localSamples)
-        let videos: [(data: Data, mimeSubtype: String)] = supportsVideo
+        let videos: [(data: Data, mimeSubtype: String)] =
+            supportsVideo
             ? attachments.compactMap(videoPayload)
             : []
 

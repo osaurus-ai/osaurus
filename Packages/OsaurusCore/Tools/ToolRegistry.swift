@@ -167,6 +167,32 @@ final class ToolRegistry: ObservableObject {
             SearchMemoryTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
+            // Agent DB feature (spec §6). The system prompt composer
+            // gates these per-agent via `Agent.settings.dbEnabled`;
+            // registering them as built-ins means agents that *do*
+            // enable the feature don't pay an install-time round-trip.
+            DBSchemaTool(),
+            DBCreateTableTool(),
+            DBAlterTableTool(),
+            DBMigrateTool(),
+            DBInsertTool(),
+            DBUpsertTool(),
+            DBUpdateTool(),
+            DBDeleteTool(),
+            DBRestoreTool(),
+            DBQueryTool(),
+            DBExecuteTool(),
+            DBDefineViewTool(),
+            DBRunViewTool(),
+            DBListViewsTool(),
+            DBDropViewTool(),
+            // Self-scheduling + notification (spec §9, §10). These are
+            // always available — they're the primary way an agent acts
+            // outside a single turn — and are explicitly *not* gated by
+            // `dbEnabled` (see SystemPromptComposer's "alwaysLoaded" set).
+            ScheduleNextRunTool(),
+            CancelNextRunTool(),
+            NotifyTool(),
         ]
         var configChanged = false
         for tool in builtIns {

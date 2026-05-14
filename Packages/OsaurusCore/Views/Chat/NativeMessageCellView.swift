@@ -164,7 +164,9 @@ final class NativeHeaderView: NSView {
         // Resolve theme-driven sizing + visibility first so avatar generation
         // matches the actual rendered size. Clamped to a sensible UI range
         // even if a malformed theme JSON lands here.
-        let themeSize = CGFloat(max(Double(Self.minAvatarSize), min(Double(Self.maxAvatarSize), theme.inlineAvatarSize)))
+        let themeSize = CGFloat(
+            max(Double(Self.minAvatarSize), min(Double(Self.maxAvatarSize), theme.inlineAvatarSize))
+        )
         if currentAvatarSize != themeSize {
             currentAvatarSize = themeSize
             avatarWidthConstraint?.constant = themeSize

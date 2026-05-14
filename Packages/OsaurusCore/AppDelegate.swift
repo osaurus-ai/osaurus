@@ -86,6 +86,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // App has launched
         NSLog("Osaurus server app launched")
 
+        // Log per-launch adoption count for the Agent DB feature.
+        // The total is across both built-in and custom agents
+        // because `effectiveDBEnabled` honours per-agent overrides
+        // for both buckets (spec §5.5). Useful dogfood signal —
+        // also feeds into the `dbEnabled adoption` heuristic the
+        // gap-closure plan asked us to track.
+        let allAgents = AgentManager.shared.agents
+        let dbEnabledCount = allAgents.filter { $0.settings.dbEnabled }.count
+        NSLog(
+            "[Osaurus] AgentDB adoption: %d/%d agents have dbEnabled=true",
+            dbEnabledCount,
+            allAgents.count
+        )
+
         // Configure local notifications
         NotificationService.shared.configureOnLaunch()
 
@@ -285,6 +299,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
+
+        // Start the self-scheduling loop (spec §9). The scheduler reads
+        // from `~/.osaurus/scheduler.sqlite` so the storage migrator
+        // must already be ready by this point — and it is, because
+        // `StorageMigrationCoordinator.blockingAwaitReady` ran at the
+        // top of `applicationDidFinishLaunching`.
+        NextRunScheduler.shared.start()
 
         // Start sandbox tool registrar. Internally awaits container
         // auto-start before the initial `registerTools` call, so the first

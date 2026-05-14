@@ -478,6 +478,7 @@ private struct SessionRow: View {
         case .http: return theme.accentColorLight.opacity(0.85)
         case .schedule: return theme.warningColor
         case .watcher: return theme.successColor
+        case .selfSchedule: return theme.warningColor.opacity(0.9)
         }
     }
 
@@ -496,6 +497,8 @@ private struct SessionRow: View {
             return Text("Schedule", bundle: .module)
         case .watcher:
             return Text("Watcher", bundle: .module)
+        case .selfSchedule:
+            return Text("Self-scheduled", bundle: .module)
         }
     }
 

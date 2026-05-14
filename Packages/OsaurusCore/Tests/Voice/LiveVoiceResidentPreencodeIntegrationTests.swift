@@ -122,8 +122,9 @@ struct LiveVoiceResidentPreencodeIntegrationTests {
         let mapped = ModelRuntime.mapOpenAIChatToMLX([chatMessage])
         #expect(mapped.count == 1)
         #expect(mapped[0].audios.count == 1)
-        guard case .preEncoded(let submittedSamples, let submittedSampleRate, let submittedEmbedding) =
-            mapped[0].audios[0]
+        guard
+            case .preEncoded(let submittedSamples, let submittedSampleRate, let submittedEmbedding) =
+                mapped[0].audios[0]
         else {
             Issue.record("Composer-style audio submit should consume fresh preencoded audio.")
             return
@@ -250,7 +251,8 @@ struct LiveVoiceResidentPreencodeIntegrationTests {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
 
-    private static let repoRoot: URL = packageRoot
+    private static let repoRoot: URL =
+        packageRoot
         .deletingLastPathComponent()
         .deletingLastPathComponent()
 }

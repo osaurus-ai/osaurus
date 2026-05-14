@@ -26,6 +26,21 @@ extension Notification.Name {
     /// like Telegram can deregister webhooks) and to clean up per-agent
     /// keychain secrets that would otherwise be orphaned.
     static let agentRemoved = Notification.Name("agentRemoved")
+    /// Posted by notification-tap handlers (and any future deep-link
+    /// router) to drive `AgentsView` and `AgentDetailView` to a
+    /// specific agent + tab + optional focused entity (e.g. saved
+    /// view name, run id). userInfo keys: `agentId: UUID` (required),
+    /// `tab: String?` (matches a `DetailTab.rawValue`), `viewRef:
+    /// String?` (saved-view name to highlight on the Views tab).
+    static let agentDetailDeeplink = Notification.Name("agentDetailDeeplink")
+    /// Edge-triggered by `AgentDatabase.enforceStorageQuotaUnlocked`
+    /// when the per-agent DB file crosses `storageWarnPercent` of
+    /// its `storageBytesLimit`. `AgentManager` observes this and
+    /// posts a rate-limited user-facing UNNotification + flips a
+    /// `@Published` flag the Schema/Data tab headers read for the
+    /// badge UI. userInfo: `agentId: UUID`, `usedBytes: Int`,
+    /// `limitBytes: Int`, `percent: Int`.
+    static let agentStorageWarn = Notification.Name("agentStorageWarn")
 }
 
 public struct AgentDeleteResult: Sendable {
@@ -48,6 +63,25 @@ public final class AgentManager: ObservableObject {
     public var activeAgent: Agent {
         agents.first { $0.id == activeAgentId } ?? Agent.default
     }
+
+    /// Agents currently flagged as "approaching their storage
+    /// quota" (≥ `storageWarnPercent` of `storageBytesLimit`). Driven
+    /// off `.agentStorageWarn` notifications fired by
+    /// `AgentDatabase`. Read by the Schema/Data tab headers for a
+    /// "approaching quota" badge (spec §11.2). Stays sticky until the
+    /// agent's data is wiped or the database resets the latch on a
+    /// subsequent mutation when usage drops back below threshold.
+    @Published public private(set) var storageWarningAgentIds: Set<UUID> = []
+
+    /// Last wall-clock moment we posted a user-visible storage
+    /// warning UNNotification for each agent. The spec asks for
+    /// "rate-limit notifications to one per agent per 24h so
+    /// repeated writes don't spam." Kept in-memory only — relaunch
+    /// resets the throttle, which we accept because relaunching
+    /// itself is rare enough that the user wants to see the warning
+    /// again in the next session if they're still near quota.
+    private var lastStorageWarningAt: [UUID: Date] = [:]
+    private static let storageWarningCooldown: TimeInterval = 24 * 60 * 60
 
     private init() {
         refresh()
@@ -80,6 +114,77 @@ public final class AgentManager: ObservableObject {
                 self.growEnabledSkillNames(Set(liveSkills))
             }
         }
+
+        // Storage soft-warning router. The DB layer is non-isolated;
+        // it edge-triggers `.agentStorageWarn` from whatever queue
+        // the mutating transaction ran on. We hop to MainActor here
+        // so the rate-limit bookkeeping and `@Published` flag mutation
+        // run on a stable actor. The userInfo dict is copied into
+        // local primitives before the hop so we never send the
+        // `Notification` value itself across the isolation boundary.
+        NotificationCenter.default.addObserver(
+            forName: .agentStorageWarn,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let info = note.userInfo,
+                let agentId = info["agentId"] as? UUID
+            else { return }
+            let percent = (info["percent"] as? Int) ?? 0
+            let usedBytes = (info["usedBytes"] as? Int) ?? 0
+            let limitBytes = (info["limitBytes"] as? Int) ?? 0
+            Task { @MainActor in
+                self?.handleStorageWarning(
+                    agentId: agentId,
+                    percent: percent,
+                    usedBytes: usedBytes,
+                    limitBytes: limitBytes
+                )
+            }
+        }
+    }
+
+    @MainActor
+    private func handleStorageWarning(
+        agentId: UUID,
+        percent: Int,
+        usedBytes: Int,
+        limitBytes: Int
+    ) {
+
+        if !storageWarningAgentIds.contains(agentId) {
+            storageWarningAgentIds.insert(agentId)
+        }
+
+        // Rate-limit the user-facing notification to one per agent
+        // per `storageWarningCooldown`. The published badge stays
+        // sticky regardless so the UI stays informative even when
+        // the toast doesn't refire.
+        let now = Date()
+        if let last = lastStorageWarningAt[agentId],
+            now.timeIntervalSince(last) < Self.storageWarningCooldown
+        {
+            return
+        }
+        lastStorageWarningAt[agentId] = now
+
+        let name = agent(for: agentId)?.name ?? "Agent"
+        let usedMB = Double(usedBytes) / 1_048_576.0
+        let limitMB = Double(limitBytes) / 1_048_576.0
+        let body = String(
+            format: "%@ has used %d%% of its storage quota (%.1f / %.1f MB).",
+            name,
+            percent,
+            usedMB,
+            limitMB
+        )
+        NotificationService.shared.postAgentEvent(
+            agentId: agentId,
+            agentName: name,
+            title: "Storage \(percent)% full",
+            body: body,
+            viewRef: nil
+        )
     }
 
     // MARK: - Public API
@@ -179,6 +284,18 @@ public final class AgentManager: ObservableObject {
         updated.updatedAt = Date()
         AgentStore.save(updated)
         refresh()
+        // Push the storage limit + soft-warn threshold down to any
+        // open agent-DB connection (spec §11.2 + §11.3). When the
+        // agent's DB hasn't been opened yet the store's cache miss
+        // is harmless — both values land on the next open.
+        AgentDatabaseStore.shared.setStorageLimit(
+            for: agent.id,
+            bytes: updated.settings.limits.storageBytesLimit
+        )
+        AgentDatabaseStore.shared.setStorageWarnPercent(
+            for: agent.id,
+            percent: updated.settings.limits.storageWarnPercent
+        )
         NotificationCenter.default.post(name: .agentUpdated, object: agent.id)
     }
 
@@ -492,6 +609,16 @@ extension AgentManager {
         guard let agent = agent(for: agentId) else { return globalDisabled }
         if agent.id == Agent.defaultId { return globalDisabled }
         return (agent.disableTools ?? false) || globalDisabled
+    }
+
+    /// Whether the Agent DB feature is enabled for an agent (spec §5.5).
+    /// The default agent (`Agent.default`) is built-in and not editable, so
+    /// its `Agent.settings.dbEnabled` is hard-wired off — the DB is per-agent
+    /// data and only makes sense for user-created agents.
+    public func effectiveDBEnabled(for agentId: UUID) -> Bool {
+        guard let agent = agent(for: agentId) else { return false }
+        if agent.id == Agent.defaultId { return false }
+        return agent.settings.dbEnabled
     }
 
     /// Whether memory is disabled for an agent.

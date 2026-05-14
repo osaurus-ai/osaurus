@@ -160,6 +160,14 @@ public final class BackgroundTaskManager: ObservableObject {
                 type: .cancelled,
                 json: PluginHostContext.serializeCancelledEvent(taskTitle: state.taskTitle)
             )
+            if let runId = state.agentRunId {
+                do {
+                    try SchedulerDatabase.shared.recordRunEnd(runId: runId, status: .cancelled)
+                } catch {
+                    print("[BackgroundTaskManager] recordRunEnd (finalize/cancel) failed for run \(runId): \(error)")
+                }
+                state.agentRunId = nil
+            }
         }
 
         dispatchHoldTasks.remove(backgroundId)
@@ -192,12 +200,63 @@ public final class BackgroundTaskManager: ObservableObject {
         }
     }
 
+    /// Update a task's running token / cost counters and cancel the
+    /// task when either dimension crosses its configured ceiling (spec
+    /// §11.3). Safe to call from any actor — we hop to MainActor
+    /// internally because `BackgroundTaskState` is `@MainActor`.
+    ///
+    /// Streaming engines call this after each provider chunk. When the
+    /// per-chunk USD cost isn't known, callers may pass nil and rely
+    /// on token counts alone.
+    public func recordUsage(
+        backgroundId: UUID,
+        tokensInDelta: Int = 0,
+        tokensOutDelta: Int = 0,
+        costUSDDelta: Double = 0
+    ) {
+        guard let state = backgroundTasks[backgroundId] else { return }
+        state.tokensIn += max(0, tokensInDelta)
+        state.tokensOut += max(0, tokensOutDelta)
+        state.costUSD += max(0, costUSDDelta)
+        if let reason = state.budgetExceededReason() {
+            state.budgetExhaustedReason = reason
+            print("[BackgroundTaskManager] budget exhausted (\(reason)) — cancelling \(backgroundId)")
+            cancelTask(backgroundId)
+        }
+    }
+
     /// Cancel a background task
     public func cancelTask(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
 
         state.chatSession?.stop()
         state.status = .cancelled
+        // Mirror the markCompleted finalisation for the agent_runs row
+        // so cancelled runs don't sit in `running` forever in the
+        // Activity tab.
+        if let runId = state.agentRunId {
+            let cancelError = state.budgetExhaustedReason.map { "Budget exhausted: \($0)" }
+            Self.writeRunTrace(
+                runId: runId,
+                state: state,
+                status: .cancelled,
+                endedAt: Date(),
+                errorMessage: cancelError
+            )
+            do {
+                try SchedulerDatabase.shared.recordRunEnd(
+                    runId: runId,
+                    status: .cancelled,
+                    tokensIn: state.tokensIn > 0 ? state.tokensIn : nil,
+                    tokensOut: state.tokensOut > 0 ? state.tokensOut : nil,
+                    costUSD: state.costUSD > 0 ? state.costUSD : nil,
+                    error: cancelError
+                )
+            } catch {
+                print("[BackgroundTaskManager] recordRunEnd (cancel) failed for run \(runId): \(error)")
+            }
+            state.agentRunId = nil
+        }
         resumeCompletion(for: backgroundId, result: .cancelled)
         emitPluginEvent(
             state,
@@ -302,7 +361,67 @@ public final class BackgroundTaskManager: ObservableObject {
         registerTask(state)
         observeChatTask(state, session: context.chatSession)
 
-        await context.start(prompt: request.prompt)
+        // Agent DB run logging (spec §1.4 + §8). Only DB-enabled agents
+        // get an `agent_runs` row + a bound `currentRunId`; for the
+        // default agent and any user-created agent that hasn't opted
+        // in, this is a no-op so the existing dispatch surface keeps
+        // the same behavior and the same overhead.
+        let agentMgr = AgentManager.shared
+        let dbEnabled = agentMgr.effectiveDBEnabled(for: context.agentId)
+        // Pre-seed the per-run budget caps from `Agent.settings.limits`
+        // (spec §11.3). `tokensIn/Out` and `costUSD` start at 0 and are
+        // updated mid-stream by `recordUsage(...)`; the dispatcher
+        // cancels the task once either threshold is crossed.
+        if let agent = agentMgr.agent(for: context.agentId) {
+            state.runTokensLimit = agent.settings.limits.runTokensLimit
+            state.runCostUSDLimit = agent.settings.limits.runCostUSDLimit
+        }
+        var boundRunId: UUID? = nil
+        var boundActor: String = "user"
+        if dbEnabled {
+            let triggerKind = Self.triggerKind(for: request.source)
+            // `triggerPayload` is intentionally minimal: persisting the
+            // full prompt here would duplicate ChatHistoryDatabase data
+            // and inflate the scheduler DB. We surface the dispatch
+            // source + external key so the Activity tab can tag the
+            // row with what woke it.
+            let triggerPayload = Self.triggerPayload(for: request)
+            do {
+                try SchedulerDatabase.shared.open()
+                let runId = try SchedulerDatabase.shared.recordRunStart(
+                    agentId: context.agentId,
+                    triggerKind: triggerKind,
+                    triggerPayload: triggerPayload,
+                    instructions: request.prompt
+                )
+                boundRunId = runId
+                state.agentRunId = runId
+                boundActor = "agent"
+            } catch {
+                print(
+                    "[BackgroundTaskManager] recordRunStart failed for agent "
+                        + "\(context.agentId): \(error)"
+                )
+            }
+        }
+
+        // Bind the run-id + actor + background-task id for the entire
+        // chat task. `chatSession.send` creates an unstructured
+        // `Task { @MainActor in ... }` inside `ExecutionContext.start`
+        // — unstructured Tasks inherit task locals captured at the
+        // moment of creation, so any `db_*` tool call or streaming
+        // producer dispatched from the inference loop picks these up
+        // without needing per-call wiring. `currentBackgroundId` is
+        // the same `BackgroundTaskState.id` we just registered, so
+        // streaming layers can call `recordUsage(backgroundId:)` for
+        // mid-stream budget enforcement (spec §11.3).
+        await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
+            await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
+                await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
+                    await context.start(prompt: request.prompt)
+                }
+            }
+        }
 
         let reattachNote = reattach == nil ? "" : " (reattached to session \(context.id))"
         print("[BackgroundTaskManager] Dispatched chat task: \(request.title ?? "untitled")\(reattachNote)")
@@ -469,12 +588,73 @@ public final class BackgroundTaskManager: ObservableObject {
         completionContinuations.removeValue(forKey: id)?.resume(returning: result)
     }
 
+    /// Map a dispatch source to the audit-trail trigger kind we persist
+    /// in `agent_runs`. Spec §16 leaves room for finer breakdowns; this
+    /// is the minimal mapping that's stable for Phase 1.
+    private static func triggerKind(for source: SessionSource) -> AgentRunTriggerKind {
+        switch source {
+        case .chat, .plugin, .http: return .user
+        case .schedule: return .recurringSchedule
+        case .watcher: return .watcher
+        case .selfSchedule: return .schedule
+        }
+    }
+
+    /// Compact JSON describing what dispatched this run. Skips the
+    /// prompt itself (already in ChatHistoryDatabase) and the plugin
+    /// secrets — just the source + grouping key the Activity tab
+    /// surfaces.
+    private static func triggerPayload(for request: DispatchRequest) -> String? {
+        var fields: [String: String] = ["source": request.source.rawValue]
+        if let pluginId = request.sourcePluginId, !pluginId.isEmpty {
+            fields["plugin_id"] = pluginId
+        }
+        if let key = request.externalSessionKey, !key.isEmpty {
+            fields["external_session_key"] = key
+        }
+        guard let data = try? JSONEncoder().encode(fields),
+            let json = String(data: data, encoding: .utf8)
+        else { return nil }
+        return json
+    }
+
     /// Mark a task as completed and signal callers.
     /// The toast persists until the user views it or dismisses manually.
     private func markCompleted(_ state: BackgroundTaskState, success: Bool, summary: String) {
         state.status = .completed(success: success, summary: summary)
         state.currentStep = nil
         state.executionContext?.chatSession.save()
+        // Close out the scheduler `agent_runs` row, if one was opened
+        // for this task. `recordRunEnd` is a single UPDATE so the cost
+        // is negligible; failure to write only forfeits the audit
+        // trail entry, never the task's completion signal.
+        if let runId = state.agentRunId {
+            let endStatus: AgentRunStatus = success ? .success : .error
+            let errorMessage: String? = success ? nil : summary
+            // Persist the per-run JSON trace BEFORE we null out
+            // `agentRunId` so subsequent retries/observers can't
+            // accidentally write it twice (spec §1.8).
+            Self.writeRunTrace(
+                runId: runId,
+                state: state,
+                status: endStatus,
+                endedAt: Date(),
+                errorMessage: errorMessage
+            )
+            do {
+                try SchedulerDatabase.shared.recordRunEnd(
+                    runId: runId,
+                    status: endStatus,
+                    tokensIn: state.tokensIn > 0 ? state.tokensIn : nil,
+                    tokensOut: state.tokensOut > 0 ? state.tokensOut : nil,
+                    costUSD: state.costUSD > 0 ? state.costUSD : nil,
+                    error: errorMessage
+                )
+            } catch {
+                print("[BackgroundTaskManager] recordRunEnd failed for run \(runId): \(error)")
+            }
+            state.agentRunId = nil
+        }
         resumeCompletion(for: state.id, result: resultFromState(state))
 
         let eventType: TaskEventType = success ? .completed : .failed
@@ -487,6 +667,59 @@ public final class BackgroundTaskManager: ObservableObject {
             outputText: outputText
         )
         emitPluginEvent(state, type: eventType, json: json)
+    }
+
+    // MARK: - Private: Run-Trace Persistence
+
+    /// Capture the terminal state of a chat task as a `RunTrace` and
+    /// write it to disk under `~/.osaurus/agents/<id>/runs/<run_id>.json`
+    /// (spec §1.8). Static + MainActor so the call site doesn't need
+    /// to hop actors; the actual file write is synchronous but
+    /// best-effort — failures are logged and swallowed.
+    private static func writeRunTrace(
+        runId: UUID,
+        state: BackgroundTaskState,
+        status: AgentRunStatus,
+        endedAt: Date,
+        errorMessage: String?
+    ) {
+        let turns: [RunTrace.Turn] = (state.chatSession?.turns ?? []).map { turn in
+            let callSnapshots: [RunTrace.ToolCallSnapshot]? = turn.toolCalls.flatMap {
+                $0.isEmpty
+                    ? nil
+                    : $0.map {
+                        RunTrace.ToolCallSnapshot(
+                            id: $0.id,
+                            name: $0.function.name,
+                            arguments: $0.function.arguments
+                        )
+                    }
+            }
+            return RunTrace.Turn(
+                id: turn.id,
+                role: turn.role.rawValue,
+                content: turn.content,
+                thinking: turn.thinkingIsEmpty ? nil : turn.thinking,
+                toolCalls: callSnapshots,
+                toolCallId: turn.toolCallId,
+                toolResults: turn.toolResults.isEmpty ? nil : turn.toolResults
+            )
+        }
+        let trace = RunTrace(
+            runId: runId,
+            agentId: state.agentId,
+            sessionId: state.id.uuidString,
+            triggerSource: state.source.rawValue,
+            status: status.rawValue,
+            startedAt: state.createdAt,
+            endedAt: endedAt,
+            tokensIn: state.tokensIn > 0 ? state.tokensIn : nil,
+            tokensOut: state.tokensOut > 0 ? state.tokensOut : nil,
+            costUSD: state.costUSD > 0 ? state.costUSD : nil,
+            errorMessage: errorMessage,
+            turns: turns
+        )
+        RunTraceWriter.write(trace)
     }
 
     // MARK: - Private: Plugin Event Emission

@@ -32,4 +32,32 @@ public enum ChatExecutionContext {
     /// Specific tool invocation id. Used by `speak` so the inline card
     /// can swap its check for a spinner while its audio plays
     @TaskLocal public static var currentToolCallId: String?
+
+    /// The current `agent_runs.id` row (`SchedulerDatabase`) so every
+    /// mutation done by `db.*` tools or scheduling tools can stamp its
+    /// originating run on the `_changelog` audit trail (spec §1.4,
+    /// §8). Bound by `BackgroundTaskManager.dispatchChat` for any
+    /// dispatched chat (chat / schedule / watcher / self-scheduled
+    /// triggers). `nil` for paths that didn't go through dispatch
+    /// (e.g. direct UI edits via `RowEditorSheet`) — the bridge
+    /// stamps `_changelog.run_id` as NULL in that case but actor
+    /// resolution is independent (see `currentRunActor`).
+    @TaskLocal public static var currentRunId: UUID?
+
+    /// String tag identifying who's "driving" the current execution.
+    /// One of "agent" (an inference loop), "user" (UI edit), "system"
+    /// (background job), or "migration" (migration runner). Used by
+    /// `LocalAgentBridge` when stamping `_changelog.actor` on writes
+    /// that go through the bridge. When `nil`, `LocalAgentBridge`
+    /// falls back to `agent` — UI paths that want `user` stamping
+    /// must bind this explicitly.
+    @TaskLocal public static var currentRunActor: String?
+
+    /// The current `BackgroundTaskState.id` for the running chat task,
+    /// so streaming producers (chat engine, HTTP SSE relay, plugin
+    /// host bridge) can forward token-usage deltas into
+    /// `BackgroundTaskManager.recordUsage(...)` for mid-stream budget
+    /// enforcement (spec §11.3). Bound by
+    /// `BackgroundTaskManager.dispatchChat` alongside `currentRunId`.
+    @TaskLocal public static var currentBackgroundId: UUID?
 }

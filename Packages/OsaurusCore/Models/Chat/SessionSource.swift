@@ -21,6 +21,12 @@ public enum SessionSource: String, Codable, CaseIterable, Sendable {
     case schedule
     /// File-system watcher trigger (`WatcherManager`).
     case watcher
+    /// Self-scheduled wake-up (spec §4.2 / §9). The agent itself
+    /// asked to be woken by calling `schedule_next_run`; the
+    /// `NextRunScheduler` is what dispatched this turn. Distinct
+    /// from `.schedule` (user-authored recurring schedules) so the
+    /// audit trail can tell them apart.
+    case selfSchedule = "self_schedule"
 }
 
 // MARK: - UI Helpers
@@ -52,6 +58,8 @@ extension SessionSource {
             return "scheduled"
         case .watcher:
             return "watcher"
+        case .selfSchedule:
+            return "self-scheduled"
         }
     }
 
@@ -63,6 +71,7 @@ extension SessionSource {
         case .http: return "network"
         case .schedule: return "clock.fill"
         case .watcher: return "eye.fill"
+        case .selfSchedule: return "alarm.fill"
         }
     }
 
@@ -74,6 +83,7 @@ extension SessionSource {
         case .http: return "API"
         case .schedule: return "Schedule"
         case .watcher: return "Watcher"
+        case .selfSchedule: return "Self-scheduled"
         }
     }
 }
