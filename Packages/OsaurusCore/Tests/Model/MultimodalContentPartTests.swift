@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import MLX
 import MLXLMCommon
 import Testing
 
@@ -191,6 +192,152 @@ struct MultimodalContentPartTests {
         // across local runs. macOS evicts the system temp dir on its own
         // schedule for the production path; tests just don't need to wait.
         try? FileManager.default.removeItem(at: u)
+    }
+
+    @Test("mapOpenAIChatToMLX decodes valid WAV input_audio into samples")
+    func mapping_audioWavDecodesToSamples() throws {
+        let snapshot = LiveVoiceAudioSnapshot(
+            samples: [-1.0, 0.0, 1.0],
+            sampleRate: 16_000)
+        let b64 = snapshot.wavData().base64EncodedString()
+        let json = """
+            [{
+              "role": "user",
+              "content": [
+                {"type": "input_audio", "input_audio": {"data": "\(b64)", "format": "wav"}}
+              ]
+            }]
+            """.data(using: .utf8)!
+
+        let msgs = try JSONDecoder().decode([ChatMessage].self, from: json)
+        let mapped = ModelRuntime.mapOpenAIChatToMLX(msgs)
+
+        #expect(mapped.count == 1)
+        #expect(mapped[0].audios.count == 1)
+        guard case .samples(let samples, let sampleRate) = mapped[0].audios[0] else {
+            Issue.record("valid WAV input_audio should decode directly to .samples")
+            return
+        }
+        #expect(sampleRate == 16_000)
+        #expect(samples.count == 3)
+        #expect(abs(samples[0] - -1.0) < 0.0001)
+        #expect(abs(samples[1]) < 0.0001)
+        #expect(abs(samples[2] - 1.0) < 0.0001)
+    }
+
+    @Test("mapOpenAIChatToMLX uses local live audio samples when present")
+    func mapping_usesLocalLiveAudioSamples() throws {
+        let fallbackBytes = Data([0x52, 0x49, 0x46, 0x46])
+        let message = ChatMessage(
+            role: "user",
+            text: "hear both",
+            imageData: [],
+            audios: [
+                (data: fallbackBytes, format: "wav"),
+                (data: fallbackBytes, format: "wav"),
+            ],
+            localAudioSamples: [
+                nil,
+                LocalAudioSamples(samples: [0.1, -0.2, 0.3], sampleRate: 16_000),
+            ],
+            videos: []
+        )
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([message])
+
+        #expect(mapped[0].audios.count == 2)
+        guard case .samples(let samples, let sampleRate) = mapped[0].audios[1] else {
+            Issue.record("second audio input should use local live samples")
+            return
+        }
+        #expect(samples == [0.1, -0.2, 0.3])
+        #expect(sampleRate == 16_000)
+    }
+
+    @Test(
+        "mapOpenAIChatToMLX prefers fresh preencoded live audio",
+        .disabled("Requires an MLXArray fixture; local SwiftPM tests cannot load default.metallib.")
+    )
+    func mapping_prefersFreshPreencodedLiveAudio() throws {
+        let attachmentId = UUID()
+        let samples: [Float] = [0.1, -0.2, 0.3]
+        let embedding = MLXArray.zeros([2, 4])
+        LiveVoiceAudioInputRegistry.shared.store(samples: samples, sampleRate: 16_000, for: attachmentId)
+        LiveVoiceAudioInputRegistry.shared.storePreencoded(
+            samples: samples,
+            sampleRate: 16_000,
+            embedding: embedding,
+            encodeMs: 12,
+            for: attachmentId
+        )
+        defer { LiveVoiceAudioInputRegistry.shared.removeAll() }
+
+        let message = ChatMessage(
+            role: "user",
+            text: "hear preencoded",
+            imageData: [],
+            audios: [(data: Data([0x52, 0x49, 0x46, 0x46]), format: "wav")],
+            localAudioSamples: [
+                LocalAudioSamples(
+                    samples: samples,
+                    sampleRate: 16_000,
+                    preencodedAttachmentId: attachmentId
+                )
+            ],
+            videos: []
+        )
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([message])
+
+        guard case .preEncoded(let mappedSamples, let sampleRate, let mappedEmbedding) = mapped[0].audios[0] else {
+            Issue.record("fresh live audio embedding should be forwarded as preEncoded")
+            return
+        }
+        #expect(mappedSamples == samples)
+        #expect(sampleRate == 16_000)
+        #expect(mappedEmbedding.shape == embedding.shape)
+    }
+
+    @Test(
+        "mapOpenAIChatToMLX ignores stale preencoded live audio",
+        .disabled("Requires an MLXArray fixture; local SwiftPM tests cannot load default.metallib.")
+    )
+    func mapping_ignoresStalePreencodedLiveAudio() throws {
+        let attachmentId = UUID()
+        LiveVoiceAudioInputRegistry.shared.store(samples: [0.1], sampleRate: 16_000, for: attachmentId)
+        LiveVoiceAudioInputRegistry.shared.storePreencoded(
+            samples: [0.1],
+            sampleRate: 16_000,
+            embedding: MLXArray.zeros([1, 4]),
+            encodeMs: 12,
+            for: attachmentId
+        )
+        defer { LiveVoiceAudioInputRegistry.shared.removeAll() }
+
+        let freshSamples: [Float] = [0.1, -0.2]
+        let message = ChatMessage(
+            role: "user",
+            text: "hear fresh",
+            imageData: [],
+            audios: [(data: Data([0x52, 0x49, 0x46, 0x46]), format: "wav")],
+            localAudioSamples: [
+                LocalAudioSamples(
+                    samples: freshSamples,
+                    sampleRate: 16_000,
+                    preencodedAttachmentId: attachmentId
+                )
+            ],
+            videos: []
+        )
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([message])
+
+        guard case .samples(let mappedSamples, let sampleRate) = mapped[0].audios[0] else {
+            Issue.record("stale live audio embedding should fall back to samples")
+            return
+        }
+        #expect(mappedSamples == freshSamples)
+        #expect(sampleRate == 16_000)
     }
 
     /// Locks in the fix for a shared-helper bug where the audio mediatype

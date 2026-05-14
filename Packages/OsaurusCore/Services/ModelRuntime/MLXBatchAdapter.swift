@@ -43,6 +43,13 @@ struct MLXBatchAdapter {
         let genTask: Task<Void, Never>
     }
 
+    struct AudioPreencodeResult {
+        let chat: [MLXLMCommon.Chat.Message]
+        let inputCount: Int
+        let convertedCount: Int
+        let alreadyPreencodedCount: Int
+    }
+
     struct EffectiveGenerationSettings: Equatable, Sendable {
         let temperature: Float
         let maxTokens: Int
@@ -332,6 +339,111 @@ struct MLXBatchAdapter {
         }
     }
 
+    static func preencodeAudioSources(
+        in chat: [MLXLMCommon.Chat.Message],
+        encode: (MLXLMCommon.UserInput.Audio) throws -> MLXLMCommon.UserInput.Audio?
+    ) rethrows -> AudioPreencodeResult {
+        var inputCount = 0
+        var convertedCount = 0
+        var alreadyPreencodedCount = 0
+
+        let mapped = try chat.map { message in
+            guard !message.audios.isEmpty else { return message }
+            var updated = message
+            updated.audios = try message.audios.map { audio in
+                inputCount += 1
+                if case .preEncoded = audio {
+                    alreadyPreencodedCount += 1
+                    return audio
+                }
+                if let encoded = try encode(audio) {
+                    convertedCount += 1
+                    return encoded
+                }
+                return audio
+            }
+            return updated
+        }
+
+        return AudioPreencodeResult(
+            chat: mapped,
+            inputCount: inputCount,
+            convertedCount: convertedCount,
+            alreadyPreencodedCount: alreadyPreencodedCount
+        )
+    }
+
+    private static func preencodeNemotronOmniAudioIfPossible(
+        in chat: [MLXLMCommon.Chat.Message],
+        modelName: String,
+        model: any LanguageModel,
+        trace: TTFTTrace?
+    ) throws -> [MLXLMCommon.Chat.Message] {
+        guard ModelFamilyNames.isNemotronOmniFamily(modelName),
+            let omni = model as? NemotronHOmni
+        else {
+            return chat
+        }
+
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        let result = try preencodeAudioSources(in: chat) { audio in
+            try preencodedAudio(audio, using: omni)
+        }
+        guard result.inputCount > 0 else { return result.chat }
+
+        let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+        trace?.set("omni_audio_preencode_input_count", result.inputCount)
+        trace?.set("omni_audio_preencode_converted_count", result.convertedCount)
+        trace?.set("omni_audio_preencode_existing_count", result.alreadyPreencodedCount)
+        trace?.set("omni_audio_preencode_ms", elapsedMs)
+        trace?.mark("omni_audio_preencode_done")
+        batchAdapterLog.info(
+            "preencodeAudio: model=\(modelName, privacy: .public) input=\(result.inputCount, privacy: .public) converted=\(result.convertedCount, privacy: .public) existing=\(result.alreadyPreencodedCount, privacy: .public) ms=\(elapsedMs, privacy: .public)"
+        )
+        return result.chat
+    }
+
+    static func preencodedAudio(
+        _ audio: MLXLMCommon.UserInput.Audio,
+        using omni: NemotronHOmni
+    ) throws -> MLXLMCommon.UserInput.Audio? {
+        let samples16k: [Float]
+        switch audio {
+        case .url(let url):
+            samples16k = try nemotronOmniLoadAudioFile(
+                url,
+                targetSampleRate: Double(omni.config.soundSampleRate)
+            )
+        case .samples(let samples, let sampleRate):
+            samples16k = sampleRate == omni.config.soundSampleRate
+                ? samples
+                : linearResamplePCM(
+                    samples,
+                    fromRate: sampleRate,
+                    toRate: omni.config.soundSampleRate
+                )
+        case .array(let array, let sampleRate):
+            let samples = array.reshaped([-1]).asType(.float32).asArray(Float.self)
+            samples16k = sampleRate == omni.config.soundSampleRate
+                ? samples
+                : linearResamplePCM(
+                    samples,
+                    fromRate: sampleRate,
+                    toRate: omni.config.soundSampleRate
+                )
+        case .preEncoded:
+            return nil
+        }
+
+        let embedding = omni.extractAudioEmbeds(waveform: samples16k)
+        MLX.eval(embedding)
+        return .preEncoded(
+            samples: samples16k,
+            sampleRate: omni.config.soundSampleRate,
+            embedding: embedding
+        )
+    }
+
     // MARK: - Thinking template context
 
     static func additionalContext(
@@ -347,6 +459,9 @@ struct MLXBatchAdapter {
             return normalized.isEmpty ? nil : normalized
         }()
         let disableThinking = generation.modelOptions["disableThinking"]?.boolValue
+        let directRailReasoningEffort = Self.isDirectRailReasoningEffort(normalizedReasoningEffort)
+        let hasPositiveReasoningEffort =
+            normalizedReasoningEffort != nil && !directRailReasoningEffort
 
         if DSV4ReasoningProfile.matches(modelId: modelName) {
             let effort: String
@@ -361,7 +476,7 @@ struct MLXBatchAdapter {
             switch effort {
             case "max":
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = "max"
+                context["reasoning_effort"] = Self.dsv4RawMaxEnabled ? "max" : "high"
             case "high":
                 context["enable_thinking"] = true
                 context["reasoning_effort"] = "high"
@@ -382,27 +497,71 @@ struct MLXBatchAdapter {
             return context
         }
 
-        if ModelFamilyNames.isZayaVLFamily(modelName) {
-            return context
-        }
-
-        if let normalizedReasoningEffort {
-            context["reasoning_effort"] = normalizedReasoningEffort
-        }
         if ModelFamilyNames.isLingFamily(modelName) {
             context["enable_thinking"] = false
             return context
         }
+
+        if ModelFamilyNames.isZayaVLFamily(modelName) {
+            return context
+        }
+
         if let disableThinking {
             context["enable_thinking"] = !disableThinking
+            if !disableThinking, let normalizedReasoningEffort {
+                context["reasoning_effort"] = normalizedReasoningEffort
+            }
+            return context
+        }
+        if ModelFamilyNames.isNemotronOmniFamily(modelName) {
+            context["enable_thinking"] = hasPositiveReasoningEffort
+            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["reasoning_effort"] = normalizedReasoningEffort
+            }
             return context
         }
         if ModelFamilyNames.isZayaFamily(modelName) {
+            context["enable_thinking"] = hasPositiveReasoningEffort
+            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["reasoning_effort"] = normalizedReasoningEffort
+            }
+            return context
+        }
+
+        if let normalizedReasoningEffort, !directRailReasoningEffort {
+            context["reasoning_effort"] = normalizedReasoningEffort
+        }
+        if directRailReasoningEffort {
             context["enable_thinking"] = false
             return context
         }
         context["enable_thinking"] = true
         return context
+    }
+
+    /// DSV4's raw `max` effort prepends an extreme "absolute maximum" thinking
+    /// preface. Keep the UI's Max segment on the stable high-thinking rail by
+    /// default; enable raw max only for explicit diagnostic runs.
+    private static var dsv4RawMaxEnabled: Bool {
+        switch ProcessInfo.processInfo.environment["OSAURUS_DSV4_RAW_MAX"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
+        guard let value else { return false }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
+            return true
+        default:
+            return false
+        }
     }
 
     static func shouldEnableCompiledBatchDecode(modelName: String, maxBatchSize: Int) -> Bool {
@@ -578,6 +737,8 @@ struct MLXBatchAdapter {
             var chatCount = 0
             var toolCount = 0
             var imageCount = 0
+            var videoCount = 0
+            var audioCount = 0
             var contextKeys: [String] = []
             var contextSummary = ""
             var promptTokenCount = 0
@@ -588,10 +749,18 @@ struct MLXBatchAdapter {
         try await container.perform { (context: MLXLMCommon.ModelContext) in
             box.performEnteredAt = CFAbsoluteTimeGetCurrent()
             trace?.mark("batch_container_perform_entered")
-            let chat = preprocessImages(in: buildChat())
+            var chat = preprocessImages(in: buildChat())
+            chat = try preencodeNemotronOmniAudioIfPossible(
+                in: chat,
+                modelName: modelName,
+                model: context.model,
+                trace: trace
+            )
             box.chatBuiltAt = CFAbsoluteTimeGetCurrent()
             box.chatCount = chat.count
             box.imageCount = chat.reduce(0) { $0 + $1.images.count }
+            box.videoCount = chat.reduce(0) { $0 + $1.videos.count }
+            box.audioCount = chat.reduce(0) { $0 + $1.audios.count }
             let toolsSpec = buildToolsSpec()
             box.toolsBuiltAt = CFAbsoluteTimeGetCurrent()
             box.toolCount = toolsSpec?.count ?? 0
@@ -649,8 +818,16 @@ struct MLXBatchAdapter {
             return Int((end - start) * 1000)
         }
         let contextKeyString = box.contextKeys.joined(separator: ",")
+        let totalPrepareMs = Int((doneAt - prepareStartedAt) * 1000)
+        trace?.set("prompt_prepare_ms", totalPrepareMs)
+        trace?.set("processor_prepare_ms", ms(box.contextBuiltAt, box.processorDoneAt))
+        trace?.set("token_array_ms", ms(box.processorDoneAt, box.tokenArrayDoneAt))
+        trace?.set("chat_message_count", box.chatCount)
+        trace?.set("chat_image_count", box.imageCount)
+        trace?.set("chat_video_count", box.videoCount)
+        trace?.set("chat_audio_count", box.audioCount)
         batchAdapterLog.info(
-            "prepareInput: model=\(modelName, privacy: .public) totalMs=\(Int((doneAt - prepareStartedAt) * 1000), privacy: .public) waitForContainerMs=\(ms(prepareStartedAt, box.performEnteredAt), privacy: .public) chatBuildMs=\(ms(box.performEnteredAt, box.chatBuiltAt), privacy: .public) toolsBuildMs=\(ms(box.chatBuiltAt, box.toolsBuiltAt), privacy: .public) contextMs=\(ms(box.toolsBuiltAt, box.contextBuiltAt), privacy: .public) processorPrepareMs=\(ms(box.contextBuiltAt, box.processorDoneAt), privacy: .public) tokenArrayMs=\(ms(box.processorDoneAt, box.tokenArrayDoneAt), privacy: .public) chat=\(box.chatCount, privacy: .public) tools=\(box.toolCount, privacy: .public) images=\(box.imageCount, privacy: .public) promptTokens=\(box.promptTokenCount, privacy: .public) contextKeys=\(contextKeyString, privacy: .public) context=\(box.contextSummary, privacy: .public)"
+            "prepareInput: model=\(modelName, privacy: .public) totalMs=\(totalPrepareMs, privacy: .public) waitForContainerMs=\(ms(prepareStartedAt, box.performEnteredAt), privacy: .public) chatBuildMs=\(ms(box.performEnteredAt, box.chatBuiltAt), privacy: .public) toolsBuildMs=\(ms(box.chatBuiltAt, box.toolsBuiltAt), privacy: .public) contextMs=\(ms(box.toolsBuiltAt, box.contextBuiltAt), privacy: .public) processorPrepareMs=\(ms(box.contextBuiltAt, box.processorDoneAt), privacy: .public) tokenArrayMs=\(ms(box.processorDoneAt, box.tokenArrayDoneAt), privacy: .public) chat=\(box.chatCount, privacy: .public) tools=\(box.toolCount, privacy: .public) images=\(box.imageCount, privacy: .public) videos=\(box.videoCount, privacy: .public) audios=\(box.audioCount, privacy: .public) promptTokens=\(box.promptTokenCount, privacy: .public) contextKeys=\(contextKeyString, privacy: .public) context=\(box.contextSummary, privacy: .public)"
         )
 
         guard let prepared = box.result else {

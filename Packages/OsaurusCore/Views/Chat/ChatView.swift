@@ -399,9 +399,20 @@ final class ChatSession: ObservableObject {
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }
         if model.lowercased() == "foundation" { return false }
+        if ModelMediaCapabilities.from(modelId: model).supportsImage { return true }
         guard let option = pickerItems.first(where: { $0.id == model }) else { return false }
         if case .remote = option.source { return true }
         return option.isVLM
+    }
+
+    var selectedModelSupportsAudio: Bool {
+        guard let model = selectedModel else { return false }
+        return ModelMediaCapabilities.from(modelId: model).supportsAudio
+    }
+
+    var selectedModelSupportsVideo: Bool {
+        guard let model = selectedModel else { return false }
+        return ModelMediaCapabilities.from(modelId: model).supportsVideo
     }
 
     /// Get the currently selected ModelPickerItem
@@ -567,6 +578,75 @@ final class ChatSession: ObservableObject {
         }
 
         return parts.joined(separator: "\n\n")
+    }
+
+    static func buildUserChatMessage(
+        content: String,
+        attachments: [Attachment],
+        supportsImages: Bool,
+        supportsAudio: Bool,
+        supportsVideo: Bool
+    ) -> ChatMessage {
+        let messageText = buildUserMessageText(content: content, attachments: attachments)
+        let imageData = supportsImages ? attachments.images : []
+        let audioPayloads = supportsAudio
+            ? attachments.compactMap(audioPayload)
+            : []
+        let audios = audioPayloads.map { (data: $0.data, format: $0.format) }
+        let localAudioSamples = audioPayloads.map(\.localSamples)
+        let videos: [(data: Data, mimeSubtype: String)] = supportsVideo
+            ? attachments.compactMap(videoPayload)
+            : []
+
+        if !imageData.isEmpty || !audios.isEmpty || !videos.isEmpty {
+            return ChatMessage(
+                role: "user",
+                text: messageText,
+                imageData: imageData,
+                audios: audios,
+                localAudioSamples: localAudioSamples,
+                videos: videos
+            )
+        }
+
+        return ChatMessage(role: "user", content: messageText)
+    }
+
+    private static func audioPayload(from attachment: Attachment) -> (
+        data: Data,
+        format: String,
+        localSamples: LocalAudioSamples?
+    )? {
+        guard attachment.isAudio, let data = attachment.loadAudioData() else { return nil }
+        let format = attachment.audioFormat?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return (
+            data,
+            (format?.isEmpty == false) ? format! : "wav",
+            LiveVoiceAudioInputRegistry.shared.samples(for: attachment.id)
+        )
+    }
+
+    private static func videoPayload(from attachment: Attachment) -> (data: Data, mimeSubtype: String)? {
+        guard attachment.isVideo, let data = attachment.loadVideoData() else { return nil }
+        return (data, videoMimeSubtype(for: attachment.filename))
+    }
+
+    private static func videoMimeSubtype(for filename: String?) -> String {
+        let ext = ((filename ?? "") as NSString).pathExtension
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch ext {
+        case "mov", "qt", "quicktime":
+            return "quicktime"
+        case "m4v":
+            return "mp4"
+        case "":
+            return "mp4"
+        default:
+            return ext
+        }
     }
 
     private static func escapeAttachmentName(_ raw: String) -> String {
@@ -1351,6 +1431,7 @@ final class ChatSession: ObservableObject {
                     let now = Date()
                     if firstDeltaTime == nil {
                         firstDeltaTime = now
+                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
                         ttftTrace?.mark("first_text_delta")
                         ttftTrace?.set("model", selectedModel ?? "unknown")
                         ttftTrace?.emit()
@@ -1371,6 +1452,7 @@ final class ChatSession: ObservableObject {
                     let now = Date()
                     if firstDeltaTime == nil {
                         firstDeltaTime = now
+                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
                         ttftTrace?.mark("first_text_delta")
                         ttftTrace?.set("model", selectedModel ?? "unknown")
                         ttftTrace?.emit()
@@ -1669,13 +1751,13 @@ final class ChatSession: ObservableObject {
                             tool_call_id: t.toolCallId
                         )
                     case .user:
-                        let messageText = Self.buildUserMessageText(content: t.content, attachments: t.attachments)
-                        let imageData = selectedModelSupportsImages ? t.attachments.images : []
-                        if !imageData.isEmpty {
-                            return ChatMessage(role: "user", text: messageText, imageData: imageData)
-                        } else {
-                            return ChatMessage(role: t.role.rawValue, content: messageText)
-                        }
+                        return Self.buildUserChatMessage(
+                            content: t.content,
+                            attachments: t.attachments,
+                            supportsImages: selectedModelSupportsImages,
+                            supportsAudio: selectedModelSupportsAudio,
+                            supportsVideo: selectedModelSupportsVideo
+                        )
                     default:
                         return ChatMessage(role: t.role.rawValue, content: t.content)
                     }

@@ -261,10 +261,30 @@ let package = Package(
         // makes the DSV4 tokenizer fallback match the canonical multi-turn
         // chat encoder so generated cache boundaries can be reused. `ad1d231`
         // synchronizes before and after safetensors disk writes so
-        // post-answer cache storage cannot crash after generation.
+        // post-answer cache storage cannot crash after generation. `c0f8b3b`
+        // adds Nemotron Omni live-voice handoff support, including
+        // pre-encoded Parakeet/audio embeddings and updated Osaurus hookup
+        // docs for media-aware cache verification. `e497f61` adds the
+        // reusable thread-safe live PCM buffer and recorder streaming cursor
+        // needed by real VAD/call-mode polling while preserving the full
+        // retained waveform for the final Omni request. `638024b` adds the
+        // tracked OmniAudioLatencyBench executable and local call-mode
+        // latency evidence for raw PCM vs pre-encoded Parakeet embeddings.
+        // `fb8fb39` makes Omni media cache restore token-aware and records
+        // prompt/media topology in the latency bench output. `b57fe98`
+        // refreshes the live Parakeet/RADIO integration docs consumed by the
+        // Osaurus voice path. `81c8ef7` adds the OmniAudioChunkStabilityBench
+        // proof that current Parakeet embeddings are not chunk-concat safe.
+        // `4365651` decodes nested ZAYA/JANGTQ-K routed-expert mxtq bit
+        // metadata, including separate fused gate/up and down-projection
+        // widths, without falling back to config parse failure.
+        // `f728718` fixes DSV4 Flash HSA selection for long prompts by masking
+        // future compressed pool chunks before indexer top-k. `6561a72`
+        // preserves ratio-4 overlap-compressor state across decode calls so
+        // long-tail DSV4 generation keeps the previous complete pool window.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "ad1d23199b056ed502124717e6ca8877f2fb303a"
+            revision: "6561a72f93d6cd5e0202e8067b53fed5cf21a660"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-

@@ -116,6 +116,30 @@ public actor RemoteProviderService: ToolCapableService {
         }
     }
 
+    static func chatCompletionsReasoningEffort(
+        providerType: RemoteProviderType,
+        host: String,
+        effort: String?
+    ) -> String? {
+        guard
+            let effort = effort?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            !effort.isEmpty
+        else {
+            return nil
+        }
+
+        switch providerType {
+        case .openaiLegacy, .azureOpenAI:
+            if host.lowercased().contains("deepseek") {
+                let acceptedDeepSeekEfforts: Set<String> = ["low", "medium", "high", "max", "xhigh"]
+                return acceptedDeepSeekEfforts.contains(effort) ? effort : nil
+            }
+            return effort
+        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
+            return effort
+        }
+    }
+
     /// Whether the target provider requires `reasoning_content` to be echoed
     /// back on assistant messages in multi-round conversations. DeepSeek's
     /// thinking mode 400s otherwise (issue #959). Other OpenAI-compat hosts
@@ -144,26 +168,50 @@ public actor RemoteProviderService: ToolCapableService {
     /// field is DeepSeek-specific and only injected for DeepSeek hosts to avoid
     /// 422s on strict schemas.
     ///
-    /// Non-DSV4 models pass through unchanged so this is safe to call
-    /// unconditionally from `buildChatRequest`.
+    /// Direct/off aliases (`instruct`, `no_think`, `none`, etc.) are internal
+    /// local-runtime controls, not portable OpenAI-compatible wire values. They
+    /// are stripped for every remote model; DSV4 on DeepSeek additionally gets
+    /// the provider-specific `thinking.disabled` object.
     static func dsv4RemoteEffort(
         host: String,
         model: String,
         effort: String?
     ) -> (effort: String?, thinking: ThinkingConfig?) {
-        let normalized = effort?
+        guard let normalized = effort?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard
-            normalized == "instruct",
-            DSV4ReasoningProfile.matches(modelId: model)
+            .lowercased(), !normalized.isEmpty
         else {
-            return (effort, nil)
+            return (nil, nil)
         }
+
+        let isDirectRailEffort: Bool
+        switch normalized {
+        case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
+            isDirectRailEffort = true
+        default:
+            isDirectRailEffort = false
+        }
+        guard isDirectRailEffort else { return (normalized, nil) }
         let thinking =
             host.lowercased().contains("deepseek")
+            && DSV4ReasoningProfile.matches(modelId: model)
             ? ThinkingConfig(type: "disabled") : nil
         return (nil, thinking)
+    }
+
+    static func remoteChatReasoningControls(
+        providerType: RemoteProviderType,
+        host: String,
+        model: String,
+        effort: String?
+    ) -> (effort: String?, thinking: ThinkingConfig?) {
+        let translated = Self.dsv4RemoteEffort(host: host, model: model, effort: effort)
+        let providerAcceptedEffort = Self.chatCompletionsReasoningEffort(
+            providerType: providerType,
+            host: host,
+            effort: translated.effort
+        )
+        return (providerAcceptedEffort, translated.thinking)
     }
 
     static func effectiveRequestProviderType(
@@ -1668,7 +1716,8 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
     ) -> RemoteChatRequest {
-        let (effortValue, thinking) = Self.dsv4RemoteEffort(
+        let (effortValue, thinking) = Self.remoteChatReasoningControls(
+            providerType: provider.providerType,
             host: provider.host,
             model: model,
             effort: parameters.modelOptions["reasoningEffort"]?.stringValue

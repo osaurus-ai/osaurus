@@ -37,6 +37,23 @@ public actor ModelRuntime {
         let isCurrent: Bool
     }
 
+    struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
+        enum Status: String, Sendable {
+            case stored
+            case skippedNoSamples
+            case skippedUnsupportedModel
+            case skippedModelNotResident
+            case skippedModelUnavailable
+            case failed
+        }
+
+        let status: Status
+        let sampleCount: Int
+        let sampleRate: Int
+        let encodeMs: Int
+        let message: String?
+    }
+
     private final class SessionHolder: NSObject, @unchecked Sendable {
         let name: String
         let container: ModelContainer
@@ -117,6 +134,127 @@ public actor ModelRuntime {
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
             return lhs.name < rhs.name
         }
+    }
+
+    func preencodeLiveVoiceAudioIfResident(
+        modelName: String,
+        attachmentId: UUID,
+        samples: [Float],
+        sampleRate: Int
+    ) async -> LiveVoiceAudioPreencodeResult {
+        guard !samples.isEmpty, sampleRate > 0 else {
+            return LiveVoiceAudioPreencodeResult(
+                status: .skippedNoSamples,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: nil
+            )
+        }
+
+        guard ModelFamilyNames.isNemotronOmniFamily(modelName) else {
+            return LiveVoiceAudioPreencodeResult(
+                status: .skippedUnsupportedModel,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: nil
+            )
+        }
+
+        guard let holder = modelCache[modelName]
+            ?? modelCache.values.first(where: {
+                $0.name.caseInsensitiveCompare(modelName) == .orderedSame
+            })
+        else {
+            return LiveVoiceAudioPreencodeResult(
+                status: .skippedModelNotResident,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: nil
+            )
+        }
+
+        await ModelLease.shared.acquire(holder.name)
+        let soloLease = await MLXBatchAdapter.Registry.shared.acquireSoloLease(for: holder.name)
+
+        final class OutBox: @unchecked Sendable {
+            var result: LiveVoiceAudioPreencodeResult?
+        }
+        let box = OutBox()
+
+        do {
+            try await holder.container.perform { context in
+                guard let omni = context.model as? NemotronHOmni else {
+                    box.result = LiveVoiceAudioPreencodeResult(
+                        status: .skippedModelUnavailable,
+                        sampleCount: samples.count,
+                        sampleRate: sampleRate,
+                        encodeMs: 0,
+                        message: "Resident model is not NemotronHOmni"
+                    )
+                    return
+                }
+
+                let startedAt = CFAbsoluteTimeGetCurrent()
+                guard case .preEncoded(let encodedSamples, let encodedSampleRate, let embedding) =
+                    try MLXBatchAdapter.preencodedAudio(
+                        .samples(samples, sampleRate: sampleRate),
+                        using: omni
+                    )
+                else {
+                    box.result = LiveVoiceAudioPreencodeResult(
+                        status: .skippedModelUnavailable,
+                        sampleCount: samples.count,
+                        sampleRate: sampleRate,
+                        encodeMs: 0,
+                        message: "Nemotron audio encoder returned no embedding"
+                    )
+                    return
+                }
+
+                let encodeMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+                LiveVoiceAudioInputRegistry.shared.storePreencoded(
+                    samples: encodedSamples,
+                    sampleRate: encodedSampleRate,
+                    sourceSampleCount: samples.count,
+                    sourceSampleRate: sampleRate,
+                    embedding: embedding,
+                    encodeMs: encodeMs,
+                    for: attachmentId
+                )
+                box.result = LiveVoiceAudioPreencodeResult(
+                    status: .stored,
+                    sampleCount: samples.count,
+                    sampleRate: sampleRate,
+                    encodeMs: encodeMs,
+                    message: nil
+                )
+            }
+        } catch {
+            await soloLease.release()
+            await ModelLease.shared.release(holder.name)
+            return LiveVoiceAudioPreencodeResult(
+                status: .failed,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: String(describing: error)
+            )
+        }
+
+        await soloLease.release()
+        await ModelLease.shared.release(holder.name)
+
+        return box.result
+            ?? LiveVoiceAudioPreencodeResult(
+                status: .skippedModelUnavailable,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: nil
+            )
     }
 
     // MARK: - Model lifecycle
@@ -701,7 +839,8 @@ public actor ModelRuntime {
     /// Installs the cache coordinator on a freshly-loaded holder.
     ///
     /// `enableCaching(config:)` constructs the coordinator with our
-    /// recommended knobs (paged + L2 disk + TurboQuant default + 8K window).
+    /// recommended knobs (paged + L2 disk, fp16 KV by default, 64K rotating
+    /// cap for callers that do not provide `maxKVSize`).
     /// vmlx's `BatchEngine.admitPendingRequests` auto-flips
     /// `coordinator.isHybrid` on first slot admission for any model whose
     /// per-layer cache list contains a `MambaCache` or `ArraysCache` — that
@@ -953,7 +1092,7 @@ public actor ModelRuntime {
         }
         activeGenerationTask = ActiveGenerationRecord(modelName: modelName, task: activeTask)
 
-        return GenerationEventMapper.map(events: prepared.stream, modelName: modelName)
+        return GenerationEventMapper.map(events: prepared.stream, modelName: modelName, trace: trace)
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
@@ -984,7 +1123,7 @@ public actor ModelRuntime {
         var pendingTools: [ServiceToolInvocation] = []
         let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
-            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented) },
+            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented, trace: parameters.ttftTrace) },
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools,
@@ -1028,7 +1167,7 @@ public actor ModelRuntime {
     ) async throws -> AsyncThrowingStream<String, Error> {
         let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
-            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented) },
+            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented, trace: parameters.ttftTrace) },
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools,
@@ -1056,12 +1195,18 @@ public actor ModelRuntime {
             var scrubber = ThinkTagScrubber()
             do {
                 for try await ev in events {
-                    if case .completionInfo(let tokenCount, let tokensPerSecond, let unclosedReasoning) = ev {
+                    if case .completionInfo(
+                        let tokenCount,
+                        let tokensPerSecond,
+                        let unclosedReasoning,
+                        let stopReason
+                    ) = ev {
                         continuation.yield(
                             StreamingStatsHint.encode(
                                 tokenCount: tokenCount,
                                 tokensPerSecond: tokensPerSecond,
-                                unclosedReasoning: unclosedReasoning
+                                unclosedReasoning: unclosedReasoning,
+                                stopReason: stopReason
                             )
                         )
                         continue
@@ -1251,14 +1396,16 @@ public actor ModelRuntime {
     /// `TemplateException: "Message has tool role, but there was no
     /// previous assistant message with a tool call!"` on MiniMax).
     nonisolated static func mapOpenAIChatToMLX(
-        _ msgs: [ChatMessage]
+        _ msgs: [ChatMessage],
+        trace: TTFTTrace? = nil
     ) -> [MLXLMCommon.Chat.Message] {
         var out: [MLXLMCommon.Chat.Message] = []
         out.reserveCapacity(max(6, msgs.count))
+        var audioMetrics = AudioMaterializationMetrics()
         for m in msgs {
             let images = extractImageSources(from: m)
             let videos = extractVideoSources(from: m)
-            let audios = extractAudioSources(from: m)
+            let audios = extractAudioSources(from: m, metrics: &audioMetrics)
             switch m.role {
             case "system":
                 out.append(
@@ -1330,6 +1477,15 @@ public actor ModelRuntime {
                     )
                 )
             }
+        }
+        if audioMetrics.inputCount > 0 {
+            trace?.set("input_audio_count", audioMetrics.inputCount)
+            trace?.set("input_audio_materialized_count", audioMetrics.materializedCount)
+            trace?.set("input_audio_local_sample_count", audioMetrics.localSampleCount)
+            trace?.set("input_audio_local_preencoded_count", audioMetrics.localPreencodedCount)
+            trace?.set("input_audio_bytes", audioMetrics.byteCount)
+            trace?.set("input_audio_materialize_ms", audioMetrics.materializeMs)
+            trace?.mark("input_audio_materialize_done")
         }
         return out
     }
@@ -1405,33 +1561,236 @@ public actor ModelRuntime {
     }
 
     /// Extract `[UserInput.Audio]` from `input_audio` content parts. The
-    /// OpenAI shape is `{data: <base64>, format: "wav"|"mp3"|...}`; we
-    /// materialize a temp file with that extension and hand the URL to vmlx
-    /// so `nemotronOmniLoadAudioFile` (AVAudioConverter → 16 kHz mono Float32)
-    /// drives the decode end-to-end. Going through a file URL keeps the path
-    /// uniform across formats — there is no in-memory `[Float]` decode here
-    /// because we'd have to duplicate vmlx's AVAudioConverter rig and lose
-    /// resampling fidelity in the process.
+    /// OpenAI wire shape is `{data: <base64>, format: "wav"|"mp3"|...}`. Valid
+    /// WAV payloads decode directly to PCM samples so the Nemotron Omni adapter
+    /// can pre-encode without a temp-file re-decode. Other supported containers
+    /// still materialize to a temp file and let vmlx's AVAudioConverter path
+    /// handle codec-specific decoding. Live in-app voice may also carry local
+    /// PCM samples aligned to the same audio part, in which case we hand those
+    /// samples directly to vmlx and keep the encoded bytes only as the portable
+    /// history/fallback representation.
+    private struct AudioMaterializationMetrics {
+        var inputCount = 0
+        var localSampleCount = 0
+        var localPreencodedCount = 0
+        var materializedCount = 0
+        var byteCount = 0
+        var materializeMs = 0
+    }
+
     nonisolated private static func extractAudioSources(
-        from message: ChatMessage
+        from message: ChatMessage,
+        metrics: inout AudioMaterializationMetrics
     ) -> [MLXLMCommon.UserInput.Audio] {
-        let inputs = message.audioInputs
+        let inputs = message.audioInputsWithLocalSamples
         guard !inputs.isEmpty else { return [] }
 
         var sources: [MLXLMCommon.UserInput.Audio] = []
-        for (data, format) in inputs {
-            let ext = format.lowercased()
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        metrics.inputCount += inputs.count
+        for (data, format, localSamples) in inputs {
+            if let localSamples {
+                if let attachmentId = localSamples.preencodedAttachmentId,
+                    let preencoded = LiveVoiceAudioInputRegistry.shared.freshPreencodedAudio(
+                        for: attachmentId,
+                        sourceSampleCount: localSamples.samples.count,
+                        sampleRate: localSamples.sampleRate
+                    )
+                {
+                    metrics.localPreencodedCount += 1
+                    sources.append(preencoded)
+                    continue
+                }
+
+                metrics.localSampleCount += 1
+                sources.append(.samples(localSamples.samples, sampleRate: localSamples.sampleRate))
+                continue
+            }
+
+            if let bytes = Data(base64Encoded: data),
+                let decoded = decodeWAVAudioSamples(bytes)
+            {
+                metrics.localSampleCount += 1
+                metrics.byteCount += decoded.byteCount
+                sources.append(.samples(decoded.samples, sampleRate: decoded.sampleRate))
+                continue
+            }
+
+            let ext = format.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                .lowercased()
+            let fallbackExtension = ext.isEmpty ? "wav" : ext
             // Synthesize a `data:audio/<format>;base64,<data>` URL so we can
             // reuse the same materializer the video path uses. The audio data
             // comes in as a bare base64 string from `input_audio.data`, not a
             // data URL — wrap it before handing off so the helper's data-URL
             // parsing applies uniformly.
-            let dataUrl = "data:audio/\(ext);base64,\(data)"
-            if let url = materializeMediaDataUrl(dataUrl, defaultExtension: ext.isEmpty ? "wav" : ext) {
-                sources.append(.url(url))
+            let dataUrl = "data:audio/\(fallbackExtension);base64,\(data)"
+            if let file = materializeMediaDataUrlResult(dataUrl, defaultExtension: fallbackExtension) {
+                metrics.materializedCount += 1
+                metrics.byteCount += file.byteCount
+                sources.append(.url(file.url))
             }
         }
+        metrics.materializeMs += Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
         return sources
+    }
+
+    private struct DecodedAudioSamples {
+        let samples: [Float]
+        let sampleRate: Int
+        let byteCount: Int
+    }
+
+    nonisolated private static func decodeWAVAudioSamples(_ bytes: Data) -> DecodedAudioSamples? {
+        guard bytes.count >= 44 else { return nil }
+        guard ascii(bytes, offset: 0, count: 4) == "RIFF",
+            ascii(bytes, offset: 8, count: 4) == "WAVE"
+        else { return nil }
+
+        var offset = 12
+        var audioFormat: UInt16?
+        var channelCount: UInt16?
+        var sampleRate: Int?
+        var blockAlign: UInt16?
+        var bitsPerSample: UInt16?
+        var dataRange: Range<Int>?
+
+        while offset + 8 <= bytes.count {
+            guard let chunkId = ascii(bytes, offset: offset, count: 4),
+                let chunkSize = readUInt32LE(bytes, offset: offset + 4)
+            else { return nil }
+
+            let chunkStart = offset + 8
+            let chunkEnd = chunkStart + Int(chunkSize)
+            guard chunkEnd <= bytes.count else { return nil }
+
+            switch chunkId {
+            case "fmt ":
+                guard chunkSize >= 16,
+                    let format = readUInt16LE(bytes, offset: chunkStart),
+                    let channels = readUInt16LE(bytes, offset: chunkStart + 2),
+                    let rate = readUInt32LE(bytes, offset: chunkStart + 4),
+                    let align = readUInt16LE(bytes, offset: chunkStart + 12),
+                    let bits = readUInt16LE(bytes, offset: chunkStart + 14)
+                else { return nil }
+                audioFormat = format
+                if format == 0xFFFE, chunkSize >= 40,
+                    let subformat = readUInt16LE(bytes, offset: chunkStart + 24)
+                {
+                    audioFormat = subformat
+                }
+                channelCount = channels
+                sampleRate = Int(rate)
+                blockAlign = align
+                bitsPerSample = bits
+
+            case "data":
+                dataRange = chunkStart ..< chunkEnd
+
+            default:
+                break
+            }
+
+            offset = chunkEnd + (Int(chunkSize) & 1)
+        }
+
+        guard let format = audioFormat,
+            let channels = channelCount,
+            let rate = sampleRate,
+            let align = blockAlign,
+            let bits = bitsPerSample,
+            let range = dataRange,
+            channels > 0,
+            rate > 0,
+            align > 0
+        else { return nil }
+
+        let channelTotal = Int(channels)
+        let bytesPerSample = Int(bits / 8)
+        guard bytesPerSample > 0, Int(align) >= channelTotal * bytesPerSample else { return nil }
+        guard format == 1 || format == 3 else { return nil }
+        if format == 3 {
+            guard bits == 32 else { return nil }
+        } else {
+            guard bits == 8 || bits == 16 || bits == 24 || bits == 32 else { return nil }
+        }
+
+        let frameStride = Int(align)
+        let frameCount = range.count / frameStride
+        guard frameCount > 0 else { return nil }
+
+        var samples: [Float] = []
+        samples.reserveCapacity(frameCount)
+        for frame in 0 ..< frameCount {
+            let frameOffset = range.lowerBound + frame * frameStride
+            var mixed = Float(0)
+            for channel in 0 ..< channelTotal {
+                let sampleOffset = frameOffset + channel * bytesPerSample
+                guard let sample = decodeWAVSample(bytes, offset: sampleOffset, format: format, bits: bits)
+                else { return nil }
+                mixed += sample
+            }
+            samples.append(mixed / Float(channelTotal))
+        }
+
+        return DecodedAudioSamples(samples: samples, sampleRate: rate, byteCount: bytes.count)
+    }
+
+    nonisolated private static func decodeWAVSample(
+        _ bytes: Data,
+        offset: Int,
+        format: UInt16,
+        bits: UInt16
+    ) -> Float? {
+        switch (format, bits) {
+        case (1, 8):
+            guard offset < bytes.count else { return nil }
+            return max(-1, min(1, (Float(bytes[offset]) - 128.0) / 127.0))
+        case (1, 16):
+            guard let raw = readUInt16LE(bytes, offset: offset) else { return nil }
+            return max(-1, min(1, Float(Int16(bitPattern: raw)) / Float(Int16.max)))
+        case (1, 24):
+            guard let raw = readInt24LE(bytes, offset: offset) else { return nil }
+            return max(-1, min(1, Float(raw) / 8_388_607.0))
+        case (1, 32):
+            guard let raw = readUInt32LE(bytes, offset: offset) else { return nil }
+            return max(-1, min(1, Float(Int32(bitPattern: raw)) / Float(Int32.max)))
+        case (3, 32):
+            guard let raw = readUInt32LE(bytes, offset: offset) else { return nil }
+            return Float(bitPattern: raw)
+        default:
+            return nil
+        }
+    }
+
+    nonisolated private static func ascii(_ bytes: Data, offset: Int, count: Int) -> String? {
+        guard offset >= 0, count >= 0, offset + count <= bytes.count else { return nil }
+        return String(data: bytes[offset ..< offset + count], encoding: .ascii)
+    }
+
+    nonisolated private static func readUInt16LE(_ bytes: Data, offset: Int) -> UInt16? {
+        guard offset >= 0, offset + 2 <= bytes.count else { return nil }
+        return UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
+    }
+
+    nonisolated private static func readUInt32LE(_ bytes: Data, offset: Int) -> UInt32? {
+        guard offset >= 0, offset + 4 <= bytes.count else { return nil }
+        return UInt32(bytes[offset])
+            | (UInt32(bytes[offset + 1]) << 8)
+            | (UInt32(bytes[offset + 2]) << 16)
+            | (UInt32(bytes[offset + 3]) << 24)
+    }
+
+    nonisolated private static func readInt24LE(_ bytes: Data, offset: Int) -> Int32? {
+        guard offset >= 0, offset + 3 <= bytes.count else { return nil }
+        var raw = Int32(bytes[offset])
+            | (Int32(bytes[offset + 1]) << 8)
+            | (Int32(bytes[offset + 2]) << 16)
+        if (raw & 0x0080_0000) != 0 {
+            raw |= ~0x00FF_FFFF
+        }
+        return raw
     }
 
     /// Decode a `data:<mediatype>;base64,<bytes>` URL into a temp file URL with
@@ -1448,6 +1807,18 @@ public actor ModelRuntime {
         _ urlString: String,
         defaultExtension: String
     ) -> URL? {
+        materializeMediaDataUrlResult(urlString, defaultExtension: defaultExtension)?.url
+    }
+
+    private struct MaterializedMediaFile {
+        let url: URL
+        let byteCount: Int
+    }
+
+    nonisolated private static func materializeMediaDataUrlResult(
+        _ urlString: String,
+        defaultExtension: String
+    ) -> MaterializedMediaFile? {
         // Expect `data:<mediatype>[;base64],<payload>`. Pull the mediatype
         // subtype as the file extension when available so AVFoundation /
         // AVAudioConverter's extension-keyed dispatch picks the right decoder.
@@ -1488,7 +1859,7 @@ public actor ModelRuntime {
             .appendingPathExtension(ext)
         do {
             try bytes.write(to: tmp, options: .atomic)
-            return tmp
+            return MaterializedMediaFile(url: tmp, byteCount: bytes.count)
         } catch {
             return nil
         }

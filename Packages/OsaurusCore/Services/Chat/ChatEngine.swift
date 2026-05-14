@@ -445,7 +445,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
             do {
                 for try await delta in inner {
-                    if StreamingStatsHint.decode(delta) != nil {
+                    if let stats = StreamingStatsHint.decode(delta) {
+                        outputTokenCount = stats.tokenCount
+                        if let stopReason = stats.stopReason,
+                           let loggedReason = InferenceLog.FinishReason(rawValue: stopReason)
+                        {
+                            finishReason = loggedReason
+                        }
                         continuation.yield(delta)
                         continue
                     }

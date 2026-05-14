@@ -92,9 +92,37 @@ struct RuntimePolicySourceTests {
         // canonical multi-turn encoder so UI-generated cache boundaries can
         // be reused on growing chat prompts. `ad1d231` synchronizes before and
         // after safetensors disk writes against the GPU stream after generation.
-        #expect(manifest.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
-        #expect(workspaceResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
-        #expect(appResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
+        // `c0f8b3b` adds Nemotron Omni live-voice handoff support and preserves
+        // pre-encoded Parakeet/audio embeddings. `e497f61` adds the reusable
+        // retained live PCM buffer plus a streaming cursor for VAD/call-mode
+        // polling without losing the final full-turn waveform. `638024b`
+        // adds a tracked OmniAudioLatencyBench for raw PCM vs pre-encoded
+        // Parakeet call-mode measurements. `fb8fb39` makes Omni media cache
+        // restore token-aware and records prompt/media topology in the bench
+        // output. `b57fe98` refreshes the Parakeet/RADIO integration docs
+        // consumed by Osaurus live-voice work. `81c8ef7` adds the
+        // OmniAudioChunkStabilityBench proof that current Parakeet embeddings
+        // cannot be concatenated safely across independently encoded chunks.
+        // `f728718` fixes DSV4 Flash long-prompt HSA selection by masking
+        // future compressed-pool chunks before indexer top-k. `6561a72`
+        // preserves DSV4's ratio-4 overlap-compressor state across decode
+        // calls, preventing the previous complete pool window from being
+        // zeroed after a single-token generation boundary.
+        let currentVmlxRevision = "6561a72f93d6cd5e0202e8067b53fed5cf21a660"
+        #expect(manifest.contains(currentVmlxRevision))
+        #expect(workspaceResolved.contains(currentVmlxRevision))
+        #expect(appResolved.contains(currentVmlxRevision))
+        #expect(!workspaceResolved.contains("b57fe98845bd1f678bd8f722dc50dba56f11d029"))
+        #expect(!appResolved.contains("b57fe98845bd1f678bd8f722dc50dba56f11d029"))
+        #expect(!appResolved.contains("fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e"))
+        #expect(!workspaceResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
+        #expect(!appResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
+        #expect(!workspaceResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
+        #expect(!appResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
+        #expect(!workspaceResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
+        #expect(!appResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
+        #expect(!workspaceResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
+        #expect(!appResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
         #expect(!workspaceResolved.contains("6de602c6d18daf2c1a07cef16b79b507a25feafd"))
         #expect(!appResolved.contains("6de602c6d18daf2c1a07cef16b79b507a25feafd"))
         #expect(!workspaceResolved.contains("b350af6daad0d25c39335356f56de2ae8d70226c"))

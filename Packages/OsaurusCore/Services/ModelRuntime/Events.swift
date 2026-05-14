@@ -29,5 +29,10 @@ enum ModelRuntimeEvent: Sendable {
     /// number") because their training data extends thought through
     /// arbitrary self-verification. `false` for non-reasoning models or
     /// for streams that emitted `</think>` cleanly.
-    case completionInfo(tokenCount: Int, tokensPerSecond: Double, unclosedReasoning: Bool)
+    case completionInfo(
+        tokenCount: Int,
+        tokensPerSecond: Double,
+        unclosedReasoning: Bool,
+        stopReason: String?
+    )
 }

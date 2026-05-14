@@ -86,7 +86,7 @@ struct GenerationEventMapperTests {
         )
         let events: [Generation] = [.chunk("ok"), .info(info)]
         let out = try await collect(events: events)
-        guard case .completionInfo(let count, let tps, let unclosed) = out.last else {
+        guard case .completionInfo(let count, let tps, let unclosed, let stopReason) = out.last else {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
@@ -95,6 +95,7 @@ struct GenerationEventMapperTests {
         // Default-constructed GenerateCompletionInfo carries unclosedReasoning=false;
         // a healthy stream that emitted </think> properly should mirror that here.
         #expect(unclosed == false)
+        #expect(stopReason == "stop")
     }
 
     @Test func info_propagates_unclosedReasoning_when_trapped() async throws {
@@ -108,7 +109,7 @@ struct GenerationEventMapperTests {
         )
         let events: [Generation] = [.reasoning("Self-Correction…"), .info(info)]
         let out = try await collect(events: events)
-        guard case .completionInfo(_, _, let unclosed) = out.last else {
+        guard case .completionInfo(_, _, let unclosed, let stopReason) = out.last else {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
@@ -116,6 +117,7 @@ struct GenerationEventMapperTests {
             unclosed == true,
             "vmlx flagged trapped-thinking; mapper must surface it on the runtime event."
         )
+        #expect(stopReason == "length")
     }
 
     @Test func info_propagates_unclosedReasoning_for_minimax_thinkingRail() async throws {
@@ -131,7 +133,7 @@ struct GenerationEventMapperTests {
             events: [.reasoning("The user is straightforward greeting"), .info(info)],
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ"
         )
-        guard case .completionInfo(_, _, let unclosed) = out.last else {
+        guard case .completionInfo(_, _, let unclosed, _) = out.last else {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
@@ -262,12 +264,13 @@ struct GenerationEventMapperTests {
             ],
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ"
         )
-        guard case .completionInfo(let count, _, let unclosed) = out.last else {
+        guard case .completionInfo(let count, _, let unclosed, let stopReason) = out.last else {
             Issue.record("expected synthesized completionInfo at end, got \(String(describing: out.last))")
             return
         }
         #expect(count > 0)
         #expect(unclosed == true)
+        #expect(stopReason == nil)
     }
 
     /// ZAYA1 (Zyphra; `model_type=zaya`) is reasoning-capable. Unlike Ling,

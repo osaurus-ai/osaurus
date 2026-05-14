@@ -36,6 +36,20 @@ enum ModelFamilyNames {
         ) != nil
     }
 
+    /// Nemotron Omni bundles. Match both the long public `Nemotron-3-Nano-Omni`
+    /// naming and shorter local picker/API ids like `Nemotron-Omni-Nano`.
+    static func isNemotronOmniFamily(_ modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.range(
+            of: #"(^|/)nemotron[\-_]3[\-_][^/]*omni($|[\-_/\.0-9])"#,
+            options: .regularExpression
+        ) != nil
+            || lower.range(
+                of: #"(^|/)nemotron[\-_]omni($|[\-_/\.0-9])"#,
+                options: .regularExpression
+            ) != nil
+    }
+
     /// Match Zyphra ZAYA bundles (`model_type=zaya`). Matches the bare
     /// repo form (`Zaya1-…`, `Zaya2-…`, `Zaya-S-…`) and any
     /// `<owner>/Zaya…` path. The required digit-or-dash boundary after

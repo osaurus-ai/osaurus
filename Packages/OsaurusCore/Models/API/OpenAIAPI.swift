@@ -143,6 +143,22 @@ struct ModelsResponse: Codable, Sendable {
     }
 }
 
+struct LocalAudioSamples: Sendable, Equatable {
+    let samples: [Float]
+    let sampleRate: Int
+    let preencodedAttachmentId: UUID?
+
+    init(
+        samples: [Float],
+        sampleRate: Int,
+        preencodedAttachmentId: UUID? = nil
+    ) {
+        self.samples = samples
+        self.sampleRate = sampleRate
+        self.preencodedAttachmentId = preencodedAttachmentId
+    }
+}
+
 // MARK: - Multimodal Content Parts
 
 /// OpenAI-compatible content part for multimodal messages.
@@ -151,11 +167,10 @@ struct ModelsResponse: Codable, Sendable {
 ///   - `text` / `input_text` — plain text
 ///   - `image_url` — `{url, detail?}`. URL may be `data:image/...;base64,...` or `https://...`
 ///   - `input_audio` — `{data: <base64>, format: "wav"|"mp3"|"flac"|...}`. Mirrors the
-///     OpenAI Realtime / GPT-4o audio shape; the audio bytes are written to a temp
-///     file and handed to vmlx as `UserInput.Audio.url(...)` so vmlx's
-///     `nemotronOmniLoadAudioFile` (AVAudioConverter → 16 kHz mono Float32) handles
-///     all decoding. Format strings are passed through to vmlx unchanged — vmlx
-///     uses the file extension, so the format hint becomes the file extension.
+///     OpenAI Realtime / GPT-4o audio shape; valid WAV bytes decode directly to
+///     `UserInput.Audio.samples(...)` for local MLX, while other containers fall
+///     back to a temp file handed to vmlx as `UserInput.Audio.url(...)` so
+///     `nemotronOmniLoadAudioFile` can use AVAudioConverter.
 ///   - `video_url` — `{url}`. Mirrors the convention adopted by LM Studio / Ollama
 ///     for video inputs since OpenAI hasn't published a canonical chat-completions
 ///     video shape. URL may be `data:video/...;base64,...` or `https://...`.
@@ -245,6 +260,11 @@ struct ChatMessage: Codable, Sendable {
     let content: String?
     /// Multimodal content parts (images, text) - populated when content is an array
     let contentParts: [MessageContentPart]?
+    /// In-process live voice samples aligned to audio input parts. This is
+    /// deliberately not Codable: OpenAI-compatible JSON keeps the portable
+    /// `input_audio` payload, while local MLX requests can bypass the
+    /// WAV/base64/temp-file round trip.
+    let localAudioSamples: [LocalAudioSamples?]
     /// Present when assistant requests tool invocations
     let tool_calls: [ToolCall]?
     /// Required for role=="tool" messages to associate with a prior tool call
@@ -278,15 +298,21 @@ struct ChatMessage: Codable, Sendable {
     }
 
     /// Extract `(base64, format)` pairs from `input_audio` content parts.
-    /// `format` is whatever the client sent (e.g. `"wav"`, `"mp3"`); we pass
-    /// it through to the file extension when materializing the temp file
-    /// because vmlx's `nemotronOmniLoadAudioFile` keys decoder selection on
-    /// the URL extension via AVAudioConverter.
+    /// `format` is whatever the client sent (e.g. `"wav"`, `"mp3"`); valid
+    /// WAV data can bypass temp-file materialization, and fallback containers
+    /// pass the format through to the temp-file extension for AVAudioConverter.
     var audioInputs: [(data: String, format: String)] {
+        audioInputsWithLocalSamples.map { (data: $0.data, format: $0.format) }
+    }
+
+    var audioInputsWithLocalSamples: [(data: String, format: String, localSamples: LocalAudioSamples?)] {
         guard let parts = contentParts else { return [] }
+        var audioIndex = 0
         return parts.compactMap { part in
             if case .audioInput(let data, let format) = part {
-                return (data, format)
+                let local = audioIndex < localAudioSamples.count ? localAudioSamples[audioIndex] : nil
+                audioIndex += 1
+                return (data, format, local)
             }
             return nil
         }
@@ -320,6 +346,7 @@ extension ChatMessage {
         self.tool_calls = try? container.decode([ToolCall].self, forKey: .tool_calls)
         self.tool_call_id = try? container.decode(String.self, forKey: .tool_call_id)
         self.reasoning_content = try? container.decode(String.self, forKey: .reasoning_content)
+        self.localAudioSamples = []
 
         if let stringContent = try? container.decode(String.self, forKey: .content) {
             self.content = stringContent
@@ -374,6 +401,7 @@ extension ChatMessage {
         self.role = role
         self.content = content
         self.contentParts = nil
+        self.localAudioSamples = []
         self.tool_calls = nil
         self.tool_call_id = nil
         self.reasoning_content = nil
@@ -392,6 +420,7 @@ extension ChatMessage {
         self.role = role
         self.content = content
         self.contentParts = nil
+        self.localAudioSamples = []
         self.tool_calls = tool_calls
         self.tool_call_id = tool_call_id
         self.reasoning_content = reasoning_content
@@ -416,6 +445,7 @@ extension ChatMessage {
 
         self.contentParts = parts.isEmpty ? nil : parts
         self.content = text.isEmpty ? nil : text
+        self.localAudioSamples = []
         self.tool_calls = nil
         self.tool_call_id = nil
         self.reasoning_content = nil
@@ -426,14 +456,14 @@ extension ChatMessage {
     /// modality. Audio bytes encode as `input_audio` with explicit
     /// format hint; video bytes encode as `video_url` with
     /// `data:video/<container>` URL. All three flow into the
-    /// OpenAI-compatible JSON shape that vmlx's
-    /// `mapOpenAIChatToMLX` materializes through
+    /// OpenAI-compatible JSON shape that `mapOpenAIChatToMLX` lowers through
     /// `extractAudioSources` / `extractVideoSources`.
     init(
         role: String,
         text: String,
         imageData: [Data],
         audios: [(data: Data, format: String)],
+        localAudioSamples: [LocalAudioSamples?] = [],
         videos: [(data: Data, mimeSubtype: String)]
     ) {
         self.role = role
@@ -469,6 +499,7 @@ extension ChatMessage {
 
         self.contentParts = parts.isEmpty ? nil : parts
         self.content = text.isEmpty ? nil : text
+        self.localAudioSamples = localAudioSamples
         self.tool_calls = nil
         self.tool_call_id = nil
         self.reasoning_content = nil

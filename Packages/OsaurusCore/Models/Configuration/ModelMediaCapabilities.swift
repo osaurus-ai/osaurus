@@ -91,11 +91,15 @@ public enum ModelMediaCapabilities {
     public static func from(modelId: String) -> Capabilities {
         let lower = modelId.lowercased()
 
-        // Nemotron-3-Nano-Omni — only family with native audio today.
+        // Nemotron-3-Nano-Omni / Nemotron-Omni-Nano — only family with
+        // native audio today.
         // Matches:
         //   OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4 / -JANGTQ4 / -JANGTQ
         //   nemotron-3-nano-omni-* (case-folded picker form)
-        if regexMatches(lower, pattern: #"nemotron-3-nano-omni|nemotron[_-]h[_-]omni"#) {
+        //   local crack bundles like Nemotron-Omni-Nano-JANGTQ-CRACK
+        if ModelFamilyNames.isNemotronOmniFamily(modelId)
+            || regexMatches(lower, pattern: #"nemotron-3-nano-omni|nemotron[_-]h[_-]omni"#)
+        {
             return .omni
         }
 
@@ -155,6 +159,33 @@ public enum ModelMediaCapabilities {
         }
 
         return .textOnly
+    }
+
+    /// Capabilities for the chat composer. `from(modelId:)` is the
+    /// family-specific source of truth for local models. The
+    /// `fallbackSupportsImages` bit lets externally discovered VLMs
+    /// (notably remote/provider models that do not match local family
+    /// names) keep image paste/drop support without accidentally
+    /// granting audio or video.
+    public static func composerCapabilities(
+        modelId: String?,
+        fallbackSupportsImages: Bool
+    ) -> Capabilities {
+        guard let modelId,
+            !modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return fallbackSupportsImages ? .imageOnly : .textOnly
+        }
+
+        let detected = from(modelId: modelId)
+        guard fallbackSupportsImages, !detected.supportsImage else {
+            return detected
+        }
+        return Capabilities(
+            supportsImage: true,
+            supportsVideo: detected.supportsVideo,
+            supportsAudio: detected.supportsAudio
+        )
     }
 
     /// Resolve capabilities by inspecting the locally-installed bundle.

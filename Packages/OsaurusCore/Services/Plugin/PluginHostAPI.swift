@@ -1452,6 +1452,7 @@ final class PluginHostContext: @unchecked Sendable {
                 do {
                     let stream = try await prep.engine.streamChat(request: iterReq)
                     var iterContent = ""
+                    var iterFinishReason = "stop"
 
                     for try await delta in stream {
                         // Cancellation check: plugin called `complete_cancel`
@@ -1493,6 +1494,9 @@ final class PluginHostContext: @unchecked Sendable {
                             // usage delta and remember it for the aggregated
                             // return so non-stream and stream paths surface
                             // the same metering shape.
+                            if let stopReason = stats.stopReason {
+                                iterFinishReason = stopReason
+                            }
                             let usage: [String: Any] = [
                                 "completion_tokens": stats.tokenCount,
                                 "tokens_per_second": stats.tokensPerSecond,
@@ -1511,7 +1515,7 @@ final class PluginHostContext: @unchecked Sendable {
                     if !iterContent.isEmpty {
                         messages.append(ChatMessage(role: "assistant", content: iterContent))
                     }
-                    emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "stop"))
+                    emit(Self.chunkPayload(id: cid, delta: [:], finishReason: iterFinishReason))
                     Self.persistStreamingInference(
                         pluginId: pid,
                         agentId: prep.agentId,
@@ -1527,7 +1531,7 @@ final class PluginHostContext: @unchecked Sendable {
                         toolCallsExecuted: toolCallsExecuted,
                         sharedArtifacts: sharedArtifacts,
                         usage: lastUsage,
-                        finishReason: "stop"
+                        finishReason: iterFinishReason
                     )
 
                 } catch let invs as ServiceToolInvocations {

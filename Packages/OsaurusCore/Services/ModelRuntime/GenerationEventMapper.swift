@@ -50,7 +50,8 @@ enum GenerationEventMapper {
     ///   stream behaves identically to the historical pass-through.
     static func map(
         events: AsyncStream<Generation>,
-        modelName: String = ""
+        modelName: String = "",
+        trace: TTFTTrace? = nil
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let mergeReasoning = treatReasoningAsContent(modelName: modelName)
         let suppressUnclosedReasoning = ModelFamilyNames.isLingFamily(modelName)
@@ -66,6 +67,15 @@ enum GenerationEventMapper {
                 var sawCompletionInfo = false
                 var sawReasoning = false
                 var estimatedTextTokens = 0
+                var markedFirstModelOutput = false
+
+                func markFirstModelOutput() {
+                    guard !markedFirstModelOutput else { return }
+                    markedFirstModelOutput = true
+                    let ms = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+                    trace?.set("first_token_ms", ms)
+                    trace?.mark("first_model_output")
+                }
 
                 for await event in events {
                     if case .info(let info) = event {
@@ -78,7 +88,8 @@ enum GenerationEventMapper {
                                 tokensPerSecond: info.tokensPerSecond,
                                 unclosedReasoning: suppressUnclosedReasoning
                                     ? false
-                                    : info.unclosedReasoning
+                                    : info.unclosedReasoning,
+                                stopReason: Self.openAIStopReason(from: info.stopReason)
                             )
                         )
                         continue
@@ -87,16 +98,18 @@ enum GenerationEventMapper {
                     if Task.isCancelled { break }
                     switch event {
                     case .chunk(let text):
+                        guard !text.isEmpty else { continue }
+                        markFirstModelOutput()
                         if firstChunk {
                             firstChunk = false
                             InferenceProgressManager.shared.prefillDidFinishAsync()
                         }
-                        guard !text.isEmpty else { continue }
                         estimatedTextTokens += max(1, text.count / 4)
                         continuation.yield(.tokens(text))
 
                     case .reasoning(let text):
                         guard !text.isEmpty else { continue }
+                        markFirstModelOutput()
                         sawReasoning = true
                         estimatedTextTokens += max(1, text.count / 4)
                         // Reasoning-capable families (DSV4-Flash thinking,
@@ -121,6 +134,7 @@ enum GenerationEventMapper {
                         }
 
                     case .toolCall(let call):
+                        markFirstModelOutput()
                         let argsJSON = serializeArguments(
                             call.function.arguments,
                             toolName: call.function.name
@@ -148,7 +162,8 @@ enum GenerationEventMapper {
                         .completionInfo(
                             tokenCount: estimatedTextTokens,
                             tokensPerSecond: 0,
-                            unclosedReasoning: sawReasoning && !suppressUnclosedReasoning
+                            unclosedReasoning: sawReasoning && !suppressUnclosedReasoning,
+                            stopReason: nil
                         )
                     )
                 }
@@ -185,6 +200,17 @@ enum GenerationEventMapper {
             id: .exclusive,
             "prompt: \(info.promptTokenCount, privacy: .public) tok \(info.promptTokensPerSecond, privacy: .public) tok/s | gen: \(info.generationTokenCount, privacy: .public) tok \(info.tokensPerSecond, privacy: .public) tok/s"
         )
+    }
+
+    private static func openAIStopReason(from stopReason: GenerateStopReason) -> String {
+        switch stopReason {
+        case .stop:
+            return "stop"
+        case .length:
+            return "length"
+        case .cancelled:
+            return "cancelled"
+        }
     }
 
     /// Convert vmlx's `[String: JSONValue]` argument map to a compact JSON

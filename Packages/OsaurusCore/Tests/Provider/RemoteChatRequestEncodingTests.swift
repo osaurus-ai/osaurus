@@ -230,6 +230,57 @@ struct RemoteChatRequestEncodingTests {
         #expect(provider.mergedModelIds(discovered: ["gpt-4.1", "gpt-5.5"]) == ["prod-chat", "gpt-5.5"])
     }
 
+    @Test func deepSeekProvider_dropsLocalInstructReasoningEffort() throws {
+        #expect(
+            RemoteProviderService.chatCompletionsReasoningEffort(
+                providerType: .openaiLegacy,
+                host: "api.deepseek.com",
+                effort: "instruct"
+            ) == nil
+        )
+    }
+
+    @Test func deepSeekProvider_preservesAcceptedReasoningEfforts() throws {
+        for effort in ["low", "medium", "high", "max", "xhigh"] {
+            #expect(
+                RemoteProviderService.chatCompletionsReasoningEffort(
+                    providerType: .openaiLegacy,
+                    host: "api.deepseek.com",
+                    effort: effort
+                ) == effort
+            )
+        }
+    }
+
+    @Test func remoteChatReasoningControls_deepSeekNormalizesAndFiltersEfforts() throws {
+        let accepted = RemoteProviderService.remoteChatReasoningControls(
+            providerType: .openaiLegacy,
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro",
+            effort: "  MAX  "
+        )
+        #expect(accepted.effort == "max")
+        #expect(accepted.thinking == nil)
+
+        let direct = RemoteProviderService.remoteChatReasoningControls(
+            providerType: .openaiLegacy,
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro",
+            effort: "instruct"
+        )
+        #expect(direct.effort == nil)
+        #expect(direct.thinking == ThinkingConfig(type: "disabled"))
+
+        let unknown = RemoteProviderService.remoteChatReasoningControls(
+            providerType: .openaiLegacy,
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro",
+            effort: "reasoning"
+        )
+        #expect(unknown.effort == nil)
+        #expect(unknown.thinking == nil)
+    }
+
     // MARK: - `reasoning_content` echo (issue #959)
 
     @Test func chatMessage_encode_includesReasoningContentWhenPresent() throws {
@@ -375,6 +426,17 @@ struct RemoteChatRequestEncodingTests {
         }
     }
 
+    @Test func dsv4RemoteEffort_normalizesAcceptedEffortCasing() throws {
+        let translated = RemoteProviderService.dsv4RemoteEffort(
+            host: "api.deepseek.com",
+            model: "deepseek-v4-pro",
+            effort: "  HIGH  "
+        )
+
+        #expect(translated.effort == "high")
+        #expect(translated.thinking == nil)
+    }
+
     @Test func dsv4RemoteEffort_nonDeepSeekHost_stripsInstructWithoutThinkingField() throws {
         // OpenRouter and other OpenAI-compat hosts that may serve DSV4 IDs
         // will also reject `"instruct"`, but the DeepSeek-only `thinking`
@@ -389,15 +451,19 @@ struct RemoteChatRequestEncodingTests {
         #expect(translated.thinking == nil)
     }
 
-    @Test func dsv4RemoteEffort_passesThroughWhenTranslationDoesNotApply() throws {
-        // Non-DSV4 model: effort flows through verbatim regardless of host.
-        let nonDSV4 = RemoteProviderService.dsv4RemoteEffort(
-            host: "api.deepseek.com",
-            model: "gpt-5.5",
-            effort: "instruct"
-        )
-        #expect(nonDSV4.effort == "instruct")
-        #expect(nonDSV4.thinking == nil)
+    @Test func dsv4RemoteEffort_stripsDirectRailAliasesForAllRemoteModels() throws {
+        // Direct/off aliases are local runtime controls. Public remote schemas
+        // reject them as `reasoning_effort` values, even when the model is not
+        // a local DSV4 bundle.
+        for effort in ["instruct", "none", "no_think", "off", "disabled", "false"] {
+            let nonDSV4 = RemoteProviderService.dsv4RemoteEffort(
+                host: "api.openai.com",
+                model: "gpt-5.5",
+                effort: effort
+            )
+            #expect(nonDSV4.effort == nil)
+            #expect(nonDSV4.thinking == nil)
+        }
 
         // Nil effort: nothing to translate, nothing to inject.
         let nilEffort = RemoteProviderService.dsv4RemoteEffort(

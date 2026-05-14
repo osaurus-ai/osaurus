@@ -42,6 +42,12 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(ModelMediaCapabilities.from(modelId: "nemotron-3-nano-omni-30b-a3b-mxfp4") == .omni)
     }
 
+    @Test("D1: short local Nemotron-Omni-Nano form → .omni")
+    func d1_nemotronOmniShortLocal() {
+        #expect(ModelMediaCapabilities.from(modelId: "Nemotron-Omni-Nano-JANGTQ-CRACK") == .omni)
+        #expect(ModelMediaCapabilities.from(modelId: "nemotron-omni-nano-jangtq-crack") == .omni)
+    }
+
     @Test("D1: nemotron_h_omni alternate naming → .omni")
     func d1_nemotronHOmniUnderscore() {
         #expect(ModelMediaCapabilities.from(modelId: "OsaurusAI/Nemotron_H_Omni-Future") == .omni)
@@ -235,5 +241,33 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(ModelMediaCapabilities.Capabilities.imageOnly.anyMedia)
         #expect(ModelMediaCapabilities.Capabilities.imageVideo.anyMedia)
         #expect(ModelMediaCapabilities.Capabilities.omni.anyMedia)
+    }
+
+    @Test("Composer capabilities merge image fallback only")
+    func composerCapabilities_mergeImageFallbackOnly() {
+        #expect(
+            ModelMediaCapabilities.composerCapabilities(
+                modelId: "unknown-remote-vlm",
+                fallbackSupportsImages: true
+            ) == .imageOnly
+        )
+        #expect(
+            ModelMediaCapabilities.composerCapabilities(
+                modelId: "JANGQ-AI/Laguna-XS.2-JANGTQ",
+                fallbackSupportsImages: false
+            ) == .textOnly
+        )
+        #expect(
+            ModelMediaCapabilities.composerCapabilities(
+                modelId: "Qwen/Qwen3-VL-8B",
+                fallbackSupportsImages: false
+            ) == .imageVideo
+        )
+        #expect(
+            ModelMediaCapabilities.composerCapabilities(
+                modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
+                fallbackSupportsImages: false
+            ) == .omni
+        )
     }
 }

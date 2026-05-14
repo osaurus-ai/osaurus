@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 import Testing
 
 @testable import OsaurusCore
@@ -52,6 +53,46 @@ struct MLXBatchAdapterTests {
         // Zero is treated as "unset" — falls back to the compile-friendly
         // default of 1 (was 4 prior to fa694e9e).
         #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 1)
+    }
+
+    @Test func preencodeAudioSources_replacesRawAudioAndCountsInputs() {
+        let rawSamples: [Float] = [0.1, -0.2, 0.3]
+        let chat = [
+            MLXLMCommon.Chat.Message.user(
+                "hear this",
+                audios: [
+                    .samples(rawSamples, sampleRate: 16_000),
+                    .samples([0.4], sampleRate: 8_000),
+                ]
+            )
+        ]
+
+        let result = MLXBatchAdapter.preencodeAudioSources(in: chat) { audio in
+            guard case .samples(let samples, let sampleRate) = audio else {
+                Issue.record("only raw samples should be passed to the encoder")
+                return nil
+            }
+            return .samples(samples.map { $0 + 1 }, sampleRate: sampleRate == 16_000 ? 16_000 : 8_000)
+        }
+
+        #expect(result.inputCount == 2)
+        #expect(result.convertedCount == 2)
+        #expect(result.alreadyPreencodedCount == 0)
+        #expect(result.chat.count == 1)
+        #expect(result.chat[0].audios.count == 2)
+        guard case .samples(let convertedSamples, let convertedRate) = result.chat[0].audios[0] else {
+            Issue.record("raw samples should be replaced by the encoder output")
+            return
+        }
+        #expect(convertedSamples == [1.1, 0.8, 1.3])
+        #expect(convertedRate == 16_000)
+
+        guard case .samples(let secondSamples, let secondRate) = result.chat[0].audios[1] else {
+            Issue.record("second raw sample clip should also be replaced")
+            return
+        }
+        #expect(secondSamples == [1.4])
+        #expect(secondRate == 8_000)
     }
 
     @Test func generateParameters_enableCompiledBatchDecodeForSoloDefault() {
@@ -295,6 +336,34 @@ struct MLXBatchAdapterTests {
             MLXBatchAdapter.additionalContext(for: unspecified, modelName: modelName)["enable_thinking"] as? Bool
                 == true
         )
+
+        let staleOffEffort = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: [
+                    "reasoningEffort": .string("no_think"),
+                    "disableThinking": .bool(true),
+                ]
+            ),
+            modelName: modelName
+        )
+        #expect(staleOffEffort["enable_thinking"] as? Bool == false)
+        #expect(
+            staleOffEffort["reasoning_effort"] == nil,
+            "direct/off aliases should not add a second cache-scope signal when generic thinking is disabled"
+        )
+
+        let apiReasoningEffort = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["reasoningEffort": .string("high")]
+            ),
+            modelName: modelName
+        )
+        #expect(apiReasoningEffort["enable_thinking"] as? Bool == true)
+        #expect(apiReasoningEffort["reasoning_effort"] as? String == "high")
     }
 
     @Test func additionalContext_mapsReasoningEffortToTemplateKwarg() {
@@ -406,7 +475,10 @@ struct MLXBatchAdapterTests {
             modelName: modelName
         )
         #expect(maxReasoning["enable_thinking"] as? Bool == true)
-        #expect(maxReasoning["reasoning_effort"] as? String == "max")
+        #expect(
+            maxReasoning["reasoning_effort"] as? String == "high",
+            "Osaurus UI Max stays on DSV4's stable high-thinking rail unless raw max diagnostics are explicitly enabled"
+        )
 
         let legacyToggle = MLXBatchAdapter.additionalContext(
             for: GenerationParameters(
@@ -445,6 +517,17 @@ struct MLXBatchAdapterTests {
                     for: userEnabled,
                     modelName: modelName
                 )["enable_thinking"] as? Bool == false
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(
+                        temperature: nil,
+                        maxTokens: 16,
+                        modelOptions: ["reasoningEffort": .string("high")]
+                    ),
+                    modelName: modelName
+                )["reasoning_effort"] == nil,
+                "Ling is a non-reasoning Osaurus profile; stale effort values must not fragment cache or reach the Bailing directive bridge"
             )
         }
 
@@ -493,6 +576,28 @@ struct MLXBatchAdapterTests {
                 )["enable_thinking"] as? Bool == true,
                 "ZAYA must honor explicit thinking opt-in: \(modelName)"
             )
+
+            let directOff = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("instruct")]
+                ),
+                modelName: modelName
+            )
+            #expect(directOff["enable_thinking"] as? Bool == false)
+            #expect(directOff["reasoning_effort"] == nil)
+
+            let apiReasoning = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("high")]
+                ),
+                modelName: modelName
+            )
+            #expect(apiReasoning["enable_thinking"] as? Bool == true)
+            #expect(apiReasoning["reasoning_effort"] as? String == "high")
         }
 
         // Boundary regression guards: names that contain `zaya` as a
@@ -510,6 +615,61 @@ struct MLXBatchAdapterTests {
                 )["enable_thinking"] as? Bool == true,
                 "non-ZAYA substring match must NOT force thinking off: \(modelName)"
             )
+        }
+    }
+
+    /// Nemotron Omni call/audio workloads should default to visible assistant
+    /// content instead of spending the first streamed chunks in the hidden
+    /// reasoning rail. Explicit user/API opt-in still enables thinking.
+    @Test func additionalContext_defaultsNemotronOmniThinkingOffButHonorsExplicitOptIn() {
+        let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
+        let userEnabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(false)]
+        )
+
+        for modelName in [
+            "dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK",
+            "nemotron-omni-nano-jangtq-crack",
+            "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == false,
+                "Nemotron Omni should default to no-thinking chat mode: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userEnabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "Nemotron Omni must honor explicit thinking opt-in: \(modelName)"
+            )
+
+            let directOff = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("no_think")]
+                ),
+                modelName: modelName
+            )
+            #expect(directOff["enable_thinking"] as? Bool == false)
+            #expect(directOff["reasoning_effort"] == nil)
+
+            let apiReasoning = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("high")]
+                ),
+                modelName: modelName
+            )
+            #expect(apiReasoning["enable_thinking"] as? Bool == true)
+            #expect(apiReasoning["reasoning_effort"] as? String == "high")
         }
     }
 
