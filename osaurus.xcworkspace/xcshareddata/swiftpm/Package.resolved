@@ -94,7 +94,7 @@
     {
       "identity" : "jinja",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/huggingface/swift-jinja",
+      "location" : "https://github.com/osaurus-ai/Jinja.git",
       "state" : {
         "revision" : "58d21aa5b69fdd9eb7e23ce2c3730f47db8e0c9d"
       }
@@ -389,7 +389,7 @@
     {
       "identity" : "swift-transformers",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/huggingface/swift-transformers.git",
+      "location" : "https://github.com/osaurus-ai/swift-transformers",
       "state" : {
         "revision" : "087a66b17e482220b94909c5cf98688383ae481a"
       }

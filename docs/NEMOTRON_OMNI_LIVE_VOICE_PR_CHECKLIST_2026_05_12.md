@@ -3,15 +3,15 @@
 ## Scope
 
 This checklist tracks the Osaurus side of live voice input for Nemotron Omni
-models. This branch pins `vmlx-swift-lm` to `f728718`, which can consume
+models. This branch pins `vmlx-swift-lm` to `6561a72`, which can consume
 `UserInput.Audio`, preserves pre-encoded Parakeet/audio embeddings, exposes a
 reusable retained live PCM buffer with a streaming cursor for VAD/call-mode
 polling, adds tracked Omni audio latency and chunk-stability benches, and keeps
 media-placeholder cache restore token-aware. The pin also carries the refreshed
 Parakeet/RADIO host-integration docs, the current proof that independently
 encoded Parakeet chunks are not safe to concatenate, and the DSV4 Flash
-long-prompt HSA top-k fix. Omni audio support is gated by
-`ModelMediaCapabilities.supportsAudio`.
+long-prompt HSA top-k plus overlap-compressor state fixes. Omni audio support
+is gated by `ModelMediaCapabilities.supportsAudio`.
 
 ## Current Hookups
 
@@ -52,12 +52,12 @@ long-prompt HSA top-k fix. Omni audio support is gated by
   `UserInput.Audio` sources to `.preEncoded` audio embeddings before
   `processor.prepare(input:)`. Existing `.preEncoded` audio is preserved, which
   is the handoff point for a future live Parakeet/sound-projection component.
-- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `f728718` so
+- `Packages/OsaurusCore/Package.swift` pins `vmlx-swift-lm` to `6561a72` so
   the app consumes the Swift live-voice handoff, live PCM streaming cursor,
   tracked `OmniAudioLatencyBench` and `OmniAudioChunkStabilityBench`
   harnesses, and media-placeholder-aware cache restore guard, plus current
   Parakeet/RADIO integration documentation and the DSV4 Flash causal HSA
-  indexer fix.
+  indexer plus ratio-4 overlap-compressor state fixes.
 - Parakeet/RADIO source, function, and documentation verification is an
   explicit release guard: the source repo must contain the encoder functions
   and bench/docs, the live remote must contain the pinned commit, Osaurus must
@@ -90,10 +90,10 @@ long-prompt HSA top-k fix. Omni audio support is gated by
   `fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e`. The follow-up `b57fe98` pin
   adds the refreshed Parakeet/RADIO integration docs, the `81c8ef7` pin adds
   the Parakeet chunk-stability bench, and the `f728718` pin adds the DSV4
-  Flash causal HSA top-k fix. Re-run after the Nemotron Omni no-thinking
-  default/profile fix also passed under Xcode's Swift toolchain. The current
-  `f728718` pin was source-built in this CLT shell with
-  `swift build --package-path Packages/OsaurusCore`.
+  Flash causal HSA top-k fix. The current `6561a72` pin also preserves DSV4
+  ratio-4 overlap-compressor state across single-token decode calls. Re-run
+  after the Nemotron Omni no-thinking default/profile fix also passed under
+  Xcode's Swift toolchain.
 - Focused Xcode-toolchain regression tests passed:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
   --filter 'ModelProfileRegistryTests/nemotron3_matchesNemotronProfile|MLXBatchAdapterTests/additionalContext_defaultsNemotronOmniThinkingOffButHonorsExplicitOptIn'`.
@@ -101,23 +101,21 @@ long-prompt HSA top-k fix. Omni audio support is gated by
   `dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK` and
   `nemotron-omni-nano-jangtq-crack`, and the runtime default
   `enable_thinking=false` with explicit opt-in still honored.
-- After the `f728718` vMLX pin bump, the same focused pin/provider/profile
-  suite should be rerun under Xcode's Swift toolchain. In this CLT shell,
-  `swift test --package-path Packages/OsaurusCore --filter 'RemoteChatRequestEncodingTests|RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening'`
-  is blocked before execution by `no such module 'Testing'` while compiling
-  the shared test target.
+- After current vMLX pin bumps, focused pin/provider/profile suites must run
+  under Xcode's Swift toolchain on this machine; the Command Line Tools Swift
+  path does not provide the Swift `Testing` module used by the shared tests.
 - Parakeet/RADIO source/push/doc checks have passed repeatedly for the live
-  library pin, including after the rebased Osaurus head `54330b43` was pushed:
+  library pin:
   `git ls-remote origin refs/heads/main` for `vmlx-swift-lm` returns
-  `f72871888e951929a11f7aabe14d9ea9024f1773`; `git grep` against the committed
+  `6561a72f93d6cd5e0202e8067b53fed5cf21a660`; `git grep` against the committed
   `vmlx-swift-lm` tree confirms `NemotronHParakeetEncoder`,
   `remapParakeetWeights`, `NemotronHRADIOVisionModel`,
   `remapRadioWeights`, `OmniAudioChunkStabilityBench`,
   `PARAKEET-RADIO-INTEGRATION.md`, and
   `docs/benchmarks/omni-audio-chunk-stability-2026-05-13.md`; Osaurus pins the
-  same revision in `Packages/OsaurusCore/Package.swift` and
-  `Packages/OsaurusCore/Package.resolved`; the Osaurus-resolved checkout also
-  contains the same encoder functions, docs, and DSV4 causal top-k helper.
+  same revision in `Packages/OsaurusCore/Package.swift` and the tracked
+  resolved files; the Osaurus-resolved checkout also contains the same encoder
+  functions, docs, and DSV4 causal top-k/overlap-compressor helpers.
 - Focused UI/API attachment regression tests passed:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
   --filter 'ChatAttachmentSecurityTests|MultimodalContentPartTests'`.
@@ -172,7 +170,7 @@ long-prompt HSA top-k fix. Omni audio support is gated by
   This rechecked the local PCM bridge together with multimodal
   audio/video mapping, the Nemotron Omni pre-encode adapter helper, and the
   DeepSeek remote `reasoning_effort` guard.
-- After rebase onto `osaurus/main` `acbf75cc`, the post-rebase focused package
+- After rebase onto `osaurus/main`, the post-rebase focused package
   suite passed with `48` tests in `6` suites:
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
   --package-path Packages/OsaurusCore --filter
@@ -200,8 +198,8 @@ long-prompt HSA top-k fix. Omni audio support is gated by
   submit path by storing the final PCM snapshot under the same attachment id,
   building `ChatSession.buildUserChatMessage(...)`, and requiring
   `ModelRuntime.mapOpenAIChatToMLX(...)` to consume `.preEncoded` audio.
-  Local run with `OSAURUS_MLX_METALLIB` passed again after the rebase at
-  `54330b43` with `warm_ms=2780`, `samples=80620`, `encode_ms=1310`,
+  Local run with `OSAURUS_MLX_METALLIB` passed again after rebase with
+  `warm_ms=2780`, `samples=80620`, `encode_ms=1310`,
   `embedding_shape=[63, 2688]`, and `composer_submit=preencoded`. The prior
   post-composer assertion run also passed with `warm_ms=2807`,
   `samples=80620`, `encode_ms=1312`, `embedding_shape=[63, 2688]`, and
@@ -228,7 +226,7 @@ long-prompt HSA top-k fix. Omni audio support is gated by
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build`.
   Re-run after the `fb8fb39` pin bump passed with the workspace resolver
   checking out `vmlx-swift-lm @ fb8fb39`; the current dependency pin is
-  `vmlx-swift-lm @ f728718`. Re-run after the Nemotron Omni
+  `vmlx-swift-lm @ 6561a72`. Re-run after the Nemotron Omni
   no-thinking default/profile fix passed.
   Xcode still reports the local CoreSimulator framework mismatch, but the macOS
   app build succeeds.
@@ -240,11 +238,8 @@ long-prompt HSA top-k fix. Omni audio support is gated by
     with HTTP 200 in `4.2 ms` total and wrote a trace block containing
     `http_sse_error_written`, endpoint/model/media counts, and
     `http_response_status=200`.
-- Built-app API smoke passed against
-  `build/XcodeDerivedData-livevoice/Build/Products/Debug/osaurus.app` with
-  `OSU_MODELS_DIR=/Users/eric/models` and
-  `nemotron-omni-nano-jangtq-crack` loaded from
-  `/Users/eric/models/dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK`.
+- Built-app API smoke passed against the debug app with
+  `nemotron-omni-nano-jangtq-crack` loaded from a local model bundle.
   The health endpoint reported the model loaded, and OpenAI-compatible
   `/chat/completions` accepted `input_audio` WAV content.
 - A pre-fix default API smoke exposed the live-call visible-output bug: the
@@ -270,8 +265,6 @@ long-prompt HSA top-k fix. Omni audio support is gated by
     `first_token_ms=111`, and `http_first_semantic_delta_kind=content`.
   - process RSS after the three-turn smoke was about `12.4 GiB`
     (`12723.6 MB` reported by `ps`), with `77128.4 MB` free+speculative VM.
-  Evidence files are under `/tmp/osaurus-live-smoke-evidence/` with the prefix
-  `default_after_patch_`.
 - Rebuilt-app API smoke after the adapter pre-encode hook passed with no
   request-level thinking overrides:
   - cold text warmup: first visible `content` delta `2967.3 ms`, total
@@ -289,8 +282,7 @@ long-prompt HSA top-k fix. Omni audio support is gated by
     `omni_audio_preencode_ms=1327`, `processor_prepare_ms=15`, and
     `first_token_ms=47`.
   - process RSS after the smoke was about `12.4 GiB` (`12972.5 MB` reported by
-    `ps`). Evidence files are under `/tmp/osaurus-live-smoke-evidence/` with
-    the prefix `preencode_after_patch_`.
+    `ps`).
 - Warm latency control from the built app:
   - text-only streaming request: first semantic SSE delta at `358.3 ms`, total
     `777.4 ms`.
@@ -307,9 +299,7 @@ long-prompt HSA top-k fix. Omni audio support is gated by
   target imports Swift `Testing`, which is unavailable from that path. Use
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` for Swift Testing
   checks on this machine.
-- vMLX real-model bench passed on the local JANGTQ2 Omni-Nano bundle:
-  `build/evidence-20260512/nemotron_omni_live_voice_jangtq2_clean_20260512_155446.log`
-  in `vmlx-swift-lm`.
+- vMLX real-model bench passed on a local JANGTQ2 Omni-Nano bundle.
 - That bench exercised text multi-turn, audio encoder smoke, full audio
   `LMInput`, mixed image + audio, media-salt isolation, reasoning toggle, and
   hybrid SSM warm-pass parity: `13 passed, 0 failed`, `bench_exit=0`.
@@ -338,12 +328,13 @@ long-prompt HSA top-k fix. Omni audio support is gated by
   3. Confirm no audio attachment is appended; only cleaned transcript text is
      sent.
 - Repeated Parakeet/RADIO source verification before merge:
-  1. Confirm `vmlx-swift-lm` live remote `main` contains commit `f728718`.
+  1. Confirm `vmlx-swift-lm` live remote `main` contains commit `6561a72`.
   2. Confirm source contains `NemotronHParakeetEncoder`,
      `NemotronHRADIOVisionModel`, `extractAudioEmbeds`, `extractImageEmbeds`,
      and `OmniAudioChunkStabilityBench`.
-  3. Confirm Osaurus `Package.swift` and both `Package.resolved` files pin
-     full revision `f72871888e951929a11f7aabe14d9ea9024f1773`.
+  3. Confirm Osaurus `Package.swift` plus workspace, app project, and
+     `OsaurusCore` `Package.resolved` files pin full revision
+     `6561a72f93d6cd5e0202e8067b53fed5cf21a660`.
   4. Confirm the Osaurus-resolved checkout contains the same Parakeet/RADIO
      functions and docs after dependency resolution.
 
