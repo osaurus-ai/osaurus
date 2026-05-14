@@ -48,6 +48,10 @@ struct AgentAvatarView: View {
     /// reads at the same visual weight as before per call site
     var monogramFontSize: CGFloat = 16
     var borderWidth: CGFloat = 2
+    /// When true, the mascot illustration fills the circle edge-to-edge
+    /// (no inner inset). Use for hero treatments; leave default for small
+    /// list/sidebar avatars where the inset reads as more iconic.
+    var bleedsToEdge: Bool = false
 
     var body: some View {
         ZStack {
@@ -67,12 +71,15 @@ struct AgentAvatarView: View {
                     .antialiased(true)
                     .scaledToFill()
             } else if let mascot = mascotId.flatMap(AgentMascot.init(rawValue:)) {
-                Image(mascot.assetName, bundle: .module)
+                let mascotImage = Image(mascot.assetName, bundle: .module)
                     .resizable()
                     .interpolation(.high)
                     .antialiased(true)
-                    .scaledToFit()
-                    .padding(diameter * 0.08)
+                if bleedsToEdge {
+                    mascotImage.scaledToFill()
+                } else {
+                    mascotImage.scaledToFit().padding(diameter * 0.08)
+                }
             } else {
                 Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
                     .font(.system(size: monogramFontSize, weight: .bold, design: .rounded))

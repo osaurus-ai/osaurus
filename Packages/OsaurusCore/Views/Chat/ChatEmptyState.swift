@@ -9,6 +9,51 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Hero Avatar Metrics
+
+/// Diameter for hero-sized agent avatars in the empty-state surfaces.
+private let heroAvatarDiameter: CGFloat = 128
+/// Font size for the icon/monogram inside a hero avatar (built-in `person.fill`
+/// placeholder and `AgentAvatarView` monogram fallback).
+private let heroAvatarIconFontSize: CGFloat = 56
+/// Font size for the SF Symbol inside the remote-hero avatar (relay / discovered).
+private let heroAvatarRemoteIconFontSize: CGFloat = 48
+
+// MARK: - Hero Agent Avatar
+
+/// Renders a hero-sized avatar for a given agent: either the built-in
+/// placeholder (theme-tinted circle + `person.fill`) or the mascot
+/// illustration via `AgentAvatarView` with `bleedsToEdge: true`.
+/// Shared by `ChatEmptyState.heroAvatar` and `ChatEmptyStateNoModels.welcomeAvatar`.
+private struct HeroAgentAvatar: View {
+    let agent: Agent
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        if agent.isBuiltIn {
+            ZStack {
+                Circle()
+                    .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
+                Image(systemName: "person.fill")
+                    .font(.system(size: heroAvatarIconFontSize, weight: .medium))
+                    .foregroundColor(theme.secondaryText.opacity(0.85))
+            }
+            .frame(width: heroAvatarDiameter, height: heroAvatarDiameter)
+        } else {
+            AgentAvatarView(
+                mascotId: agent.avatar,
+                name: agent.name,
+                tint: agentColorFor(agent.name),
+                diameter: heroAvatarDiameter,
+                customImageURL: agent.customAvatarURL,
+                monogramFontSize: heroAvatarIconFontSize,
+                borderWidth: 0,
+                bleedsToEdge: true
+            )
+        }
+    }
+}
+
 struct ChatEmptyState: View {
     let hasModels: Bool
     let selectedModel: String?
@@ -101,25 +146,8 @@ struct ChatEmptyState: View {
             remoteHeroAvatar(systemImage: "antenna.radiowaves.left.and.right", seed: relay.name)
         } else if let discovered = activeDiscoveredAgent {
             remoteHeroAvatar(systemImage: "network", seed: discovered.name)
-        } else if activeAgent.isBuiltIn {
-            ZStack {
-                Circle()
-                    .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
-                Image(systemName: "person.fill")
-                    .font(.system(size: 40, weight: .medium))
-                    .foregroundColor(theme.secondaryText.opacity(0.85))
-            }
-            .frame(width: 88, height: 88)
         } else {
-            AgentAvatarView(
-                mascotId: activeAgent.avatar,
-                name: activeAgent.name,
-                tint: agentColorFor(activeAgent.name),
-                diameter: 88,
-                customImageURL: activeAgent.customAvatarURL,
-                monogramFontSize: 40,
-                borderWidth: 0
-            )
+            HeroAgentAvatar(agent: activeAgent)
         }
     }
 
@@ -128,10 +156,10 @@ struct ChatEmptyState: View {
             Circle()
                 .fill(theme.accentColorLight.opacity(theme.isDark ? 0.18 : 0.12))
             Image(systemName: systemImage)
-                .font(.system(size: 36, weight: .semibold))
+                .font(.system(size: heroAvatarRemoteIconFontSize, weight: .semibold))
                 .foregroundColor(theme.accentColorLight)
         }
-        .frame(width: 88, height: 88)
+        .frame(width: heroAvatarDiameter, height: heroAvatarDiameter)
     }
 
     private var staggeredQuickActions: some View {
@@ -234,31 +262,11 @@ private struct ChatEmptyStateNoModels: View {
 
     /// Default agent avatar used for the no-models / downloading states,
     /// where there is no active chat agent to anchor to.
-    @ViewBuilder
     private var welcomeAvatar: some View {
         let agent =
             AgentManager.shared.agents.first(where: { $0.id == Agent.defaultId })
             ?? Agent.default
-        if agent.isBuiltIn {
-            ZStack {
-                Circle()
-                    .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
-                Image(systemName: "person.fill")
-                    .font(.system(size: 40, weight: .medium))
-                    .foregroundColor(theme.secondaryText.opacity(0.85))
-            }
-            .frame(width: 88, height: 88)
-        } else {
-            AgentAvatarView(
-                mascotId: agent.avatar,
-                name: agent.name,
-                tint: agentColorFor(agent.name),
-                diameter: 88,
-                customImageURL: agent.customAvatarURL,
-                monogramFontSize: 40,
-                borderWidth: 0
-            )
-        }
+        return HeroAgentAvatar(agent: agent)
     }
 
     var body: some View {
