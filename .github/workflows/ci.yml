@@ -88,10 +88,9 @@ jobs:
 
       - name: Restore DerivedData cache
         id: dd-cache
-        # Restore only on main pushes / manual maintainer runs. Pull requests
-        # intentionally cold-build DerivedData: restore-key hits have produced
-        # stale Swift modules whose C-module dependencies are missing when
-        # Xcode later compiles EventSource.
+        # Restore only on main pushes / manual maintainer runs, and only when
+        # the exact source/package hash matches. Pull requests intentionally
+        # cold-build DerivedData.
         if: ${{ github.event_name != 'pull_request' }}
         uses: actions/cache/restore@v5
         with:
@@ -101,8 +100,13 @@ jobs:
           # SQLCipher bump would land its new sqlite3.{c,h} but CI would
           # silently re-use a stale cached compile of the old code.
           key: dd-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/**/*.swift', 'Packages/**/Package.swift', 'Packages/**/Resources/**', 'Packages/**/*.c', 'Packages/**/*.h') }}
-          restore-keys: |
-            dd-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
+          # Do not use broad restore keys for DerivedData. A restored cache
+          # from an older package graph can contain Swift modules whose C
+          # module dependencies are no longer visible to Xcode, which shows
+          # up as "unable to resolve module dependency" for transitive C
+          # targets such as CAsyncHTTPClient / CNIOPosix when EventSource
+          # builds. If the exact source/package hash changed, cold-build and
+          # save a fresh cache under the new primary key instead.
 
       # Make "clear the build cache" a one-click operation. Three triggers:
       #   1. Pull requests — always cold-build DerivedData so PRs never trust
