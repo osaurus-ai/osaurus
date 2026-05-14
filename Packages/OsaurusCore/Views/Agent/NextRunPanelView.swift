@@ -24,6 +24,11 @@ public struct NextRunPanelView: View {
     /// content column (not the icon). `iconWidth` + the row's HStack
     /// spacing (12).
     private static let iconColumnLeading: CGFloat = 30
+    /// `.distantFuture` slots (the "Pause indefinitely" menu option) are
+    /// rendered as "Indefinitely paused" instead of a literal year-4001
+    /// date. Anything past this offset (≈100 years) is treated as
+    /// indefinite — a comfortable buffer over any realistic user input.
+    private static let indefinitePauseThreshold: TimeInterval = 100 * 365 * 24 * 3600
 
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
@@ -161,61 +166,93 @@ public struct NextRunPanelView: View {
             )
     }
 
-    // MARK: Paused
+    // MARK: Paused / Idle banners
 
-    /// Mirrors `scheduledRow`'s two-row layout: info + mode chip on top,
-    /// Resume on a second row.
+    /// Both single-row states share the same anatomy: icon + title +
+    /// subtitle on the left, state-toggle action + mode chip on the
+    /// right. Routed through `statusBanner` so the two states stay
+    /// pixel-identical except for icon, copy, and the toggle slot.
     @ViewBuilder
     private func pausedBanner(_ p: AgentPauseRecord) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 12) {
-                bannerIcon("pause.circle.fill", color: theme.warningColor)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Paused until \(Self.absolute(p.pausedUntil))")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let reason = p.reason, !reason.isEmpty {
-                        Text(reason)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
-                    }
-                }
-                Spacer(minLength: 8)
-                modeChip
-            }
-
-            actionsRow {
-                actionButton("Resume", systemImage: "play.fill") { resume() }
-            }
+        statusBanner(
+            icon: "pause.circle.fill",
+            iconColor: theme.warningColor,
+            title: "Paused",
+            subtitle: LocalizedStringKey(Self.pausedSubtitle(for: p))
+        ) {
+            resumeButton
         }
     }
 
-    // MARK: Idle banner
-
-    /// Shown when the agent isn't paused and has no scheduled run. Keeps
-    /// the Pause affordance and mode chip discoverable; otherwise the
-    /// banner would disappear and the user would lose both entry points.
     @ViewBuilder
     private var idleBanner: some View {
-        HStack(alignment: .center, spacing: 12) {
-            bannerIcon("calendar.badge.clock", color: theme.tertiaryText)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("No upcoming run scheduled")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("The agent will schedule itself when it has work to do.")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-            }
-            Spacer()
+        statusBanner(
+            icon: "calendar.badge.clock",
+            iconColor: theme.tertiaryText,
+            title: "No upcoming run scheduled",
+            subtitle: "The agent will schedule itself when it has work to do."
+        ) {
             pauseMenu
-            modeChip
         }
+    }
+
+    /// Renders the paused-state subtitle. Combines "Until <date>" with
+    /// the optional user-provided reason; "Indefinitely paused" is
+    /// substituted when the slot was written with `.distantFuture` so
+    /// the user doesn't see a literal year-4001 date.
+    private static func pausedSubtitle(for p: AgentPauseRecord) -> String {
+        let isIndefinite = p.pausedUntil.timeIntervalSinceNow > Self.indefinitePauseThreshold
+        let base = isIndefinite
+            ? "Indefinitely paused"
+            : "Until \(Self.absolute(p.pausedUntil))"
+        let reason = p.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return reason.isEmpty ? base : "\(base) • \(reason)"
+    }
+
+    /// Compact "Resume" button sized to match `pauseMenu`'s visual
+    /// weight (same font, same secondary-text color, no chrome) so the
+    /// pause/resume toggle reads as one control across the two states.
+    /// `pauseMenu` is a menu (multiple presets); `resumeButton` is a
+    /// plain button because there's only one resume action.
+    @ViewBuilder
+    private var resumeButton: some View {
+        Button(action: resume) {
+            Label("Resume", systemImage: "play.fill")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
     }
 
     // MARK: Shared banner pieces
+
+    /// Common chrome for the idle and paused states. Scheduled state
+    /// has its own two-row layout (see `scheduledRow`).
+    @ViewBuilder
+    private func statusBanner<Toggle: View>(
+        icon: String,
+        iconColor: Color,
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey,
+        @ViewBuilder toggle: () -> Toggle
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            bannerIcon(icon, color: iconColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title, bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(subtitle, bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            toggle()
+            modeChip
+        }
+    }
 
     @ViewBuilder
     private func bannerIcon(_ systemName: String, color: Color) -> some View {
@@ -287,58 +324,67 @@ public struct NextRunPanelView: View {
         }
     }
 
+    /// Quick-pause menu surfaced in the idle and scheduled banners.
+    /// Never rendered while paused — the body switch routes that case
+    /// to `pausedBanner`, which shows `resumeButton` instead.
     @ViewBuilder
     private var pauseMenu: some View {
-        if pause?.pausedUntil ?? .distantPast > Date() {
-            EmptyView()
-        } else {
-            Menu {
-                Button("1 hour") { pauseFor(.init(hours: 1)) }
-                Button("4 hours") { pauseFor(.init(hours: 4)) }
-                Button("Until tomorrow") { pauseUntilTomorrow() }
-                Button("Custom…") { presentCustomPause() }
-                Button("Indefinitely") { pauseFor(nil) }
-            } label: {
-                Label("Pause", systemImage: "pause.fill")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+        Menu {
+            Button("1 hour") { pauseFor(hours: 1) }
+            Button("4 hours") { pauseFor(hours: 4) }
+            Button("Until tomorrow") { pauseUntilTomorrow() }
+            Button("Custom…") { presentCustomPause() }
+            Button("Indefinitely") { applyPause(until: .distantFuture) }
+        } label: {
+            Label("Pause", systemImage: "pause.fill")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
         }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
     }
 
     // MARK: Edit sheet
 
     private var editInstructionsSheet: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Edit next-run instructions")
-                .font(.headline)
-            Text(
-                "Editing the wake-up brief flags the row as user-scheduled "
-                    + "so the agent knows you intervened."
+        let trimmedEmpty = editedInstructions
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+        return VStack(spacing: 0) {
+            AgentSheetHeader(
+                icon: "pencil.and.list.clipboard",
+                title: "Edit next-run instructions",
+                subtitle:
+                    "Editing the wake-up brief flags the row as user-scheduled so the agent knows you intervened.",
+                onClose: { showEditInstructions = false }
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
-            TextEditor(text: $editedInstructions)
-                .font(.system(size: 12))
-                .frame(minHeight: 100)
-                .padding(8)
-                .background(theme.secondaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(theme.primaryBorder, lineWidth: 0.5)
+            VStack(alignment: .leading, spacing: 8) {
+                AgentSheetSectionLabel("Wake-up brief")
+                StyledTextField(
+                    placeholder: "What should the agent do when it wakes up?",
+                    text: $editedInstructions,
+                    icon: "text.alignleft",
+                    axis: .vertical,
+                    lineLimit: 5
                 )
-            HStack {
-                Spacer()
-                Button("Cancel") { showEditInstructions = false }
-                Button("Save") { saveEditedInstructions() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(editedInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            AgentSheetFooter(
+                primary: AgentSheetFooter.Action(
+                    label: "Save",
+                    isEnabled: !trimmedEmpty,
+                    handler: { saveEditedInstructions() }
+                ),
+                secondary: AgentSheetFooter.Action(
+                    label: "Cancel",
+                    handler: { showEditInstructions = false }
+                ),
+                hint: "+ Enter to save"
+            )
         }
-        .padding(20)
         .frame(width: 480)
+        .background(theme.primaryBackground)
     }
 
     // MARK: Side-effects
@@ -392,26 +438,28 @@ public struct NextRunPanelView: View {
         Task { await reload() }
     }
 
-    private func pauseFor(_ duration: PauseDuration?) {
-        let until = duration?.absolute(from: Date()) ?? .distantFuture
+    /// Single side-effect for every pause menu entry. Writes to the
+    /// scheduler DB and triggers a reload so the banner snaps to the
+    /// paused state.
+    private func applyPause(until: Date, reason: String? = nil) {
         try? LocalAgentBridge.shared.pauseAgent(
             agentId: agentId,
             until: until,
-            reason: nil
+            reason: reason
         )
         Task { await reload() }
+    }
+
+    private func pauseFor(hours: Int) {
+        applyPause(until: Date().addingTimeInterval(TimeInterval(hours) * 3600))
     }
 
     private func pauseUntilTomorrow() {
         let cal = Calendar.current
         let start = cal.startOfDay(for: Date())
-        let tomorrow = cal.date(byAdding: .day, value: 1, to: start) ?? Date().addingTimeInterval(86400)
-        try? LocalAgentBridge.shared.pauseAgent(
-            agentId: agentId,
-            until: tomorrow,
-            reason: nil
-        )
-        Task { await reload() }
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: start)
+            ?? Date().addingTimeInterval(86400)
+        applyPause(until: tomorrow)
     }
 
     /// Seed the custom-pause sheet with a sensible default (+24h)
@@ -424,56 +472,65 @@ public struct NextRunPanelView: View {
     }
 
     private func applyCustomPause() {
-        let trimmedReason =
-            customPauseReason
+        let trimmedReason = customPauseReason
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // The picker is constrained to future-only, but guard anyway
         // — a paused-until in the past would no-op the next reload.
         let until = max(customPauseUntil, Date().addingTimeInterval(60))
-        try? LocalAgentBridge.shared.pauseAgent(
-            agentId: agentId,
+        applyPause(
             until: until,
             reason: trimmedReason.isEmpty ? nil : trimmedReason
         )
         showCustomPause = false
-        Task { await reload() }
     }
 
     @ViewBuilder
     private var customPauseSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Pause agent")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            Text(
-                "Pick when this agent should resume firing scheduled and self-scheduled runs. The optional reason is logged in the audit trail."
+        VStack(spacing: 0) {
+            AgentSheetHeader(
+                icon: "pause.circle",
+                title: "Pause agent",
+                subtitle:
+                    "Pick when this agent should resume firing scheduled and self-scheduled runs. The optional reason is logged in the audit trail.",
+                onClose: { showCustomPause = false }
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-            DatePicker(
-                "Resume at",
-                selection: $customPauseUntil,
-                in: Date().addingTimeInterval(60)...,
-                displayedComponents: [.date, .hourAndMinute]
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    AgentSheetSectionLabel("Resume at")
+                    DatePicker(
+                        "",
+                        selection: $customPauseUntil,
+                        in: Date().addingTimeInterval(60)...,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+                    .datePickerStyle(.compact)
+                    .labelsHidden()
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    AgentSheetSectionLabel("Reason (optional)")
+                    StyledTextField(
+                        placeholder: "e.g. cooling off after an error",
+                        text: $customPauseReason,
+                        icon: "text.bubble"
+                    )
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            AgentSheetFooter(
+                primary: AgentSheetFooter.Action(
+                    label: "Pause",
+                    handler: { applyCustomPause() }
+                ),
+                secondary: AgentSheetFooter.Action(
+                    label: "Cancel",
+                    handler: { showCustomPause = false }
+                ),
+                hint: "+ Enter to pause"
             )
-            .datePickerStyle(.compact)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Reason (optional)").font(.system(size: 11, weight: .medium))
-                TextField("e.g. cooling off after an error", text: $customPauseReason)
-                    .textFieldStyle(.roundedBorder)
-            }
-            HStack {
-                Spacer()
-                Button("Cancel") { showCustomPause = false }
-                    .controlSize(.small)
-                Button("Pause") { applyCustomPause() }
-                    .controlSize(.small)
-                    .keyboardShortcut(.defaultAction)
-            }
         }
-        .padding(20)
         .frame(width: 400)
+        .background(theme.primaryBackground)
     }
 
     private func resume() {
@@ -485,9 +542,7 @@ public struct NextRunPanelView: View {
 
     @MainActor
     private func reload() async {
-        do {
-            try SchedulerDatabase.shared.open()
-        } catch {
+        guard (try? SchedulerDatabase.shared.open()) != nil else {
             nextRun = nil
             pause = nil
             return
@@ -501,7 +556,7 @@ public struct NextRunPanelView: View {
         refreshTask = Task { @MainActor in
             while !Task.isCancelled {
                 nowTick = Date()
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                try? await Task.sleep(for: .seconds(30))
             }
         }
     }
@@ -543,19 +598,16 @@ public struct NextRunPanelView: View {
         return "in \(days)d"
     }
 
-    static func absolute(_ when: Date) -> String {
+    /// Cached formatter: `DateFormatter` allocation is expensive and
+    /// `absolute(_:)` is called on every banner render + ticker tick.
+    private static let absoluteFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .short
         f.timeStyle = .short
-        return f.string(from: when)
-    }
-}
+        return f
+    }()
 
-// MARK: - PauseDuration
-
-private struct PauseDuration {
-    let hours: Int
-    func absolute(from base: Date) -> Date {
-        base.addingTimeInterval(TimeInterval(hours) * 3600)
+    static func absolute(_ when: Date) -> String {
+        absoluteFormatter.string(from: when)
     }
 }

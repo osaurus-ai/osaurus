@@ -1008,48 +1008,48 @@ fileprivate struct RowEditorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Edit row", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Text(displayString(for: row.rowId))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            Divider().foregroundColor(theme.primaryBorder)
+            AgentSheetHeader(
+                icon: "square.and.pencil",
+                title: "Edit row",
+                subtitle: LocalizedStringKey("ID \(displayString(for: row.rowId))"),
+                onClose: onCancel
+            )
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 14) {
                     ForEach(row.columns, id: \.name) { column in
                         editorField(for: column)
                     }
                 }
-                .padding(16)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
             }
             .frame(minHeight: 200, maxHeight: 400)
-            Divider().foregroundColor(theme.primaryBorder)
             footer
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
         }
         .frame(width: 520)
+        .background(theme.primaryBackground)
         .onAppear { hydrateDraft() }
     }
 
     @ViewBuilder
     private func editorField(for column: AgentColumnInfo) -> some View {
         let isReadOnly = isSystemColumn(column.name)
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(column.name)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+        let isNull = nullValues.contains(column.name)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                AgentSheetSectionLabel(LocalizedStringKey(column.name))
                 Text(column.type)
-                    .font(.system(size: 10))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(theme.inputBackground)
+                    )
                 if isReadOnly {
-                    Text("read-only").font(.system(size: 9))
+                    Text("read-only", bundle: .module)
+                        .font(.system(size: 9, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
                 }
                 Spacer()
@@ -1068,38 +1068,52 @@ fileprivate struct RowEditorSheet: View {
                     .controlSize(.mini)
                 }
             }
-            TextField(
-                "",
+            StyledTextField(
+                placeholder: "",
                 text: Binding(
                     get: { draftValues[column.name] ?? "" },
                     set: { draftValues[column.name] = $0 }
-                )
+                ),
+                icon: nil
             )
-            .textFieldStyle(.roundedBorder)
-            .disabled(isReadOnly || nullValues.contains(column.name))
+            .disabled(isReadOnly || isNull)
+            .opacity(isReadOnly || isNull ? 0.55 : 1.0)
         }
     }
 
     @ViewBuilder
     private var footer: some View {
-        HStack(spacing: 8) {
-            if row.isDeleted {
-                Button("Restore", action: onRestore)
-                    .controlSize(.small)
-            } else {
-                Button("Delete", role: .destructive, action: onSoftDelete)
-                    .controlSize(.small)
+        VStack(spacing: 0) {
+            Divider().opacity(0.5)
+            HStack(spacing: 10) {
+                if row.isDeleted {
+                    Button(action: onRestore) {
+                        Text("Restore", bundle: .module)
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                } else {
+                    Button(action: onSoftDelete) {
+                        Text("Delete", bundle: .module)
+                    }
+                    .buttonStyle(DestructiveButtonStyle())
+                }
+                Spacer()
+                Button(action: onCancel) {
+                    Text("Cancel", bundle: .module)
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .keyboardShortcut(.cancelAction)
+                Button {
+                    onSave(buildUpdates())
+                } label: {
+                    Text("Save", bundle: .module)
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .keyboardShortcut(.return, modifiers: .command)
             }
-            Spacer()
-            Button("Cancel", action: onCancel)
-                .controlSize(.small)
-            Button {
-                onSave(buildUpdates())
-            } label: {
-                Text("Save", bundle: .module)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(theme.secondaryBackground)
         }
     }
 
@@ -1483,12 +1497,20 @@ public struct ActivityTabView: View {
     }
 
     public var body: some View {
+        // Minimums are deliberately conservative: the agent detail body
+        // is `maxWidth: .infinity` and gets dropped into a Settings
+        // detail pane (~750pt at standard width). HSplitView refuses to
+        // compress past the sum of its children's `minWidth`, so an
+        // aggressive total min would force the parent wider on smaller
+        // windows. `idealWidth` preserves the first-render layout when
+        // there's room.
         HSplitView {
             runsList
-                .frame(minWidth: 320, idealWidth: 360)
+                .frame(minWidth: 220, idealWidth: 320)
             tracePane
-                .frame(minWidth: 380)
+                .frame(minWidth: 300)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .task { await loadRuns() }
         .onChange(of: agentId) { _, _ in Task { await loadRuns() } }
@@ -1848,9 +1870,11 @@ public struct ViewsTabView: View {
     }
 
     public var body: some View {
+        // See `ActivityTabView` for the rationale on conservative
+        // minimums — same Settings-window constraint applies here.
         HSplitView {
-            sidebar.frame(minWidth: 240, idealWidth: 260)
-            detail.frame(minWidth: 360)
+            sidebar.frame(minWidth: 180, idealWidth: 240)
+            detail.frame(minWidth: 280)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
