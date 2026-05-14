@@ -107,8 +107,11 @@ struct RuntimePolicySourceTests {
         // future compressed-pool chunks before indexer top-k. `6561a72`
         // preserves DSV4's ratio-4 overlap-compressor state across decode
         // calls, preventing the previous complete pool window from being
-        // zeroed after a single-token generation boundary.
-        let currentVmlxRevision = "6561a72f93d6cd5e0202e8067b53fed5cf21a660"
+        // zeroed after a single-token generation boundary. `e1280c3` is a
+        // build-time fix that breaks up a nested ternary + four-level `??`
+        // chain in LLMModelFactory.swift that the Swift type checker could
+        // not solve within its time budget; runtime behavior is unchanged.
+        let currentVmlxRevision = "e1280c3978d68e9204006923e922e62cb2ea5628"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
