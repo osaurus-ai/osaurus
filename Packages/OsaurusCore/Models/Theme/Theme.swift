@@ -123,6 +123,8 @@ protocol ThemeProtocol {
     var showEdgeLight: Bool { get }
     var showInlineAvatar: Bool { get }
     var inlineAvatarSize: Double { get }
+    var showAgentName: Bool { get }
+    var agentNameSize: Double { get }
 
     // Border customization
     var defaultBorderWidth: Double { get }
@@ -167,6 +169,8 @@ extension ThemeProtocol {
     var showEdgeLight: Bool { true }
     var showInlineAvatar: Bool { true }
     var inlineAvatarSize: Double { 24 }
+    var showAgentName: Bool { true }
+    var agentNameSize: Double { 13 }
 
     // Border defaults
     var defaultBorderWidth: Double { 1.0 }
@@ -520,6 +524,8 @@ struct CustomizableTheme: ThemeProtocol {
     var showEdgeLight: Bool { config.messages.showEdgeLight }
     var showInlineAvatar: Bool { config.messages.showInlineAvatar }
     var inlineAvatarSize: Double { config.messages.inlineAvatarSize }
+    var showAgentName: Bool { config.messages.showAgentName }
+    var agentNameSize: Double { config.messages.agentNameSize }
 
     // Border customization
     var defaultBorderWidth: Double { config.borders.defaultWidth }

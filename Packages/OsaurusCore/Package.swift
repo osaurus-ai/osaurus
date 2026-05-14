@@ -287,7 +287,7 @@ let package = Package(
         // long-tail DSV4 generation keeps the previous complete pool window.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift-lm",
-            revision: "6561a72f93d6cd5e0202e8067b53fed5cf21a660"
+            revision: "e1280c3978d68e9204006923e922e62cb2ea5628"
         ),
         // Osaurus-owned transformers/Jinja chain. `swift-transformers`
         // depends on `osaurus-ai/Jinja`, but its semver range can fresh-

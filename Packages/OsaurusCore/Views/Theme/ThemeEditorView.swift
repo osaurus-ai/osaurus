@@ -258,24 +258,31 @@ struct ThemeEditorView: View {
 
                 Divider().opacity(0.3)
 
-                Text("Inline Avatar", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
+                Text("Agent Avatar", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
-                inlineAvatarToggleRow
-                sliderRow("Size", value: $editingTheme.messages.inlineAvatarSize, range: 16 ... 36)
-                    .disabled(!editingTheme.messages.showInlineAvatar)
-                    .opacity(editingTheme.messages.showInlineAvatar ? 1 : 0.5)
+                sliderRow("Size", value: $editingTheme.messages.inlineAvatarSize, range: 16 ... 108)
+
+                Divider().opacity(0.3)
+
+                Text("Agent Name", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
+                    currentTheme.tertiaryText
+                ).textCase(.uppercase)
+                showAgentNameToggleRow
+                sliderRow("Name Size", value: $editingTheme.messages.agentNameSize, range: 12.5 ... 18)
+                    .disabled(!editingTheme.messages.showAgentName)
+                    .opacity(editingTheme.messages.showAgentName ? 1 : 0.5)
             }
         }
     }
 
-    private var inlineAvatarToggleRow: some View {
+    private var showAgentNameToggleRow: some View {
         HStack {
             Text("Show in chat", bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(currentTheme.primaryText)
             Spacer()
-            Toggle("", isOn: $editingTheme.messages.showInlineAvatar)
+            Toggle("", isOn: $editingTheme.messages.showAgentName)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .tint(currentTheme.accentColor)
@@ -583,7 +590,7 @@ struct ThemeEditorView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
 
                 ThemeChatPreview(theme: editingTheme)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(6)
             }
             .padding(20)
@@ -987,9 +994,9 @@ struct ThemeChatPreview: View {
             }
         }
         .background(c(theme.colors.primaryBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(c(theme.colors.primaryBorder).opacity(0.5), lineWidth: 0.5)
         )
     }
@@ -1007,13 +1014,48 @@ struct ThemeChatPreview: View {
     }
 
     private func messageHeader(_ name: String, color: Color) -> some View {
-        Text(name)
-            .font(primaryFont(size: captionSize + 1, weight: .semibold))
-            .foregroundColor(color)
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 2)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        let showAvatar = theme.messages.showInlineAvatar
+        let showName = theme.messages.showAgentName
+        let avatarSize = CGFloat(max(16, min(108, theme.messages.inlineAvatarSize)))
+        let nameSize = CGFloat(max(12.5, min(18, theme.messages.agentNameSize)))
+
+        return HStack(spacing: 8) {
+            if showAvatar {
+                previewAvatar(size: avatarSize, name: name, tint: color)
+            }
+            if showName {
+                Text(name)
+                    .font(primaryFont(size: nameSize, weight: .semibold))
+                    .foregroundColor(color)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func previewAvatar(size: CGFloat, name: String, tint: Color) -> some View {
+        if let mascot = Bundle.module.image(forResource: "osaurus-avatar-green") {
+            Image(nsImage: mascot)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(c(theme.colors.secondaryText).opacity(0.35), lineWidth: 1))
+        } else {
+            let initial = String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
+            ZStack {
+                Circle().fill(tint.opacity(0.18))
+                Text(initial.isEmpty ? "A" : initial)
+                    .font(primaryFont(size: size * 0.45, weight: .semibold))
+                    .foregroundColor(tint)
+            }
+            .frame(width: size, height: size)
+            .overlay(Circle().stroke(c(theme.colors.secondaryText).opacity(0.35), lineWidth: 1))
+        }
     }
 
     private func previewUserMessage(_ content: String) -> some View {
