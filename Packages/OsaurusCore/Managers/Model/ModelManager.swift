@@ -402,10 +402,12 @@ final class ModelManager: NSObject, ObservableObject {
             return existing
         }
 
-        let lower = trimmed.lowercased()
-        guard lower.contains("mlx") || lower.hasPrefix("mlx-community/") || lower.contains("-mlx")
+        // OsaurusAI repos must already be in the registry (curated or org-fetched)
+        // if we fell through `findExistingModel` above, this OsaurusAI id is unknown so reject
+        if trimmed.lowercased().hasPrefix("osaurusai/") { return nil }
+
+        guard trimmed.lowercased().hasPrefix("mlx-community/") || Self.nameLooksLikeMLX(trimmed)
         else { return nil }
-        guard Self.sdkSupportedModelIds().contains(lower) else { return nil }
 
         let model = MLXModel(
             id: trimmed,
@@ -418,15 +420,30 @@ final class ModelManager: NSObject, ObservableObject {
     }
 
     /// Resolve a model only if the Hugging Face repository is MLX-compatible.
-    /// Uses network metadata from Hugging Face for a reliable determination.
+    /// Policy:
+    ///   - `mlx-community/*`: trust the org; HF compat check confirms.
+    ///   - `OsaurusAI/*`: must already exist in the registry (curated or org-fetched)
+    ///     unknown OsaurusAI ids are rejected.
+    ///   - Other orgs: require `mlx`/`-mlx` in the repo id AND HF metadata confirming MLX.
     func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        guard Self.sdkSupportedModelIds().contains(trimmed.lowercased()) else { return nil }
 
         if let existing = findExistingModel(id: trimmed).model { return existing }
 
-        guard await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed) else { return nil }
+        let lower = trimmed.lowercased()
+        if lower.hasPrefix("osaurusai/") {
+            // Not in registry (would have returned above) — reject.
+            return nil
+        }
+
+        if lower.hasPrefix("mlx-community/") {
+            guard await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed) else { return nil }
+        } else {
+            guard Self.nameLooksLikeMLX(trimmed),
+                  await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed)
+            else { return nil }
+        }
 
         let model = MLXModel(
             id: trimmed,
@@ -511,6 +528,14 @@ final class ModelManager: NSObject, ObservableObject {
     }
 
     // MARK: - Private Methods
+
+    /// Heuristic for non-allowlisted orgs: the repo id should advertise MLX in its name
+    /// (e.g. `someuser/Llama-3-8B-mlx`, `someuser/Foo-mlx-4bit`)
+    static func nameLooksLikeMLX(_ repoId: String) -> Bool {
+        let lower = repoId.lowercased()
+        return lower.contains("-mlx") || lower.contains("_mlx") || lower.hasSuffix("/mlx")
+            || lower.contains("mlx-")
+    }
 
     static func sdkSupportedModelIds() -> Set<String> {
         var allowed: Set<String> = []

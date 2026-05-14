@@ -1568,6 +1568,16 @@ private struct HuggingFaceImportSheet: View {
             isResolving = false
             if resolved != nil {
                 onImported(repoId)
+            } else if repoId.lowercased().hasPrefix("osaurusai/") {
+                errorMessage = L(
+                    "That OsaurusAI model isn't in the registry. Pick one from the Recommended list."
+                )
+            } else if !repoId.lowercased().hasPrefix("mlx-community/")
+                && !ModelManager.nameLooksLikeMLX(repoId)
+            {
+                errorMessage = L(
+                    "Repos outside mlx-community must have “mlx” in the repo name (e.g. user/Model-mlx-4bit)."
+                )
             } else {
                 errorMessage = L(
                     "This repo doesn't appear to be MLX-compatible. Try a model from mlx-community or one with “-mlx” in its name."
