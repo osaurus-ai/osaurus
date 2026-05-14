@@ -134,36 +134,86 @@ final class NativeTypingIndicatorView: NSView {
         updateMemoryLabel(monitor: monitor)
     }
 
-    private func observeModelLoading() {
-        let manager = InferenceProgressManager.shared
-        // `isLoadingModel` is now a computed view over the `@Published`
-        // `loadInFlightCount` refcount (see InferenceProgressManager). We
-        // observe the underlying counter and derive the boolean in the
-        // sink, rather than using `$isLoadingModel` which no longer
-        // exists as a projected publisher.
-        let sink = manager.$loadInFlightCount
-            .map { $0 > 0 }
-            .combineLatest(manager.$isPreflighting)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] (loadingModel, preflighting) in
-                self?.setLoadingModelState(loadingModel: loadingModel, preflighting: preflighting)
+    /// Mutually-exclusive states the typing indicator can advertise on its
+    /// inline label. Order of evaluation in `currentLoadingPhase` encodes
+    /// priority: sandbox provisioning blocks the rest of the turn, so it
+    /// wins over preflight (which only runs once the model is up), which
+    /// in turn wins over a raw model-load tick.
+    private enum LoadingPhase {
+        case sandbox
+        case preflight
+        case modelLoad
+
+        var labelText: String {
+            switch self {
+            case .sandbox: "Sandbox is still loading..."
+            case .preflight: "Searching capabilities..."
+            case .modelLoad: "Loading Model..."
             }
-        cancellables.append(sink)
+        }
     }
 
-    private func setLoadingModelState(loadingModel: Bool, preflighting: Bool) {
-        let showingLabel = loadingModel || preflighting
-        let expectedText = preflighting ? "Searching capabilities..." : "Loading Model..."
+    private func observeModelLoading() {
+        // Merge every truth source the label depends on into a single Void
+        // tick stream and recompute synchronously in the sink. Evaluating
+        // eagerly against the MainActor singletons is cleaner than threading
+        // six values through CombineLatest, especially since the sandbox
+        // gate also requires a per-agent `effectiveAutonomousExec` lookup.
+        let progress = InferenceProgressManager.shared
+        let sandbox = SandboxManager.State.shared
+        let agents = AgentManager.shared
 
-        guard showingLabel != isShowingLoadingLabel || (showingLabel && loadingLabel.stringValue != expectedText) else {
-            return
-        }
+        let triggers: [AnyPublisher<Void, Never>] = [
+            progress.$loadInFlightCount.map { _ in () }.eraseToAnyPublisher(),
+            progress.$isPreflighting.map { _ in () }.eraseToAnyPublisher(),
+            sandbox.$status.map { _ in () }.eraseToAnyPublisher(),
+            sandbox.$isProvisioning.map { _ in () }.eraseToAnyPublisher(),
+            agents.$activeAgentId.map { _ in () }.eraseToAnyPublisher(),
+            agents.$agents.map { _ in () }.eraseToAnyPublisher(),
+        ]
 
-        isShowingLoadingLabel = showingLabel
+        cancellables.append(
+            Publishers.MergeMany(triggers)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.refreshLoadingPhase() }
+        )
+    }
+
+    /// Recompute and apply the current loading phase. Must be called on
+    /// the main thread — caller is responsible for hopping there.
+    private func refreshLoadingPhase() {
+        applyLoadingPhase(currentLoadingPhase())
+    }
+
+    private func currentLoadingPhase() -> LoadingPhase? {
+        let progress = InferenceProgressManager.shared
+        let sandbox = SandboxManager.State.shared
+        let agents = AgentManager.shared
+
+        let agentUsesSandbox =
+            agents.effectiveAutonomousExec(for: agents.activeAgentId)?.enabled == true
+        let sandboxBooting = sandbox.status == .starting || sandbox.isProvisioning
+
+        if agentUsesSandbox && sandboxBooting { return .sandbox }
+        if progress.isPreflighting { return .preflight }
+        if progress.loadInFlightCount > 0 { return .modelLoad }
+        return nil
+    }
+
+    private func applyLoadingPhase(_ phase: LoadingPhase?) {
+        let showing = phase != nil
+        let expectedText = phase?.labelText ?? loadingLabel.stringValue
+
+        guard
+            showing != isShowingLoadingLabel
+                || (showing && loadingLabel.stringValue != expectedText)
+        else { return }
+
+        isShowingLoadingLabel = showing
         loadingLabel.stringValue = expectedText
-        loadingLabel.isHidden = !showingLabel
-        dotStack.isHidden = showingLabel
-        memoryStack?.isHidden = showingLabel
+        loadingLabel.isHidden = !showing
+        dotStack.isHidden = showing
+        memoryStack?.isHidden = showing
     }
 
     private func updateMemoryLabel(monitor: SystemMonitorService) {
