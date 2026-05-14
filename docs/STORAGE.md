@@ -53,6 +53,8 @@ If you want to back up your data in plaintext (for example, before reinstalling 
 | Methods catalog | SQLCipher | `~/.osaurus/methods/methods.sqlite` |
 | Tool index | SQLCipher | `~/.osaurus/tool-index/tool_index.sqlite` |
 | Per-plugin databases | SQLCipher | `~/.osaurus/Tools/<plugin-id>/data/data.db` |
+| Per-agent database (opt-in) | SQLCipher | `~/.osaurus/agents/<uuid>/db.sqlite` |
+| Self-scheduling slots | SQLCipher | `~/.osaurus/scheduler.sqlite` |
 | Large chat attachments | AES-GCM (`.osec`) | `~/.osaurus/chat-history/blobs/<sha256>.osec` |
 
 **Attachment spillover.** Every `Attachment.image` or `Attachment.document` payload greater than or equal to **16 KB** is hashed, encrypted, and written to its own `.osec` file via [`AttachmentBlobStore`](../Packages/OsaurusCore/Storage/AttachmentBlobStore.swift). The chat row stores only `{ "ref": "<sha256>", ... }`, so resaving a session no longer rewrites every attachment byte. Smaller payloads (icons, short text snippets) stay inline in the row to avoid filesystem chatter.
@@ -240,6 +242,8 @@ The ticker is started from [`AppDelegate`](../Packages/OsaurusCore/AppDelegate.s
 | `~/.osaurus/methods/methods.sqlite` | SQLCipher methods catalog |
 | `~/.osaurus/tool-index/tool_index.sqlite` | SQLCipher tool index |
 | `~/.osaurus/Tools/<plugin-id>/data/data.db` | Per-plugin SQLCipher database |
+| `~/.osaurus/agents/<uuid>/db.sqlite` | Per-agent SQLCipher database (see [Agent DB & Self-Scheduling](AGENT_DB.md)) |
+| `~/.osaurus/scheduler.sqlite` | SQLCipher cross-agent next-run + pause slots |
 
 The DEK lives in macOS Keychain, **not** in `~/.osaurus/`.
 

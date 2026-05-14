@@ -4,6 +4,8 @@ Osaurus has a persistent, on-device memory system that learns from your conversa
 
 The mental model is simple: a smart secretary that knows what you've discussed and surfaces only what matters right now — not a tape recorder.
 
+> **Not the same as per-agent DB.** Memory is **global across all your chats** — it's identity, pinned facts, and episodic recall derived from natural conversation. For an agent that maintains its own private structured store (custom tables, soft-deletes, saved views), see [Agent DB & Self-Scheduling](AGENT_DB.md). The two are orthogonal: an agent can use neither, either, or both.
+
 ---
 
 ## Getting Started
