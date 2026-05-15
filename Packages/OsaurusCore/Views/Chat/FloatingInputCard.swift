@@ -2660,6 +2660,13 @@ extension FloatingInputCard {
 
     private var cardBackground: some View {
         ZStack {
+            // NSVisualEffectView-backed glass behind everything, only when
+            // the prompt card's own glass toggle is on. The fill above is
+            // already semi-transparent so the material shows through.
+            if theme.glassInputEnabled {
+                ThemedGlassSurface(cornerRadius: 20)
+            }
+
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(theme.primaryBackground.opacity(theme.isDark ? 0.82 : 0.94))
 

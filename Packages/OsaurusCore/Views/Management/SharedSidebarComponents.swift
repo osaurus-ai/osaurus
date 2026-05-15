@@ -111,9 +111,18 @@ struct SidebarBackground: View {
 
     var body: some View {
         ZStack {
-            // Layer 1: Semi-transparent card background
+            // Layer 0: NSVisualEffectView-backed glass, only when the
+            // sidebar's own glass toggle is on. Outer container clips to
+            // the sidebar's rounded shape, so a plain rectangle is fine here.
+            if theme.glassSidebarEnabled {
+                ThemedGlassSurface(cornerRadius: SidebarStyle.cornerRadius)
+            }
+
+            // Layer 1: Semi-transparent card background. Lower opacity when
+            // the sidebar's own glass toggle is on so the behind-window
+            // material shows through.
             theme.cardBackground.opacity(
-                theme.glassEnabled
+                theme.glassSidebarEnabled
                     ? (theme.isDark ? SidebarStyle.glassOpacityDark : SidebarStyle.glassOpacityLight)
                     : 1.0
             )
