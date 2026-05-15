@@ -345,8 +345,8 @@ final class CustomNSTextView: NSTextView {
     /// keep working as before.
     override func paste(_ sender: Any?) {
         if let handler = onPasteText,
-           let text = NSPasteboard.general.string(forType: .string),
-           handler(text)
+            let text = NSPasteboard.general.string(forType: .string),
+            handler(text)
         {
             return
         }

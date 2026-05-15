@@ -40,6 +40,8 @@ Import skills from any GitHub repository that includes a skills marketplace:
 
 Osaurus looks for `.claude-plugin/marketplace.json` in the repository to discover available skills.
 
+> **Full Claude plugins:** Osaurus also recognises the directory-based Claude plugin layout (e.g. [`anthropics/claude-for-legal`](https://github.com/anthropics/claude-for-legal)) and can import scheduled agents, slash commands, MCP providers, and a shared `CLAUDE.md` context alongside the skills. See [Claude Plugins](CLAUDE_PLUGINS.md) for the full plugin import flow.
+
 ### From Files
 
 Import skills from local files:
@@ -87,6 +89,12 @@ Export skills to share with others:
 ### Delete
 
 Click **Delete** to remove a custom skill. Built-in skills cannot be deleted.
+
+### Installed Plugins
+
+When you import a full Claude plugin from GitHub, the **Installed Plugins** card appears at the top of the Skills view. Each row shows the plugin name, source slug, and chips for its skill / schedule / command / MCP counts. Click **Uninstall** to remove every artifact the plugin contributed (skills, schedules, slash commands, MCP providers, and any Keychain-stored tokens) in one shot.
+
+Only plugins imported via the GitHub flow are listed here — Osaurus's built-in tool plugins are managed separately. See [Claude Plugins](CLAUDE_PLUGINS.md) for the full lifecycle.
 
 ---
 
@@ -246,6 +254,7 @@ No per-agent skill configuration is needed. The system automatically matches the
 - Ensure the repository is public or you have access
 - Verify the repo contains `.claude-plugin/marketplace.json`
 - Check your network connection
+- If you see "GitHub rate-limited this app", wait for the reset time shown in the error and retry — unauthenticated requests are capped at 60/hour. See [Claude Plugins → Rate Limiting](CLAUDE_PLUGINS.md#rate-limiting).
 
 ### Skill instructions not being followed
 
@@ -263,6 +272,7 @@ No per-agent skill configuration is needed. The system automatically matches the
 
 ## Related Documentation
 
+- [Claude Plugins](CLAUDE_PLUGINS.md) — Full plugin imports (skills + schedules + commands + MCP + `CLAUDE.md`)
 - [Agents](../README.md#agents) — Custom AI assistants
 - [Tools & Plugins](plugins/README.md) — Extend with custom tools
 - [Agent Skills Specification](https://agentskills.io/) — Open format documentation

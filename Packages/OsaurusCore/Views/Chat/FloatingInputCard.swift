@@ -1211,9 +1211,10 @@ extension FloatingInputCard {
                                     _ = pendingAttachments.remove(at: index)
                                 }
                             },
-                            onTap: attachment.isPastedContent ? {
-                                pastedContentPreview = attachment
-                            } : nil
+                            onTap: attachment.isPastedContent
+                                ? {
+                                    pastedContentPreview = attachment
+                                } : nil
                         )
                     case .audio, .audioRef, .video, .videoRef:
                         // Audio/video attachments display as a labeled chip

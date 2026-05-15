@@ -75,6 +75,10 @@ struct SkillsView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
+                            InstalledPluginsSection(onMessage: { message, isError in
+                                showToast(message, isError: isError)
+                            })
+
                             ForEach(Array(skillManager.skills.enumerated()), id: \.element.id) { index, skill in
                                 SkillRow(
                                     skill: skill,
@@ -181,6 +185,19 @@ struct SkillsView: View {
                 },
                 onCancel: {
                     showGitHubImport = false
+                },
+                onPluginInstallComplete: { report in
+                    // The sheet shows its own summary screen; just refresh the
+                    // skills list and surface a short toast in the background.
+                    Task { @MainActor in
+                        await skillManager.refresh()
+                        let total =
+                            report.totalImportedSkills + report.totalImportedAgents
+                            + report.totalImportedCommands + report.totalImportedMCPProviders
+                        if total > 0 {
+                            showToast("Installed \(total) item\(total == 1 ? "" : "s")")
+                        }
+                    }
                 }
             )
         }

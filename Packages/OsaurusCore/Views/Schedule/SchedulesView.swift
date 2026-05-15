@@ -12,6 +12,7 @@ import SwiftUI
 
 struct SchedulesView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var managementState = ManagementStateManager.shared
     private var scheduleManager = ScheduleManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -149,7 +150,24 @@ struct SchedulesView: View {
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
+            consumePendingScheduleEditRequest()
         }
+        .onChange(of: managementState.pendingScheduleEditId) { _, _ in
+            consumePendingScheduleEditRequest()
+        }
+    }
+
+    /// Handle a deeplink request to open a specific schedule's editor (e.g.
+    /// from the Claude plugin import summary). Looks up the schedule by id
+    /// against the live `ScheduleManager`, opens the editor, and clears the
+    /// pending request so it doesn't replay on the next tab visit.
+    private func consumePendingScheduleEditRequest() {
+        guard let pending = managementState.pendingScheduleEditId else { return }
+        scheduleManager.refresh()
+        if let match = scheduleManager.schedules.first(where: { $0.id == pending }) {
+            editingSchedule = match
+        }
+        managementState.pendingScheduleEditId = nil
     }
 
     // MARK: - Header

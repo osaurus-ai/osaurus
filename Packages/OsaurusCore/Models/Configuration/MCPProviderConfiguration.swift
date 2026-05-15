@@ -93,11 +93,17 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
     /// OAuth client/server metadata, populated when `authType == .oauth`.
     public var oauth: MCPOAuthConfig?
 
+    /// Optional plugin grouping key. Set when this provider was installed as
+    /// part of a plugin import (e.g. a Claude plugin's `.mcp.json` entry).
+    /// Used for bulk uninstall.
+    public var pluginId: String?
+
     private enum CodingKeys: String, CodingKey {
         case id, name, url, enabled, customHeaders
         case streamingEnabled, discoveryTimeout, toolCallTimeout, autoConnect
         case secretHeaderKeys
         case authType, oauth
+        case pluginId
     }
 
     public init(
@@ -112,7 +118,8 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         autoConnect: Bool = true,
         secretHeaderKeys: [String] = [],
         authType: MCPProviderAuthType = .bearerToken,
-        oauth: MCPOAuthConfig? = nil
+        oauth: MCPOAuthConfig? = nil,
+        pluginId: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -126,6 +133,7 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         self.secretHeaderKeys = secretHeaderKeys
         self.authType = authType
         self.oauth = oauth
+        self.pluginId = pluginId
     }
 
     public init(from decoder: Decoder) throws {
@@ -143,6 +151,7 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         // Migration: legacy configs default to .bearerToken so the existing token-from-Keychain path works.
         self.authType = try container.decodeIfPresent(MCPProviderAuthType.self, forKey: .authType) ?? .bearerToken
         self.oauth = try container.decodeIfPresent(MCPOAuthConfig.self, forKey: .oauth)
+        self.pluginId = try container.decodeIfPresent(String.self, forKey: .pluginId)
     }
 
     /// Get all headers including secret headers from Keychain

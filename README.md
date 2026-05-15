@@ -156,7 +156,7 @@ osaurus tools dev com.acme.my-plugin     # Dev with hot reload
 
 ## More
 
-**Skills & Methods** -- Skills import reusable AI capabilities from GitHub repos or files, compatible with [Agent Skills](https://agentskills.io/). Methods are learned workflows that agents save and reuse over time. Both are automatically selected via RAG search -- no manual configuration needed. See [Skills Guide](docs/SKILLS.md).
+**Skills & Methods** -- Skills import reusable AI capabilities from GitHub repos or files, compatible with [Agent Skills](https://agentskills.io/). Full Claude plugins (skills, scheduled agents, slash commands, MCP providers, and `CLAUDE.md` context) can be imported from any GitHub repo and managed as a single bundle. Methods are learned workflows that agents save and reuse over time. All are automatically selected via RAG search -- no manual configuration needed. See [Skills Guide](docs/SKILLS.md) and [Claude Plugins](docs/CLAUDE_PLUGINS.md).
 
 **Automation** -- Schedules run recurring tasks in the background. Watchers monitor folders and trigger agents on file changes.
 

@@ -162,11 +162,13 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     public static let pastedContentFilename = "Pasted content"
 
     public static func pastedContent(_ text: String) -> Attachment {
-        Attachment(kind: .document(
-            filename: pastedContentFilename,
-            content: text,
-            fileSize: text.utf8.count
-        ))
+        Attachment(
+            kind: .document(
+                filename: pastedContentFilename,
+                content: text,
+                fileSize: text.utf8.count
+            )
+        )
     }
 
     public static func audio(_ data: Data, format: String, filename: String? = nil) -> Attachment {

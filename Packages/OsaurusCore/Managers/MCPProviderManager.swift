@@ -119,6 +119,21 @@ public final class MCPProviderManager: ObservableObject {
         notifyStatusChanged()
     }
 
+    /// Returns providers associated with a plugin id.
+    public func providers(forPluginId pluginId: String) -> [MCPProvider] {
+        configuration.providers.filter { $0.pluginId == pluginId }
+    }
+
+    /// Remove every provider installed by a plugin. Returns the number deleted.
+    @discardableResult
+    public func deleteByPluginId(_ pluginId: String) -> Int {
+        let matches = providers(forPluginId: pluginId)
+        for provider in matches {
+            removeProvider(id: provider.id)
+        }
+        return matches.count
+    }
+
     /// Set enabled state for a provider
     /// When enabled is true, automatically connects to the provider
     /// When enabled is false, disconnects from the provider

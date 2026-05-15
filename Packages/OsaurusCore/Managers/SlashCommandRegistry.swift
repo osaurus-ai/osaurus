@@ -38,14 +38,16 @@ public final class SlashCommandRegistry {
         name: String,
         description: String = "",
         icon: String = "text.bubble",
-        template: String
+        template: String,
+        pluginId: String? = nil
     ) -> SlashCommand {
         let cmd = SlashCommand(
             name: name,
             description: description,
             icon: icon,
             kind: .template,
-            template: template
+            template: template,
+            pluginId: pluginId
         )
         SlashCommandStore.save(cmd)
         refresh()
@@ -65,6 +67,25 @@ public final class SlashCommandRegistry {
         let result = SlashCommandStore.delete(id: id)
         if result { refresh() }
         return result
+    }
+
+    /// Returns all persisted custom commands associated with a plugin.
+    public func commands(forPluginId pluginId: String) -> [SlashCommand] {
+        customCommands.filter { $0.pluginId == pluginId }
+    }
+
+    /// Delete every persisted custom command that belongs to a plugin.
+    /// Returns the number of commands deleted.
+    @discardableResult
+    public func deleteByPluginId(_ pluginId: String) -> Int {
+        let matches = commands(forPluginId: pluginId)
+        guard !matches.isEmpty else { return 0 }
+        var count = 0
+        for cmd in matches where SlashCommandStore.delete(id: cmd.id) {
+            count += 1
+        }
+        if count > 0 { refresh() }
+        return count
     }
 
     // MARK: - Filtering
