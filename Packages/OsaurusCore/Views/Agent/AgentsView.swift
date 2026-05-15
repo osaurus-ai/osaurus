@@ -1221,147 +1221,147 @@ struct AgentDetailView: View {
 
     private var bodyWithSheets: some View {
         bodyCore
-        .sheet(
-            isPresented: Binding(
-                get: { bundleExportDestination != nil },
-                set: { if !$0 { bundleExportDestination = nil } }
-            )
-        ) {
-            bundleExportPassphraseSheet
-        }
-        .sheet(
-            isPresented: Binding(
-                get: { bundleImportSource != nil },
-                set: { if !$0 { bundleImportSource = nil } }
-            )
-        ) {
-            bundleImportPassphraseSheet
-        }
-        .sheet(
-            isPresented: Binding(
-                get: { bundleImportPreview != nil },
-                set: { if !$0 { discardBundlePreview() } }
-            )
-        ) {
-            bundleImportReviewSheet
-        }
+            .sheet(
+                isPresented: Binding(
+                    get: { bundleExportDestination != nil },
+                    set: { if !$0 { bundleExportDestination = nil } }
+                )
+            ) {
+                bundleExportPassphraseSheet
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { bundleImportSource != nil },
+                    set: { if !$0 { bundleImportSource = nil } }
+                )
+            ) {
+                bundleImportPassphraseSheet
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { bundleImportPreview != nil },
+                    set: { if !$0 { discardBundlePreview() } }
+                )
+            ) {
+                bundleImportReviewSheet
+            }
     }
 
     private var bodyWithAlerts: some View {
         bodyWithSheets
-        .themedAlert(
-            "Bundle operation failed",
-            isPresented: Binding(
-                get: { bundleErrorMessage != nil },
-                set: { if !$0 { bundleErrorMessage = nil } }
-            ),
-            message: bundleErrorMessage ?? "",
-            primaryButton: .primary("OK") { bundleErrorMessage = nil }
-        )
-        .themedAlert(
-            "Bundle ready",
-            isPresented: Binding(
-                get: { bundleSuccessMessage != nil },
-                set: { if !$0 { bundleSuccessMessage = nil } }
-            ),
-            message: bundleSuccessMessage ?? "",
-            primaryButton: .primary("OK") { bundleSuccessMessage = nil }
-        )
-        .themedAlert(
-            "Delete Agent",
-            isPresented: $showDeleteConfirm,
-            message:
-                "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed.",
-            primaryButton: .destructive("Delete") { onDelete(currentAgent) },
-            secondaryButton: .cancel("Cancel")
-        )
-        .themedAlert(
-            "Expose Agent to Internet?",
-            isPresented: $showRelayConfirmation,
-            message:
-                "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
-            primaryButton: .destructive("Enable Relay") {
-                relayManager.setTunnelEnabled(true, for: agent.id)
-            },
-            secondaryButton: .cancel("Cancel")
-        )
-        .themedAlert(
-            "Retry plugin load?",
-            isPresented: Binding(
-                get: { pendingFailedPluginRetry != nil },
-                set: { if !$0 { pendingFailedPluginRetry = nil } }
-            ),
-            message:
-                "The host quarantined this plugin after it caused a crash during load. Retrying re-runs the same dylib against the same host build, so if the underlying bug (most often a misaligned `osr_host_api` mirror in the plugin) is unfixed it will crash again. Use this only after you have rebuilt or re-installed the plugin.",
-            primaryButton: .destructive("Retry Anyway") {
-                if let pid = pendingFailedPluginRetry {
-                    confirmRetryFailedPlugin(pid)
-                }
-                pendingFailedPluginRetry = nil
-            },
-            secondaryButton: .cancel("Cancel")
-        )
-        .themedAlert(
-            "Uninstall plugin?",
-            isPresented: Binding(
-                get: { pendingFailedPluginUninstall != nil },
-                set: { if !$0 { pendingFailedPluginUninstall = nil } }
-            ),
-            message:
-                "This permanently deletes the plugin's installed dylib, manifest, and per-agent secrets from disk. The host will stop attempting to load it on every launch — the only way to escape a crash-looping plugin without editing files by hand. You can reinstall it later from the Tools manager.",
-            primaryButton: .destructive("Uninstall") {
-                if let pid = pendingFailedPluginUninstall {
-                    confirmUninstallFailedPlugin(pid)
-                }
-                pendingFailedPluginUninstall = nil
-            },
-            secondaryButton: .cancel("Cancel")
-        )
+            .themedAlert(
+                "Bundle operation failed",
+                isPresented: Binding(
+                    get: { bundleErrorMessage != nil },
+                    set: { if !$0 { bundleErrorMessage = nil } }
+                ),
+                message: bundleErrorMessage ?? "",
+                primaryButton: .primary("OK") { bundleErrorMessage = nil }
+            )
+            .themedAlert(
+                "Bundle ready",
+                isPresented: Binding(
+                    get: { bundleSuccessMessage != nil },
+                    set: { if !$0 { bundleSuccessMessage = nil } }
+                ),
+                message: bundleSuccessMessage ?? "",
+                primaryButton: .primary("OK") { bundleSuccessMessage = nil }
+            )
+            .themedAlert(
+                "Delete Agent",
+                isPresented: $showDeleteConfirm,
+                message:
+                    "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed.",
+                primaryButton: .destructive("Delete") { onDelete(currentAgent) },
+                secondaryButton: .cancel("Cancel")
+            )
+            .themedAlert(
+                "Expose Agent to Internet?",
+                isPresented: $showRelayConfirmation,
+                message:
+                    "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
+                primaryButton: .destructive("Enable Relay") {
+                    relayManager.setTunnelEnabled(true, for: agent.id)
+                },
+                secondaryButton: .cancel("Cancel")
+            )
+            .themedAlert(
+                "Retry plugin load?",
+                isPresented: Binding(
+                    get: { pendingFailedPluginRetry != nil },
+                    set: { if !$0 { pendingFailedPluginRetry = nil } }
+                ),
+                message:
+                    "The host quarantined this plugin after it caused a crash during load. Retrying re-runs the same dylib against the same host build, so if the underlying bug (most often a misaligned `osr_host_api` mirror in the plugin) is unfixed it will crash again. Use this only after you have rebuilt or re-installed the plugin.",
+                primaryButton: .destructive("Retry Anyway") {
+                    if let pid = pendingFailedPluginRetry {
+                        confirmRetryFailedPlugin(pid)
+                    }
+                    pendingFailedPluginRetry = nil
+                },
+                secondaryButton: .cancel("Cancel")
+            )
+            .themedAlert(
+                "Uninstall plugin?",
+                isPresented: Binding(
+                    get: { pendingFailedPluginUninstall != nil },
+                    set: { if !$0 { pendingFailedPluginUninstall = nil } }
+                ),
+                message:
+                    "This permanently deletes the plugin's installed dylib, manifest, and per-agent secrets from disk. The host will stop attempting to load it on every launch — the only way to escape a crash-looping plugin without editing files by hand. You can reinstall it later from the Tools manager.",
+                primaryButton: .destructive("Uninstall") {
+                    if let pid = pendingFailedPluginUninstall {
+                        confirmUninstallFailedPlugin(pid)
+                    }
+                    pendingFailedPluginUninstall = nil
+                },
+                secondaryButton: .cancel("Cancel")
+            )
     }
 
     var body: some View {
         bodyWithAlerts
-        .sheet(isPresented: $showCreateSchedule) {
-            ScheduleEditorSheet(
-                mode: .create,
-                onSave: { schedule in
-                    ScheduleManager.shared.create(
-                        name: schedule.name,
-                        instructions: schedule.instructions,
-                        agentId: schedule.agentId,
-                        frequency: schedule.frequency,
-                        isEnabled: schedule.isEnabled
-                    )
-                    showCreateSchedule = false
-                    showSuccess("Created schedule \"\(schedule.name)\"")
-                },
-                onCancel: { showCreateSchedule = false },
-                initialAgentId: agent.id
-            )
-            .environment(\.theme, themeManager.currentTheme)
-        }
-        .sheet(isPresented: $showCreateWatcher) {
-            WatcherEditorSheet(
-                mode: .create,
-                onSave: { watcher in
-                    watcherManager.create(
-                        name: watcher.name,
-                        instructions: watcher.instructions,
-                        agentId: watcher.agentId,
-                        watchPath: watcher.watchPath,
-                        watchBookmark: watcher.watchBookmark,
-                        isEnabled: watcher.isEnabled,
-                        recursive: watcher.recursive,
-                        responsiveness: watcher.responsiveness
-                    )
-                    showCreateWatcher = false
-                    showSuccess("Created watcher \"\(watcher.name)\"")
-                },
-                onCancel: { showCreateWatcher = false },
-                initialAgentId: agent.id
-            )
-            .environment(\.theme, themeManager.currentTheme)
-        }
+            .sheet(isPresented: $showCreateSchedule) {
+                ScheduleEditorSheet(
+                    mode: .create,
+                    onSave: { schedule in
+                        ScheduleManager.shared.create(
+                            name: schedule.name,
+                            instructions: schedule.instructions,
+                            agentId: schedule.agentId,
+                            frequency: schedule.frequency,
+                            isEnabled: schedule.isEnabled
+                        )
+                        showCreateSchedule = false
+                        showSuccess("Created schedule \"\(schedule.name)\"")
+                    },
+                    onCancel: { showCreateSchedule = false },
+                    initialAgentId: agent.id
+                )
+                .environment(\.theme, themeManager.currentTheme)
+            }
+            .sheet(isPresented: $showCreateWatcher) {
+                WatcherEditorSheet(
+                    mode: .create,
+                    onSave: { watcher in
+                        watcherManager.create(
+                            name: watcher.name,
+                            instructions: watcher.instructions,
+                            agentId: watcher.agentId,
+                            watchPath: watcher.watchPath,
+                            watchBookmark: watcher.watchBookmark,
+                            isEnabled: watcher.isEnabled,
+                            recursive: watcher.recursive,
+                            responsiveness: watcher.responsiveness
+                        )
+                        showCreateWatcher = false
+                        showSuccess("Created watcher \"\(watcher.name)\"")
+                    },
+                    onCancel: { showCreateWatcher = false },
+                    initialAgentId: agent.id
+                )
+                .environment(\.theme, themeManager.currentTheme)
+            }
     }
 
     // MARK: - Detail Header Bar

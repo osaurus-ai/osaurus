@@ -202,7 +202,8 @@ public struct NextRunPanelView: View {
     /// the user doesn't see a literal year-4001 date.
     private static func pausedSubtitle(for p: AgentPauseRecord) -> String {
         let isIndefinite = p.pausedUntil.timeIntervalSinceNow > Self.indefinitePauseThreshold
-        let base = isIndefinite
+        let base =
+            isIndefinite
             ? "Indefinitely paused"
             : "Until \(Self.absolute(p.pausedUntil))"
         let reason = p.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -347,7 +348,8 @@ public struct NextRunPanelView: View {
     // MARK: Edit sheet
 
     private var editInstructionsSheet: some View {
-        let trimmedEmpty = editedInstructions
+        let trimmedEmpty =
+            editedInstructions
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .isEmpty
         return VStack(spacing: 0) {
@@ -457,7 +459,8 @@ public struct NextRunPanelView: View {
     private func pauseUntilTomorrow() {
         let cal = Calendar.current
         let start = cal.startOfDay(for: Date())
-        let tomorrow = cal.date(byAdding: .day, value: 1, to: start)
+        let tomorrow =
+            cal.date(byAdding: .day, value: 1, to: start)
             ?? Date().addingTimeInterval(86400)
         applyPause(until: tomorrow)
     }
@@ -472,7 +475,8 @@ public struct NextRunPanelView: View {
     }
 
     private func applyCustomPause() {
-        let trimmedReason = customPauseReason
+        let trimmedReason =
+            customPauseReason
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // The picker is constrained to future-only, but guard anyway
         // — a paused-until in the past would no-op the next reload.

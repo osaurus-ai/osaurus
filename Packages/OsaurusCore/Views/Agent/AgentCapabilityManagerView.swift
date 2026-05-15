@@ -727,6 +727,10 @@ struct AgentCapabilityManagerView: View {
         guard case .live(let agentId) = source else { return }
         let liveToolNames = ToolRegistry.shared.listDynamicTools().map(\.name)
         let liveSkillNames = SkillManager.shared.skills.map(\.name)
+        // If the registry hasn't loaded yet, don't seed an empty allowlist —
+        // the next `.toolsListChanged` would treat every later-registered
+        // tool/skill as "newly discovered" and grow the agent back to full.
+        guard !(liveToolNames.isEmpty && liveSkillNames.isEmpty) else { return }
         agentManager.seedEnabledCapabilitiesIfNeeded(
             for: agentId,
             defaultToolNames: liveToolNames,

@@ -83,6 +83,14 @@ public final class AgentManager: ObservableObject {
     private var lastStorageWarningAt: [UUID: Date] = [:]
     private static let storageWarningCooldown: TimeInterval = 24 * 60 * 60
 
+    /// `UserDefaults` keys for the persisted snapshot of every
+    /// tool/skill name the registry has ever reported via
+    /// `.toolsListChanged`. Used by the observer to tell *brand-new*
+    /// capabilities apart from ones the user has explicitly disabled
+    /// (both look "absent from the agent's allowlist" otherwise).
+    private static let knownToolNamesKey = "AgentManager.knownToolNames.v1"
+    private static let knownSkillNamesKey = "AgentManager.knownSkillNames.v1"
+
     private init() {
         refresh()
         migrateAgentAddressesIfNeeded()
@@ -101,6 +109,11 @@ public final class AgentManager: ObservableObject {
         // still fall back to the global registry — see `effectiveEnabledToolNames`.
         // Skills ride this same notification because plugin skills register alongside
         // their tools (see `PluginManager._loadAll`).
+        //
+        // We only grow with names that are *new* relative to the persisted registry
+        // snapshot. On the first observation after this fix shipped the snapshot is
+        // nil, so the diff is empty and we just seed — that protects upgraded users
+        // from having their existing disables clobbered.
         NotificationCenter.default.addObserver(
             forName: .toolsListChanged,
             object: nil,
@@ -108,10 +121,16 @@ public final class AgentManager: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                let liveTools = ToolRegistry.shared.listDynamicTools().map(\.name)
-                self.growEnabledToolNames(Set(liveTools))
-                let liveSkills = SkillManager.shared.skills.map(\.name)
-                self.growEnabledSkillNames(Set(liveSkills))
+                self.growNewlyDiscoveredCapabilities(
+                    live: Set(ToolRegistry.shared.listDynamicTools().map(\.name)),
+                    key: Self.knownToolNamesKey,
+                    grow: self.growEnabledToolNames
+                )
+                self.growNewlyDiscoveredCapabilities(
+                    live: Set(SkillManager.shared.skills.map(\.name)),
+                    key: Self.knownSkillNamesKey,
+                    grow: self.growEnabledSkillNames
+                )
             }
         }
 
@@ -857,6 +876,36 @@ extension AgentManager {
         if anyAgentChanged {
             refresh()
         }
+    }
+
+    // MARK: - Known capability registry snapshot
+
+    /// Diff `live` against the persisted snapshot at `key`. Newly discovered
+    /// names are passed to `grow`; the snapshot is then refreshed to `live`.
+    /// A missing snapshot (first observation) seeds without growing, which is
+    /// what protects already-disabled capabilities on the upgrade path.
+    private func growNewlyDiscoveredCapabilities(
+        live: Set<String>,
+        key: String,
+        grow: (Set<String>) -> Void
+    ) {
+        if let known = loadKnownNames(forKey: key) {
+            let newlyDiscovered = live.subtracting(known)
+            if !newlyDiscovered.isEmpty { grow(newlyDiscovered) }
+        }
+        saveKnownNames(live, forKey: key)
+    }
+
+    /// Stored as a sorted `[String]` in `UserDefaults.standard` so the
+    /// on-disk form is stable and diff-friendly. Returns `nil` when no
+    /// snapshot has ever been written.
+    private func loadKnownNames(forKey key: String) -> Set<String>? {
+        guard let arr = UserDefaults.standard.array(forKey: key) as? [String] else { return nil }
+        return Set(arr)
+    }
+
+    private func saveKnownNames(_ names: Set<String>, forKey key: String) {
+        UserDefaults.standard.set(names.sorted(), forKey: key)
     }
 
     /// Update the default model for an agent
