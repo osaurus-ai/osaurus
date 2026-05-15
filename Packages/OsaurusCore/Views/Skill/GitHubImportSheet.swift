@@ -1112,6 +1112,7 @@ private struct InstallReportLine: View {
             Spacer()
             Text("\(count)")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
+                // swiftlint:disable:next empty_count
                 .foregroundColor(count > 0 ? theme.primaryText : theme.tertiaryText)
         }
     }
