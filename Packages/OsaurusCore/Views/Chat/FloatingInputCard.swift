@@ -2606,7 +2606,14 @@ extension FloatingInputCard {
                     localText = ""
                     text = ""
                     return true
-                } : nil
+                } : nil,
+            onPasteText: { pasted in
+                guard pasted.count >= Self.pastedContentThreshold else { return false }
+                withAnimation(theme.springAnimation()) {
+                    pendingAttachments.append(.pastedContent(pasted))
+                }
+                return true
+            }
         )
         .frame(maxHeight: maxHeight)
         .overlay(alignment: .topLeading) {
