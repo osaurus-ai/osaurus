@@ -3,6 +3,29 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.19</title>
+            <pubDate>Fri, 15 May 2026 05:18:49 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.19</sparkle:version>
+            <sparkle:shortVersionString>0.18.19</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.19/Osaurus-0.18.19.dmg" length="41642601" type="application/octet-stream" sparkle:edSignature="EIYgWy8OGvjH++zhwbqRypiTYWGkFJLy2X1zsa3kkEKJYO6170UQBZddjQkDCtXUvhoF7GU3n36x3lW8Vmb6CA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Fix Gemini tool schema parameters (#1088) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed issue with reverting changes in capabilities manager (#1100) by @tpae
+- prevent switching active theme when saving a theme edit (#1096) by @RaajeevChandran
+- improved theme edit sync in chat (#1095) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.18...0.18.19
+]]></description>
+        </item>
+        <item>
             <title>0.18.18</title>
             <pubDate>Thu, 14 May 2026 20:12:35 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
