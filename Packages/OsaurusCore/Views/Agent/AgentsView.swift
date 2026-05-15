@@ -1041,7 +1041,52 @@ struct AgentDetailView: View {
             .sorted { $0.pluginId < $1.pluginId }
     }
 
-    var body: some View {
+    @ViewBuilder
+    private var tabContent: some View {
+        switch selectedTab {
+        case .builtIn(.capabilities):
+            AgentCapabilityManagerView(agentId: agent.id, onDismiss: nil)
+                .environment(\.theme, themeManager.currentTheme)
+                .id(selectedTab)
+        case .builtIn(.home):
+            HomeTabView(agentId: agent.id)
+                .environment(\.theme, themeManager.currentTheme)
+                .id(selectedTab)
+        case .builtIn(.schema):
+            SchemaTabView(agentId: agent.id)
+                .environment(\.theme, themeManager.currentTheme)
+                .id(selectedTab)
+        case .builtIn(.data):
+            DataTabView(
+                agentId: agent.id,
+                initialSelectedTable: pendingFocusedTableName
+            )
+            .environment(\.theme, themeManager.currentTheme)
+            .id(selectedTab)
+        case .builtIn(.views):
+            ViewsTabView(
+                agentId: agent.id,
+                initialFocusedViewName: pendingFocusedViewName
+            )
+            .environment(\.theme, themeManager.currentTheme)
+            .id(selectedTab)
+        case .builtIn(.activity):
+            ActivityTabView(agentId: agent.id)
+                .environment(\.theme, themeManager.currentTheme)
+                .id(selectedTab)
+        default:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    scrollableTabContent
+                }
+                .padding(24)
+                .id(selectedTab)
+            }
+            .animation(nil, value: selectedTab)
+        }
+    }
+
+    private var bodyCore: some View {
         VStack(spacing: 0) {
             detailHeaderBar
 
@@ -1068,47 +1113,7 @@ struct AgentDetailView: View {
                 // (NSTableView / NSOutlineView). Rendering them directly —
                 // without the outer ScrollView the other tabs share — keeps
                 // their tables flush and avoids nested scrolling.
-                switch selectedTab {
-                case .builtIn(.capabilities):
-                    AgentCapabilityManagerView(agentId: agent.id, onDismiss: nil)
-                        .environment(\.theme, themeManager.currentTheme)
-                        .id(selectedTab)
-                case .builtIn(.home):
-                    HomeTabView(agentId: agent.id)
-                        .environment(\.theme, themeManager.currentTheme)
-                        .id(selectedTab)
-                case .builtIn(.schema):
-                    SchemaTabView(agentId: agent.id)
-                        .environment(\.theme, themeManager.currentTheme)
-                        .id(selectedTab)
-                case .builtIn(.data):
-                    DataTabView(
-                        agentId: agent.id,
-                        initialSelectedTable: pendingFocusedTableName
-                    )
-                    .environment(\.theme, themeManager.currentTheme)
-                    .id(selectedTab)
-                case .builtIn(.views):
-                    ViewsTabView(
-                        agentId: agent.id,
-                        initialFocusedViewName: pendingFocusedViewName
-                    )
-                    .environment(\.theme, themeManager.currentTheme)
-                    .id(selectedTab)
-                case .builtIn(.activity):
-                    ActivityTabView(agentId: agent.id)
-                        .environment(\.theme, themeManager.currentTheme)
-                        .id(selectedTab)
-                default:
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
-                            scrollableTabContent
-                        }
-                        .padding(24)
-                        .id(selectedTab)
-                    }
-                    .animation(nil, value: selectedTab)
-                }
+                tabContent
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -1212,6 +1217,10 @@ struct AgentDetailView: View {
         .onReceive(ModelPickerItemCache.shared.$items) { options in
             pickerItems = options
         }
+    }
+
+    private var bodyWithSheets: some View {
+        bodyCore
         .sheet(
             isPresented: Binding(
                 get: { bundleExportDestination != nil },
@@ -1236,6 +1245,10 @@ struct AgentDetailView: View {
         ) {
             bundleImportReviewSheet
         }
+    }
+
+    private var bodyWithAlerts: some View {
+        bodyWithSheets
         .themedAlert(
             "Bundle operation failed",
             isPresented: Binding(
@@ -1304,6 +1317,10 @@ struct AgentDetailView: View {
             },
             secondaryButton: .cancel("Cancel")
         )
+    }
+
+    var body: some View {
+        bodyWithAlerts
         .sheet(isPresented: $showCreateSchedule) {
             ScheduleEditorSheet(
                 mode: .create,

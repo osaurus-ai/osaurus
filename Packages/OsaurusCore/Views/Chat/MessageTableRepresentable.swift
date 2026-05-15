@@ -590,12 +590,22 @@ extension MessageTableRepresentable {
             let previousEditingTurnId = ctx.editingTurnId
             let previousStreaming = ctx.isStreaming
             let previousLastAssistantTurnId = ctx.lastAssistantTurnId
+            // NSView backed cells snapshot the theme
+            // imperatively in configure(...). wen the user edits the theme
+            // mid-conversation, blocks/IDs don't change and Path 1 would
+            // early return thus leaving on-screen cells with stale avatar size /
+            // fonts. capture the previous theme so we can force a reconfigure
+            // (and height-cache flush) like the width change path does
+            let previousThemeConfig = ctx.theme.customThemeConfig
 
             // if width changed, invalidate the entire height cache
             if widthChanged { heightCache.removeAll() }
 
             ctx = context
             self.groupHeaderMap = groupHeaderMap
+
+            let themeChanged = previousThemeConfig != context.theme.customThemeConfig
+            if themeChanged { heightCache.removeAll() }
 
             // Editing state lives in the context, not in the blocks themselves.
             // Reconfigure affected cells immediately so the UI responds without
@@ -637,8 +647,15 @@ extension MessageTableRepresentable {
                     previousStreaming != context.isStreaming
                     || previousLastAssistantTurnId != context.lastAssistantTurnId
                     || expandedIdsChanged
+                    || themeChanged
                 if contextAffectsCells {
                     reconfigureAllCellsFromLookup(newLookup)
+                    if themeChanged {
+                        // theme changes can alter cell intrinsic size (avatar
+                        // diameter, name font size) so re-measure rows too
+                        let allRows = IndexSet(integersIn: 0 ..< blockIds.count)
+                        if !allRows.isEmpty { noteRowHeightsChanged(allRows) }
+                    }
                 }
                 streamingBlockId = newStreamingBlockId
                 return
@@ -660,7 +677,15 @@ extension MessageTableRepresentable {
             // --- Path 2: In-place update (IDs unchanged, content changed) ---
             if !widthChanged, newIds == blockIds {
                 ChatPerfTrace.shared.count("applyBlocks.path2.inPlace")
-                reconfigureChangedCells(newLookup: newLookup, streamId: newStreamingBlockId)
+                if themeChanged {
+                    // theme edits affect every cell, not just content-changed
+                    // ones. reconfigure all and re-measure heights
+                    reconfigureAllCellsFromLookup(newLookup)
+                    let allRows = IndexSet(integersIn: 0 ..< blockIds.count)
+                    if !allRows.isEmpty { noteRowHeightsChanged(allRows) }
+                } else {
+                    reconfigureChangedCells(newLookup: newLookup, streamId: newStreamingBlockId)
+                }
                 blockLookup = newLookup
                 streamingBlockId = newStreamingBlockId
                 return
@@ -677,6 +702,13 @@ extension MessageTableRepresentable {
                 streamingJustEnded: streamingJustEnded,
                 previousStreamingBlockId: previousStreamingBlockId
             )
+            // Snapshot only reconfigures cells whose ContentBlock changed.
+            // cells reused for unchanged blocks would keep stale theme
+            if themeChanged {
+                reconfigureAllCellsFromLookup(newLookup)
+                let allRows = IndexSet(integersIn: 0 ..< blockIds.count)
+                if !allRows.isEmpty { noteRowHeightsChanged(allRows) }
+            }
         }
 
         // MARK: - Update Paths (Private)

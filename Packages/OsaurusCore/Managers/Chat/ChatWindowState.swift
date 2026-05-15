@@ -436,16 +436,18 @@ final class ChatWindowState: ObservableObject {
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.refreshAgentConfig() } }
         )
-        // Refresh theme when global theme changes (only if agent uses global theme)
+        // refresh theme when any theme on disk changes. refreshTheme()
+        // re-resolves from `installedThemes`/`currentTheme` and no ops via its
+        // config equality guard if this window's effective theme is unchanged,
+        // so windows pinned to an agent specific theme also pick up live edits
+        // to that theme without waiting for a reopen
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: .globalThemeChanged,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in
-                    if self?.themeId == nil { self?.refreshTheme() }
-                }
+                Task { @MainActor in self?.refreshTheme() }
             }
         )
         // Note: `.agentUpdated` is intentionally not observed here.
