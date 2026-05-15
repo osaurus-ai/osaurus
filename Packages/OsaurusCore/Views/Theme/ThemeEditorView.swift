@@ -881,9 +881,7 @@ struct ThemeEditorView: View {
 
         print("[Osaurus] ThemeEditor: Saving theme '\(themeToSave.metadata.name)' (id: \(themeToSave.metadata.id))")
         themeManager.saveTheme(themeToSave)
-        themeManager.applyCustomTheme(themeToSave)
-        themeManager.refreshInstalledThemes()
-        print("[Osaurus] ThemeEditor: Theme saved and applied successfully")
+        print("[Osaurus] ThemeEditor: Theme saved successfully")
 
         withAnimation { showSaveConfirmation = true }
 
