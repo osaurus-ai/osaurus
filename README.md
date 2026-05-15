@@ -1,5 +1,5 @@
 <p align="center">
-<img width="865" height="677" alt="Screenshot 2026-03-19 at 3 42 04 PM" src="https://github.com/user-attachments/assets/c16ee8bb-7f31-4659-9c2c-6eaaf8441c26" />
+<img width="1920" height="1080" alt="osaurus-techcrunch-1" src="https://github.com/user-attachments/assets/8614b2a6-8b12-487f-983d-5f51aa6e1825" />
 </p>
 
 <h1 align="center">Osaurus</h1>
