@@ -43,7 +43,17 @@ public enum AgentStore {
                 if a.id == Agent.defaultId { return true }
                 if b.id == Agent.defaultId { return false }
             }
-            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            // Ordered agents first; unordered fall through to alphabetical.
+            switch (a.order, b.order) {
+            case let (lhs?, rhs?) where lhs != rhs:
+                return lhs < rhs
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            default:
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
         }
     }
 

@@ -293,6 +293,18 @@ public final class AgentManager: ObservableObject {
         update(agent)
     }
 
+    /// Assign sequential `order` values (0...N-1) to custom agents in the
+    /// given sequence and refresh once. Built-ins must not be included.
+    public func reorder(orderedIds: [UUID]) {
+        for (index, id) in orderedIds.enumerated() {
+            guard var agent = AgentStore.load(id: id), !agent.isBuiltIn else { continue }
+            guard agent.order != index else { continue }
+            agent.order = index
+            AgentStore.save(agent)
+        }
+        refresh()
+    }
+
     /// Update an existing agent
     public func update(_ agent: Agent) {
         guard !agent.isBuiltIn else {

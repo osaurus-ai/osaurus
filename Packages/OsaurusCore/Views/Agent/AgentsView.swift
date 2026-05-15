@@ -41,6 +41,7 @@ struct AgentsView: View {
     @State private var selectedAgent: Agent?
     @State private var selectedRemoteAgentId: UUID?
     @State private var isCreating = false
+    @State private var isReordering = false
     @State private var hasAppeared = false
     @State private var successMessage: String?
     @State private var sandboxCleanupNotice: SandboxCleanupNotice?
@@ -130,6 +131,10 @@ struct AgentsView: View {
                     isCreating = false
                 }
             )
+        }
+        .sheet(isPresented: $isReordering) {
+            AgentReorderSheet()
+                .environment(\.theme, themeManager.currentTheme)
         }
         .themedAlert(
             sandboxCleanupNotice?.title ?? "Sandbox Cleanup",
@@ -295,6 +300,11 @@ struct AgentsView: View {
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
                 agentManager.refresh()
+            }
+            if !customAgents.isEmpty {
+                HeaderIconButton("list.bullet.indent", help: "Reorder agents") {
+                    isReordering = true
+                }
             }
             HeaderPrimaryButton("Create Agent", icon: "plus") {
                 isCreating = true
