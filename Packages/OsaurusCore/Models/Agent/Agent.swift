@@ -118,6 +118,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Opt-in feature settings (Agent DB + self-scheduling). Agents created before
     /// the feature shipped decode with `.defaultDisabled`, leaving the surface dormant.
     public var settings: AgentSettings
+    /// User-defined position. `nil` falls to the end, sorted alphabetically.
+    public var order: Int?
 
     public init(
         id: UUID = UUID(),
@@ -147,7 +149,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         customAvatarFilename: String? = nil,
         autoSpeak: Bool? = nil,
         ttsVoice: String? = nil,
-        settings: AgentSettings = .defaultDisabled
+        settings: AgentSettings = .defaultDisabled,
+        order: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -177,6 +180,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.autoSpeak = autoSpeak
         self.ttsVoice = ttsVoice
         self.settings = settings
+        self.order = order
     }
 
     // MARK: - Custom avatar resolution
@@ -277,6 +281,7 @@ extension Agent {
         autoSpeak = try c.decodeIfPresent(Bool.self, forKey: .autoSpeak)
         ttsVoice = try c.decodeIfPresent(String.self, forKey: .ttsVoice)
         settings = try c.decodeIfPresent(AgentSettings.self, forKey: .settings) ?? .defaultDisabled
+        order = try c.decodeIfPresent(Int.self, forKey: .order)
     }
 }
 

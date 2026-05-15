@@ -175,6 +175,12 @@ struct FloatingInputCard: View {
 
     @State private var pauseTimerCancellable: AnyCancellable? = nil
     @State private var liveVoiceAttachmentId: UUID?
+    /// Active pasted-content attachment whose preview sheet is showing.
+    /// Set on chip tap; cleared on dismiss.
+    @State private var pastedContentPreview: Attachment?
+    /// Character threshold above which clipboard text is converted to a
+    /// pasted-content attachment instead of being inlined into the input.
+    private static let pastedContentThreshold: Int = 400
     @State private var liveVoicePreencodeTask: Task<Void, Never>?
     @State private var lastLiveVoicePreencodeAt: Date = .distantPast
     @State private var lastLiveVoicePreencodeSampleCount: Int = 0
@@ -1198,11 +1204,17 @@ extension FloatingInputCard {
                             )
                         }
                     case .document, .documentRef:
-                        DocumentChip(attachment: attachment) {
-                            withAnimation(theme.springAnimation()) {
-                                _ = pendingAttachments.remove(at: index)
-                            }
-                        }
+                        DocumentChip(
+                            attachment: attachment,
+                            onRemove: {
+                                withAnimation(theme.springAnimation()) {
+                                    _ = pendingAttachments.remove(at: index)
+                                }
+                            },
+                            onTap: attachment.isPastedContent ? {
+                                pastedContentPreview = attachment
+                            } : nil
+                        )
                     case .audio, .audioRef, .video, .videoRef:
                         // Audio/video attachments display as a labeled chip
                         // with a media-type icon. Inline-bytes are kept on
@@ -1219,6 +1231,11 @@ extension FloatingInputCard {
             }
         }
         .frame(height: 48)
+        .sheet(item: $pastedContentPreview) { attachment in
+            PastedContentSheet(attachment: attachment) {
+                pastedContentPreview = nil
+            }
+        }
     }
 
     // MARK: - Selector Row (Model + Tools)
@@ -1939,7 +1956,13 @@ extension FloatingInputCard {
                 switch content {
                 case .text(let text):
                     Button {
-                        localText += text
+                        if text.count >= Self.pastedContentThreshold {
+                            withAnimation(theme.springAnimation()) {
+                                pendingAttachments.append(.pastedContent(text))
+                            }
+                        } else {
+                            localText += text
+                        }
                         clipboardService.markAsRead()
                     } label: {
                         Text("Paste to Input", bundle: .module)
@@ -2002,18 +2025,29 @@ extension FloatingInputCard {
 
         switch content {
         case .text(let text):
-            // Inject directly into the text input area for better UX (editing)
-            withAnimation(theme.springAnimation()) {
-                if localText.isEmpty {
-                    localText = text
-                } else {
-                    if !localText.hasSuffix("\n") {
-                        localText += "\n"
-                    }
-                    localText += text
+            if text.count >= Self.pastedContentThreshold {
+                // Large paste → convert to a "pasted content" attachment.
+                // Lets the user view / remove the snippet without polluting
+                // the input field with hundreds of lines of text.
+                withAnimation(theme.springAnimation()) {
+                    pendingAttachments.append(.pastedContent(text))
+                    clipboardService.markAsRead()
+                    isFocused = true
                 }
-                clipboardService.markAsRead()
-                isFocused = true
+            } else {
+                // Inject directly into the text input area for better UX (editing)
+                withAnimation(theme.springAnimation()) {
+                    if localText.isEmpty {
+                        localText = text
+                    } else {
+                        if !localText.hasSuffix("\n") {
+                            localText += "\n"
+                        }
+                        localText += text
+                    }
+                    clipboardService.markAsRead()
+                    isFocused = true
+                }
             }
 
         case .image(let data):
@@ -2572,7 +2606,14 @@ extension FloatingInputCard {
                     localText = ""
                     text = ""
                     return true
-                } : nil
+                } : nil,
+            onPasteText: { pasted in
+                guard pasted.count >= Self.pastedContentThreshold else { return false }
+                withAnimation(theme.springAnimation()) {
+                    pendingAttachments.append(.pastedContent(pasted))
+                }
+                return true
+            }
         )
         .frame(maxHeight: maxHeight)
         .overlay(alignment: .topLeading) {
