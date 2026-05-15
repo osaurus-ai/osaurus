@@ -307,8 +307,12 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
         }
     }
 
-    /// Whether glass effect is enabled (false = solid background)
+    /// Whether glass effect is enabled for the chat area background.
     public var enabled: Bool
+    /// Whether glass effect is enabled for the chat session sidebar.
+    public var sidebarEnabled: Bool
+    /// Whether glass effect is enabled for the prompt/input card.
+    public var inputEnabled: Bool
     public var material: GlassMaterial
     public var blurRadius: Double
     public var opacityPrimary: Double
@@ -322,6 +326,8 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
 
     public init(
         enabled: Bool = false,
+        sidebarEnabled: Bool = false,
+        inputEnabled: Bool = false,
         material: GlassMaterial = .hudWindow,
         blurRadius: Double = 30,
         opacityPrimary: Double = 0.10,
@@ -334,6 +340,8 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
         windowBackingOpacity: Double = 0.55
     ) {
         self.enabled = enabled
+        self.sidebarEnabled = sidebarEnabled
+        self.inputEnabled = inputEnabled
         self.material = material
         self.blurRadius = blurRadius
         self.opacityPrimary = opacityPrimary
@@ -366,6 +374,8 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try container.decode(Bool.self, forKey: .enabled)
+        sidebarEnabled = try container.decodeIfPresent(Bool.self, forKey: .sidebarEnabled) ?? false
+        inputEnabled = try container.decodeIfPresent(Bool.self, forKey: .inputEnabled) ?? false
         material = try container.decode(GlassMaterial.self, forKey: .material)
         blurRadius = try container.decode(Double.self, forKey: .blurRadius)
         opacityPrimary = try container.decode(Double.self, forKey: .opacityPrimary)

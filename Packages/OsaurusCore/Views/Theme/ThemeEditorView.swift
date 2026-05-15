@@ -21,6 +21,10 @@ struct ThemeEditorView: View {
     @State private var collapsedSections: Set<String> = ["Advanced Colors", "Advanced"]
     @State private var animationPreviewTrigger = false
     @State private var showGlassPerformanceWarning = false
+    /// Reverts the glass toggle the user just turned on if they cancel the
+    /// performance-warning alert. Captured as a closure so the same alert
+    /// can serve any of the three independent glass toggles.
+    @State private var pendingGlassRevert: (() -> Void)?
 
     let onDismiss: () -> Void
 
@@ -55,9 +59,12 @@ struct ThemeEditorView: View {
                     "Glass effects use behind-window blur and additional compositing layers. This may impact performance, especially on older Macs or under heavy load.",
                 bundle: .module
             ),
-            primaryButton: .primary(String(localized: "Enable", bundle: .module)) {},
+            primaryButton: .primary(String(localized: "Enable", bundle: .module)) {
+                pendingGlassRevert = nil
+            },
             secondaryButton: .cancel(String(localized: "Cancel", bundle: .module)) {
-                editingTheme.glass.enabled = false
+                pendingGlassRevert?()
+                pendingGlassRevert = nil
             }
         )
         .themedAlertScope(.content)
@@ -73,6 +80,7 @@ struct ThemeEditorView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     appearanceSection
+                    glassSection
                     codeSection
                     colorsSection
                     messagesSection
@@ -182,9 +190,90 @@ struct ThemeEditorView: View {
                 if editingTheme.background.type == .image {
                     imageBackgroundControls
                 }
-
-                glassBackgroundToggle
             }
+        }
+    }
+
+    // MARK: - Section: Glass
+
+    private var glassSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            editorSection("Glass") {
+                glassToggleRow(
+                    label: "Chat Area",
+                    isOn: Binding(
+                        get: { editingTheme.glass.enabled },
+                        set: { editingTheme.glass.enabled = $0 }
+                    ),
+                    revert: { editingTheme.glass.enabled = false }
+                )
+                glassToggleRow(
+                    label: "Sidebar",
+                    isOn: Binding(
+                        get: { editingTheme.glass.sidebarEnabled },
+                        set: { editingTheme.glass.sidebarEnabled = $0 }
+                    ),
+                    revert: { editingTheme.glass.sidebarEnabled = false }
+                )
+                glassToggleRow(
+                    label: "Prompt Box",
+                    isOn: Binding(
+                        get: { editingTheme.glass.inputEnabled },
+                        set: { editingTheme.glass.inputEnabled = $0 }
+                    ),
+                    revert: { editingTheme.glass.inputEnabled = false }
+                )
+
+                if editingTheme.background.type == .image {
+                    Text("Disabled while using an image background.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(currentTheme.tertiaryText)
+                }
+            }
+        }
+        .onChange(of: editingTheme.background.type) { _, newType in
+            // Image backgrounds composite poorly with behind-window blur;
+            // force all three glass toggles off when the user switches to
+            // an image background.
+            if newType == .image {
+                editingTheme.glass.enabled = false
+                editingTheme.glass.sidebarEnabled = false
+                editingTheme.glass.inputEnabled = false
+            }
+        }
+    }
+
+    /// One row of the Glass section. Disabled when the theme uses an image
+    /// background. Turning a toggle ON triggers the performance-warning
+    /// alert; cancelling the alert calls `revert` to undo the change.
+    private func glassToggleRow(
+        label: LocalizedStringKey,
+        isOn: Binding<Bool>,
+        revert: @escaping () -> Void
+    ) -> some View {
+        let isImageBackground = editingTheme.background.type == .image
+        return HStack {
+            Text(label, bundle: .module)
+                .font(.system(size: 13))
+                .foregroundColor(isImageBackground ? currentTheme.tertiaryText : currentTheme.primaryText)
+            Spacer()
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { isOn.wrappedValue && !isImageBackground },
+                    set: { newValue in
+                        isOn.wrappedValue = newValue
+                        if newValue {
+                            pendingGlassRevert = revert
+                            showGlassPerformanceWarning = true
+                        }
+                    }
+                )
+            )
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .tint(currentTheme.accentColor)
+            .disabled(isImageBackground)
         }
     }
 
@@ -331,45 +420,6 @@ struct ThemeEditorView: View {
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
                 sliderRow("Input Radius", value: $editingTheme.borders.inputCornerRadius, range: 0 ... 20)
-            }
-        }
-    }
-
-    private var glassBackgroundToggle: some View {
-        let isImageBackground = editingTheme.background.type == .image
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Glass Background", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(isImageBackground ? currentTheme.tertiaryText : currentTheme.primaryText)
-                Spacer()
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { editingTheme.glass.enabled && !isImageBackground },
-                        set: { newValue in
-                            editingTheme.glass.enabled = newValue
-                            if newValue {
-                                showGlassPerformanceWarning = true
-                            }
-                        }
-                    )
-                )
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(currentTheme.accentColor)
-                .disabled(isImageBackground)
-            }
-
-            if isImageBackground {
-                Text("Disabled while using an image background.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(currentTheme.tertiaryText)
-            }
-        }
-        .onChange(of: editingTheme.background.type) { _, newType in
-            if newType == .image && editingTheme.glass.enabled {
-                editingTheme.glass.enabled = false
             }
         }
     }

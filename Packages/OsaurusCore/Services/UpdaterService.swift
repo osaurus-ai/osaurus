@@ -35,9 +35,30 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
         super.init()
     }
 
-    /// Opens the Sparkle update UI to check and install updates
+    /// Opens the Sparkle update UI to check and install updates.
+    ///
+    /// if a background update session is already in flight (which happens
+    /// when the settings window has just been opened), `SPUUpdater` reports
+    /// `canCheckForUpdates == false` and silently drops user initiated
+    /// checks. wait briefly for the in-flight session to settle so the
+    /// click reliably surfaces the Sparkle dialog on the first try
     func checkForUpdates() {
-        updaterController.checkForUpdates(nil)
+        let updater = updaterController.updater
+        if updater.canCheckForUpdates {
+            updaterController.checkForUpdates(nil)
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                if self.updaterController.updater.canCheckForUpdates {
+                    self.updaterController.checkForUpdates(nil)
+                    return
+                }
+            }
+        }
     }
 
     /// Silently checks for updates in the background without showing UI

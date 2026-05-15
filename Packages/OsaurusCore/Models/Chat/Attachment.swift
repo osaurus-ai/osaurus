@@ -159,6 +159,18 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         Attachment(kind: .document(filename: filename, content: content, fileSize: fileSize))
     }
 
+    public static let pastedContentFilename = "Pasted content"
+
+    public static func pastedContent(_ text: String) -> Attachment {
+        Attachment(
+            kind: .document(
+                filename: pastedContentFilename,
+                content: text,
+                fileSize: text.utf8.count
+            )
+        )
+    }
+
     public static func audio(_ data: Data, format: String, filename: String? = nil) -> Attachment {
         Attachment(kind: .audio(data, format: format, filename: filename))
     }
@@ -188,6 +200,20 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         case .audio, .audioRef: return true
         default: return false
         }
+    }
+
+    public var isPastedContent: Bool {
+        filename == Attachment.pastedContentFilename
+    }
+
+    /// Newline-delimited line count for pasted-content attachments. Returns
+    /// `nil` for any other kind (including non-pasted documents).
+    public var pastedContentLineCount: Int? {
+        guard isPastedContent, let content = loadDocumentContent() else { return nil }
+        if content.isEmpty { return 0 }
+        var count = 1
+        for ch in content where ch == "\n" { count += 1 }
+        return count
     }
 
     public var isVideo: Bool {

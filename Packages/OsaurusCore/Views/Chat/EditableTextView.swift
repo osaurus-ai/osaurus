@@ -25,6 +25,10 @@ struct EditableTextView: NSViewRepresentable {
     var onArrowDown: (() -> Bool)? = nil
     /// Called on Escape key. Return true to consume the event.
     var onEscape: (() -> Bool)? = nil
+    /// Called when the user pastes plain text (Cmd+V or menu Paste). Return
+    /// true to consume the paste (e.g. routed elsewhere as an attachment);
+    /// false to let NSTextView insert the text inline as normal.
+    var onPasteText: ((String) -> Bool)? = nil
 
     // MARK: - NSViewRepresentable
 
@@ -69,6 +73,9 @@ struct EditableTextView: NSViewRepresentable {
         let coordinator = context.coordinator
         textView.onMarkedTextChanged = { [weak coordinator] in coordinator?.parent.isComposing = $0 }
         textView.onFocusChanged = { [weak coordinator] in coordinator?.parent.isFocused = $0 }
+        textView.onPasteText = { [weak coordinator] text in
+            coordinator?.parent.onPasteText?(text) ?? false
+        }
 
         scrollView.documentView = textView
         return scrollView
@@ -245,6 +252,9 @@ final class CustomNSTextView: NSTextView {
     var onMarkedTextChanged: ((Bool) -> Void)?
     /// Called when first-responder state changes (focused / not focused).
     var onFocusChanged: ((Bool) -> Void)?
+    /// Called on Cmd+V / menu Paste with the pasteboard's plain-text string.
+    /// Return true to consume the paste (skips the default insertion).
+    var onPasteText: ((String) -> Bool)?
 
     // MARK: First-responder
 
@@ -323,5 +333,23 @@ final class CustomNSTextView: NSTextView {
     override func didChangeText() {
         super.didChangeText()
         invalidateIntrinsicContentSize()
+    }
+
+    // MARK: Paste interception
+
+    /// Intercept Cmd+V / menu Paste. If a plain-text payload is present and
+    /// `onPasteText` consumes it (returns true), we swallow the paste; the
+    /// owner has already routed the content elsewhere (e.g. converted to a
+    /// pasted-content attachment). Otherwise fall back to the default
+    /// NSTextView behavior so rich-text / file pastes and short text inserts
+    /// keep working as before.
+    override func paste(_ sender: Any?) {
+        if let handler = onPasteText,
+            let text = NSPasteboard.general.string(forType: .string),
+            handler(text)
+        {
+            return
+        }
+        super.paste(sender)
     }
 }

@@ -15,6 +15,11 @@ struct GitHubImportSheet: View {
 
     let onImport: ([Skill]) -> Void
     let onCancel: () -> Void
+    /// Optional callback for the richer "Claude plugin" install path. The
+    /// sheet does the install itself; this callback fires once with the report
+    /// so the caller can refresh dependent views (skills list, slash commands,
+    /// etc.).
+    var onPluginInstallComplete: ((ClaudePluginInstallReport) -> Void)? = nil
 
     // MARK: - State
 
@@ -22,13 +27,21 @@ struct GitHubImportSheet: View {
         case urlInput
         case loading
         case skillSelection(GitHubSkillsResult)
+        case pluginSelection(GitHubPluginsResult)
         case importing(progress: Int, total: Int)
+        case installComplete(ClaudePluginInstallReport)
         case error(GitHubSkillError)
     }
 
     @State private var urlInput: String = ""
     @State private var importState: ImportState = .urlInput
     @State private var selectedSkillPaths: Set<String> = []
+    /// Selected plugins by name for the new-style flow.
+    @State private var selectedPluginNames: Set<String> = []
+    /// Whether to attach CLAUDE.md to imported skills.
+    @State private var attachClaudeMd: Bool = true
+    /// Whether to also import HTTP/SSE MCP servers from each plugin's `.mcp.json`.
+    @State private var importMCPProviders: Bool = true
     @State private var hasAppeared = false
     @State private var isInputFocused = false
     @State private var activeTask: Task<Void, Never>?
@@ -41,7 +54,7 @@ struct GitHubImportSheet: View {
             contentView
             footerView
         }
-        .frame(width: 520, height: 480)
+        .frame(width: 560, height: 540)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(
@@ -118,7 +131,9 @@ struct GitHubImportSheet: View {
         switch importState {
         case .urlInput, .loading: return "link"
         case .skillSelection: return "sparkles"
+        case .pluginSelection: return "shippingbox.fill"
         case .importing: return "arrow.down.circle"
+        case .installComplete: return "checkmark.circle.fill"
         case .error: return "exclamationmark.triangle"
         }
     }
@@ -128,7 +143,9 @@ struct GitHubImportSheet: View {
         case .urlInput: return L("Import from GitHub")
         case .loading: return L("Connecting...")
         case .skillSelection(let result): return result.repoName
+        case .pluginSelection(let result): return result.repoName
         case .importing: return L("Importing...")
+        case .installComplete: return L("Import Complete")
         case .error: return L("Import Failed")
         }
     }
@@ -139,7 +156,14 @@ struct GitHubImportSheet: View {
         case .loading: return L("Fetching repository information")
         case .skillSelection(let result):
             return L("\(result.skills.count) skills available")
-        case .importing(let progress, let total): return L("Importing skill \(progress) of \(total)")
+        case .pluginSelection(let result):
+            return L("\(result.plugins.count) plugins available")
+        case .importing(let progress, let total): return L("Importing \(progress) of \(total)")
+        case .installComplete(let report):
+            let totals =
+                report.totalImportedSkills + report.totalImportedAgents
+                + report.totalImportedCommands + report.totalImportedMCPProviders
+            return L("\(totals) items installed")
         case .error(let error): return error.localizedDescription
         }
     }
@@ -155,8 +179,12 @@ struct GitHubImportSheet: View {
             loadingView
         case .skillSelection(let result):
             skillSelectionView(result)
+        case .pluginSelection(let result):
+            pluginSelectionView(result)
         case .importing(let progress, let total):
             importingView(progress: progress, total: total)
+        case .installComplete(let report):
+            installCompleteView(report)
         case .error(let error):
             errorView(error)
         }
@@ -381,6 +409,213 @@ struct GitHubImportSheet: View {
         }
     }
 
+    // MARK: - Plugin Selection View (new-style marketplaces)
+
+    private func pluginSelectionView(_ result: GitHubPluginsResult) -> some View {
+        VStack(spacing: 0) {
+            // Repository info + selected count.
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(
+                            LinearGradient(
+                                colors: [theme.accentColor.opacity(0.15), theme.accentColor.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    Image(systemName: "shippingbox.fill")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .frame(width: 32, height: 32)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    if let description = result.repoDescription {
+                        Text(description)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(2)
+                    }
+                }
+
+                Spacer()
+
+                Text("\(selectedPluginNames.count) selected", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(theme.accentColor.opacity(0.1)))
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.cardBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(theme.cardBorder, lineWidth: 1)
+                    )
+            )
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            // Select-all header + options.
+            HStack(spacing: 12) {
+                Button(action: {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        if selectedPluginNames.count == result.plugins.count {
+                            selectedPluginNames.removeAll()
+                        } else {
+                            selectedPluginNames = Set(result.plugins.map(\.name))
+                        }
+                    }
+                }) {
+                    HStack(spacing: 8) {
+                        Image(
+                            systemName: selectedPluginNames.count == result.plugins.count
+                                ? "checkmark.circle.fill" : "circle"
+                        )
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(
+                            selectedPluginNames.count == result.plugins.count
+                                ? theme.accentColor : theme.tertiaryText
+                        )
+
+                        Text("Select All", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Spacer()
+
+                Toggle("", isOn: $attachClaudeMd)
+                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                    .labelsHidden()
+                    .scaleEffect(0.7)
+                Text("CLAUDE.md", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+
+                Toggle("", isOn: $importMCPProviders)
+                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                    .labelsHidden()
+                    .scaleEffect(0.7)
+                Text("MCP", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+
+            // Plugin list.
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(result.plugins, id: \.name) { plugin in
+                        ClaudePluginRow(
+                            plugin: plugin,
+                            isSelected: selectedPluginNames.contains(plugin.name)
+                        ) {
+                            withAnimation(.easeOut(duration: 0.1)) {
+                                if selectedPluginNames.contains(plugin.name) {
+                                    selectedPluginNames.remove(plugin.name)
+                                } else {
+                                    selectedPluginNames.insert(plugin.name)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+        }
+    }
+
+    // MARK: - Install Complete View
+
+    private func installCompleteView(_ report: ClaudePluginInstallReport) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                // Top-line counts.
+                VStack(alignment: .leading, spacing: 6) {
+                    InstallReportLine(
+                        icon: "sparkles",
+                        label: L("Skills"),
+                        count: report.totalImportedSkills
+                    )
+                    InstallReportLine(
+                        icon: "calendar.badge.clock",
+                        label: L("Scheduled agents"),
+                        count: report.totalImportedAgents
+                    )
+                    InstallReportLine(
+                        icon: "text.bubble",
+                        label: L("Slash commands"),
+                        count: report.totalImportedCommands
+                    )
+                    InstallReportLine(
+                        icon: "antenna.radiowaves.left.and.right",
+                        label: L("MCP providers"),
+                        count: report.totalImportedMCPProviders
+                    )
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.cardBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.cardBorder, lineWidth: 1)
+                        )
+                )
+
+                if !report.allSchedulesNeedingCron.isEmpty {
+                    InstallReportPendingSchedulesNotice(
+                        items: report.allSchedulesNeedingCron,
+                        onSelect: openScheduleEditor
+                    )
+                }
+
+                if !report.allSkippedStdioServers.isEmpty {
+                    InstallReportNotice(
+                        icon: "terminal",
+                        title: L("MCP servers need manual setup"),
+                        message: L(
+                            "Osaurus's remote MCP connector is HTTP/SSE only. These stdio servers must be configured manually:"
+                        ),
+                        items: report.allSkippedStdioServers
+                    )
+                }
+
+                if !report.allPlaceholderTokensSkipped.isEmpty {
+                    InstallReportNotice(
+                        icon: "key",
+                        title: L("MCP servers need tokens"),
+                        message: L(
+                            "These servers ship with placeholder credentials. Paste a real token in MCP settings before enabling them:"
+                        ),
+                        items: report.allPlaceholderTokensSkipped
+                    )
+                }
+
+                if !report.allErrors.isEmpty {
+                    InstallReportNotice(
+                        icon: "exclamationmark.triangle",
+                        title: L("Some items failed"),
+                        message: L("These artifacts couldn't be installed:"),
+                        items: report.allErrors
+                    )
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+    }
+
     // MARK: - Importing View
 
     private func importingView(progress: Int, total: Int) -> some View {
@@ -397,7 +632,11 @@ struct GitHubImportSheet: View {
                     .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                     .frame(width: 56, height: 56)
                     .rotationEffect(.degrees(-90))
-                    .animation(.easeInOut(duration: 0.3), value: progress)
+                // Disable the implicit trim animation: with the
+                // installer's parallel fetch + per-artifact tick, we
+                // receive a burst of progress updates and any easeInOut
+                // animation stomps on its predecessor, producing
+                // visible jank instead of smooth motion.
 
                 Text("\(progress)", bundle: .module)
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
@@ -405,11 +644,11 @@ struct GitHubImportSheet: View {
             }
 
             VStack(spacing: 4) {
-                Text("Importing Skills", bundle: .module)
+                Text("Installing", bundle: .module)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Fetching skill \(progress) of \(total)...", bundle: .module)
+                Text("Importing \(progress) of \(total)...", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             }
@@ -421,7 +660,9 @@ struct GitHubImportSheet: View {
     // MARK: - Error View
 
     private func errorView(_ error: GitHubSkillError) -> some View {
-        VStack(spacing: 20) {
+        let isRateLimit: Bool
+        if case .rateLimited = error { isRateLimit = true } else { isRateLimit = false }
+        return VStack(spacing: 20) {
             Spacer()
 
             ZStack {
@@ -429,15 +670,18 @@ struct GitHubImportSheet: View {
                     .fill(theme.errorColor.opacity(0.1))
                     .frame(width: 64, height: 64)
 
-                Image(systemName: "exclamationmark.triangle.fill")
+                Image(systemName: isRateLimit ? "clock.badge.exclamationmark" : "exclamationmark.triangle.fill")
                     .font(.system(size: 26))
                     .foregroundColor(theme.errorColor)
             }
 
             VStack(spacing: 6) {
-                Text("Something went wrong", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                Text(
+                    isRateLimit ? "GitHub rate limit reached" : "Something went wrong",
+                    bundle: .module
+                )
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(theme.primaryText)
 
                 Text(error.localizedDescription)
                     .font(.system(size: 12))
@@ -473,8 +717,16 @@ struct GitHubImportSheet: View {
         HStack(spacing: 10) {
             Spacer()
 
-            Button(action: cancel) { Text("Cancel", bundle: .module) }
-                .buttonStyle(GitHubSecondaryButtonStyle())
+            switch importState {
+            case .installComplete:
+                Button(action: cancel) { Text("Done", bundle: .module) }
+                    .buttonStyle(GitHubPrimaryButtonStyle())
+                    .keyboardShortcut(.return, modifiers: .command)
+
+            default:
+                Button(action: cancel) { Text("Cancel", bundle: .module) }
+                    .buttonStyle(GitHubSecondaryButtonStyle())
+            }
 
             switch importState {
             case .urlInput:
@@ -502,7 +754,22 @@ struct GitHubImportSheet: View {
                 .disabled(selectedSkillPaths.isEmpty)
                 .keyboardShortcut(.return, modifiers: .command)
 
-            case .loading, .importing, .error:
+            case .pluginSelection:
+                Button {
+                    if case .pluginSelection(let result) = importState {
+                        installSelectedPlugins(from: result)
+                    }
+                } label: {
+                    Text(
+                        "Install \(selectedPluginNames.count) Plugin\(selectedPluginNames.count == 1 ? "" : "s")",
+                        bundle: .module
+                    )
+                }
+                .buttonStyle(GitHubPrimaryButtonStyle())
+                .disabled(selectedPluginNames.isEmpty)
+                .keyboardShortcut(.return, modifiers: .command)
+
+            case .loading, .importing, .error, .installComplete:
                 EmptyView()
             }
         }
@@ -525,6 +792,15 @@ struct GitHubImportSheet: View {
         onCancel()
     }
 
+    /// Deep-link from the install summary to the schedule editor. Dismisses
+    /// this sheet, flips to the Schedules tab, and queues the editor to open
+    /// for the requested schedule id.
+    private func openScheduleEditor(_ id: UUID) {
+        ManagementStateManager.shared.selectedTab = .schedules
+        ManagementStateManager.shared.pendingScheduleEditId = id
+        cancel()
+    }
+
     private func fetchSkills() {
         let url = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !url.isEmpty else { return }
@@ -534,10 +810,33 @@ struct GitHubImportSheet: View {
 
         activeTask = Task { @MainActor in
             do {
-                let result = try await gitHubService.fetchSkills(from: url)
+                // Prefer the richer plugin-aware fetch. If everything in the
+                // repo is legacy (`skills: [String]` only), fall back to the
+                // existing flat skill picker for backward compatibility.
+                let plugins = try await gitHubService.fetchPlugins(from: url)
                 guard !Task.isCancelled else { return }
-                selectedSkillPaths = Set(result.skills.map(\.path))
-                importState = .skillSelection(result)
+
+                if plugins.isLegacyOnly {
+                    let skills = plugins.plugins.flatMap { manifest -> [GitHubSkillPreview] in
+                        manifest.skills.map {
+                            GitHubSkillPreview(
+                                path: $0.path,
+                                pluginName: manifest.name,
+                                pluginDescription: manifest.description
+                            )
+                        }
+                    }
+                    let legacyResult = GitHubSkillsResult(
+                        repo: plugins.repo,
+                        marketplace: plugins.marketplace,
+                        skills: skills
+                    )
+                    selectedSkillPaths = Set(skills.map(\.path))
+                    importState = .skillSelection(legacyResult)
+                } else {
+                    selectedPluginNames = Set(plugins.plugins.map(\.name))
+                    importState = .pluginSelection(plugins)
+                }
             } catch is CancellationError {
                 return
             } catch let error as GitHubSkillError {
@@ -547,6 +846,44 @@ struct GitHubImportSheet: View {
                 guard !Task.isCancelled else { return }
                 importState = .error(.networkError(error))
             }
+        }
+    }
+
+    private func installSelectedPlugins(from result: GitHubPluginsResult) {
+        let selected = result.plugins.filter { selectedPluginNames.contains($0.name) }
+        guard !selected.isEmpty else { return }
+
+        let selections = selected.map {
+            ClaudePluginSelection(
+                manifest: $0,
+                importMCP: importMCPProviders,
+                attachClaudeMd: attachClaudeMd
+            )
+        }
+        let totalSteps = max(selections.reduce(0) { $0 + $1.totalSelected }, 1)
+
+        activeTask?.cancel()
+        importState = .importing(progress: 0, total: totalSteps)
+
+        activeTask = Task { @MainActor in
+            let report = await ClaudePluginInstaller.shared.install(
+                selections: selections,
+                from: result.repo,
+                progressHandler: { @MainActor current, total in
+                    // The installer runs on the main actor, so this fires
+                    // synchronously inside `install`. Updating `@State`
+                    // directly (no inner `Task`) avoids two problems:
+                    //   1. a flood of queued Tasks racing to set
+                    //      `importState`, which can leave us stuck at
+                    //      "N of N" because a late-arriving progress task
+                    //      overwrites `.installComplete`.
+                    //   2. one extra runloop tick of jank per artifact.
+                    importState = .importing(progress: current, total: total)
+                }
+            )
+            guard !Task.isCancelled else { return }
+            onPluginInstallComplete?(report)
+            importState = .installComplete(report)
         }
     }
 
@@ -654,6 +991,234 @@ private struct GitHubSkillSelectionRow: View {
                 isHovered = hovering
             }
         }
+    }
+}
+
+// MARK: - Plugin Row
+
+private struct ClaudePluginRow: View {
+    @Environment(\.theme) private var theme
+
+    let plugin: ClaudePluginManifest
+    let isSelected: Bool
+    let onToggle: () -> Void
+
+    @State private var isHovered = false
+
+    private var pluginColor: Color {
+        let hue = Double(abs(plugin.name.hashValue % 360)) / 360.0
+        return Color(hue: hue, saturation: 0.55, brightness: 0.75)
+    }
+
+    private var summaryLine: String {
+        var pieces: [String] = []
+        if !plugin.skills.isEmpty {
+            pieces.append("\(plugin.skills.count) skill\(plugin.skills.count == 1 ? "" : "s")")
+        }
+        if !plugin.agents.isEmpty {
+            pieces.append("\(plugin.agents.count) agent\(plugin.agents.count == 1 ? "" : "s")")
+        }
+        if !plugin.commands.isEmpty {
+            pieces.append("\(plugin.commands.count) cmd\(plugin.commands.count == 1 ? "" : "s")")
+        }
+        if plugin.mcpJsonPath != nil { pieces.append("MCP") }
+        if plugin.claudeMdPath != nil { pieces.append("CLAUDE.md") }
+        return pieces.isEmpty ? "(no installable items)" : pieces.joined(separator: " · ")
+    }
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(alignment: .top, spacing: 10) {
+                // Checkbox
+                ZStack {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(isSelected ? theme.accentColor : Color.clear)
+                        .frame(width: 16, height: 16)
+
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(isSelected ? theme.accentColor : theme.tertiaryText.opacity(0.5), lineWidth: 1.5)
+                        .frame(width: 16, height: 16)
+
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                }
+                .padding(.top, 3)
+
+                // Plugin icon
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(pluginColor.opacity(0.12))
+                    Image(systemName: "shippingbox")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(pluginColor)
+                }
+                .frame(width: 28, height: 28)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(plugin.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    if let description = plugin.description, !description.isEmpty {
+                        Text(description)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(2)
+                    }
+                    Text(summaryLine)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHovered ? theme.secondaryBackground : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.1)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Install Report Subviews
+
+private struct InstallReportLine: View {
+    @Environment(\.theme) private var theme
+
+    let icon: String
+    let label: String
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.accentColor)
+                .frame(width: 16)
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundColor(theme.primaryText)
+            Spacer()
+            Text("\(count)")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                // swiftlint:disable:next empty_count
+                .foregroundColor(count > 0 ? theme.primaryText : theme.tertiaryText)
+        }
+    }
+}
+
+private struct InstallReportNotice: View {
+    @Environment(\.theme) private var theme
+
+    let icon: String
+    let title: String
+    let message: String
+    let items: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.orange)
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+            }
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(items, id: \.self) { item in
+                    Text("• \(item)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.leading, 4)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+                )
+        )
+    }
+}
+
+/// Variant of `InstallReportNotice` that renders each pending schedule as a
+/// button so the user can jump straight to the schedule editor instead of
+/// hunting through the Schedules tab manually.
+private struct InstallReportPendingSchedulesNotice: View {
+    @Environment(\.theme) private var theme
+
+    let items: [ClaudePluginInstallReport.PendingSchedule]
+    let onSelect: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.orange)
+                Text("Schedules need review", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+            }
+            Text(
+                "These agents had no machine-readable schedule and were created disabled. Tap one to set a cron expression:",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(items) { item in
+                    Button(action: { onSelect(item.id) }) {
+                        HStack(spacing: 6) {
+                            Text("•")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(theme.secondaryText)
+                            Text(item.name)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(theme.accentColor)
+                                .underline()
+                                .lineLimit(2)
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(theme.accentColor.opacity(0.7))
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            .padding(.leading, 4)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+                )
+        )
     }
 }
 

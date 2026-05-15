@@ -64,6 +64,8 @@ protocol ThemeProtocol {
 
     // Glass specific
     var glassEnabled: Bool { get }
+    var glassSidebarEnabled: Bool { get }
+    var glassInputEnabled: Bool { get }
     var glassOpacityPrimary: Double { get }
     var glassOpacitySecondary: Double { get }
     var glassOpacityTertiary: Double { get }
@@ -138,6 +140,8 @@ protocol ThemeProtocol {
 extension ThemeProtocol {
     // Provide defaults for new properties so existing themes don't break
     var glassEnabled: Bool { false }
+    var glassSidebarEnabled: Bool { false }
+    var glassInputEnabled: Bool { false }
     var glassMaterial: NSVisualEffectView.Material { .hudWindow }
     var glassTintColor: Color? { nil }
     var glassTintOpacity: Double { 0 }
@@ -458,6 +462,8 @@ struct CustomizableTheme: ThemeProtocol {
     var glassBlurRadius: Double { config.glass.blurRadius }
     var glassEdgeLight: Color { Color(themeHex: config.glass.edgeLight) }
     var glassEnabled: Bool { config.glass.enabled }
+    var glassSidebarEnabled: Bool { config.glass.sidebarEnabled }
+    var glassInputEnabled: Bool { config.glass.inputEnabled }
     var glassMaterial: NSVisualEffectView.Material { config.glass.material.nsMaterial }
     var glassTintColor: Color? {
         guard let tint = config.glass.tintColor else { return nil }

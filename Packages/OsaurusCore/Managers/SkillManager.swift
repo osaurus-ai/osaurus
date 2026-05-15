@@ -235,6 +235,54 @@ public final class SkillManager {
         return imported
     }
 
+    /// Import skills that came from a plugin and preserve their `pluginId` so
+    /// they can be grouped, re-registered on update, and uninstalled in bulk
+    /// via `unregisterPluginSkills(pluginId:)`.
+    ///
+    /// Unlike `importSkillsFromMarkdown(_:)` this path:
+    /// - Keeps `pluginId` (required for grouping/uninstall).
+    /// - Keeps `category` and `keywords`.
+    /// - Honours an existing-skill `enabled` state when re-importing the same
+    ///   plugin skill, just like `registerPluginSkill(_:)`.
+    @discardableResult
+    public func importSkillsPreservingPluginId(_ skills: [Skill]) async -> [Skill] {
+        var imported: [Skill] = []
+        for parsedSkill in skills {
+            // Honour existing enabled state if this plugin+name already exists.
+            let existing = self.skills.first(where: {
+                $0.pluginId == parsedSkill.pluginId && $0.name == parsedSkill.name
+            })
+
+            let skill = Skill(
+                id: existing?.id ?? UUID(),
+                name: parsedSkill.name,
+                description: parsedSkill.description,
+                version: parsedSkill.version,
+                author: parsedSkill.author,
+                category: parsedSkill.category,
+                keywords: parsedSkill.keywords,
+                enabled: existing?.enabled ?? parsedSkill.enabled,
+                instructions: parsedSkill.instructions,
+                isBuiltIn: false,
+                createdAt: existing?.createdAt ?? Date(),
+                updatedAt: Date(),
+                pluginId: parsedSkill.pluginId
+            )
+            await SkillStore.save(skill)
+            imported.append(skill)
+        }
+        if !imported.isEmpty {
+            await refresh()
+
+            Task {
+                for skill in imported {
+                    await SkillSearchService.shared.indexSkill(skill)
+                }
+            }
+        }
+        return imported
+    }
+
     public func exportSkill(_ skill: Skill) throws -> Data {
         try skill.exportToJSON()
     }

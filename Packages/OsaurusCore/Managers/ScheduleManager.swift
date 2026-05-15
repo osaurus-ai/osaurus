@@ -179,6 +179,28 @@ public final class ScheduleManager {
         executeSchedule(schedule)
     }
 
+    // MARK: - Plugin Grouping
+
+    /// Key used in `Schedule.parameters` to group schedules by the plugin they
+    /// were installed from. Set by the Claude plugin importer.
+    public static let pluginIdParameterKey = "pluginId"
+
+    /// Returns all schedules associated with a plugin id.
+    public func schedules(forPluginId pluginId: String) -> [Schedule] {
+        schedules.filter { $0.parameters[Self.pluginIdParameterKey] == pluginId }
+    }
+
+    /// Delete every schedule installed by a plugin. Returns the number deleted.
+    @discardableResult
+    public func deleteByPluginId(_ pluginId: String) -> Int {
+        let matches = schedules(forPluginId: pluginId)
+        var count = 0
+        for schedule in matches where delete(id: schedule.id) {
+            count += 1
+        }
+        return count
+    }
+
     /// Cancel a running schedule execution
     public func cancelExecution(_ scheduleId: UUID) {
         if let task = executionTasks[scheduleId] {

@@ -31,6 +31,10 @@ public struct SlashCommand: Identifiable, Codable, Sendable, Equatable {
     public let isBuiltIn: Bool
     public let createdAt: Date
     public var updatedAt: Date
+    /// Optional plugin grouping key. Set when this command was installed as
+    /// part of a plugin import; nil for hand-authored user commands and
+    /// built-ins. Used for bulk uninstall.
+    public var pluginId: String?
 
     public init(
         id: UUID = UUID(),
@@ -41,7 +45,8 @@ public struct SlashCommand: Identifiable, Codable, Sendable, Equatable {
         template: String? = nil,
         isBuiltIn: Bool = false,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        pluginId: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -52,6 +57,27 @@ public struct SlashCommand: Identifiable, Codable, Sendable, Equatable {
         self.isBuiltIn = isBuiltIn
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.pluginId = pluginId
+    }
+
+    // Backward-compatible decoding: older JSON files have no `pluginId`.
+    private enum CodingKeys: String, CodingKey {
+        case id, name, description, icon, kind, template
+        case isBuiltIn, createdAt, updatedAt, pluginId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        self.icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "text.bubble"
+        self.kind = try c.decodeIfPresent(SlashCommandKind.self, forKey: .kind) ?? .template
+        self.template = try c.decodeIfPresent(String.self, forKey: .template)
+        self.isBuiltIn = try c.decodeIfPresent(Bool.self, forKey: .isBuiltIn) ?? false
+        self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        self.pluginId = try c.decodeIfPresent(String.self, forKey: .pluginId)
     }
 }
 

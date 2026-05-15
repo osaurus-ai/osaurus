@@ -75,6 +75,10 @@ struct SkillsView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
+                            InstalledPluginsSection(onMessage: { message, isError in
+                                showToast(message, isError: isError)
+                            })
+
                             ForEach(Array(skillManager.skills.enumerated()), id: \.element.id) { index, skill in
                                 SkillRow(
                                     skill: skill,
@@ -181,6 +185,19 @@ struct SkillsView: View {
                 },
                 onCancel: {
                     showGitHubImport = false
+                },
+                onPluginInstallComplete: { report in
+                    // The sheet shows its own summary screen; just refresh the
+                    // skills list and surface a short toast in the background.
+                    Task { @MainActor in
+                        await skillManager.refresh()
+                        let total =
+                            report.totalImportedSkills + report.totalImportedAgents
+                            + report.totalImportedCommands + report.totalImportedMCPProviders
+                        if total > 0 {
+                            showToast("Installed \(total) item\(total == 1 ? "" : "s")")
+                        }
+                    }
                 }
             )
         }
@@ -382,8 +399,14 @@ private struct ImportDropdownButton: View {
     @State private var isHovering = false
 
     var body: some View {
+        // Menu actions are dispatched via `dispatchAfterDismiss` so the
+        // parent state mutation runs *after* the menu popover has finished
+        // animating closed. Presenting a `.sheet` or `.fileImporter`
+        // synchronously from inside a `Menu` button can deadlock SwiftUI
+        // — historically the root cause of an instant beachball on this
+        // dropdown. See commit 31efc410.
         Menu {
-            Button(action: onGitHub) {
+            Button(action: { dispatchAfterDismiss(onGitHub) }) {
                 Label {
                     Text("From GitHub", bundle: .module)
                 } icon: {
@@ -391,7 +414,7 @@ private struct ImportDropdownButton: View {
                 }
             }
             Divider()
-            Button(action: onLocal) {
+            Button(action: { dispatchAfterDismiss(onLocal) }) {
                 Label {
                     Text("From File", bundle: .module)
                 } icon: {
@@ -424,6 +447,13 @@ private struct ImportDropdownButton: View {
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering
             }
+        }
+    }
+
+    private func dispatchAfterDismiss(_ action: @escaping () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleepForPopoverDismiss()
+            action()
         }
     }
 }

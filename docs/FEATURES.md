@@ -16,6 +16,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift                       |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | plugins/README.md             | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
+| Claude Plugin Import             | Stable    | "Skills"           | CLAUDE_PLUGINS.md             | Services/GitHubSkillService.swift, Services/Skill/ClaudePluginInstaller.swift, Views/Skill/GitHubImportSheet.swift, Views/Skill/InstalledPluginsSection.swift |
 | Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
 | Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/PreflightCapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
 | Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
@@ -91,7 +92,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  ├── Skills                                                              │
 │  │   ├── SkillManager (Skill CRUD and loading)                           │
 │  │   ├── SkillSearchService (RAG-based skill search)                     │
-│  │   └── GitHubSkillService (GitHub import)                              │
+│  │   ├── GitHubSkillService (Plugin discovery + marketplace parsing)     │
+│  │   └── ClaudePluginInstaller (Full Claude plugin install/uninstall)    │
 │  ├── Methods                                                             │
 │  │   ├── MethodService (Method CRUD and scoring)                         │
 │  │   └── MethodSearchService (RAG-based method search)                   │
@@ -803,6 +805,41 @@ See [docs/plugins/README.md](plugins/README.md) for the full reference.
 
 ---
 
+### Claude Plugin Import
+
+**Purpose:** Import full Claude plugins from GitHub — skills, scheduled agents, slash commands, MCP providers, and shared `CLAUDE.md` context — as a single managed bundle.
+
+**Components:**
+
+- `Services/GitHubSkillService.swift` — Repository discovery, `marketplace.json` parsing, directory-based artifact probing, GitHub rate-limit detection
+- `Services/Skill/ClaudePluginInstaller.swift` — Per-plugin install/uninstall orchestrator, idempotent re-install, MCP placeholder-token detection, cron inference
+- `Views/Skill/GitHubImportSheet.swift` — Import UI with concurrent fetch progress and deep-linkable install summary
+- `Views/Skill/InstalledPluginsSection.swift` — Aggregator + management surface for installed plugin bundles
+- `Managers/ManagementStateManager.swift` — Deep-link state for opening a schedule editor from the install summary
+
+**Features:**
+
+- **Two marketplace shapes** — Directory-based Claude plugin layout *and* legacy flat `skills: [String]` arrays
+- **Five artifact families** — `SKILL.md`, `agents/*.md`, `commands/*.md`, `CLAUDE.md`, `.mcp.json` (HTTP/SSE)
+- **Plugin id grouping** — Every artifact is tagged `github:<owner>/<repo>/<plugin>` so the bundle can be reinstalled or uninstalled atomically
+- **Idempotent re-install** — Non-skill artifacts are replaced on re-import; skills dedupe by `(pluginId, name)`
+- **Parallel discovery & fetch** — `withThrowingTaskGroup` + `async let` across plugins and artifact probes
+- **Cron inference** — Natural-language frequency text in agent frontmatter is mapped to cron; unmatched schedules land disabled with a deep-link to the editor
+- **Placeholder token handling** — MCP env references like `${VAR}`, `$VAR`, `<token>` are detected and the provider is created without a token (surfaced in the install summary)
+- **Rate-limit aware** — `403` + `X-RateLimit-Remaining: 0` is mapped to `GitHubSkillError.rateLimited(resetAt:)` and a user-facing relative-time message
+
+**Plugin ID format:**
+
+```
+github:<owner>/<repo>/<plugin-name>
+```
+
+Stored on each artifact as `Skill.pluginId`, `Schedule.parameters["pluginId"]`, `SlashCommand.pluginId`, and `MCPProvider.pluginId`.
+
+**Reference repository:** [`anthropics/claude-for-legal`](https://github.com/anthropics/claude-for-legal)
+
+---
+
 ### Methods
 
 **Purpose:** Reusable, scored workflows that agents save and learn from over time.
@@ -1141,6 +1178,7 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
 | [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, FluidAudio, and VAD mode guide       |
 | [SKILLS.md](SKILLS.md)                                         | Skills, methods, and context management guide    |
+| [CLAUDE_PLUGINS.md](CLAUDE_PLUGINS.md)                         | Importing Claude plugins from GitHub             |
 | [MEMORY.md](MEMORY.md)                                         | Memory system and configuration guide            |
 | [SANDBOX.md](SANDBOX.md)                                       | Sandbox VM and plugin guide                       |
 | [plugins/README.md](plugins/README.md)                         | Creating custom plugins                           |

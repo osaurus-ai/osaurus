@@ -756,80 +756,165 @@ extension Skill {
 
     /// Extract YAML frontmatter and body from markdown
     private static func extractFrontmatter(from markdown: String) throws -> ([String: Any], String) {
-        let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard trimmed.hasPrefix("---") else {
-            throw SkillParseError.noFrontmatter
+        guard let split = Self.splitFrontmatter(markdown) else {
+            // Distinguish "no frontmatter at all" from "opened but never closed"
+            let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.hasPrefix("---") {
+                throw SkillParseError.noFrontmatter
+            }
+            throw SkillParseError.malformedFrontmatter
         }
+        let frontmatter = parseYaml(split.frontmatterLines)
+        return (frontmatter, split.body)
+    }
 
-        // Find the closing ---
-        let lines = trimmed.components(separatedBy: .newlines)
-        var frontmatterEndIndex: Int?
-
-        for (index, line) in lines.enumerated() {
-            if index > 0 && line.trimmingCharacters(in: .whitespaces) == "---" {
-                frontmatterEndIndex = index
+    /// Splits a markdown document into its YAML frontmatter lines and body.
+    /// Returns nil when no closing `---` is found. Returns an empty
+    /// frontmatter when the document does not start with `---`.
+    ///
+    /// Exposed to other parsers in the module (e.g. the Claude plugin
+    /// installer) so frontmatter parsing stays consistent across SKILL.md,
+    /// agent and command markdown.
+    static func splitFrontmatter(_ markdown: String) -> (frontmatterLines: [String], body: String)? {
+        let normalized = markdown.replacingOccurrences(of: "\r\n", with: "\n")
+        let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("---") else {
+            return ([], normalized)
+        }
+        let lines = trimmed.components(separatedBy: "\n")
+        var endIndex: Int?
+        for (index, line) in lines.enumerated() where index > 0 {
+            if line.trimmingCharacters(in: .whitespaces) == "---" {
+                endIndex = index
                 break
             }
         }
-
-        guard let endIndex = frontmatterEndIndex else {
-            throw SkillParseError.malformedFrontmatter
-        }
-
-        let frontmatterLines = lines[1 ..< endIndex]
-        let bodyLines = lines[(endIndex + 1)...]
-
-        let frontmatter = parseYaml(Array(frontmatterLines))
-        let body = bodyLines.joined(separator: "\n")
-
-        return (frontmatter, body)
+        guard let end = endIndex else { return nil }
+        let frontmatterLines = Array(lines[1 ..< end])
+        let body = lines[(end + 1)...].joined(separator: "\n")
+        return (frontmatterLines, body)
     }
 
-    /// Simple YAML parser for frontmatter (handles basic key: value pairs and nested objects)
+    /// Run `parseYaml` against an arbitrary YAML block. Public-in-module so
+    /// other parsers can reuse the same folded/literal scalar handling.
+    static func parseYamlBlock(_ lines: [String]) -> [String: Any] {
+        parseYaml(lines)
+    }
+
+    /// Simple YAML parser for frontmatter. Handles:
+    /// - flat `key: value` pairs
+    /// - nested objects (indented children)
+    /// - folded (`>`) and literal (`|`) block scalars
     private static func parseYaml(_ lines: [String]) -> [String: Any] {
         var result: [String: Any] = [:]
         var currentNestedKey: String?
         var nestedObject: [String: Any] = [:]
 
-        for line in lines {
-            guard !line.trimmingCharacters(in: .whitespaces).isEmpty,
-                !line.trimmingCharacters(in: .whitespaces).hasPrefix("#")
-            else { continue }
+        var i = 0
+        while i < lines.count {
+            let rawLine = lines[i]
+            let stripped = rawLine.trimmingCharacters(in: .whitespaces)
+            if stripped.isEmpty || stripped.hasPrefix("#") {
+                i += 1
+                continue
+            }
 
-            // Check indentation level
-            let leadingSpaces = line.prefix(while: { $0 == " " }).count
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let leadingSpaces = rawLine.prefix(while: { $0 == " " }).count
 
-            guard let colonIndex = trimmed.firstIndex(of: ":") else { continue }
+            guard let colonIndex = stripped.firstIndex(of: ":") else {
+                i += 1
+                continue
+            }
 
-            let key = String(trimmed[..<colonIndex]).trimmingCharacters(in: .whitespaces)
-            let value = String(trimmed[trimmed.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+            let key = String(stripped[..<colonIndex]).trimmingCharacters(in: .whitespaces)
+            let value = String(stripped[stripped.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+
+            // Block scalar introducer (`>` or `|`) — consume continuation lines
+            // that are indented strictly more than the parent key.
+            if value == ">" || value == "|" {
+                let folded = (value == ">")
+                let baseIndent = leadingSpaces
+                var collected: [String] = []
+                i += 1
+                while i < lines.count {
+                    let next = lines[i]
+                    let nextTrim = next.trimmingCharacters(in: .whitespaces)
+                    if nextTrim.isEmpty {
+                        // Preserve paragraph breaks for `|`; for `>` empty
+                        // lines also separate paragraphs (insert empty marker).
+                        collected.append("")
+                        i += 1
+                        continue
+                    }
+                    let nextIndent = next.prefix(while: { $0 == " " }).count
+                    if nextIndent <= baseIndent {
+                        break
+                    }
+                    collected.append(nextTrim)
+                    i += 1
+                }
+                let joined: String
+                if folded {
+                    // Folded: paragraphs separated by single newlines; lines
+                    // inside a paragraph joined by spaces.
+                    var paragraphs: [String] = []
+                    var current: [String] = []
+                    for piece in collected {
+                        if piece.isEmpty {
+                            if !current.isEmpty {
+                                paragraphs.append(current.joined(separator: " "))
+                                current = []
+                            }
+                        } else {
+                            current.append(piece)
+                        }
+                    }
+                    if !current.isEmpty {
+                        paragraphs.append(current.joined(separator: " "))
+                    }
+                    joined = paragraphs.joined(separator: "\n")
+                } else {
+                    // Literal: preserve newlines verbatim, trim trailing blanks.
+                    var trimmedTail = collected
+                    while let last = trimmedTail.last, last.isEmpty {
+                        trimmedTail.removeLast()
+                    }
+                    joined = trimmedTail.joined(separator: "\n")
+                }
+
+                if leadingSpaces >= 2 && currentNestedKey != nil {
+                    nestedObject[key] = joined
+                } else {
+                    if let nestedKey = currentNestedKey, !nestedObject.isEmpty {
+                        result[nestedKey] = nestedObject
+                        nestedObject = [:]
+                    }
+                    currentNestedKey = nil
+                    result[key] = joined
+                }
+                continue
+            }
 
             // Check if this is a nested key (indented)
             if leadingSpaces >= 2 && currentNestedKey != nil {
-                // This is a nested value
                 let parsedValue = parseYamlValue(value)
                 nestedObject[key] = parsedValue
             } else {
-                // Save previous nested object if exists
                 if let nestedKey = currentNestedKey, !nestedObject.isEmpty {
                     result[nestedKey] = nestedObject
                     nestedObject = [:]
                 }
 
                 if value.isEmpty {
-                    // This is a parent key for nested object
                     currentNestedKey = key
                 } else {
-                    // Regular key-value pair
                     currentNestedKey = nil
                     result[key] = parseYamlValue(value)
                 }
             }
+            i += 1
         }
 
-        // Save final nested object if exists
         if let nestedKey = currentNestedKey, !nestedObject.isEmpty {
             result[nestedKey] = nestedObject
         }
