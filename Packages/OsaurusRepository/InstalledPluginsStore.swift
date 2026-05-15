@@ -13,6 +13,13 @@ public struct PluginReceipt: Codable, Equatable, Sendable {
         public let sha256: String
         public let minisign: MinisignInfo?
         public let size: Int?
+
+        public init(url: String, sha256: String, minisign: MinisignInfo? = nil, size: Int? = nil) {
+            self.url = url
+            self.sha256 = sha256
+            self.minisign = minisign
+            self.size = size
+        }
     }
 
     public let plugin_id: String
@@ -24,6 +31,18 @@ public struct PluginReceipt: Codable, Equatable, Sendable {
     public let arch: String
     public let public_keys: [String: String]?
     public let artifact: ArtifactInfo
+
+    public init(plugin_id: String, version: SemanticVersion, installed_at: Date, dylib_filename: String, dylib_sha256: String, platform: String, arch: String, public_keys: [String: String]? = nil, artifact: ArtifactInfo) {
+        self.plugin_id = plugin_id
+        self.version = version
+        self.installed_at = installed_at
+        self.dylib_filename = dylib_filename
+        self.dylib_sha256 = dylib_sha256
+        self.platform = platform
+        self.arch = arch
+        self.public_keys = public_keys
+        self.artifact = artifact
+    }
 }
 
 /// Derives installed plugin state from the file system.
