@@ -721,9 +721,14 @@ public class ThemeManager: ObservableObject {
         ThemeConfigurationStore.saveTheme(theme)
         refreshInstalledThemes()
 
-        // If this is the active theme, update it
+        // If this is the active theme, re-apply it (which also posts the
+        // notification). Otherwise still post `.globalThemeChanged` so any
+        // open chat window using this theme via a per-agent `themeId` picks
+        // up the edit without us having to switch the user's active theme.
         if activeCustomTheme?.metadata.id == theme.metadata.id {
             applyCustomTheme(theme)
+        } else {
+            NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
         }
     }
 
