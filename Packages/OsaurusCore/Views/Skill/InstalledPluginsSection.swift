@@ -124,7 +124,11 @@ final class InstalledPluginsAggregator: ObservableObject {
         self.scheduleManager = scheduleManager
         self.slashCommands = slashCommands
         self.mcpManager = mcpManager
-        refresh()
+        // First scan is deferred to the view's `.onAppear`. Doing the
+        // iterate-everything pass synchronously here piles work onto the
+        // same runloop tick that presents the Import sheet from a `Menu`
+        // button, which on macOS can turn the menu-popover/sheet dismissal
+        // race into a hard beachball.
     }
 
     func refresh() {
@@ -214,9 +218,12 @@ struct InstalledPluginsSection: View {
     @Environment(\.theme) private var theme
     @StateObject private var aggregator = InstalledPluginsAggregator()
 
-    // The backing managers use Swift's Observation framework (`@Observable`);
-    // SwiftUI re-renders this view automatically when their state changes,
-    // so we just need plain references to read counts on each redraw.
+    // `SkillManager`, `ScheduleManager`, and `SlashCommandRegistry` use
+    // Swift's Observation framework (`@Observable`); SwiftUI re-renders this
+    // view automatically when their state is read inside the body, so plain
+    // references suffice. `MCPProviderManager` still conforms to the older
+    // `ObservableObject` protocol, which is why it needs an explicit
+    // `@ObservedObject` wrapper to participate in invalidation.
     private let skillManager = SkillManager.shared
     private let scheduleManager = ScheduleManager.shared
     private let slashCommands = SlashCommandRegistry.shared
