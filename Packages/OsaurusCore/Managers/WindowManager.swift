@@ -61,7 +61,7 @@ public struct WindowConfiguration: Sendable {
         usePanel: false,
         titlebarAppearsTransparent: true,
         titleVisibility: .hidden,
-        isMovableByWindowBackground: true,
+        isMovableByWindowBackground: false,
         hideStandardButtons: [],
         autosaveKey: .management
     )
