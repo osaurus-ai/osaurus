@@ -15,6 +15,7 @@ struct DocumentChip: View {
     let attachment: Attachment
     var onRemove: (() -> Void)? = nil
     var onTap: (() -> Void)? = nil
+    var onEdit: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
@@ -22,7 +23,7 @@ struct DocumentChip: View {
     private var isPasted: Bool { attachment.isPastedContent }
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             chipContent
         }
         .padding(.horizontal, 8)
@@ -52,13 +53,13 @@ struct DocumentChip: View {
             }
         }
 
+        if let onEdit {
+            circularButton(systemName: "pencil", action: onEdit)
+                .help("Edit pasted content")
+        }
+
         if let onRemove {
-            Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .buttonStyle(.plain)
+            circularButton(systemName: "xmark", action: onRemove)
         }
     }
 
@@ -78,7 +79,6 @@ struct DocumentChip: View {
             }
 
             if isPasted {
-                pastedBadge
                 if let lines = attachment.pastedContentLineCount {
                     Text("\(lines) lines")
                         .font(theme.font(size: 9, weight: .regular))
@@ -92,15 +92,20 @@ struct DocumentChip: View {
         }
     }
 
-    private var pastedBadge: some View {
-        Text("PASTED")
-            .font(theme.font(size: 8, weight: .bold))
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .strokeBorder(theme.primaryBorder.opacity(0.45), lineWidth: 0.5)
-            )
+    private func circularButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 20, height: 20)
+                .background(
+                    Circle().fill(theme.primaryBackground.opacity(0.6))
+                )
+                .overlay(
+                    Circle().strokeBorder(theme.primaryBorder.opacity(0.25), lineWidth: 0.5)
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
     }
 }

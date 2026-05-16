@@ -178,6 +178,7 @@ struct FloatingInputCard: View {
     /// Active pasted-content attachment whose preview sheet is showing.
     /// Set on chip tap; cleared on dismiss.
     @State private var pastedContentPreview: Attachment?
+    @State private var pastedContentEdit: Attachment?
     /// Character threshold above which clipboard text is converted to a
     /// pasted-content attachment instead of being inlined into the input.
     private static let pastedContentThreshold: Int = 400
@@ -1214,6 +1215,10 @@ extension FloatingInputCard {
                             onTap: attachment.isPastedContent
                                 ? {
                                     pastedContentPreview = attachment
+                                } : nil,
+                            onEdit: attachment.isPastedContent
+                                ? {
+                                    pastedContentEdit = attachment
                                 } : nil
                         )
                     case .audio, .audioRef, .video, .videoRef:
@@ -1236,6 +1241,18 @@ extension FloatingInputCard {
             PastedContentSheet(attachment: attachment) {
                 pastedContentPreview = nil
             }
+        }
+        .sheet(item: $pastedContentEdit) { attachment in
+            PastedContentSheet(
+                attachment: attachment,
+                onDismiss: { pastedContentEdit = nil },
+                onSave: { updated in
+                    if let idx = pendingAttachments.firstIndex(where: { $0.id == attachment.id }) {
+                        pendingAttachments[idx] = .pastedContent(updated)
+                    }
+                    pastedContentEdit = nil
+                }
+            )
         }
     }
 
