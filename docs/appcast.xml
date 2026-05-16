@@ -3,6 +3,36 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.20</title>
+            <pubDate>Fri, 15 May 2026 17:46:08 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.20</sparkle:version>
+            <sparkle:shortVersionString>0.18.20</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.20/Osaurus-0.18.20.dmg" length="41837161" type="application/octet-stream" sparkle:edSignature="aUdcyILeRPSgr1jhfudk7KKIV8KWwv+Zz5Sgmy14SWPc75FVLWKIqhRQ7opqs0LidjPvp3fGm5baY6trTeXSAQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Replace old screenshot with new image (#1108) by @tpae
+- added independent glass toggles for sidebar \& chat input in theme editor (#1101) by @RaajeevChandran
+- pasted content chip \& preview (#1103) by @RaajeevChandran
+- [codex] Move theme image picker into Appearance (#1099) by @mimeding
+- reorder agents (#1102) by @RaajeevChandran
+
+## 🚀 Features
+
+- added support for importing claude plugins (#1106) by @tpae
+
+## 🐛 Bug Fixes
+
+- fix freeze when opening import skills dialog (#1107) by @tpae
+- fixed unresponsive Update Available button (#1105) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.19...0.18.20
+]]></description>
+        </item>
+        <item>
             <title>0.18.19</title>
             <pubDate>Fri, 15 May 2026 05:18:49 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

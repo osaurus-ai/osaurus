@@ -269,19 +269,25 @@ public struct ToolsInstall {
         let digest = SHA256.hash(data: dylibData)
         let dylibSha = Data(digest).map { String(format: "%02x", $0) }.joined()
 
-        // Create receipt structure matching PluginReceipt
-        let receipt: [String: Any] = [
-            "plugin_id": pluginId,
-            "version": version.description,
-            "installed_at": ISO8601DateFormatter().string(from: Date()),
-            "dylib_filename": dylibURL.lastPathComponent,
-            "dylib_sha256": dylibSha,
-            "platform": "macos",
-            "arch": "arm64",
-        ]
+        let receipt = PluginReceipt(
+            plugin_id: pluginId,
+            version: version,
+            installed_at: Date(),
+            dylib_filename: dylibURL.lastPathComponent,
+            dylib_sha256: dylibSha,
+            platform: "macos",
+            arch: "arm64",
+            public_keys: nil,
+            artifact: .init(
+                url: "file://" + dylibURL.path,
+                sha256: dylibSha,
+                minisign: nil,
+                size: dylibData.count
+            )
+        )
 
         let receiptURL = installDir.appendingPathComponent("receipt.json")
-        let receiptData = try JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys])
+        let receiptData = try JSONEncoder().encode(receipt)
         try receiptData.write(to: receiptURL)
     }
 

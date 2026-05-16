@@ -399,8 +399,14 @@ private struct ImportDropdownButton: View {
     @State private var isHovering = false
 
     var body: some View {
+        // Menu actions are dispatched via `dispatchAfterDismiss` so the
+        // parent state mutation runs *after* the menu popover has finished
+        // animating closed. Presenting a `.sheet` or `.fileImporter`
+        // synchronously from inside a `Menu` button can deadlock SwiftUI
+        // — historically the root cause of an instant beachball on this
+        // dropdown. See commit 31efc410.
         Menu {
-            Button(action: onGitHub) {
+            Button(action: { dispatchAfterDismiss(onGitHub) }) {
                 Label {
                     Text("From GitHub", bundle: .module)
                 } icon: {
@@ -408,7 +414,7 @@ private struct ImportDropdownButton: View {
                 }
             }
             Divider()
-            Button(action: onLocal) {
+            Button(action: { dispatchAfterDismiss(onLocal) }) {
                 Label {
                     Text("From File", bundle: .module)
                 } icon: {
@@ -441,6 +447,13 @@ private struct ImportDropdownButton: View {
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering
             }
+        }
+    }
+
+    private func dispatchAfterDismiss(_ action: @escaping () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleepForPopoverDismiss()
+            action()
         }
     }
 }
