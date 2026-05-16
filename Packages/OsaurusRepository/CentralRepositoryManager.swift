@@ -62,7 +62,7 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         let root = ToolsPaths.pluginSpecsRoot()
         try fm.createDirectoryIfNeeded(at: root)
 
-        let archiveURL = try archiveZipURL()
+        let archiveURLs = try archiveZipURLs()
 
         // Stage the download + extraction in a sibling temp dir under the same parent
         // so the final atomic swap stays on a single volume.
@@ -74,7 +74,23 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         defer { try? fm.removeItem(at: stagingDir) }
 
         let zipURL = stagingDir.appendingPathComponent(Path.archiveZip, isDirectory: false)
-        try downloadFile(from: archiveURL, to: zipURL)
+
+        // try candidates in order, falling through on 404 so a repo whose
+        // default branch is master still resolves when no branch is pinned
+        var lastError: Error?
+        for (index, url) in archiveURLs.enumerated() {
+            do {
+                try downloadFile(from: url, to: zipURL)
+                lastError = nil
+                break
+            } catch RefreshError.httpStatus(404) where index < archiveURLs.count - 1 {
+                lastError = RefreshError.httpStatus(404)
+                continue
+            } catch {
+                throw error
+            }
+        }
+        if let lastError { throw lastError }
 
         let extractDir = stagingDir.appendingPathComponent(Path.extracted, isDirectory: true)
         try fm.createDirectory(at: extractDir, withIntermediateDirectories: true)
@@ -100,11 +116,12 @@ public final class CentralRepositoryManager: @unchecked Sendable {
 
     // MARK: - URL derivation
 
-    /// Builds the GitHub source-archive URL for the configured central repo + branch.
-    /// e.g. `https://github.com/osaurus-ai/osaurus-tools.git` + `main`
-    /// →    `https://github.com/osaurus-ai/osaurus-tools/archive/refs/heads/main.zip`
-    /// Branch defaults to `main` when `CentralRepository.branch` is `nil`.
-    private func archiveZipURL() throws -> URL {
+    /// Builds the GitHub source archive URLs to try for the configured central repo.
+    /// When `CentralRepository.branch` is set, returns that single URL. Otherwise
+    /// returns both `main` and `master` candidates. the repo's default branch
+    /// has historically been `master` but could be either, and there's no cheap
+    /// unauthenticated way to ask GitHub for it
+    private func archiveZipURLs() throws -> [URL] {
         guard let comps = URLComponents(string: central.url),
             let host = comps.host?.lowercased(),
             host == "github.com" || host.hasSuffix(".github.com")
@@ -117,16 +134,14 @@ public final class CentralRepositoryManager: @unchecked Sendable {
 
         let owner = String(segments[0])
         let repo = String(segments[1])
-        let branch = central.branch ?? "main"
-        let encodedBranch =
-            branch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? branch
+        let branches: [String] = central.branch.map { [$0] } ?? ["main", "master"]
 
-        guard
-            let url = URL(
-                string: "https://github.com/\(owner)/\(repo)/archive/refs/heads/\(encodedBranch).zip"
-            )
-        else { throw RefreshError.unsupportedURL(central.url) }
-        return url
+        let urls: [URL] = branches.compactMap { branch in
+            let encoded = branch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? branch
+            return URL(string: "https://github.com/\(owner)/\(repo)/archive/refs/heads/\(encoded).zip")
+        }
+        guard !urls.isEmpty else { throw RefreshError.unsupportedURL(central.url) }
+        return urls
     }
 
     // MARK: - Download / unzip
