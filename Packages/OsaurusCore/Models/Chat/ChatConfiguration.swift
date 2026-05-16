@@ -104,6 +104,16 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// When true, Osaurus will monitor the clipboard for new text content to offer as context.
     public var enableClipboardMonitoring: Bool
 
+    // MARK: - Generative Greetings
+    /// Free-text "voice" instruction that shapes the AI-generated empty-state
+    /// greetings and quick actions. Empty string means "use the built-in
+    /// playful default" baked into `GenerativeGreetingService`. Per-agent
+    /// overrides live on `AgentSettings.greetingPersona` and take precedence
+    /// when non-empty. Whether the feature runs at all is decided per-agent
+    /// via `AgentSettings.generativeGreetingsEnabled` (auto-on when a Core
+    /// Model is configured).
+    public var greetingPersona: String
+
     public init(
         hotkey: Hotkey?,
         systemPrompt: String,
@@ -125,7 +135,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultToolSelectionMode: ToolSelectionMode? = nil,
         defaultManualToolNames: [String]? = nil,
         defaultManualSkillNames: [String]? = nil,
-        enableClipboardMonitoring: Bool = true
+        enableClipboardMonitoring: Bool = true,
+        greetingPersona: String = ""
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -148,6 +159,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.defaultManualToolNames = defaultManualToolNames
         self.defaultManualSkillNames = defaultManualSkillNames
         self.enableClipboardMonitoring = enableClipboardMonitoring
+        self.greetingPersona = greetingPersona
     }
 
     public init(from decoder: Decoder) throws {
@@ -188,6 +200,13 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             forKey: .defaultManualSkillNames
         )
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
+        // Older persisted JSON may carry an `enableGenerativeGreetings`
+        // boolean from before the master toggle was retired in favor of
+        // a per-agent on/off (auto-on when a Core Model is configured).
+        // Auto-synthesized `Codable` ignores unknown keys on decode so
+        // we don't have to mention it here — the legacy value is simply
+        // dropped on the next save.
+        greetingPersona = try container.decodeIfPresent(String.self, forKey: .greetingPersona) ?? ""
     }
 
     public static var `default`: ChatConfiguration {
@@ -218,7 +237,14 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             workMaxIterations: 50,
             defaultAutonomousExec: nil,
             preflightSearchMode: .balanced,
-            enableClipboardMonitoring: true
+            enableClipboardMonitoring: true,
+            // Empty persona = "use built-in playful default". Users opt
+            // into a custom voice from Settings → Chat (or per-agent
+            // override in the Customization tab). The on/off decision
+            // moved off `ChatConfiguration` entirely — it's now a
+            // per-agent setting that auto-resolves to true when a Core
+            // Model is configured.
+            greetingPersona: ""
         )
     }
 

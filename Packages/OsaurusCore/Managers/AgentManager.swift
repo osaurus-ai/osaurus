@@ -327,6 +327,11 @@ public final class AgentManager: ObservableObject {
             for: agent.id,
             percent: updated.settings.limits.storageWarnPercent
         )
+        // Drop any pre-generated empty-state greetings for this agent.
+        // Persona / system prompt / quick-action edits invalidate the
+        // pool's cached output — the next session open should pop a
+        // freshly generated greeting that reflects the new settings.
+        Task { await GenerativeGreetingPool.shared.invalidate(agentId: agent.id) }
         NotificationCenter.default.post(name: .agentUpdated, object: agent.id)
     }
 
@@ -437,6 +442,12 @@ public final class AgentManager: ObservableObject {
         // Done before posting `.agentRemoved` so subscribers see the
         // post-cleanup keychain state.
         ToolSecretsKeychain.deleteAllSecrets(forAgent: id)
+
+        // Drop any greetings the pool was holding for this agent. We
+        // can't rely on per-agent settings drift here (the agent is
+        // gone) — explicit invalidation prevents the orphaned entries
+        // from sitting in memory until TTL.
+        await GenerativeGreetingPool.shared.invalidate(agentId: id)
 
         // Notify subscribers (e.g. PluginManager) so plugins can
         // deregister webhooks (push tunnel_url=nil) and tear down any

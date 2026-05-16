@@ -63,8 +63,20 @@ public actor CoreModelService {
     /// in log messages so callers (and humans reading the log) can
     /// see the root cause instead of just "circuitBreakerOpen".
     private var lastBreakerError: Error?
+    /// Number of times the breaker has re-opened without an
+    /// intervening successful call. Drives exponential cooldown so a
+    /// genuinely-broken backend (Foundation framework lock contention,
+    /// crashed remote provider) doesn't get hammered every minute
+    /// forever. Reset to zero on any successful generation.
+    private var consecutiveBreakerCycles = 0
     private static let circuitBreakerThreshold = 5
+    /// Base cooldown after the breaker first opens. Doubles each cycle
+    /// the breaker re-opens without a success in between (60s, 120s,
+    /// 240s, …) up to `circuitBreakerMaxCooldownSeconds`. The cap
+    /// matches the greeting pool's TTL so a wedged backend can't keep
+    /// the user locked out longer than a single fresh-greeting cycle.
     private static let circuitBreakerCooldownSeconds: TimeInterval = 60
+    private static let circuitBreakerMaxCooldownSeconds: TimeInterval = 30 * 60
 
     private init() {}
 
@@ -157,16 +169,39 @@ public actor CoreModelService {
         do {
             return try await runWithRetries(model: primary, messages: messages, params: params, timeout: timeout)
         } catch let coreErr as CoreModelError {
-            // Only fall back when the configured model is fundamentally
-            // unusable on this machine. `.timedOut` and `.circuitBreakerOpen`
-            // are transient — retrying with a different model would mask
-            // the real issue.
+            // Configuration-level failure: the primary's identifier
+            // can't be routed at all (Foundation Model on pre-26 macOS,
+            // a deleted MLX model, a disconnected remote provider).
+            // `.timedOut` and `.circuitBreakerOpen` are deliberately
+            // NOT in this branch — they're transient and retrying with
+            // a different model would just mask the real issue.
             guard case .modelUnavailable = coreErr,
                 let fb = fallback,
                 fb != primary
             else { throw coreErr }
             logger.info("Core model '\(primary)' unavailable; falling back to chat model '\(fb)'")
             return try await runWithRetries(model: fb, messages: messages, params: params, timeout: timeout)
+        } catch {
+            // Runtime failure that isn't a CoreModelError. The primary
+            // backend is wedged below the routing layer — Foundation
+            // framework lock contention (the OS-level "Too many open
+            // files" / `failedToRetrieveAssetSet` cycle), MLX runtime
+            // crashes, or a remote provider returning malformed JSON.
+            // `runWithRetries` already gave the primary three chances;
+            // try the chat-model fallback once before bubbling so
+            // best-effort callers (greetings, preflight) still get
+            // useful output. If the fallback isn't viable (missing or
+            // identical to primary), preserve the original error.
+            guard let fb = fallback, fb != primary else { throw error }
+            logger.warning(
+                "Core model '\(primary)' exhausted retries (\(error.localizedDescription)); falling back to chat model '\(fb)'"
+            )
+            return try await runWithRetries(
+                model: fb,
+                messages: messages,
+                params: params,
+                timeout: timeout
+            )
         }
     }
 
@@ -248,18 +283,21 @@ public actor CoreModelService {
     // MARK: - Private — breaker bookkeeping
 
     /// Throws `circuitBreakerOpen` while the cooldown is active.
-    /// When the cooldown has elapsed, transitions the breaker to
-    /// "half-open" by clearing all counters so the upcoming probe
-    /// has a clean slate. Without this the counter would sit at
-    /// `circuitBreakerThreshold` forever and a single subsequent
-    /// failure would immediately re-open the breaker — making it
-    /// permanently sticky.
+    /// When the cooldown has elapsed, transitions the breaker to a
+    /// "half-open" probe state: the failure counter, cooldown
+    /// window, and last-error are cleared so the next call runs,
+    /// but `consecutiveBreakerCycles` is PRESERVED so a failed probe
+    /// escalates to the next cooldown bucket (60s → 120s → 240s …)
+    /// instead of restarting at 60s — without that, a wedged backend
+    /// would stay pinned in fast-retry mode forever.
     private func checkBreakerOrEnterHalfOpen() throws {
         guard let openUntil = circuitOpenUntil else { return }
         if Date() < openUntil {
             throw CoreModelError.circuitBreakerOpen
         }
-        clearBreakerState()
+        consecutiveFailures = 0
+        circuitOpenUntil = nil
+        lastBreakerError = nil
         logger.info("Circuit breaker cooldown elapsed — entering half-open probe")
     }
 
@@ -267,6 +305,10 @@ public actor CoreModelService {
         consecutiveFailures = 0
         circuitOpenUntil = nil
         lastBreakerError = nil
+        // A success between cycles resets the exponential cooldown so
+        // the next genuine outage starts at the fast 60s cadence
+        // again rather than inheriting yesterday's backoff.
+        consecutiveBreakerCycles = 0
     }
 
     /// Returns the model's response on success (and clears breaker
@@ -319,10 +361,24 @@ public actor CoreModelService {
 
         consecutiveFailures += 1
         if consecutiveFailures >= Self.circuitBreakerThreshold {
-            circuitOpenUntil = Date().addingTimeInterval(Self.circuitBreakerCooldownSeconds)
+            // Exponential cooldown: each consecutive open without an
+            // intervening success doubles the wait, capped at 30 min.
+            // The shift saturates at cycle 5 anyway (60s × 32 = 1920s
+            // already past the 1800s ceiling), so clamping there
+            // keeps the multiplier well within `Int` range and the
+            // arithmetic readable. Bit-shift over `pow(2, …)` so the
+            // type stays `Int`.
+            let cycles = min(consecutiveBreakerCycles, 5)
+            let multiplier = TimeInterval(1 << cycles)
+            let cooldown = min(
+                Self.circuitBreakerCooldownSeconds * multiplier,
+                Self.circuitBreakerMaxCooldownSeconds
+            )
+            circuitOpenUntil = Date().addingTimeInterval(cooldown)
             lastBreakerError = error
+            consecutiveBreakerCycles += 1
             logger.error(
-                "Circuit breaker opened after \(self.consecutiveFailures) consecutive failures; last error: \(error.localizedDescription)"
+                "Circuit breaker opened after \(self.consecutiveFailures) consecutive failures (cycle \(self.consecutiveBreakerCycles), cooldown \(Int(cooldown))s); last error: \(error.localizedDescription)"
             )
         }
 

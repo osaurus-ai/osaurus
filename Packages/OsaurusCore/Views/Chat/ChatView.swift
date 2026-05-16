@@ -24,6 +24,51 @@ final class VisibleBlocksStore: ObservableObject {
     @Published var groupHeaderMap: [UUID: UUID] = [:]
 }
 
+/// Lifecycle of the generative greeting for a single chat session. Drives
+/// the empty-state UI: `.idle` and `.failed` render the static greeting +
+/// the agent's configured quick actions, `.loading` renders an animated
+/// skeleton, and `.ready` renders the freshly produced AI payload with a
+/// shimmer fade-in. A separate `.failed` (vs `.idle`) lets the UI know the
+/// loader actually completed without a result so it doesn't re-trigger
+/// from a stale state.
+enum GenerativeGreetingState: Equatable {
+    case idle
+    case loading
+    case ready(GenerativeGreeting)
+    case failed
+}
+
+/// Lifts the empty-state's "kick off a generative greeting" wiring out of
+/// `ChatView.body` so the closure stays small enough for the type checker.
+/// Re-runs `loadGenerativeGreetingIfNeeded` whenever the selected model or
+/// active agent changes; the session-level cache key absorbs idempotent
+/// re-fires (re-appearing the empty state, scrolling, etc.).
+private struct GenerativeGreetingTrigger: ViewModifier {
+    @ObservedObject var session: ChatSession
+    @ObservedObject var windowState: ChatWindowState
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { trigger() }
+            .onChange(of: session.selectedModel) { _, _ in trigger() }
+            .onChange(of: windowState.agentId) { _, _ in trigger() }
+    }
+
+    private func trigger() {
+        // The master "enable generative greetings" toggle in Settings was
+        // retired in favor of a per-agent on/off (auto-on when a Core
+        // Model is configured). The Core-Model presence check here is
+        // the canonical sync proxy used elsewhere — see
+        // `MemoryService.hasCoreModel()`.
+        let coreModelConfigured =
+            AppConfiguration.shared.chatConfig.coreModelIdentifier != nil
+        session.loadGenerativeGreetingIfNeeded(
+            agent: windowState.activeAgent,
+            coreModelConfigured: coreModelConfigured
+        )
+    }
+}
+
 @MainActor
 final class ChatSession: ObservableObject {
     @Published var turns: [ChatTurn] = []
@@ -155,6 +200,23 @@ final class ChatSession: ObservableObject {
     /// `ChatView` observes this to drive auto-speak. Not set on stop/error.
     @Published var lastCompletedAssistantTurnId: UUID?
 
+    /// Lifecycle of the generative greeting for the current empty state.
+    /// Drives skeleton vs static vs AI-produced rendering — see
+    /// `GenerativeGreetingState`. Populated by
+    /// `loadGenerativeGreetingIfNeeded(...)`, reset on `reset()`.
+    @Published var generativeGreetingState: GenerativeGreetingState = .idle
+
+    /// In-flight generation, retained so we can cancel it on reset / send /
+    /// teardown. The state machine on `generativeGreetingState` is what the
+    /// UI observes; the task is kept here purely for cooperative cancel.
+    private var generativeGreetingTask: Task<Void, Never>?
+
+    /// Cache key for the most recently kicked-off generation. Encodes
+    /// session id, agent id, and model so the call only re-runs when one
+    /// of those actually changed (re-appearing the empty state for the
+    /// same context is a no-op).
+    private var generativeGreetingKey: String?
+
     /// Weak back-reference to the owning window state (set by ChatWindowState).
     weak var windowState: ChatWindowState?
 
@@ -285,6 +347,7 @@ final class ChatSession: ObservableObject {
     deinit {
         print("[ChatSession] deinit")
         currentTask?.cancel()
+        generativeGreetingTask?.cancel()
         if let observer = remoteModelsObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -746,6 +809,8 @@ final class ChatSession: ObservableObject {
         visibleBlocksStore.blocks = []
         visibleBlocksStore.groupHeaderMap = [:]
 
+        resetGenerativeGreeting()
+
         applyEffectiveModel(for: agentId)
         rebuildVisibleBlocks()
     }
@@ -761,6 +826,137 @@ final class ChatSession: ObservableObject {
         // new one now that turns/sessionId are cleared.
         applyEffectiveModel(for: newAgentId)
         Task { [weak self] in await self?.refreshContextEstimates() }
+    }
+
+    // MARK: - Generative Greeting
+
+    /// Asynchronously fetch (and cache) a delightful greeting + four quick
+    /// actions for the current empty state. Idempotent for a given
+    /// `(session, agent, model)` combination — re-appearing the empty
+    /// state, scrolling, or theme changes won't re-fire the inference.
+    ///
+    /// State machine: `idle` (feature off / no model) → `loading` (task in
+    /// flight) → `ready(payload)` on success, `failed` on any throw or
+    /// cancellation. The UI uses `loading` to render a skeleton, and both
+    /// `idle` and `failed` to render the static fallback.
+    func loadGenerativeGreetingIfNeeded(agent: Agent, coreModelConfigured: Bool) {
+        guard agent.shouldUseGenerativeGreetings(coreModelConfigured: coreModelConfigured) else {
+            generativeGreetingState = .idle
+            generativeGreetingKey = nil
+            generativeGreetingTask?.cancel()
+            generativeGreetingTask = nil
+            return
+        }
+
+        guard hasAnyModel else { return }
+        guard let model = selectedModel, !model.isEmpty else { return }
+
+        let sessionPart = sessionId?.uuidString ?? "draft"
+        let key = "\(sessionPart):\(agent.id.uuidString):\(model)"
+        if key == generativeGreetingKey { return }
+
+        generativeGreetingKey = key
+        generativeGreetingTask?.cancel()
+
+        let snapshot = agent
+        generativeGreetingTask = Task { [weak self] in
+            // Tell the pool which (agent, model) the user is looking
+            // at so its periodic ticker has a refill target even when
+            // no popFresh / warmUp call is in flight.
+            await GenerativeGreetingPool.shared.setActive(
+                agent: snapshot,
+                model: model
+            )
+
+            // Hot path: a pre-generated greeting is already waiting.
+            // Skip the loading skeleton entirely and ride straight to
+            // `.ready`, then fire a background warmUp to top the pool
+            // back up to target.
+            if let cached = await GenerativeGreetingPool.shared.popFresh(
+                for: snapshot,
+                model: model
+            ) {
+                // Commit to the UI atomically: only assign `.ready` if
+                // the task hasn't been cancelled and the cache key
+                // still matches. If it doesn't match (rapid hide/show,
+                // agent switch landed mid-pop), push the cached entry
+                // BACK into the pool — it cost us a model call to
+                // produce, throwing it away on every fast switch is
+                // wasteful. Returning a `Bool` from `MainActor.run`
+                // lets us keep the commit guard atomic without
+                // splitting it across two hops.
+                let didCommit = await MainActor.run { () -> Bool in
+                    guard let self = self else { return false }
+                    guard !Task.isCancelled,
+                        self.generativeGreetingKey == key
+                    else { return false }
+                    self.generativeGreetingState = .ready(cached)
+                    return true
+                }
+                if !didCommit {
+                    await GenerativeGreetingPool.shared.seed(
+                        cached,
+                        for: snapshot,
+                        model: model
+                    )
+                    return
+                }
+                await GenerativeGreetingPool.shared.warmUp(
+                    for: snapshot,
+                    model: model
+                )
+                return
+            }
+
+            // Cold path: pool was empty (first session of the run, or
+            // an invalidation just landed). Flip to `.loading` so the
+            // empty state renders the skeleton, then generate inline
+            // and seed the pool with the result so the *next* session
+            // open is hot.
+            await MainActor.run {
+                guard let self = self else { return }
+                guard self.generativeGreetingKey == key else { return }
+                self.generativeGreetingState = .loading
+            }
+            do {
+                let result = try await GenerativeGreetingService.shared.generate(
+                    agent: snapshot,
+                    fallbackModel: model
+                )
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self = self else { return }
+                    guard self.generativeGreetingKey == key else { return }
+                    self.generativeGreetingState = .ready(result)
+                }
+                await GenerativeGreetingPool.shared.warmUp(
+                    for: snapshot,
+                    model: model
+                )
+            } catch {
+                guard !Task.isCancelled else { return }
+                // Silent fallback — `.failed` flips the empty state back
+                // to the static greeting + the agent's configured quick
+                // actions. `.idle` is reserved for "feature is off" so
+                // the UI can distinguish the two.
+                await MainActor.run {
+                    guard let self = self else { return }
+                    guard self.generativeGreetingKey == key else { return }
+                    self.generativeGreetingState = .failed
+                }
+            }
+        }
+    }
+
+    /// Cancel any in-flight greeting generation and clear cached output.
+    /// Called from `reset()`, `deinit`, and `ChatWindowManager.hideWindow`
+    /// — the latter so re-opening the window pops a fresh entry from the
+    /// pool instead of briefly flashing the previous session's greeting.
+    func resetGenerativeGreeting() {
+        generativeGreetingTask?.cancel()
+        generativeGreetingTask = nil
+        generativeGreetingKey = nil
+        generativeGreetingState = .idle
     }
 
     /// Invalidate the token cache (called when tools/skills change)
@@ -2471,31 +2667,7 @@ struct ChatView: View {
                         // Content area (show immediately, model discovery is async)
                         if session.hasAnyModel || session.isDiscoveringModels {
                             if !session.hasVisibleThreadMessages {
-                                // Empty state
-                                ChatEmptyState(
-                                    hasModels: true,
-                                    selectedModel: session.selectedModel,
-                                    agents: windowState.agents,
-                                    activeAgentId: windowState.agentId,
-                                    quickActions: windowState.activeAgent.chatQuickActions
-                                        ?? AgentQuickAction.defaultChatQuickActions,
-                                    onOpenModelManager: {
-                                        AppDelegate.shared?.showManagementWindow(initialTab: .models)
-                                    },
-                                    onUseFoundation: windowState.foundationModelAvailable
-                                        ? {
-                                            session.selectedModel =
-                                                session.pickerItems.firstChatCapable?.id
-                                                ?? "foundation"
-                                        } : nil,
-                                    onQuickAction: { prompt in
-                                        session.input = prompt
-                                    },
-                                    onOpenOnboarding: nil,
-                                    activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
-                                    activeRelayAgent: windowState.selectedRelayAgent
-                                )
-                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                                emptyStateView
                             } else {
                                 // Message thread. While a prompt
                                 // overlay is mounted, blur the thread
@@ -2835,6 +3007,48 @@ struct ChatView: View {
         windowState.selectedDiscoveredAgentProviderId = relay.providerId
         session.reset()
         Task { await session.refreshPickerItems() }
+    }
+
+    // MARK: - Empty State
+
+    /// The chat empty-state surface, lifted into its own `@ViewBuilder`
+    /// helper so the cumulative type-checker work in `body` stays under
+    /// the budget — adding modifiers to the inline `ChatEmptyState(...)`
+    /// here previously tipped the surrounding ZStack expression past the
+    /// "unable to type-check in reasonable time" threshold.
+    @ViewBuilder
+    private var emptyStateView: some View {
+        ChatEmptyState(
+            hasModels: true,
+            selectedModel: session.selectedModel,
+            agents: windowState.agents,
+            activeAgentId: windowState.agentId,
+            quickActions: windowState.activeAgent.chatQuickActions
+                ?? AgentQuickAction.defaultChatQuickActions,
+            generativeGreetingState: session.generativeGreetingState,
+            onOpenModelManager: {
+                AppDelegate.shared?.showManagementWindow(initialTab: .models)
+            },
+            onUseFoundation: windowState.foundationModelAvailable
+                ? {
+                    session.selectedModel =
+                        session.pickerItems.firstChatCapable?.id
+                        ?? "foundation"
+                } : nil,
+            onQuickAction: { prompt in
+                session.input = prompt
+            },
+            onOpenOnboarding: nil,
+            activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
+            activeRelayAgent: windowState.selectedRelayAgent
+        )
+        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        .modifier(
+            GenerativeGreetingTrigger(
+                session: session,
+                windowState: windowState
+            )
+        )
     }
 
     // MARK: - Background

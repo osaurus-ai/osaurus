@@ -40,14 +40,6 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
         ]
     }
 
-    public static var defaultWorkQuickActions: [AgentQuickAction] {
-        [
-            AgentQuickAction(icon: "globe", text: L("Build a site"), prompt: L("Build a landing page for ")),
-            AgentQuickAction(icon: "magnifyingglass", text: L("Research a topic"), prompt: L("Research ")),
-            AgentQuickAction(icon: "doc.text", text: L("Write a blog post"), prompt: L("Write a blog post about ")),
-            AgentQuickAction(icon: "folder", text: L("Organize my files"), prompt: L("Help me organize ")),
-        ]
-    }
 }
 
 /// Controls whether tools are selected automatically via RAG or manually by the user
@@ -76,8 +68,16 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var maxTokens: Int?
     /// Per-agent chat quick actions. nil = use defaults, empty = hidden, non-empty = custom list
     public var chatQuickActions: [AgentQuickAction]?
-    /// Per-agent work quick actions. nil = use defaults, empty = hidden, non-empty = custom list
-    public var workQuickActions: [AgentQuickAction]?
+    /// User-authored override for the chat empty-state greeting line.
+    /// `nil` (or empty after trim) renders the existing time-of-day
+    /// default ("Good morning" / "Hello"). Only applied when generative
+    /// greetings resolve to OFF for this agent — when AI is generating,
+    /// the produced greeting wins.
+    public var chatGreeting: String?
+    /// User-authored override for the chat empty-state subtitle.
+    /// `nil` (or empty after trim) renders the localized default
+    /// ("How can I help you today?"). Same gating as `chatGreeting`.
+    public var chatSubtitle: String?
     /// Whether this is a built-in agent (cannot be deleted)
     public let isBuiltIn: Bool
     /// When the agent was created
@@ -131,7 +131,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         chatQuickActions: [AgentQuickAction]? = nil,
-        workQuickActions: [AgentQuickAction]? = nil,
+        chatGreeting: String? = nil,
+        chatSubtitle: String? = nil,
         isBuiltIn: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
@@ -161,7 +162,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.chatQuickActions = chatQuickActions
-        self.workQuickActions = workQuickActions
+        self.chatGreeting = chatGreeting
+        self.chatSubtitle = chatSubtitle
         self.isBuiltIn = isBuiltIn
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -262,7 +264,8 @@ extension Agent {
         temperature = try c.decodeIfPresent(Float.self, forKey: .temperature)
         maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens)
         chatQuickActions = try c.decodeIfPresent([AgentQuickAction].self, forKey: .chatQuickActions)
-        workQuickActions = try c.decodeIfPresent([AgentQuickAction].self, forKey: .workQuickActions)
+        chatGreeting = try c.decodeIfPresent(String.self, forKey: .chatGreeting)
+        chatSubtitle = try c.decodeIfPresent(String.self, forKey: .chatSubtitle)
         isBuiltIn = try c.decode(Bool.self, forKey: .isBuiltIn)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
@@ -468,6 +471,18 @@ public struct AgentLimitsSettings: Codable, Sendable, Equatable {
     public static var defaults: AgentLimitsSettings { AgentLimitsSettings() }
 }
 
+/// Legacy tri-state used before the master `enableGenerativeGreetings`
+/// toggle was retired in favor of a per-agent on/off (auto-on when a
+/// Core Model is configured). Kept around purely so old persisted
+/// `AgentSettings` JSON still decodes — `AgentSettings.init(from:)`
+/// maps `.enabled → true`, `.disabled → false`, `.followGlobal → nil`.
+/// New callers should not use this enum.
+public enum GenerativeGreetingsPreference: String, Codable, Sendable, CaseIterable {
+    case followGlobal
+    case enabled
+    case disabled
+}
+
 /// Top-level opt-in feature settings for an agent. Currently bundles the DB
 /// toggle (spec §5.5), self-scheduling bounds (spec §4.1, §9, §13), and the
 /// Phase 4 storage / cost limits (spec §11.3). New agent-wide opt-in
@@ -486,15 +501,30 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     public var schedule: AgentScheduleSettings
     /// Storage quota + per-run cost ceilings (Phase 4).
     public var limits: AgentLimitsSettings
+    /// Per-agent on/off for the generative greetings feature.
+    /// `nil` means "auto" — the feature runs whenever a Core Model is
+    /// configured, the canonical sync proxy used elsewhere
+    /// (`MemoryService.hasCoreModel()`). Explicit `true`/`false` always
+    /// wins over the auto resolution.
+    public var generativeGreetingsEnabled: Bool?
+    /// Per-agent override for the empty-state greeting voice. `nil` (or
+    /// an empty string after trimming) inherits the global persona from
+    /// `ChatConfiguration.greetingPersona`; both empty falls back to the
+    /// built-in playful default in `GenerativeGreetingService`.
+    public var greetingPersona: String?
 
     public init(
         dbEnabled: Bool,
         schedule: AgentScheduleSettings,
-        limits: AgentLimitsSettings = .defaults
+        limits: AgentLimitsSettings = .defaults,
+        generativeGreetingsEnabled: Bool? = nil,
+        greetingPersona: String? = nil
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
         self.limits = limits
+        self.generativeGreetingsEnabled = generativeGreetingsEnabled
+        self.greetingPersona = greetingPersona
     }
 
     public init(from decoder: Decoder) throws {
@@ -504,6 +534,46 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             try c.decodeIfPresent(AgentScheduleSettings.self, forKey: .schedule)
             ?? AgentScheduleSettings.defaults(for: .ambient)
         limits = try c.decodeIfPresent(AgentLimitsSettings.self, forKey: .limits) ?? .defaults
+        // Backward compat: prior versions stored a tri-state enum under
+        // `generativeGreetings`. Map it onto the new `Bool?` shape so
+        // upgrade installs don't lose their explicit on/off choice. The
+        // new `generativeGreetingsEnabled` key wins when both are
+        // present (which only happens during the first save after
+        // upgrade).
+        if let explicit = try c.decodeIfPresent(Bool.self, forKey: .generativeGreetingsEnabled) {
+            generativeGreetingsEnabled = explicit
+        } else if let legacy = try c.decodeIfPresent(
+            GenerativeGreetingsPreference.self,
+            forKey: .generativeGreetings
+        ) {
+            switch legacy {
+            case .enabled: generativeGreetingsEnabled = true
+            case .disabled: generativeGreetingsEnabled = false
+            case .followGlobal: generativeGreetingsEnabled = nil
+            }
+        } else {
+            generativeGreetingsEnabled = nil
+        }
+        greetingPersona = try c.decodeIfPresent(String.self, forKey: .greetingPersona)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case dbEnabled
+        case schedule
+        case limits
+        case generativeGreetingsEnabled
+        case greetingPersona
+        // Read-only legacy key — never encoded after migration.
+        case generativeGreetings
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(dbEnabled, forKey: .dbEnabled)
+        try c.encode(schedule, forKey: .schedule)
+        try c.encode(limits, forKey: .limits)
+        try c.encodeIfPresent(generativeGreetingsEnabled, forKey: .generativeGreetingsEnabled)
+        try c.encodeIfPresent(greetingPersona, forKey: .greetingPersona)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of
@@ -512,7 +582,22 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         AgentSettings(
             dbEnabled: false,
             schedule: AgentScheduleSettings.defaults(for: .ambient),
-            limits: .defaults
+            limits: .defaults,
+            generativeGreetingsEnabled: nil,
+            greetingPersona: nil
         )
+    }
+}
+
+// MARK: - Generative Greetings Helpers
+
+extension Agent {
+    /// Resolves whether generative greetings should run for this agent.
+    /// Explicit per-agent on/off always wins; otherwise we auto-enable
+    /// the feature whenever a Core Model is configured. Pass
+    /// `coreModelConfigured: AppConfiguration.shared.chatConfig.coreModelIdentifier != nil`
+    /// at the call site (the canonical sync proxy used elsewhere).
+    public func shouldUseGenerativeGreetings(coreModelConfigured: Bool) -> Bool {
+        settings.generativeGreetingsEnabled ?? coreModelConfigured
     }
 }

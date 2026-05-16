@@ -40,9 +40,11 @@ struct EvalTimeoutReportTests {
         #expect(report.counts.errored == 2)
         #expect(report.cases.map(\.id) == ["broken.json", "capability_search.browser-prefix"])
         #expect(report.cases[1].query == "browser")
-        #expect(report.cases[1].notes == [
-            "timeout: startup bootstrap exceeded 5s; eval aborted before case execution"
-        ])
+        #expect(
+            report.cases[1].notes == [
+                "timeout: startup bootstrap exceeded 5s; eval aborted before case execution"
+            ]
+        )
     }
 
     @Test func configuredStartupTimeoutHonorsEnvironment() {

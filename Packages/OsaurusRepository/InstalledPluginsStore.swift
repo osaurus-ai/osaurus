@@ -32,7 +32,17 @@ public struct PluginReceipt: Codable, Equatable, Sendable {
     public let public_keys: [String: String]?
     public let artifact: ArtifactInfo
 
-    public init(plugin_id: String, version: SemanticVersion, installed_at: Date, dylib_filename: String, dylib_sha256: String, platform: String, arch: String, public_keys: [String: String]? = nil, artifact: ArtifactInfo) {
+    public init(
+        plugin_id: String,
+        version: SemanticVersion,
+        installed_at: Date,
+        dylib_filename: String,
+        dylib_sha256: String,
+        platform: String,
+        arch: String,
+        public_keys: [String: String]? = nil,
+        artifact: ArtifactInfo
+    ) {
         self.plugin_id = plugin_id
         self.version = version
         self.installed_at = installed_at

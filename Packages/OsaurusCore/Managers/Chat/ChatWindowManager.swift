@@ -45,8 +45,44 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     private var windowStates: [UUID: ChatWindowState] = [:]
     private var sessionCallbacks: [UUID: () -> Void] = [:]
 
+    /// Sleep/wake observers on `NSWorkspace.shared.notificationCenter`.
+    /// Held so we can detach them in `deinit`. Pause the greeting pool
+    /// on sleep so a closed laptop doesn't keep firing background
+    /// inferences against the GPU.
+    nonisolated(unsafe) private var sleepObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var wakeObserver: NSObjectProtocol?
+
     private override init() {
         super.init()
+        installSleepWakeObservers()
+    }
+
+    deinit {
+        let nc = NSWorkspace.shared.notificationCenter
+        if let token = sleepObserver { nc.removeObserver(token) }
+        if let token = wakeObserver { nc.removeObserver(token) }
+    }
+
+    /// Hook NSWorkspace's sleep/wake notifications to the pool's
+    /// pause/resume seam. Notifications from `NSWorkspace` arrive on
+    /// the main thread, but the pool is an actor so we hop through
+    /// `Task` to call into it.
+    private func installSleepWakeObservers() {
+        let nc = NSWorkspace.shared.notificationCenter
+        sleepObserver = nc.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { await GenerativeGreetingPool.shared.pause() }
+        }
+        wakeObserver = nc.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { await GenerativeGreetingPool.shared.resume() }
+        }
     }
 
     // MARK: - Public API
@@ -187,6 +223,25 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// Hide a window by ID
     public func hideWindow(id: UUID) {
         guard let window = nsWindows[id] else { return }
+        // Drop any cached AI-generated empty-state content so re-opening
+        // the window pops a fresh entry from `GenerativeGreetingPool`
+        // instead of flashing the previous session's greeting before
+        // the trigger replaces it. Idempotent — clearing an already
+        // `.idle` session is a no-op.
+        if let state = windowStates[id] {
+            state.session.resetGenerativeGreeting()
+        }
+        // Tell the pool the user no longer has THIS window's agent on
+        // screen so the 5-min ticker stops topping up its cache. The
+        // pool scopes the clear to the matching agent so a second
+        // visible window for a different agent keeps its active
+        // pointer; same-agent multi-window is rare enough that any
+        // residual over-clearing is recovered on the next empty-state
+        // appearance via `setActive`.
+        if let info = windows[id] {
+            let agentId = info.agentId
+            Task { await GenerativeGreetingPool.shared.clearActive(agentId: agentId) }
+        }
         window.orderOut(nil)
         print("[ChatWindowManager] Hid window \(id)")
     }
@@ -225,6 +280,15 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// Check if any windows are visible
     public var hasVisibleWindows: Bool {
         nsWindows.values.contains { $0.isVisible }
+    }
+
+    /// True when any open chat session is currently streaming a model
+    /// response. Read by `GenerativeGreetingPool` to defer background
+    /// refills while an interactive turn is in flight — both calls
+    /// share the same MLX context and unboxing them concurrently
+    /// degrades token-per-second on the user's active conversation.
+    public var isAnySessionStreaming: Bool {
+        windowStates.values.contains { $0.session.isStreaming }
     }
 
     /// Get the count of active windows
