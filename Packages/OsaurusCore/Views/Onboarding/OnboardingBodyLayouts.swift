@@ -18,33 +18,62 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Scroll Container
+
+/// Single source of truth for any vertical scrolling inside an onboarding
+/// body. Applies the shared `scrollContentBuffer` so glass-card hover
+/// shadows clear the chrome's body clip on top/bottom edges. Step files
+/// should always reach for this instead of building a `ScrollView` inline.
+struct OnboardingScrollContainer<Content: View>: View {
+    let alignment: Alignment
+    let content: Content
+
+    init(
+        alignment: Alignment = .topLeading,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.alignment = alignment
+        self.content = content()
+    }
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            content
+                .frame(maxWidth: .infinity, alignment: alignment)
+                .padding(OnboardingMetrics.scrollContentBuffer)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+    }
+}
+
 // MARK: - Two-Column Body
 
-struct OnboardingTwoColumnBody<RightContent: View>: View {
-    let illustrationAsset: String?
-    let leftHeadline: LocalizedStringKey?
-    let leftBody: LocalizedStringKey?
+/// Two-column body with a left visual column and a right form / content
+/// column. The default initializer builds the standard
+/// illustration + headline + supporting copy left column; a generalized
+/// `leftColumn:` overload lets steps (e.g. Create Agent) substitute a
+/// custom visual (preview card, etc.) while keeping the shared widths,
+/// paddings, and right-column scroll policy.
+struct OnboardingTwoColumnBody<LeftContent: View, RightContent: View>: View {
+    let leftContent: LeftContent
     let subtitle: LocalizedStringKey?
     /// When `true` (default) the right column wraps `rightContent` in a
-    /// single vertical `ScrollView`. Set `false` for steps that need to
-    /// manage their own internal scroll regions (e.g. a sticky header above
-    /// a scrollable substate body).
+    /// single vertical `OnboardingScrollContainer`. Set `false` for steps
+    /// that need to manage their own internal scroll regions (e.g. a sticky
+    /// header above a scrollable substate body).
     let useScrollView: Bool
     let rightContent: RightContent
 
     @Environment(\.theme) private var theme
 
+    /// Generalized initializer — caller supplies the left column.
     init(
-        illustrationAsset: String?,
-        leftHeadline: LocalizedStringKey? = nil,
-        leftBody: LocalizedStringKey? = nil,
         subtitle: LocalizedStringKey? = nil,
         useScrollView: Bool = true,
+        @ViewBuilder leftColumn: () -> LeftContent,
         @ViewBuilder rightContent: () -> RightContent
     ) {
-        self.illustrationAsset = illustrationAsset
-        self.leftHeadline = leftHeadline
-        self.leftBody = leftBody
+        self.leftContent = leftColumn()
         self.subtitle = subtitle
         self.useScrollView = useScrollView
         self.rightContent = rightContent()
@@ -52,7 +81,7 @@ struct OnboardingTwoColumnBody<RightContent: View>: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            leftColumn
+            leftColumnContainer
                 .frame(width: OnboardingMetrics.leftColumnWidth)
 
             rightColumn
@@ -63,34 +92,14 @@ struct OnboardingTwoColumnBody<RightContent: View>: View {
 
     // MARK: - Left Column
 
-    private var leftColumn: some View {
+    /// Wraps the caller's left-column content with the shared paddings,
+    /// vertical centring, and width constraint so every two-column step
+    /// has a pixel-stable rhythm.
+    private var leftColumnContainer: some View {
         VStack(alignment: .leading, spacing: 0) {
             Spacer(minLength: 0)
-
-            illustrationBlock
-
-            if leftHeadline != nil || leftBody != nil {
-                Spacer().frame(height: OnboardingMetrics.illustrationToHeadline)
-            }
-
-            if let headline = leftHeadline {
-                Text(headline, bundle: .module)
-                    .font(theme.font(size: OnboardingMetrics.leftHeadlineSize, weight: .bold))
-                    .foregroundColor(theme.primaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if let body = leftBody {
-                Spacer().frame(height: OnboardingMetrics.leftHeadlineToBody)
-                Text(body, bundle: .module)
-                    .font(theme.font(size: OnboardingMetrics.leftBodySize))
-                    .foregroundColor(theme.secondaryText)
-                    .lineSpacing(4)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
+            leftContent
+                .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, OnboardingMetrics.leftColumnPadding)
@@ -98,43 +107,21 @@ struct OnboardingTwoColumnBody<RightContent: View>: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
-    private var illustrationBlock: some View {
-        ZStack {
-            Circle()
-                .fill(theme.accentColor.opacity(theme.isDark ? 0.16 : 0.10))
-                .frame(width: 220, height: 220)
-                .blur(radius: 50)
-
-            if let asset = illustrationAsset, OnboardingAssetCheck.exists(asset) {
-                Image(asset, bundle: .module)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: OnboardingMetrics.illustrationMaxHeight)
-            } else {
-                IllustrationPlaceholder()
-                    .frame(maxWidth: .infinity, maxHeight: OnboardingMetrics.illustrationMaxHeight)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: OnboardingMetrics.illustrationMaxHeight)
-    }
-
     // MARK: - Right Column
 
     /// Right column. When `useScrollView` is `true`, the optional subtitle +
-    /// `rightContent` are wrapped in a single vertical `ScrollView`. When
-    /// `false`, the subtitle and content are laid out non-scrollably and the
-    /// caller is expected to manage any inner scroll regions itself.
+    /// `rightContent` are wrapped in a single shared
+    /// `OnboardingScrollContainer`. When `false`, the subtitle and content
+    /// are laid out non-scrollably and the caller is expected to manage
+    /// any inner scroll regions itself.
     @ViewBuilder
     private var rightColumn: some View {
         if useScrollView {
-            ScrollView(.vertical, showsIndicators: false) {
+            OnboardingScrollContainer {
                 rightInnerStack
                     .padding(.horizontal, OnboardingMetrics.rightColumnHorizontalPadding)
                     .padding(.vertical, OnboardingMetrics.bodyVerticalPadding)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             rightInnerStack
                 .padding(.horizontal, OnboardingMetrics.rightColumnHorizontalPadding)
@@ -162,8 +149,123 @@ struct OnboardingTwoColumnBody<RightContent: View>: View {
     }
 }
 
+// MARK: - Two-Column Body — illustration convenience
+
+extension OnboardingTwoColumnBody where LeftContent == OnboardingIllustrationLeftColumn {
+    /// Convenience initializer producing the canonical illustration +
+    /// headline + body left column. Used by Configure AI and Identity.
+    init(
+        illustrationAsset: String?,
+        leftHeadline: LocalizedStringKey? = nil,
+        leftBody: LocalizedStringKey? = nil,
+        subtitle: LocalizedStringKey? = nil,
+        useScrollView: Bool = true,
+        @ViewBuilder rightContent: () -> RightContent
+    ) {
+        self.init(
+            subtitle: subtitle,
+            useScrollView: useScrollView,
+            leftColumn: {
+                OnboardingIllustrationLeftColumn(
+                    illustrationAsset: illustrationAsset,
+                    headline: leftHeadline,
+                    body: leftBody
+                )
+            },
+            rightContent: rightContent
+        )
+    }
+}
+
+// MARK: - Illustration Left Column
+
+/// The canonical left column for `OnboardingTwoColumnBody`: glow-backed
+/// illustration, optional headline, optional supporting body. Promoted to
+/// a named view so other steps can reuse it directly when they need a
+/// custom-laid-out left column that *also* renders the illustration.
+struct OnboardingIllustrationLeftColumn: View {
+    let illustrationAsset: String?
+    let headline: LocalizedStringKey?
+    let supportingBody: LocalizedStringKey?
+
+    @Environment(\.theme) private var theme
+
+    init(
+        illustrationAsset: String?,
+        headline: LocalizedStringKey? = nil,
+        body: LocalizedStringKey? = nil
+    ) {
+        self.illustrationAsset = illustrationAsset
+        self.headline = headline
+        self.supportingBody = body
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            illustrationBlock
+
+            if headline != nil || supportingBody != nil {
+                Spacer().frame(height: OnboardingMetrics.illustrationToHeadline)
+            }
+
+            if let headline = headline {
+                Text(headline, bundle: .module)
+                    .font(theme.font(size: OnboardingMetrics.leftHeadlineSize, weight: .bold))
+                    .foregroundColor(theme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let body = supportingBody {
+                Spacer().frame(height: OnboardingMetrics.leftHeadlineToBody)
+                Text(body, bundle: .module)
+                    .font(theme.font(size: OnboardingMetrics.leftBodySize))
+                    .foregroundColor(theme.secondaryText)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var illustrationBlock: some View {
+        ZStack {
+            Circle()
+                .fill(theme.accentColor.opacity(theme.isDark ? 0.16 : 0.10))
+                .frame(width: 220, height: 220)
+                .blur(radius: 50)
+
+            if let asset = illustrationAsset, OnboardingAssetCheck.exists(asset) {
+                Image(asset, bundle: .module)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: OnboardingMetrics.illustrationMaxHeight)
+            } else {
+                IllustrationPlaceholder()
+                    .frame(maxWidth: .infinity, maxHeight: OnboardingMetrics.illustrationMaxHeight)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: OnboardingMetrics.illustrationMaxHeight)
+    }
+}
+
 // MARK: - Hero Body
 
+/// Single-column centered hero (illustration + headline + subtitle).
+///
+/// Layout notes:
+///  - `ScrollView` is a backstop for long localized copy / large
+///    Dynamic Type — content is centered in the viewport when it fits
+///    and scrolls when it doesn't.
+///  - The wrapping copy must NOT use `fixedSize(vertical: true)` next
+///    to `.frame(maxWidth:)`: SwiftUI's ideal-size pass can lock the
+///    height at single-line, clipping multi-line wrapped text.
+///  - Centring uses `.frame(minHeight:, alignment:)` rather than
+///    `Spacer().layoutPriority(...)`; layout-priority Spacers collapse
+///    to their minimum length under a `ScrollView`'s unbounded
+///    vertical proposal.
 struct OnboardingHeroBody: View {
     let illustrationAsset: String?
     let headline: LocalizedStringKey?
@@ -182,12 +284,20 @@ struct OnboardingHeroBody: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Top spacer is slightly heavier than the bottom (3:2) so the
-            // content reads "above the fold" rather than floating dead-center.
-            Spacer(minLength: 0)
-                .layoutPriority(0.6)
+        GeometryReader { geo in
+            ScrollView(.vertical, showsIndicators: false) {
+                heroStack
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, OnboardingMetrics.heroBodyHorizontalPadding)
+                    .padding(.vertical, OnboardingMetrics.heroBodyVerticalPadding)
+                    .frame(minHeight: geo.size.height, alignment: .center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
 
+    private var heroStack: some View {
+        VStack(spacing: 0) {
             heroIllustration
 
             if headline != nil || subtitle != nil {
@@ -199,7 +309,6 @@ struct OnboardingHeroBody: View {
                     .font(theme.font(size: OnboardingMetrics.heroHeadlineSize, weight: .bold))
                     .foregroundColor(theme.primaryText)
                     .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: OnboardingMetrics.heroMaxTextWidth)
             }
 
@@ -210,16 +319,9 @@ struct OnboardingHeroBody: View {
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
                     .lineSpacing(4)
-                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: OnboardingMetrics.heroMaxTextWidth)
             }
-
-            Spacer(minLength: 0)
-                .layoutPriority(0.4)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 32)
-        .padding(.vertical, 18)
     }
 
     private var heroIllustration: some View {

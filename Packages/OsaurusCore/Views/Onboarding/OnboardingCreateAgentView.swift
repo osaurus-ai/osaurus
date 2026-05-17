@@ -85,22 +85,19 @@ struct CreateAgentBody: View {
     private let formMaxWidth: CGFloat = 440
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            leftColumn
-                .frame(width: OnboardingMetrics.leftColumnWidth)
-
-            rightColumn
-                .frame(maxWidth: .infinity)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        OnboardingTwoColumnBody(
+            leftColumn: { leftColumnContent },
+            rightContent: { rightColumnContent }
+        )
     }
 
-    // MARK: - Layout
+    // MARK: - Left column
 
-    private var leftColumn: some View {
+    /// Left-column content for the shared two-column body. The shared
+    /// container handles widths, padding, and vertical centring so this
+    /// view only needs to lay out the in-column composition.
+    private var leftColumnContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: 0)
-
             agentPreviewCard
 
             Spacer().frame(height: OnboardingMetrics.illustrationToHeadline)
@@ -122,120 +119,100 @@ struct CreateAgentBody: View {
             .lineSpacing(4)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, OnboardingMetrics.leftColumnPadding)
-        .padding(.vertical, OnboardingMetrics.bodyVerticalPadding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
-    private var rightColumn: some View {
-        ScrollView(.vertical, showsIndicators: false) {
+    // MARK: - Right column
+
+    /// Right-column form. Wrapped by the shared two-column body in an
+    /// `OnboardingScrollContainer`, so the column gets the standard
+    /// scroll buffer (which clears glass-card hover shadows on the
+    /// chrome's clip) without each step re-applying it manually.
+    private var rightColumnContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
             // Sequenced top-to-bottom in dependency order: pick a visual
             // identity (avatar), then a behavior preset (starter) — which
             // prefills both name and prompt — then refine.
-            VStack(alignment: .leading, spacing: 16) {
-                avatarRow
-                starterRow
-                nameField
-                systemPromptField
-            }
-            .frame(maxWidth: formMaxWidth, alignment: .leading)
-            .padding(.horizontal, OnboardingMetrics.rightColumnHorizontalPadding)
-            .padding(.top, OnboardingMetrics.bodyVerticalPadding)
-            .padding(.bottom, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            avatarRow
+            starterRow
+            nameField
+            systemPromptField
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: formMaxWidth, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Live agent preview rendered as an `OnboardingGlassCard` so the
+    /// preview shares the same radius / border / shadow vocabulary as
+    /// every other onboarding card.
     private var agentPreviewCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 14) {
-                AgentAvatarView(
-                    mascotId: state.selectedAvatar,
-                    name: previewName,
-                    tint: agentColorFor(previewName),
-                    diameter: 68,
-                    monogramFontSize: 24,
-                    borderWidth: 1.5
-                )
-                .shadow(color: theme.accentColor.opacity(theme.isDark ? 0.24 : 0.16), radius: 18, x: 0, y: 8)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(previewName)
-                        .font(theme.font(size: 20, weight: .bold))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-
-                    HStack(spacing: 6) {
-                        Image(systemName: state.selectedTemplate.icon)
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(LocalizedStringKey(state.selectedTemplate.label), bundle: .module)
-                            .font(theme.font(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(theme.accentColor.opacity(0.12)))
-                    .overlay(Capsule().strokeBorder(theme.accentColor.opacity(0.22), lineWidth: 1))
-                }
-            }
-
-            Divider()
-                .overlay(theme.primaryBorder.opacity(0.45))
-
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 6) {
-                    Image(systemName: "quote.opening")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("Prompt preview", bundle: .module)
-                        .textCase(.uppercase)
-                        .font(theme.font(size: 10, weight: .bold))
-                        .tracking(0.6)
-                }
-                .foregroundColor(theme.tertiaryText)
-
-                Text(previewPrompt)
-                    .font(theme.font(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .lineSpacing(3)
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, minHeight: OnboardingMetrics.illustrationMaxHeight, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            theme.inputBackground.opacity(theme.isDark ? 0.92 : 0.98),
-                            theme.accentColor.opacity(theme.isDark ? 0.10 : 0.06),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+        OnboardingGlassCard {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .center, spacing: 14) {
+                    AgentAvatarView(
+                        mascotId: state.selectedAvatar,
+                        name: previewName,
+                        tint: agentColorFor(previewName),
+                        diameter: 68,
+                        monogramFontSize: 24,
+                        borderWidth: 1.5
                     )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.glassEdgeLight.opacity(theme.isDark ? 0.24 : 0.34),
-                            theme.accentColor.opacity(0.18),
-                            theme.primaryBorder.opacity(0.18),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
-        .shadow(color: Color.black.opacity(theme.isDark ? 0.18 : 0.08), radius: 18, x: 0, y: 12)
+                    .shadow(
+                        color: theme.accentColor.opacity(theme.isDark ? 0.24 : 0.16),
+                        radius: 18,
+                        x: 0,
+                        y: 8
+                    )
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(previewName)
+                            .font(theme.font(size: 20, weight: .bold))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+
+                        HStack(spacing: 6) {
+                            Image(systemName: state.selectedTemplate.icon)
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(LocalizedStringKey(state.selectedTemplate.label), bundle: .module)
+                                .font(theme.font(size: 11, weight: .semibold))
+                        }
+                        .foregroundColor(theme.accentColor)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                        .overlay(Capsule().strokeBorder(theme.accentColor.opacity(0.22), lineWidth: 1))
+                    }
+                }
+
+                Divider()
+                    .overlay(theme.primaryBorder.opacity(0.45))
+
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "quote.opening")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Prompt preview", bundle: .module)
+                            .textCase(.uppercase)
+                            .font(theme.font(size: OnboardingMetrics.sectionLabelSize, weight: .bold))
+                            .tracking(0.6)
+                    }
+                    .foregroundColor(theme.tertiaryText)
+
+                    Text(previewPrompt)
+                        .font(theme.font(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .lineSpacing(3)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(18)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: OnboardingMetrics.illustrationMaxHeight,
+                alignment: .topLeading
+            )
+        }
     }
 
     private var previewName: String {
@@ -282,10 +259,10 @@ struct CreateAgentBody: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: OnboardingMetrics.selectableRowRadius, style: .continuous)
                     .fill(isSelected ? theme.accentColor.opacity(0.12) : theme.inputBackground)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        RoundedRectangle(cornerRadius: OnboardingMetrics.selectableRowRadius, style: .continuous)
                             .strokeBorder(
                                 isSelected ? theme.accentColor.opacity(0.45) : theme.inputBorder,
                                 lineWidth: isSelected ? 1.5 : 1

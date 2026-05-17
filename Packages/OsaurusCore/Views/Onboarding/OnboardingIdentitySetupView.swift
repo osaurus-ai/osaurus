@@ -370,64 +370,31 @@ struct IdentityBody: View {
     // MARK: - Error / Generating
 
     private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.errorColor)
-            Text(message)
-                .font(theme.font(size: 12, weight: .medium))
-                .foregroundColor(theme.errorColor)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.errorColor.opacity(0.10))
-        )
+        OnboardingCalloutBanner(tone: .error, rawMessage: message)
     }
 
     private var generatingBody: some View {
-        HStack(spacing: 12) {
-            ProgressView()
-                .scaleEffect(0.9)
-            Text("Generating identity…", bundle: .module)
-                .font(theme.font(size: 13, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            Spacer(minLength: 0)
+        OnboardingGlassCard {
+            HStack(spacing: 12) {
+                ProgressView()
+                    .scaleEffect(0.9)
+                Text("Generating identity…", bundle: .module)
+                    .font(theme.font(size: 13, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 60)
+            .padding(14)
         }
-        .frame(maxWidth: .infinity, minHeight: 60)
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: OnboardingMetrics.cardCornerRadius, style: .continuous)
-                .fill(theme.cardBackground.opacity(theme.glassEnabled ? 0.5 : 1.0))
-                .overlay(
-                    RoundedRectangle(cornerRadius: OnboardingMetrics.cardCornerRadius, style: .continuous)
-                        .strokeBorder(theme.cardBorder, lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Recovery body
 
     private func recoveryBody(info: IdentityInfo) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Text("Lost phrases cannot be recovered.", bundle: .module)
-                    .font(theme.font(size: 12, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.warningColor.opacity(0.10))
+            OnboardingCalloutBanner(
+                tone: .warning,
+                message: "Lost phrases cannot be recovered."
             )
 
             if let mnemonic = info.mnemonic {

@@ -64,6 +64,8 @@ enum OnboardingMetrics {
     static let heroIllustrationToHeadline: CGFloat = 24
     static let heroHeadlineToSubtitle: CGFloat = 12
     static let heroMaxTextWidth: CGFloat = 460
+    static let heroBodyHorizontalPadding: CGFloat = 32
+    static let heroBodyVerticalPadding: CGFloat = 18
 
     // Typography
     static let titleSize: CGFloat = 16
@@ -91,6 +93,57 @@ enum OnboardingMetrics {
     static let buttonHeight: CGFloat = 42
     /// Standard CTA width used by every primary footer button.
     static let ctaWidthCompact: CGFloat = 200
+    /// Label size for the brand / stateful CTAs in the footer.
+    static let ctaLabelSize: CGFloat = 15
+    /// Label size for inline / compact buttons (in-card actions).
+    static let compactLabelSize: CGFloat = 12
+    /// Label size for tertiary text-link buttons (e.g. "Skip for now").
+    static let linkLabelSize: CGFloat = 13
+
+    // Compact / inline buttons (e.g. "Try again", "Use Apple Intelligence")
+    /// Corner radius for small in-card action buttons.
+    static let inlineButtonRadius: CGFloat = 8
+    /// Horizontal padding for compact buttons.
+    static let inlineButtonPaddingH: CGFloat = 12
+    /// Vertical padding for compact buttons.
+    static let inlineButtonPaddingV: CGFloat = 6
+
+    // Segmented control (path picker, protocol toggle, starter chips)
+    /// Outer track corner radius for `OnboardingSegmentedControl`.
+    static let segmentControlRadius: CGFloat = 11
+    /// Inset between the track and its segment fills.
+    static let segmentControlInset: CGFloat = 3
+    /// Corner radius of the selected-segment fill.
+    static let segmentRadius: CGFloat = 8
+    /// Default height of a single segment.
+    static let segmentHeight: CGFloat = 30
+    /// Height of the protocol pill toggle (taller than the standard
+    /// segmented control because it pairs with a labelled form field).
+    static let protocolToggleHeight: CGFloat = 36
+
+    // Selectable rows (e.g. OpenAI auth choice)
+    /// Corner radius of the bordered selectable row.
+    static let selectableRowRadius: CGFloat = 9
+    /// Padding inside a selectable row.
+    static let selectableRowPadding: CGFloat = 10
+
+    // Banners (warning / error / info / success callouts)
+    /// Corner radius for inline banners and callouts.
+    static let bannerCornerRadius: CGFloat = 8
+    /// Horizontal padding inside banners.
+    static let bannerPaddingH: CGFloat = 12
+    /// Vertical padding inside banners.
+    static let bannerPaddingV: CGFloat = 10
+
+    // Scroll content buffer
+    /// Insets applied to scroll content inside an onboarding body so
+    /// card hover shadows (`OnboardingGlassCard` uses `radius:16, y:6`
+    /// on hover) don't clip against the scroll-area / chrome body
+    /// edges. Bottom buffer is heavier than top so the lifted-shadow
+    /// of the bottom-most card has room to render.
+    static var scrollContentBuffer: EdgeInsets {
+        EdgeInsets(top: 8, leading: 6, bottom: 20, trailing: 6)
+    }
 
     /// Horizontal offset used by step slide transitions. Sized to the full
     /// window width so views slide cleanly off-screen instead of overlapping.
@@ -124,6 +177,16 @@ enum OnboardingStyle {
     // Accent edge highlight
     static let accentEdgeHoverOpacity: Double = 0.18
     static let accentEdgeNormalOpacity: Double = 0.10
+}
+
+// MARK: - Semantic Color Helpers
+
+extension ThemeProtocol {
+    /// Foreground color to use *on* `accentColor` fills. Returns
+    /// `primaryBackground` so dark-on-light and light-on-dark stay
+    /// readable — light mode accent is near-black, dark mode accent is
+    /// cream, and `primaryBackground` flips to match.
+    var onboardingOnAccent: Color { primaryBackground }
 }
 
 // MARK: - Per-Step Preferred Size (constant)

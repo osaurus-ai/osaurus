@@ -296,13 +296,103 @@ struct OnboardingTextButton: View {
     var body: some View {
         Button(action: action) {
             Text(LocalizedStringKey(title), bundle: .module)
-                .font(theme.font(size: 13, weight: .medium))
+                .font(theme.font(size: OnboardingMetrics.linkLabelSize, weight: .medium))
                 .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
                 .underline(isHovered)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
             withAnimation(theme.animationQuick()) { isHovered = hovering }
+        }
+    }
+}
+
+// MARK: - Compact Button
+
+/// Visual style for `OnboardingCompactButton`.
+enum OnboardingCompactButtonStyle {
+    /// Filled with the theme accent — primary action inside an in-card
+    /// row (e.g. "Try again", "Use Apple Intelligence").
+    case accent
+    /// Stroked outline — secondary action paired with `.accent` (e.g.
+    /// "Use a cloud provider").
+    case outline
+    /// No background, label-only — destructive / dismissive actions
+    /// (e.g. "Choose another model").
+    case ghost
+}
+
+/// Small in-card action button. One radius/padding pair, one label
+/// size, one optional leading icon — used for inline "Try again",
+/// "Use Apple Intelligence", "Use a cloud provider" actions.
+struct OnboardingCompactButton: View {
+    let title: String
+    let icon: String?
+    let style: OnboardingCompactButtonStyle
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    init(
+        title: String,
+        icon: String? = nil,
+        style: OnboardingCompactButtonStyle = .accent,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.icon = icon
+        self.style = style
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let icon = icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .font(theme.font(size: OnboardingMetrics.compactLabelSize, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundColor(foregroundColor)
+            .padding(.horizontal, OnboardingMetrics.inlineButtonPaddingH)
+            .padding(.vertical, OnboardingMetrics.inlineButtonPaddingV)
+            .background(background)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(theme.animationQuick()) { isHovered = hovering }
+        }
+    }
+
+    private var foregroundColor: Color {
+        switch style {
+        case .accent: return theme.onboardingOnAccent
+        case .outline: return theme.primaryText
+        case .ghost: return isHovered ? theme.primaryText : theme.secondaryText
+        }
+    }
+
+    @ViewBuilder
+    private var background: some View {
+        let shape = RoundedRectangle(
+            cornerRadius: OnboardingMetrics.inlineButtonRadius,
+            style: .continuous
+        )
+        switch style {
+        case .accent:
+            shape.fill(theme.accentColor.opacity(isHovered ? 0.92 : 1.0))
+        case .outline:
+            shape.stroke(theme.cardBorder, lineWidth: 1)
+                .background(
+                    shape.fill(isHovered ? theme.cardBackground.opacity(0.5) : Color.clear)
+                )
+        case .ghost:
+            shape.fill(isHovered ? theme.cardBackground.opacity(0.5) : Color.clear)
         }
     }
 }

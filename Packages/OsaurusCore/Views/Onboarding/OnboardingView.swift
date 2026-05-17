@@ -135,14 +135,29 @@ public struct OnboardingView: View {
         }
     }
 
+    /// When a step has no caption we reserve the vertical footprint
+    /// with a transparent `Color.clear` block (hidden from VoiceOver)
+    /// so the action row's vertical position stays stable across
+    /// step transitions.
     @ViewBuilder
     private var stepFooterCaptionText: some View {
-        Text(chromeFooterCaption ?? " ")
-            .font(theme.font(size: OnboardingMetrics.captionSize))
-            .foregroundColor(theme.tertiaryText)
-            .multilineTextAlignment(.center)
-            .lineLimit(1)
-            .opacity(chromeFooterCaption == nil ? 0 : 1)
+        if let caption = chromeFooterCaption {
+            Text(caption, bundle: .module)
+                .font(theme.font(size: OnboardingMetrics.captionSize))
+                .foregroundColor(theme.tertiaryText)
+                .multilineTextAlignment(.center)
+                .lineLimit(1)
+        } else {
+            Color.clear
+                .frame(height: footerCaptionLineHeight)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// Approximate height of one caption line at
+    /// `OnboardingMetrics.captionSize`.
+    private var footerCaptionLineHeight: CGFloat {
+        OnboardingMetrics.captionSize + 4
     }
 
     @ViewBuilder
