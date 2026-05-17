@@ -2055,7 +2055,8 @@ private struct ProviderEditSheet: View {
         let auth = manualAuthEndpoint.trimmingCharacters(in: .whitespaces)
         let token = manualTokenEndpoint.trimmingCharacters(in: .whitespaces)
         let clientId = manualClientId.trimmingCharacters(in: .whitespaces)
-        let scopes = manualScopes
+        let scopes =
+            manualScopes
             .split(whereSeparator: { $0 == " " || $0 == "," })
             .map { String($0).trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -2321,7 +2322,9 @@ private struct ProviderEditSheet: View {
         for entry in envEntries
         where entry.isSecret && !entry.key.isEmpty && !entry.value.isEmpty {
             _ = MCPProviderKeychain.saveEnvSecret(
-                entry.value, key: entry.key, for: updatedProvider.id
+                entry.value,
+                key: entry.key,
+                for: updatedProvider.id
             )
         }
 

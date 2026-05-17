@@ -434,7 +434,7 @@ public struct GitHubTreeEntry: Decodable, Sendable {
 /// `relativePath` from the skill's own root so the installer can stash it
 /// under `references/` or `assets/` with a predictable name.
 public struct GitHubSkillAsset: Sendable {
-    public let path: String          // full path within the repo
+    public let path: String  // full path within the repo
     public let relativePath: String  // path relative to the skill dir
     public let size: Int
 
@@ -1042,7 +1042,7 @@ public final class GitHubSkillService: ObservableObject {
     /// `scripts/`, supporting docs under `references/`, binary templates
     /// under `assets/` or `templates/`.
     nonisolated private static let conventionalAssetSubdirs: Set<String> = [
-        "scripts", "references", "assets", "templates"
+        "scripts", "references", "assets", "templates",
     ]
 
     /// Build the full manifest of importable artifacts for one plugin.

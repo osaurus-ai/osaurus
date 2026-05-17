@@ -224,7 +224,8 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         // Migration: legacy configs predate transport / stdio support, so
         // anything not explicitly tagged is HTTP.
         self.transport = try container.decodeIfPresent(MCPProviderTransport.self, forKey: .transport) ?? .http
-        self.executionHost = try container.decodeIfPresent(MCPProviderExecutionHost.self, forKey: .executionHost) ?? .sandbox
+        self.executionHost =
+            try container.decodeIfPresent(MCPProviderExecutionHost.self, forKey: .executionHost) ?? .sandbox
         self.command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
         self.args = try container.decodeIfPresent([String].self, forKey: .args) ?? []
         self.env = try container.decodeIfPresent([String: String].self, forKey: .env) ?? [:]

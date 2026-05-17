@@ -323,7 +323,8 @@ public enum MCPOAuthService {
         else { return nil }
 
         let issuer =
-            oauth.issuer ?? authEndpoint.components(separatedBy: "/").prefix(3)
+            oauth.issuer
+            ?? authEndpoint.components(separatedBy: "/").prefix(3)
             .joined(separator: "/")
         let prm = MCPProtectedResourceMetadata(
             resource: serverURL.absoluteString,

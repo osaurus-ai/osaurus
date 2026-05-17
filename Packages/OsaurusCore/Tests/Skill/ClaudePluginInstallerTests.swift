@@ -1036,7 +1036,7 @@ struct ClaudePluginInstallerTests {
         }
         let counter = Counter()
         await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<20 {
+            for _ in 0 ..< 20 {
                 group.addTask {
                     _ = try? await limiter.run {
                         await counter.enter()

@@ -499,7 +499,9 @@ public final class ClaudePluginInstaller {
                             MCPProviderManager.shared.addProvider(provider, token: nil)
                             for (key, value) in classifiedEnv.realSecrets {
                                 _ = MCPProviderKeychain.saveEnvSecret(
-                                    value, key: key, for: provider.id
+                                    value,
+                                    key: key,
+                                    for: provider.id
                                 )
                             }
                             if !classifiedEnv.placeholderSecrets.isEmpty {
@@ -526,7 +528,8 @@ public final class ClaudePluginInstaller {
                                 continue
                             }
                             let classified = classifyMCPEntries(
-                                server.headers, scope: .header
+                                server.headers,
+                                scope: .header
                             )
                             let oauthConfig = MCPOAuthConfig(
                                 clientId: server.oauth?.clientId,
@@ -548,7 +551,9 @@ public final class ClaudePluginInstaller {
                             MCPProviderManager.shared.addProvider(provider, token: nil)
                             for (key, value) in classified.realSecrets {
                                 _ = MCPProviderKeychain.saveHeaderSecret(
-                                    value, key: key, for: provider.id
+                                    value,
+                                    key: key,
+                                    for: provider.id
                                 )
                             }
                             summary.oauthProvidersNeedingSignIn.append(
@@ -575,7 +580,8 @@ public final class ClaudePluginInstaller {
                                 continue
                             }
                             let classified = classifyMCPEntries(
-                                server.headers, scope: .header
+                                server.headers,
+                                scope: .header
                             )
                             let hasRealToken = (server.token?.isEmpty == false)
                             let hasAnySecretSlot =
@@ -598,7 +604,9 @@ public final class ClaudePluginInstaller {
                             )
                             for (key, value) in classified.realSecrets {
                                 _ = MCPProviderKeychain.saveHeaderSecret(
-                                    value, key: key, for: provider.id
+                                    value,
+                                    key: key,
+                                    for: provider.id
                                 )
                             }
                             if server.tokenIsPlaceholder || !classified.placeholderSecrets.isEmpty {
@@ -977,7 +985,7 @@ public final class ClaudePluginInstaller {
         // inside a much later code block.
         var description = ""
         let scanEnd = min(firstContentLineIndex + 10, lines.count)
-        for idx in firstContentLineIndex..<scanEnd {
+        for idx in firstContentLineIndex ..< scanEnd {
             let stripped = lines[idx].trimmingCharacters(in: .whitespaces)
             if stripped.isEmpty { continue }
             if stripped.lowercased().hasPrefix("description:") {
@@ -1041,7 +1049,7 @@ public final class ClaudePluginInstaller {
     ) -> (rewritten: String, additionalReferences: [(name: String, data: Data)]) {
         // Build a lookup of fetched assets by basename so a rewrite can
         // map "scripts/recalc.py" → "references/recalc.py".
-        var assetByBasename: [String: String] = [:]   // basename → "references|assets/<name>"
+        var assetByBasename: [String: String] = [:]  // basename → "references|assets/<name>"
         for asset in fetchedAssets {
             let basename = (asset.relativePath as NSString).lastPathComponent
             let bucket = shouldStoreAsReference(basename) ? "references" : "assets"
