@@ -236,7 +236,7 @@ public final class ScheduleManager {
         var schedulesToRun: [Schedule] = []
 
         for schedule in enabledSchedules {
-            guard let nextRun = schedule.frequency.nextRunDate(after: now) else { continue }
+            guard let nextRun = schedule.nextRunDateAfterExecutionAnchor(asOf: now) else { continue }
 
             if soonestDate == nil || nextRun < soonestDate! {
                 soonestDate = nextRun
@@ -277,21 +277,7 @@ public final class ScheduleManager {
         let schedulesToRun = schedules.filter { schedule in
             guard schedule.isEnabled else { return false }
             guard !runningTasks.keys.contains(schedule.id) else { return false }  // Already running
-
-            // Determine reference time for checking next run:
-            // - If schedule has run before, use lastRunAt (finds the next run after that)
-            // - Otherwise, look back up to 1 hour (handles new schedules + system sleep)
-            let checkFrom: Date
-            if let lastRun = schedule.lastRunAt {
-                checkFrom = lastRun
-            } else {
-                checkFrom = now.addingTimeInterval(-3600)  // 1 hour ago
-            }
-
-            guard let nextRun = schedule.frequency.nextRunDate(after: checkFrom) else { return false }
-
-            // Run if the scheduled time is now or in the recent past (with small future tolerance)
-            return nextRun <= now.addingTimeInterval(60)
+            return schedule.shouldRunNow(asOf: now)
         }
 
         // Execute all due schedules
@@ -314,16 +300,16 @@ public final class ScheduleManager {
             // For "once" schedules, check if the time has passed
             if case .once(let date) = schedule.frequency {
                 // If the once date is in the past but hasn't run yet
-                if date <= now && schedule.lastRunAt == nil {
+                if date <= now && schedule.executionAnchor == nil {
                     print("[Osaurus] Found missed once schedule: \(schedule.name)")
                     executeSchedule(schedule)
                 }
             } else {
                 // For recurring schedules, check if we missed the last run
-                // Only run if lastRunAt is nil or the next run after lastRunAt is in the past
-                if let lastRun = schedule.lastRunAt {
-                    if let nextAfterLast = schedule.frequency.nextRunDate(after: lastRun),
-                        nextAfterLast <= now
+                // Only run if an execution anchor exists and the next run after it is in the past.
+                if let anchor = schedule.executionAnchor {
+                    if let nextAfterAnchor = schedule.frequency.nextRunDate(after: anchor),
+                        nextAfterAnchor <= now
                     {
                         print("[Osaurus] Found missed recurring schedule: \(schedule.name)")
                         executeSchedule(schedule)
@@ -337,37 +323,43 @@ public final class ScheduleManager {
 
     /// Execute a schedule by dispatching to TaskDispatcher
     private func executeSchedule(_ schedule: Schedule) {
+        var triggeredSchedule = schedule
+        triggeredSchedule.lastTriggeredAt = Date()
+        ScheduleStore.save(triggeredSchedule)
+        refresh()
+
         let request = DispatchRequest(
-            prompt: schedule.instructions,
-            agentId: schedule.agentId,
-            title: schedule.name,
-            parameters: schedule.parameters,
-            folderPath: schedule.folderPath,
-            folderBookmark: schedule.folderBookmark,
+            prompt: triggeredSchedule.instructions,
+            agentId: triggeredSchedule.agentId,
+            title: triggeredSchedule.name,
+            parameters: triggeredSchedule.parameters,
+            folderPath: triggeredSchedule.folderPath,
+            folderBookmark: triggeredSchedule.folderBookmark,
             source: .schedule,
-            externalSessionKey: schedule.id.uuidString
+            externalSessionKey: triggeredSchedule.id.uuidString
         )
 
-        print("[Osaurus] Executing schedule: \(schedule.name)")
+        print("[Osaurus] Executing schedule: \(triggeredSchedule.name)")
 
         let task = Task { @MainActor in
             guard let handle = await TaskDispatcher.shared.dispatch(request) else {
-                print("[Osaurus] Failed to dispatch schedule: \(schedule.name)")
+                print("[Osaurus] Failed to dispatch schedule: \(triggeredSchedule.name)")
+                self.executionTasks.removeValue(forKey: triggeredSchedule.id)
                 return
             }
 
-            self.runningTasks[schedule.id] = ScheduleRunInfo(
-                scheduleId: schedule.id,
-                scheduleName: schedule.name,
-                agentId: schedule.agentId,
+            self.runningTasks[triggeredSchedule.id] = ScheduleRunInfo(
+                scheduleId: triggeredSchedule.id,
+                scheduleName: triggeredSchedule.name,
+                agentId: triggeredSchedule.agentId,
                 chatSessionId: UUID()
             )
 
             let result = await TaskDispatcher.shared.awaitCompletion(handle)
-            self.handleResult(result, schedule: schedule, request: handle.request)
+            self.handleResult(result, schedule: triggeredSchedule, request: handle.request)
         }
 
-        executionTasks[schedule.id] = task
+        executionTasks[triggeredSchedule.id] = task
     }
 
     // MARK: - Result Handling

@@ -445,12 +445,29 @@ struct ThemeEditorView: View {
                             .stroke(currentTheme.primaryBorder, lineWidth: 1)
                     )
 
-                Button {
-                    editingTheme.background.imageData = nil
-                } label: {
-                    Text("Remove Image", bundle: .module)
+                HStack(spacing: 8) {
+                    Button {
+                        showImagePicker = true
+                    } label: {
+                        Label {
+                            Text("Replace Image", bundle: .module)
+                        } icon: {
+                            Image(systemName: "photo.badge.plus")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        editingTheme.background.imageData = nil
+                    } label: {
+                        Label {
+                            Text("Remove Image", bundle: .module)
+                        } icon: {
+                            Image(systemName: "trash")
+                        }
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
             } else {
                 Button(action: { showImagePicker = true }) {
                     VStack(spacing: 8) {

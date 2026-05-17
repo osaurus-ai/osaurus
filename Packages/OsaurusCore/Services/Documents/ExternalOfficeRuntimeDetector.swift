@@ -379,6 +379,9 @@ public struct ExternalOfficeRuntimeDetector: Sendable {
         process.arguments = ["--version"]
         process.standardOutput = outputHandle
         process.standardError = outputHandle
+        let inputHandle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/null"))
+        defer { try? inputHandle?.close() }
+        process.standardInput = inputHandle
 
         do {
             try process.run()

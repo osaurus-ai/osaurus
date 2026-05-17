@@ -341,6 +341,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     public var isEnabled: Bool
     /// When the schedule last ran
     public var lastRunAt: Date?
+    /// When the schedule was last selected for execution
+    public var lastTriggeredAt: Date?
     /// The chat session ID from the last run (for viewing results)
     public var lastChatSessionId: UUID?
     /// When the schedule was created
@@ -359,6 +361,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         frequency: ScheduleFrequency,
         isEnabled: Bool = true,
         lastRunAt: Date? = nil,
+        lastTriggeredAt: Date? = nil,
         lastChatSessionId: UUID? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -373,6 +376,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         self.frequency = frequency
         self.isEnabled = isEnabled
         self.lastRunAt = lastRunAt
+        self.lastTriggeredAt = lastTriggeredAt
         self.lastChatSessionId = lastChatSessionId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -385,7 +389,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         case personaId  // legacy key for migration
         case mode  // legacy key (chat / work) — ignored on decode
         case folderPath, folderBookmark
-        case frequency, isEnabled, lastRunAt, lastChatSessionId
+        case frequency, isEnabled, lastRunAt, lastTriggeredAt, lastChatSessionId
         case createdAt, updatedAt
     }
 
@@ -406,6 +410,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         frequency = try container.decode(ScheduleFrequency.self, forKey: .frequency)
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         lastRunAt = try container.decodeIfPresent(Date.self, forKey: .lastRunAt)
+        lastTriggeredAt = try container.decodeIfPresent(Date.self, forKey: .lastTriggeredAt)
         lastChatSessionId = try container.decodeIfPresent(UUID.self, forKey: .lastChatSessionId)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
@@ -423,6 +428,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         try container.encode(frequency, forKey: .frequency)
         try container.encode(isEnabled, forKey: .isEnabled)
         try container.encodeIfPresent(lastRunAt, forKey: .lastRunAt)
+        try container.encodeIfPresent(lastTriggeredAt, forKey: .lastTriggeredAt)
         try container.encodeIfPresent(lastChatSessionId, forKey: .lastChatSessionId)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
@@ -434,6 +440,19 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     public var nextRunDate: Date? {
         guard isEnabled else { return nil }
         return frequency.nextRunDate()
+    }
+
+    /// Most recent execution anchor. Trigger time wins over completion time so
+    /// failed or in-flight runs do not replay the same missed slot.
+    public var executionAnchor: Date? {
+        lastTriggeredAt ?? lastRunAt
+    }
+
+    /// Calculate the next run date from the execution anchor.
+    public func nextRunDateAfterExecutionAnchor(asOf now: Date = Date()) -> Date? {
+        guard isEnabled else { return nil }
+        if case .once = frequency, executionAnchor != nil { return nil }
+        return frequency.nextRunDate(after: executionAnchor ?? now)
     }
 
     /// Human-readable description of when this will next run
@@ -475,19 +494,24 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     }
 
     /// Whether this schedule should run now (or was missed)
-    public func shouldRunNow(toleranceSeconds: TimeInterval = 60) -> Bool {
+    public func shouldRunNow(
+        asOf now: Date = Date(),
+        toleranceSeconds: TimeInterval = 60,
+        initialLookbackSeconds: TimeInterval = 3600
+    ) -> Bool {
         guard isEnabled else { return false }
 
-        // For once schedules, check if we're within tolerance of the target time
+        let latestAllowedFireDate = now.addingTimeInterval(toleranceSeconds)
+
+        // A one-shot should never replay once it has been selected for dispatch.
         if case .once(let date) = frequency {
-            let now = Date()
-            return abs(now.timeIntervalSince(date)) <= toleranceSeconds
+            guard executionAnchor == nil else { return false }
+            return date <= latestAllowedFireDate
         }
 
-        // For recurring schedules, check if nextRunDate is in the past or within tolerance
-        guard let nextRun = frequency.nextRunDate() else { return false }
-        let now = Date()
-        return now >= nextRun.addingTimeInterval(-toleranceSeconds)
+        let checkFrom = executionAnchor ?? now.addingTimeInterval(-initialLookbackSeconds)
+        guard let nextRun = frequency.nextRunDate(after: checkFrom) else { return false }
+        return nextRun <= latestAllowedFireDate
     }
 }
 
