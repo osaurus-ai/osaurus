@@ -21,6 +21,7 @@ struct ToolsManagerView: View {
     @State private var searchText: String = ""
     @State private var hasAppeared = false
     @State private var isRefreshingInstalled = false
+    @ObservedObject private var managementState = ManagementStateManager.shared
 
     // Snapshot values from services (updated via .onReceive / reload)
     @State private var toolEntries: [ToolRegistry.ToolEntry] = []
@@ -59,6 +60,10 @@ struct ToolsManagerView: View {
             withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
                 hasAppeared = true
             }
+            applyPendingSubTabRequest()
+        }
+        .onChange(of: managementState.pendingToolsSubTab) { _, _ in
+            applyPendingSubTabRequest()
         }
         .task(id: searchText) {
             try? await Task.sleep(nanoseconds: 150_000_000)
@@ -326,6 +331,18 @@ struct ToolsManagerView: View {
         toolEntries = ToolRegistry.shared.listTools()
         remoteProviderCount = providerManager.configuration.providers.count
         Task { await updateFilteredLists() }
+    }
+
+    /// Honour one-shot navigation requests routed through
+    /// `ManagementStateManager.pendingToolsSubTab` (e.g. the Claude plugin
+    /// install summary deep-linking to the Remote MCP tab after OAuth or
+    /// bearer-token imports).
+    private func applyPendingSubTabRequest() {
+        guard let raw = managementState.pendingToolsSubTab,
+            let target = ToolsTab(rawValue: raw)
+        else { return }
+        selectedTab = target
+        managementState.pendingToolsSubTab = nil
     }
 }
 

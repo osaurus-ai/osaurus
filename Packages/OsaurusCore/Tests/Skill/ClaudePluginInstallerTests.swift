@@ -260,15 +260,17 @@ struct ClaudePluginInstallerTests {
     }
 
     /// `.mcp.json` with a stdio entry (`command:` + `args:`) must produce a
-    /// `url == nil` server so the installer can list it under "needs manual
-    /// setup".
-    @Test func parsesStdioMCPServerAsSkippable() {
+    /// `url == nil` server and now preserve `command`, `args`, `env`, `cwd`
+    /// so the installer can persist them on the resulting `MCPProvider`.
+    @Test func parsesStdioMCPServerWithCommandAndArgs() {
         let json = #"""
             {
                 "mcpServers": {
                     "local-fs": {
                         "command": "/usr/local/bin/mcp-fs",
-                        "args": ["--root", "/tmp"]
+                        "args": ["--root", "/tmp"],
+                        "env": { "LOG_LEVEL": "debug", "API_KEY": "${SECRET}" },
+                        "cwd": "/tmp"
                     }
                 }
             }
@@ -279,6 +281,11 @@ struct ClaudePluginInstallerTests {
         let server = parsed.servers[0]
         #expect(server.name == "local-fs")
         #expect(server.url == nil)
+        #expect(server.command == "/usr/local/bin/mcp-fs")
+        #expect(server.args == ["--root", "/tmp"])
+        #expect(server.cwd == "/tmp")
+        #expect(server.env["LOG_LEVEL"] == "debug")
+        #expect(server.env["API_KEY"] == "${SECRET}")
     }
 
     /// Some forks of the spec use `servers: {}` instead of `mcpServers: {}`.

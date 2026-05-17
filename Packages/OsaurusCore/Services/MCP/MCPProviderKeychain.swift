@@ -10,6 +10,7 @@
 //    - `.token`         (legacy/static bearer token)
 //    - `.oauth.tokens`  (OAuth 2.1 token blob)
 //    - `.header.<key>`  (per-header secret)
+//    - `.env.<key>`     (per-env-var secret for stdio subprocesses)
 //
 
 import Foundation
@@ -104,6 +105,23 @@ public enum MCPProviderKeychain {
         deleteItem(account: headerAccount(key: key, for: providerId))
     }
 
+    // MARK: - Env secrets (stdio subprocess)
+
+    @discardableResult
+    public static func saveEnvSecret(_ value: String, key: String, for providerId: UUID) -> Bool {
+        setData(Data(value.utf8), account: envAccount(key: key, for: providerId))
+    }
+
+    public static func getEnvSecret(key: String, for providerId: UUID) -> String? {
+        getData(account: envAccount(key: key, for: providerId))
+            .flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    @discardableResult
+    public static func deleteEnvSecret(key: String, for providerId: UUID) -> Bool {
+        deleteItem(account: envAccount(key: key, for: providerId))
+    }
+
     // MARK: - Bulk delete
 
     /// Delete every Keychain item this enum owns for `providerId` — token, OAuth blob,
@@ -147,6 +165,10 @@ public enum MCPProviderKeychain {
 
     private static func headerAccount(key: String, for providerId: UUID) -> String {
         "\(providerId.uuidString).header.\(key)"
+    }
+
+    private static func envAccount(key: String, for providerId: UUID) -> String {
+        "\(providerId.uuidString).env.\(key)"
     }
 
     // MARK: - Generic CRUD

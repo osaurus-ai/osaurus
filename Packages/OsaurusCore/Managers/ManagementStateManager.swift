@@ -30,5 +30,17 @@ public final class ManagementStateManager: ObservableObject {
     /// landed disabled because no cron expression was found.
     @Published public var pendingScheduleEditId: UUID?
 
+    /// One-shot request to focus a specific sub-tab inside `ToolsManagerView`
+    /// (`available`, `remote`, or `sandbox`). Used by the Claude plugin
+    /// import summary to deep-link to the Remote MCP providers tab after
+    /// installing OAuth or bearer-token providers that need finishing touches.
+    @Published public var pendingToolsSubTab: String?
+
+    /// One-shot request to open the editor for a specific MCP provider id.
+    /// `ProvidersView` observes this and resets it to nil after applying.
+    /// Used by the Claude plugin import summary to land the user on the
+    /// exact provider whose env vars or OAuth still need attention.
+    @Published public var pendingMCPProviderEditId: UUID?
+
     private init() {}
 }

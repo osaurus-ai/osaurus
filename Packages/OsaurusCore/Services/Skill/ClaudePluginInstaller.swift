@@ -76,6 +76,25 @@ public struct ClaudePluginInstallReport: Sendable {
         }
     }
 
+    /// An MCP provider the user still needs to finish configuring after
+    /// import (placeholder env vars, missing tokens, or OAuth sign-in).
+    /// `id` matches `MCPProvider.id`, so the install summary can hand it
+    /// to `ManagementStateManager.pendingMCPProviderEditId` for a
+    /// one-click deep-link to the editor.
+    public struct PendingMCPProvider: Sendable, Identifiable, Hashable {
+        public let id: UUID
+        public let name: String
+        /// Env keys / header keys still empty — listed verbatim in the
+        /// install summary so users know what to paste. Empty for OAuth.
+        public let missingKeys: [String]
+
+        public init(id: UUID, name: String, missingKeys: [String] = []) {
+            self.id = id
+            self.name = name
+            self.missingKeys = missingKeys
+        }
+    }
+
     public struct PluginSummary: Sendable {
         public let pluginId: String
         public let pluginName: String
@@ -87,18 +106,29 @@ public struct ClaudePluginInstallReport: Sendable {
         /// attached to imported skills.
         public var importedSkillAssetCount: Int = 0
         /// Server names from `.mcp.json` that we couldn't auto-install because
-        /// Osaurus's remote MCP transport is HTTP/SSE only — these need manual
-        /// stdio configuration.
+        /// they were structurally invalid (e.g. neither `url` nor `command`).
         public var skippedStdioMCPServers: [String] = []
-        /// MCP servers whose env-style token was a placeholder (e.g.
-        /// `${VAULT_TOKEN}`). The provider was created without a token so the
-        /// user must paste a real one before enabling.
-        public var placeholderTokensSkipped: [String] = []
+        /// Stdio MCP servers imported with `executionHost == .sandbox` that
+        /// still need env-var values filled in (the `.mcp.json` declared
+        /// `${VAR}` placeholders). The install summary uses `id` to
+        /// deep-link straight to the provider's editor and `missingKeys`
+        /// to tell the user *which* env vars are still empty.
+        public var stdioProvidersNeedingConfiguration: [PendingMCPProvider] = []
+        /// Stdio MCP servers we couldn't import because the Osaurus sandbox
+        /// is not available on this machine (older macOS, container runtime
+        /// not provisioned, etc.). Imported plugins must run sandboxed; we
+        /// don't offer to install them on the host.
+        public var stdioProvidersBlockedNoSandbox: [String] = []
+        /// HTTP/SSE MCP servers whose token was a placeholder (e.g.
+        /// `${VAULT_TOKEN}`). The provider was created without a token so
+        /// the user must paste a real one before enabling. `missingKeys`
+        /// names the header / env keys that still need real values.
+        public var placeholderTokensSkipped: [PendingMCPProvider] = []
         /// OAuth-protected MCP servers (e.g. Slack, Notion in knowledge-work
         /// plugins) imported as `authType: .oauth` and left disabled. The
-        /// user must complete the OAuth sign-in flow in MCP settings before
-        /// these will actually authenticate.
-        public var oauthProvidersNeedingSignIn: [String] = []
+        /// user must complete the OAuth sign-in flow before these will
+        /// actually authenticate. `missingKeys` is always empty for OAuth.
+        public var oauthProvidersNeedingSignIn: [PendingMCPProvider] = []
         /// Schedules that couldn't infer a cron — created disabled so the
         /// user can review and configure. Identified by `Schedule.id` so the
         /// UI can deep-link to the editor.
@@ -124,10 +154,16 @@ public struct ClaudePluginInstallReport: Sendable {
     public var allSkippedStdioServers: [String] {
         perPlugin.flatMap { $0.skippedStdioMCPServers }
     }
-    public var allPlaceholderTokensSkipped: [String] {
+    public var allStdioProvidersNeedingConfiguration: [PendingMCPProvider] {
+        perPlugin.flatMap { $0.stdioProvidersNeedingConfiguration }
+    }
+    public var allStdioProvidersBlockedNoSandbox: [String] {
+        perPlugin.flatMap { $0.stdioProvidersBlockedNoSandbox }
+    }
+    public var allPlaceholderTokensSkipped: [PendingMCPProvider] {
         perPlugin.flatMap { $0.placeholderTokensSkipped }
     }
-    public var allOAuthProvidersNeedingSignIn: [String] {
+    public var allOAuthProvidersNeedingSignIn: [PendingMCPProvider] {
         perPlugin.flatMap { $0.oauthProvidersNeedingSignIn }
     }
     public var allSchedulesNeedingCron: [PendingSchedule] {
@@ -415,10 +451,67 @@ public final class ClaudePluginInstaller {
                 defer { tick() }
                 if let content = fetched.mcpJson {
                     let parsed = MCPJSONParser.parse(content)
+                    // Precompute sandbox availability once per install run so a
+                    // batch of stdio servers in the same plugin doesn't kick
+                    // off the macOS-version probe N times.
+                    let sandboxAvailable: Bool
+                    #if os(macOS)
+                        sandboxAvailable = await SandboxManager.shared
+                            .checkAvailability().isAvailable
+                    #else
+                        sandboxAvailable = false
+                    #endif
                     for server in parsed.servers {
                         switch server.kind {
-                        case .stdio, .empty:
+                        case .empty:
                             summary.skippedStdioMCPServers.append(server.name)
+
+                        case .stdio:
+                            guard let command = server.command, !command.isEmpty else {
+                                summary.skippedStdioMCPServers.append(server.name)
+                                continue
+                            }
+                            guard sandboxAvailable else {
+                                summary.stdioProvidersBlockedNoSandbox.append(server.name)
+                                continue
+                            }
+                            // Classify env values the same way we classify
+                            // headers: real values go to Keychain, placeholder
+                            // values mark the key as a secret slot the user
+                            // has to fill in later.
+                            let classifiedEnv = classifyMCPEntries(server.env, scope: .env)
+                            let provider = MCPProvider(
+                                name: "\(manifest.name): \(server.name)",
+                                url: "",
+                                enabled: false,
+                                authType: .none,
+                                pluginId: pluginId,
+                                transport: .stdio,
+                                executionHost: .sandbox,
+                                command: command,
+                                args: server.args,
+                                env: classifiedEnv.regular,
+                                secretEnvKeys:
+                                    Array(classifiedEnv.realSecrets.keys)
+                                    + classifiedEnv.placeholderSecrets,
+                                workingDirectory: server.cwd
+                            )
+                            MCPProviderManager.shared.addProvider(provider, token: nil)
+                            for (key, value) in classifiedEnv.realSecrets {
+                                _ = MCPProviderKeychain.saveEnvSecret(
+                                    value, key: key, for: provider.id
+                                )
+                            }
+                            if !classifiedEnv.placeholderSecrets.isEmpty {
+                                summary.stdioProvidersNeedingConfiguration.append(
+                                    .init(
+                                        id: provider.id,
+                                        name: server.name,
+                                        missingKeys: classifiedEnv.placeholderSecrets
+                                    )
+                                )
+                            }
+                            summary.importedMCPProviderCount += 1
 
                         case .oauth:
                             // OAuth provider: create disabled so the user can
@@ -432,6 +525,9 @@ public final class ClaudePluginInstaller {
                                 summary.skippedStdioMCPServers.append(server.name)
                                 continue
                             }
+                            let classified = classifyMCPEntries(
+                                server.headers, scope: .header
+                            )
                             let oauthConfig = MCPOAuthConfig(
                                 clientId: server.oauth?.clientId,
                                 redirectURI: server.oauth?.callbackPort.map {
@@ -442,13 +538,35 @@ public final class ClaudePluginInstaller {
                                 name: "\(manifest.name): \(server.name)",
                                 url: url,
                                 enabled: false,
-                                customHeaders: server.headers ?? [:],
+                                customHeaders: classified.regular,
+                                secretHeaderKeys: Array(classified.realSecrets.keys)
+                                    + Array(classified.placeholderSecrets),
                                 authType: .oauth,
                                 oauth: oauthConfig,
                                 pluginId: pluginId
                             )
                             MCPProviderManager.shared.addProvider(provider, token: nil)
-                            summary.oauthProvidersNeedingSignIn.append(server.name)
+                            for (key, value) in classified.realSecrets {
+                                _ = MCPProviderKeychain.saveHeaderSecret(
+                                    value, key: key, for: provider.id
+                                )
+                            }
+                            summary.oauthProvidersNeedingSignIn.append(
+                                .init(id: provider.id, name: server.name)
+                            )
+                            if !classified.placeholderSecrets.isEmpty
+                                && !summary.placeholderTokensSkipped.contains(
+                                    where: { $0.id == provider.id }
+                                )
+                            {
+                                summary.placeholderTokensSkipped.append(
+                                    .init(
+                                        id: provider.id,
+                                        name: server.name,
+                                        missingKeys: classified.placeholderSecrets
+                                    )
+                                )
+                            }
                             summary.importedMCPProviderCount += 1
 
                         case .bearer:
@@ -456,21 +574,49 @@ public final class ClaudePluginInstaller {
                                 summary.skippedStdioMCPServers.append(server.name)
                                 continue
                             }
+                            let classified = classifyMCPEntries(
+                                server.headers, scope: .header
+                            )
                             let hasRealToken = (server.token?.isEmpty == false)
+                            let hasAnySecretSlot =
+                                hasRealToken || server.tokenIsPlaceholder
+                                || !classified.realSecrets.isEmpty
+                                || !classified.placeholderSecrets.isEmpty
                             let provider = MCPProvider(
                                 name: "\(manifest.name): \(server.name)",
                                 url: url,
                                 enabled: false,
-                                customHeaders: server.headers ?? [:],
-                                authType: hasRealToken ? .bearerToken : .none,
+                                customHeaders: classified.regular,
+                                secretHeaderKeys: Array(classified.realSecrets.keys)
+                                    + Array(classified.placeholderSecrets),
+                                authType: hasAnySecretSlot ? .bearerToken : .none,
                                 pluginId: pluginId
                             )
                             MCPProviderManager.shared.addProvider(
                                 provider,
                                 token: hasRealToken ? server.token : nil
                             )
-                            if server.tokenIsPlaceholder {
-                                summary.placeholderTokensSkipped.append(server.name)
+                            for (key, value) in classified.realSecrets {
+                                _ = MCPProviderKeychain.saveHeaderSecret(
+                                    value, key: key, for: provider.id
+                                )
+                            }
+                            if server.tokenIsPlaceholder || !classified.placeholderSecrets.isEmpty {
+                                var missing = classified.placeholderSecrets
+                                if server.tokenIsPlaceholder {
+                                    missing.append("Authorization")
+                                }
+                                if !summary.placeholderTokensSkipped.contains(
+                                    where: { $0.id == provider.id }
+                                ) {
+                                    summary.placeholderTokensSkipped.append(
+                                        .init(
+                                            id: provider.id,
+                                            name: server.name,
+                                            missingKeys: missing
+                                        )
+                                    )
+                                }
                             }
                             summary.importedMCPProviderCount += 1
                         }
@@ -1270,6 +1416,80 @@ enum ClaudeMarkdownParser {
 /// knowledge-work plugins (`type: "http"` + `oauth: { clientId, callbackPort }`).
 /// Everything stdio-style is surfaced as a "skipped" entry; OAuth servers
 /// are surfaced as needing sign-in.
+/// Outcome of classifying a key/value bag from a `.mcp.json` server
+/// entry — used for both HTTP headers and stdio env vars.
+struct ClassifiedMCPHeaders {
+    /// Entries safe to persist as plain values in the on-disk config.
+    var regular: [String: String] = [:]
+    /// Entries whose value looked like a real secret (bearer token, API key).
+    /// The installer routes these into Keychain instead of config.
+    var realSecrets: [String: String] = [:]
+    /// Entries whose value was a placeholder (`${VAR}`, `<token>`, etc.).
+    /// The installer registers them as secret keys with no value so the
+    /// user can fill them in via the editor.
+    var placeholderSecrets: [String] = []
+}
+
+/// Key-name heuristic for "this entry probably carries sensitive material".
+/// Header keys use a slightly different vocabulary than env-var names so
+/// the two scopes get tailored substring lists.
+private enum SecretKeyScope {
+    case header
+    case env
+
+    func keyLooksSecret(_ key: String) -> Bool {
+        switch self {
+        case .header:
+            let k = key.lowercased()
+            return k == "authorization"
+                || k == "proxy-authorization"
+                || k.contains("api-key")
+                || k.contains("apikey")
+                || k.contains("token")
+                || k.contains("secret")
+                || k.contains("password")
+        case .env:
+            let k = key.uppercased()
+            return k.contains("TOKEN")
+                || k.contains("KEY")
+                || k.contains("SECRET")
+                || k.contains("PASSWORD")
+                || k.contains("API")
+        }
+    }
+}
+
+/// Sort an entry bag into plain values, real-secret values, and
+/// placeholder values. Plain → on-disk config, real → Keychain,
+/// placeholder → empty slot for the user to fill in.
+private func classifyMCPEntries(
+    _ entries: [String: String]?,
+    scope: SecretKeyScope
+) -> ClassifiedMCPHeaders {
+    var result = ClassifiedMCPHeaders()
+    guard let entries else { return result }
+
+    for (key, value) in entries {
+        let keyLooksSecret = scope.keyLooksSecret(key)
+        let valueLooksPlaceholder = MCPJSONParser.isPlaceholder(value)
+
+        if keyLooksSecret {
+            if valueLooksPlaceholder {
+                result.placeholderSecrets.append(key)
+            } else {
+                result.realSecrets[key] = value
+            }
+        } else if valueLooksPlaceholder {
+            // Non-secret-looking key with a placeholder value — still keep
+            // it out of plain config so we don't ship a literal `${FOO}`.
+            result.placeholderSecrets.append(key)
+        } else {
+            result.regular[key] = value
+        }
+    }
+    return result
+}
+
 enum MCPJSONParser {
     /// Classification of a single `.mcp.json` server entry.
     enum ServerKind: Sendable, Equatable {
@@ -1309,6 +1529,14 @@ enum MCPJSONParser {
             /// stashes these so the OAuth service can complete sign-in.
             let oauth: OAuth?
             let kind: ServerKind
+            // Stdio-only fields. Populated for `kind == .stdio` entries so the
+            // installer can persist them on the `MCPProvider` record. The
+            // installer is responsible for classifying placeholder values in
+            // `env` and routing them into `secretEnvKeys` + Keychain.
+            let command: String?
+            let args: [String]
+            let env: [String: String]
+            let cwd: String?
         }
         let servers: [Server]
     }
@@ -1340,6 +1568,15 @@ enum MCPJSONParser {
             let isPlaceholder = rawToken.map(Self.isPlaceholder) ?? false
             let token: String? = (rawToken != nil && !isPlaceholder) ? rawToken : nil
 
+            // Stdio fields. `command` is the executable, `args` are its CLI
+            // arguments, `cwd` is an optional working directory. Anthropic's
+            // plugin docs spell `args` as an array of strings.
+            let command = serverDict["command"] as? String
+            let args = (serverDict["args"] as? [String]) ?? []
+            let cwd =
+                (serverDict["cwd"] as? String)
+                ?? (serverDict["workingDirectory"] as? String)
+
             // OAuth metadata block (used by knowledge-work-plugins). We
             // accept either spelling `clientId` / `client_id`.
             var oauth: Parsed.OAuth? = nil
@@ -1357,7 +1594,10 @@ enum MCPJSONParser {
             }
 
             // Classification: explicit oauth block wins, then url presence,
-            // then anything else (stdio-style `command` etc.).
+            // then anything else (stdio-style `command` etc.). A bare `url`
+            // key set to "" is still stdio-shaped — those entries (seen in
+            // some example .mcp.json files) report as `.empty` so the
+            // install summary can flag them separately from real stdio.
             let kind: ServerKind
             if oauth != nil, let u = url, !u.isEmpty {
                 kind = .oauth
@@ -1377,7 +1617,11 @@ enum MCPJSONParser {
                     tokenIsPlaceholder: isPlaceholder,
                     headers: headers,
                     oauth: oauth,
-                    kind: kind
+                    kind: kind,
+                    command: command,
+                    args: args,
+                    env: env,
+                    cwd: cwd
                 )
             )
         }

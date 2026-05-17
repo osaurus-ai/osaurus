@@ -14,3 +14,9 @@ RUN apk add --no-cache \
     sqlite sqlite-dev \
     libstdc++ libffi-dev openssl-dev \
     tzdata
+
+# Install Astral `uv` / `uvx` so stdio MCP servers shipped as
+# `uvx some-server` work out of the box. The installer auto-picks the
+# musl build for Alpine; `UV_INSTALL_DIR` lands the binaries on the
+# default PATH for the sandboxed agent user.
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh

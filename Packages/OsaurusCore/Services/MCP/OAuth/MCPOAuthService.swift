@@ -100,15 +100,23 @@ public enum MCPOAuthService {
             throw MCPOAuthError.canonicalResourceFailed
         }
 
-        // 1. Discovery — PRM then ASM.
+        // 1. Discovery — PRM then ASM. Skipped when the provider record already
+        //    carries a complete manual override (both `authorizationEndpoint` and
+        //    `tokenEndpoint`); this lets users wire up MCP servers that don't
+        //    implement RFC 9728 PRM (e.g. plugins that ship explicit endpoints
+        //    in their `.mcp.json` oauth block).
         let (prm, asm): (MCPProtectedResourceMetadata, MCPAuthorizationServerMetadata)
-        do {
-            (prm, asm) = try await MCPOAuthDiscovery.shared.discover(
-                serverURL: serverURL,
-                hint: hint?.resourceMetadataURL
-            )
-        } catch let error as MCPOAuthDiscoveryError {
-            throw MCPOAuthError.discovery(error)
+        if let manualPair = manualMetadata(from: provider.oauth, serverURL: serverURL) {
+            (prm, asm) = manualPair
+        } else {
+            do {
+                (prm, asm) = try await MCPOAuthDiscovery.shared.discover(
+                    serverURL: serverURL,
+                    hint: hint?.resourceMetadataURL
+                )
+            } catch let error as MCPOAuthDiscoveryError {
+                throw MCPOAuthError.discovery(error)
+            }
         }
 
         // 2. Resolve scopes.
@@ -298,6 +306,42 @@ public enum MCPOAuthService {
         }
         components.queryItems = items
         return components.url!
+    }
+
+    /// Build synthetic PRM/ASM from a provider's manually-supplied OAuth config.
+    /// Returns `nil` unless **both** `authorizationEndpoint` and `tokenEndpoint`
+    /// are populated — those are the two pieces discovery cannot work around.
+    /// Used to support MCP servers that don't implement RFC 9728 PRM but still
+    /// expect a standard authorization-code/PKCE flow.
+    static func manualMetadata(
+        from oauth: MCPOAuthConfig?,
+        serverURL: URL
+    ) -> (MCPProtectedResourceMetadata, MCPAuthorizationServerMetadata)? {
+        guard let oauth,
+            let authEndpoint = oauth.authorizationEndpoint, !authEndpoint.isEmpty,
+            let tokenEndpoint = oauth.tokenEndpoint, !tokenEndpoint.isEmpty
+        else { return nil }
+
+        let issuer =
+            oauth.issuer ?? authEndpoint.components(separatedBy: "/").prefix(3)
+            .joined(separator: "/")
+        let prm = MCPProtectedResourceMetadata(
+            resource: serverURL.absoluteString,
+            authorizationServers: [issuer],
+            scopesSupported: oauth.scopes.isEmpty ? nil : oauth.scopes,
+            bearerMethodsSupported: ["header"]
+        )
+        let asm = MCPAuthorizationServerMetadata(
+            issuer: issuer,
+            authorizationEndpoint: authEndpoint,
+            tokenEndpoint: tokenEndpoint,
+            registrationEndpoint: oauth.registrationEndpoint,
+            scopesSupported: oauth.scopes.isEmpty ? nil : oauth.scopes,
+            codeChallengeMethodsSupported: ["S256"],
+            grantTypesSupported: ["authorization_code", "refresh_token"],
+            tokenEndpointAuthMethodsSupported: ["none"]
+        )
+        return (prm, asm)
     }
 
     /// Resolve the scope list for the authorize/token request.

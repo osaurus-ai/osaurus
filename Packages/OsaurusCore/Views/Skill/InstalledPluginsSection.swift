@@ -122,6 +122,24 @@ private struct ArtifactCounts: Equatable {
 /// install or uninstall.
 @MainActor
 final class InstalledPluginsAggregator: ObservableObject {
+    /// Lightweight projection of a stdio MCP provider so the row UI can
+    /// render command + execution-host badge + Restart without binding
+    /// directly to `MCPProvider` (which is mutable and pulls in the
+    /// providers array as a publishing source).
+    struct InstalledStdioMCP: Identifiable, Equatable {
+        let id: UUID
+        /// e.g. `MyPlugin: server-everything`.
+        let name: String
+        let command: String
+        let args: [String]
+        let executionHost: MCPProviderExecutionHost
+
+        /// `npx -y @scope/server-everything` style display string.
+        var commandLine: String {
+            args.isEmpty ? command : "\(command) \(args.joined(separator: " "))"
+        }
+    }
+
     struct Summary: Identifiable, Equatable {
         let pluginId: String
         /// User-friendly plugin name, e.g. "Commercial Legal".
@@ -129,6 +147,10 @@ final class InstalledPluginsAggregator: ObservableObject {
         /// Source repository slug, e.g. "anthropics/claude-for-legal".
         let sourceLabel: String
         fileprivate let counts: ArtifactCounts
+        /// Stdio MCP providers tagged with this plugin id. The expanded
+        /// row exposes per-server command + Restart so users don't have
+        /// to dig into the MCP tab to bounce a flaky subprocess.
+        let stdioMCPs: [InstalledStdioMCP]
 
         var id: String { pluginId }
         var totalCount: Int { counts.total }
@@ -165,6 +187,7 @@ final class InstalledPluginsAggregator: ObservableObject {
 
     func refresh() {
         var perPlugin: [String: ArtifactCounts] = [:]
+        var perPluginStdio: [String: [InstalledStdioMCP]] = [:]
 
         func bump(_ pluginId: String?, _ field: WritableKeyPath<ArtifactCounts, Int>) {
             guard let pluginId, Self.isClaudePluginId(pluginId) else { return }
@@ -182,6 +205,20 @@ final class InstalledPluginsAggregator: ObservableObject {
         }
         for provider in mcpManager.configuration.providers {
             bump(provider.pluginId, \.mcp)
+            if let pluginId = provider.pluginId,
+                Self.isClaudePluginId(pluginId),
+                provider.transport == .stdio
+            {
+                perPluginStdio[pluginId, default: []].append(
+                    InstalledStdioMCP(
+                        id: provider.id,
+                        name: provider.name,
+                        command: provider.command,
+                        args: provider.args,
+                        executionHost: provider.executionHost
+                    )
+                )
+            }
         }
 
         let summaries =
@@ -191,7 +228,8 @@ final class InstalledPluginsAggregator: ObservableObject {
                     pluginId: id,
                     displayName: Self.displayName(for: id),
                     sourceLabel: Self.sourceLabel(for: id),
-                    counts: counts
+                    counts: counts,
+                    stdioMCPs: (perPluginStdio[id] ?? []).sorted { $0.name < $1.name }
                 )
             }
             .sorted { $0.displayName < $1.displayName }
@@ -486,6 +524,9 @@ struct InstalledPluginsSection: View {
 
 /// Single plugin row: icon, friendly title + source slug, artifact-type
 /// chips, and an uninstall affordance that fades in on hover.
+/// Plugins that ship stdio MCP servers also get an inline expander that
+/// reveals per-server command + Restart so users don't have to navigate
+/// to the MCP tab to bounce a flaky subprocess.
 private struct PluginRow: View {
     @Environment(\.theme) private var theme
 
@@ -493,27 +534,67 @@ private struct PluginRow: View {
     let onUninstall: () -> Void
 
     @State private var isHovered = false
+    @State private var isExpanded = false
+
+    private var hasStdioMCPs: Bool { !plugin.stdioMCPs.isEmpty }
 
     var body: some View {
-        HStack(spacing: 10) {
-            glyph
-            titleStack
-            Spacer(minLength: 8)
-            chips
-            uninstallButton
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                if hasStdioMCPs {
+                    expandToggle
+                } else {
+                    Spacer().frame(width: 14)
+                }
+                glyph
+                titleStack
+                Spacer(minLength: 8)
+                chips
+                uninstallButton
+            }
+            .padding(.horizontal, Metrics.rowHPadding)
+            .padding(.vertical, Metrics.rowVPadding)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if hasStdioMCPs {
+                    withAnimation(Metrics.expandAnimation) { isExpanded.toggle() }
+                }
+            }
+
+            if isExpanded && hasStdioMCPs {
+                stdioMCPList
+                    .padding(.leading, 36)
+                    .padding(.trailing, Metrics.rowHPadding)
+                    .padding(.bottom, 6)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
-        .padding(.horizontal, Metrics.rowHPadding)
-        .padding(.vertical, Metrics.rowVPadding)
         .background(
             RoundedRectangle(cornerRadius: Metrics.rowCornerRadius)
                 .fill(theme.primaryBackground.opacity(isHovered ? 0.55 : 0))
         )
-        .contentShape(Rectangle())
         .animation(Metrics.hoverAnimation, value: isHovered)
         .onHover { hovering in isHovered = hovering }
         .contextMenu {
             Button(role: .destructive, action: onUninstall) {
                 Label("Uninstall", systemImage: "trash")
+            }
+        }
+    }
+
+    private var expandToggle: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundColor(theme.secondaryText)
+            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            .animation(Metrics.expandAnimation, value: isExpanded)
+            .frame(width: 14)
+    }
+
+    private var stdioMCPList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(plugin.stdioMCPs) { server in
+                StdioMCPRow(server: server)
             }
         }
     }
@@ -579,6 +660,103 @@ private struct PluginRow: View {
         }
         .buttonStyle(PlainButtonStyle())
         .help("Uninstall \(plugin.displayName)")
+    }
+}
+
+// MARK: - Stdio MCP row
+
+/// Per-server row shown under an expanded `PluginRow`. Renders the
+/// command line (middle-truncated so the binary stays visible), the
+/// execution-host badge, and a Restart button that bounces the
+/// subprocess via `MCPProviderManager.reconnect`.
+private struct StdioMCPRow: View {
+    @Environment(\.theme) private var theme
+
+    let server: InstalledPluginsAggregator.InstalledStdioMCP
+
+    @State private var isRestarting = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(server.name)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                Text(server.commandLine)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 6)
+            executionHostBadge
+            restartButton
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(theme.primaryBackground.opacity(0.35))
+        )
+    }
+
+    private var executionHostBadge: some View {
+        let isSandbox = server.executionHost == .sandbox
+        return Text(isSandbox ? "Sandbox" : "Host")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(isSandbox ? theme.accentColor : .orange)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(
+                Capsule()
+                    .fill(
+                        (isSandbox ? theme.accentColor : .orange).opacity(0.14)
+                    )
+            )
+    }
+
+    private var restartButton: some View {
+        Button(action: restart) {
+            HStack(spacing: 3) {
+                if isRestarting {
+                    ProgressView()
+                        .scaleEffect(0.4)
+                        .frame(width: 10, height: 10)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                Text("Restart", bundle: .module)
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundColor(theme.accentColor)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(theme.accentColor.opacity(0.12))
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(isRestarting)
+        .help("Restart the stdio MCP subprocess")
+    }
+
+    private func restart() {
+        guard !isRestarting else { return }
+        isRestarting = true
+        Task { @MainActor in
+            // Swallow errors here — the provider card itself surfaces
+            // failures via `MCPProviderState.lastError`, and the user is
+            // about to scroll to it anyway. Failing silently in this row
+            // beats showing two competing error messages.
+            try? await MCPProviderManager.shared.reconnect(providerId: server.id)
+            isRestarting = false
+        }
     }
 }
 

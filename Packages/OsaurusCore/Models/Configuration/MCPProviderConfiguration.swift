@@ -19,6 +19,29 @@ public enum MCPProviderAuthType: String, Codable, Sendable, CaseIterable {
     case oauth
 }
 
+// MARK: - MCP Transport / Execution Host
+
+/// Transport used to talk to an MCP server.
+public enum MCPProviderTransport: String, Codable, Sendable, CaseIterable {
+    /// Remote HTTP/SSE server (default for Osaurus historically).
+    case http
+    /// Local stdio subprocess that speaks the MCP protocol over its stdin/stdout.
+    case stdio
+}
+
+/// Where a stdio MCP subprocess is executed. Imported plugins always run in
+/// the sandbox; manually-added providers can opt into running on the host.
+public enum MCPProviderExecutionHost: String, Codable, Sendable, CaseIterable {
+    /// Run the subprocess inside the Linux sandbox container. Default for
+    /// imported plugins because we don't trust arbitrary install commands
+    /// shipped by third-party plugins.
+    case sandbox
+    /// Run the subprocess directly on the macOS host. Only available for
+    /// manually-added providers, with a UI warning. Used for trusted local
+    /// tools (e.g. a developer's own `npx @modelcontextprotocol/...` setup).
+    case host
+}
+
 /// Per-provider OAuth configuration cached after Dynamic Client Registration / discovery.
 ///
 /// Secrets (access/refresh tokens, registration access token) are stored in Keychain;
@@ -98,12 +121,44 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
     /// Used for bulk uninstall.
     public var pluginId: String?
 
+    /// Transport used to talk to this MCP server. Defaults to `.http` so
+    /// every legacy config keeps working with the existing HTTP code path.
+    public var transport: MCPProviderTransport
+
+    /// For `transport == .stdio` only: where to run the subprocess.
+    /// Imported plugins always default to `.sandbox`; manually-added providers
+    /// default to `.sandbox` too and can opt into `.host` via the UI with a
+    /// warning. Ignored for `.http`.
+    public var executionHost: MCPProviderExecutionHost
+
+    /// For `transport == .stdio` only: executable to launch (e.g. `npx`,
+    /// `uvx`, or a full path).
+    public var command: String
+
+    /// For `transport == .stdio` only: arguments passed to the subprocess.
+    public var args: [String]
+
+    /// For `transport == .stdio` only: environment variables passed to the
+    /// subprocess. Plain values are stored as-is in config; values for keys
+    /// listed in `secretEnvKeys` live in Keychain instead.
+    public var env: [String: String]
+
+    /// Keys in `env` whose values should be persisted in Keychain rather than
+    /// in the plain config file (analogous to `secretHeaderKeys`).
+    public var secretEnvKeys: [String]
+
+    /// For `transport == .stdio` only: optional working directory the
+    /// subprocess inherits.
+    public var workingDirectory: String?
+
     private enum CodingKeys: String, CodingKey {
         case id, name, url, enabled, customHeaders
         case streamingEnabled, discoveryTimeout, toolCallTimeout, autoConnect
         case secretHeaderKeys
         case authType, oauth
         case pluginId
+        case transport, executionHost
+        case command, args, env, secretEnvKeys, workingDirectory
     }
 
     public init(
@@ -119,7 +174,14 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         secretHeaderKeys: [String] = [],
         authType: MCPProviderAuthType = .bearerToken,
         oauth: MCPOAuthConfig? = nil,
-        pluginId: String? = nil
+        pluginId: String? = nil,
+        transport: MCPProviderTransport = .http,
+        executionHost: MCPProviderExecutionHost = .sandbox,
+        command: String = "",
+        args: [String] = [],
+        env: [String: String] = [:],
+        secretEnvKeys: [String] = [],
+        workingDirectory: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -134,6 +196,13 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         self.authType = authType
         self.oauth = oauth
         self.pluginId = pluginId
+        self.transport = transport
+        self.executionHost = executionHost
+        self.command = command
+        self.args = args
+        self.env = env
+        self.secretEnvKeys = secretEnvKeys
+        self.workingDirectory = workingDirectory
     }
 
     public init(from decoder: Decoder) throws {
@@ -152,6 +221,15 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         self.authType = try container.decodeIfPresent(MCPProviderAuthType.self, forKey: .authType) ?? .bearerToken
         self.oauth = try container.decodeIfPresent(MCPOAuthConfig.self, forKey: .oauth)
         self.pluginId = try container.decodeIfPresent(String.self, forKey: .pluginId)
+        // Migration: legacy configs predate transport / stdio support, so
+        // anything not explicitly tagged is HTTP.
+        self.transport = try container.decodeIfPresent(MCPProviderTransport.self, forKey: .transport) ?? .http
+        self.executionHost = try container.decodeIfPresent(MCPProviderExecutionHost.self, forKey: .executionHost) ?? .sandbox
+        self.command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
+        self.args = try container.decodeIfPresent([String].self, forKey: .args) ?? []
+        self.env = try container.decodeIfPresent([String: String].self, forKey: .env) ?? [:]
+        self.secretEnvKeys = try container.decodeIfPresent([String].self, forKey: .secretEnvKeys) ?? []
+        self.workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory)
     }
 
     /// Get all headers including secret headers from Keychain
@@ -166,6 +244,24 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         }
 
         return headers
+    }
+
+    /// Resolve the full environment for a stdio subprocess: plain `env`
+    /// merged with any Keychain-stored values for `secretEnvKeys`. Keys
+    /// whose Keychain entry is missing are dropped so we don't ship a
+    /// literal placeholder over the wire.
+    public func resolvedEnv() -> [String: String] {
+        var merged = env
+        for key in secretEnvKeys {
+            if let value = MCPProviderKeychain.getEnvSecret(key: key, for: id) {
+                merged[key] = value
+            } else {
+                // No Keychain value yet — strip the placeholder rather than
+                // forwarding it as a literal.
+                merged.removeValue(forKey: key)
+            }
+        }
+        return merged
     }
 
     /// Check if provider has a token stored in Keychain

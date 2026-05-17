@@ -33,6 +33,15 @@ public final class MCPProviderManager: ObservableObject {
     /// Registered tool instances keyed by provider ID
     private var registeredTools: [UUID: [MCPProviderTool]] = [:]
 
+    /// Host-resident stdio subprocess owners keyed by provider ID. Held so
+    /// `disconnect(...)` can terminate them — the subprocess only stays
+    /// alive while we hold the runner.
+    private var hostStdioRunners: [UUID: MCPStdioHostRunner] = [:]
+
+    /// Sandbox-resident stdio subprocess owners keyed by provider ID. Same
+    /// lifecycle as `hostStdioRunners` but routed through the container.
+    private var sandboxStdioRunners: [UUID: SandboxStdioRunner] = [:]
+
     private init() {
         self.configuration = MCPProviderConfigurationStore.load()
 
@@ -190,8 +199,14 @@ public final class MCPProviderManager: ObservableObject {
                 version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
             )
 
-            // Connect
-            _ = try await client.connect(transport: transport)
+            // Connect under a timeout. Without this, a stdio subprocess that
+            // spawned successfully but never speaks MCP would leave the card
+            // stuck on "Connecting…" indefinitely. `discoverTools` already
+            // uses `withTimeout` for the second leg of the handshake — we
+            // mirror that for the first.
+            try await withTimeout(seconds: provider.discoveryTimeout) {
+                _ = try await client.connect(transport: transport)
+            }
 
             // Store client
             clients[providerId] = client
@@ -215,10 +230,13 @@ public final class MCPProviderManager: ObservableObject {
             notifyStatusChanged()
 
         } catch {
-            // Probe the server for an auth challenge so we can: (a) classify the error
-            // as "needs sign in" for the UI and (b) trigger a single refresh+retry on
-            // bad-token cases per the MCP spec's bounded-retry guidance.
-            let challenge = await probeAuthChallenge(for: provider)
+            // Stdio transports talk to a local subprocess, not an HTTP server,
+            // so there's no `WWW-Authenticate` 401 to probe — the error is
+            // either a spawn failure or a protocol mismatch.
+            let challenge: MCPBearerChallenge? =
+                provider.transport == .http
+                ? await probeAuthChallenge(for: provider)
+                : nil
 
             if let challenge {
                 // Try one refresh+retry for OAuth providers when we already have tokens.
@@ -260,6 +278,9 @@ public final class MCPProviderManager: ObservableObject {
             clients.removeValue(forKey: providerId)
             discoveredTools.removeValue(forKey: providerId)
             registeredTools.removeValue(forKey: providerId)
+            // Stdio subprocesses might have been spawned successfully even
+            // though the MCP handshake failed — make sure we don't leak them.
+            stopStdioRunners(for: providerId)
 
             print("[Osaurus] MCP Provider '\(provider.name)': Connection failed - \(error)")
             notifyStatusChanged()
@@ -279,6 +300,9 @@ public final class MCPProviderManager: ObservableObject {
         clients.removeValue(forKey: providerId)
         discoveredTools.removeValue(forKey: providerId)
         registeredTools.removeValue(forKey: providerId)
+
+        // Tear down any stdio subprocesses owned by this provider.
+        stopStdioRunners(for: providerId)
 
         // Update state
         if var state = providerStates[providerId] {
@@ -385,6 +409,56 @@ public final class MCPProviderManager: ObservableObject {
 
     // MARK: - Test Connection
 
+    /// Spin up the same runner we'd use in production, complete an MCP
+    /// handshake under a tight timeout, list the available tools, then
+    /// tear everything down. Returns the tool count for the editor's
+    /// success label. Stdio test runs are intentionally short-lived;
+    /// the provider isn't persisted and no state is left behind.
+    public func testStdioConnection(provider: MCPProvider) async throws -> Int {
+        // Build the production transport; spawning a real subprocess is
+        // the whole point — fake-test paths would miss PATH lookup, env
+        // resolution, and protocol mismatches.
+        let transport: any MCP.Transport
+        do {
+            transport = try await createStdioTransport(for: provider)
+        } catch {
+            // `createStdioTransport` retains the runner in
+            // `hostStdioRunners` / `sandboxStdioRunners` on success but
+            // we don't want a test attempt to register one — wipe both
+            // before rethrowing.
+            stopStdioRunners(for: provider.id)
+            throw error
+        }
+
+        let client = MCP.Client(name: "Osaurus", version: "1.0.0")
+
+        do {
+            try await withTimeout(seconds: 10) {
+                _ = try await client.connect(transport: transport)
+            }
+            let (tools, _) = try await withTimeout(seconds: 10) {
+                try await client.listTools()
+            }
+            stopStdioRunners(for: provider.id)
+            return tools.count
+        } catch {
+            stopStdioRunners(for: provider.id)
+            throw error
+        }
+    }
+
+    /// Tear down any stdio runners registered against `providerId`. Used
+    /// by `testStdioConnection` so probe attempts don't leak subprocesses,
+    /// and by `connect`'s catch path for the same reason.
+    private func stopStdioRunners(for providerId: UUID) {
+        if let runner = hostStdioRunners.removeValue(forKey: providerId) {
+            Task { await runner.stop() }
+        }
+        if let runner = sandboxStdioRunners.removeValue(forKey: providerId) {
+            Task { await runner.stop() }
+        }
+    }
+
     /// Test connection to a provider without persisting
     public func testConnection(url: String, token: String?, headers: [String: String]) async throws -> Int {
         guard let endpoint = URL(string: url) else {
@@ -427,6 +501,14 @@ public final class MCPProviderManager: ObservableObject {
 
     /// Run the OAuth sign-in flow for an existing provider, persist tokens + cached
     /// `MCPOAuthConfig`, and (optionally) trigger a reconnect.
+    ///
+    /// On success the provider is auto-enabled (a successful sign-in is an unambiguous
+    /// signal of intent — most imported providers ship disabled so the user wouldn't
+    /// see anything connect otherwise) and `connect(...)` runs unconditionally.
+    ///
+    /// On failure the error is recorded in `MCPProviderState.lastError` so the
+    /// `ProviderCard` UI can surface it next to the Sign In button, then re-thrown
+    /// so callers can also toast it.
     @discardableResult
     public func oauthSignIn(providerId: UUID, reconnect: Bool = true) async throws -> MCPOAuthSignInResult {
         guard var provider = configuration.provider(id: providerId) else {
@@ -443,10 +525,31 @@ public final class MCPProviderManager: ObservableObject {
             provider.authType = .oauth
         }
 
-        let result = try await MCPOAuthService.signIn(provider: provider, hint: hint, persist: true)
+        let result: MCPOAuthSignInResult
+        do {
+            result = try await MCPOAuthService.signIn(provider: provider, hint: hint, persist: true)
+        } catch {
+            // Surface the error to the UI so the orange "Sign in required" banner can
+            // explain what went wrong, instead of looking like a no-op. We keep
+            // `requiresAuth` set so the Sign In button stays available for retry.
+            if var state = providerStates[providerId] {
+                state.lastError = "Sign-in failed: \(error.localizedDescription)"
+                providerStates[providerId] = state
+            }
+            notifyStatusChanged()
+            throw error
+        }
 
         // Persist refreshed config back into the provider record.
         provider.oauth = result.config
+        // A successful Sign In is intent-to-use: enable the provider if it was
+        // imported in the disabled state. Without this, every imported OAuth
+        // provider would sit silently after sign-in and the user would have
+        // to discover the toggle.
+        let wasDisabled = !provider.enabled
+        if wasDisabled {
+            provider.enabled = true
+        }
         configuration.update(provider)
         MCPProviderConfigurationStore.save(configuration)
 
@@ -459,7 +562,10 @@ public final class MCPProviderManager: ObservableObject {
         }
         notifyStatusChanged()
 
-        if reconnect && provider.enabled {
+        // Reconnect unconditionally on success. The previous behaviour gated this on
+        // `provider.enabled`, which never fired for imported providers (created
+        // disabled) so the user thought Sign In did nothing.
+        if reconnect {
             Task { try? await connect(providerId: providerId) }
         }
         return result
@@ -467,10 +573,70 @@ public final class MCPProviderManager: ObservableObject {
 
     // MARK: - Private Helpers
 
+    /// Branch on `provider.transport` and return the appropriate
+    /// `MCP.Transport`. HTTP is the default path; stdio routes to either
+    /// `MCPStdioHostRunner` or `SandboxStdioRunner` depending on the
+    /// provider's `executionHost`. The runner is retained in the manager
+    /// so `disconnect(...)` can stop the subprocess later.
+    private func createTransport(for provider: MCPProvider) async throws -> any MCP.Transport {
+        switch provider.transport {
+        case .http:
+            return try await createHTTPTransport(for: provider)
+        case .stdio:
+            return try await createStdioTransport(for: provider)
+        }
+    }
+
+    /// Build a stdio transport for `provider` and start the backing subprocess.
+    /// Whichever runner we use, we keep the strong reference so the process
+    /// stays alive — without that the actor would be deallocated, the
+    /// `FileDescriptor`s would close, and the MCP client would see an EOF on
+    /// its first read.
+    private func createStdioTransport(for provider: MCPProvider) async throws -> any MCP.Transport {
+        switch provider.executionHost {
+        case .host:
+            let runner = try MCPStdioHostRunner(provider: provider)
+            try await runner.start()
+            hostStdioRunners[provider.id] = runner
+            return runner.transport
+        case .sandbox:
+            #if os(macOS)
+                let availability = await SandboxManager.shared.checkAvailability()
+                guard availability.isAvailable else {
+                    // OS doesn't support the sandbox at all (macOS < 26).
+                    // No amount of provisioning will fix this — surface
+                    // it as the terminal error.
+                    throw MCPStdioTransportError.sandboxUnavailable
+                }
+                // Auto-provision a stopped container. Users expect "enable
+                // this stdio provider" to just work; making them open the
+                // Sandbox tab first and click Start is friction we can
+                // eliminate. `startContainer()` is a no-op when already
+                // running, so the happy path stays free.
+                if await SandboxManager.shared.status() != .running {
+                    do {
+                        try await SandboxManager.shared.startContainer()
+                    } catch {
+                        throw MCPStdioTransportError.processSpawnFailed(
+                            "Could not start the Osaurus sandbox: "
+                                + error.localizedDescription
+                        )
+                    }
+                }
+                let runner = try SandboxStdioRunner(provider: provider)
+                try await runner.start()
+                sandboxStdioRunners[provider.id] = runner
+                return runner.transport
+            #else
+                throw MCPStdioTransportError.sandboxUnavailable
+            #endif
+        }
+    }
+
     /// Build the `URLSessionConfiguration` for a provider, including any cached
     /// auth headers. OAuth refresh-before-connect happens inside this method so
     /// every entrypoint (connect / testConnection) goes through the same gate.
-    private func createTransport(for provider: MCPProvider) async throws -> HTTPClientTransport {
+    private func createHTTPTransport(for provider: MCPProvider) async throws -> HTTPClientTransport {
         guard let endpoint = URL(string: provider.url) else {
             throw MCPProviderError.invalidURL
         }

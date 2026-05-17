@@ -4,7 +4,11 @@
 //
 //  JSON recipe format for sandbox plugins that run inside the shared
 //  Linux container. Each plugin declares dependencies, setup commands,
-//  tool definitions, and optional MCP/daemon processes.
+//  tool definitions, and an optional daemon process.
+//
+//  MCP servers shipped by a sandbox plugin are now configured through
+//  `MCPProvider(transport: .stdio, executionHost: .sandbox, …)` instead
+//  of the previous `mcp:` field on this struct.
 //
 
 import CryptoKit
@@ -29,7 +33,6 @@ public struct SandboxPlugin: Codable, Sendable, Identifiable, Equatable {
     /// Paths must not contain ".." or start with "/".
     public var files: [String: String]?
     public var tools: [SandboxToolSpec]?
-    public var mcp: SandboxMCPSpec?
     public var daemon: SandboxDaemonSpec?
     /// Secret names the plugin requires. User is prompted on install.
     public var secrets: [String]?
@@ -45,7 +48,7 @@ public struct SandboxPlugin: Codable, Sendable, Identifiable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case name, description, version, author, source
-        case dependencies, setup, files, tools, mcp, daemon
+        case dependencies, setup, files, tools, daemon
         case secrets, events, permissions, metadata, modifiedAt
     }
 
@@ -58,7 +61,7 @@ public struct SandboxPlugin: Codable, Sendable, Identifiable, Equatable {
 
     private static let knownKeyNames: Set<String> = [
         "name", "description", "version", "author", "source",
-        "dependencies", "setup", "files", "tools", "mcp", "daemon",
+        "dependencies", "setup", "files", "tools", "daemon",
         "secrets", "events", "permissions", "metadata", "modifiedAt",
     ]
 
@@ -73,7 +76,9 @@ public struct SandboxPlugin: Codable, Sendable, Identifiable, Equatable {
         setup = try c.decodeIfPresent(String.self, forKey: .setup)
         files = try c.decodeIfPresent([String: String].self, forKey: .files)
         tools = try c.decodeIfPresent([SandboxToolSpec].self, forKey: .tools)
-        mcp = try c.decodeIfPresent(SandboxMCPSpec.self, forKey: .mcp)
+        // The previous `mcp:` field was removed; old JSON that still has
+        // an `mcp` key falls through to the dynamic-coding catch-all and
+        // lands in `metadata` rather than failing decode.
         daemon = try c.decodeIfPresent(SandboxDaemonSpec.self, forKey: .daemon)
         secrets = try c.decodeIfPresent([String].self, forKey: .secrets)
         events = try c.decodeIfPresent(SandboxEventsSpec.self, forKey: .events)
@@ -100,7 +105,6 @@ public struct SandboxPlugin: Codable, Sendable, Identifiable, Equatable {
         try c.encodeIfPresent(setup, forKey: .setup)
         try c.encodeIfPresent(files, forKey: .files)
         try c.encodeIfPresent(tools, forKey: .tools)
-        try c.encodeIfPresent(mcp, forKey: .mcp)
         try c.encodeIfPresent(daemon, forKey: .daemon)
         try c.encodeIfPresent(secrets, forKey: .secrets)
         try c.encodeIfPresent(events, forKey: .events)
@@ -121,7 +125,6 @@ public struct SandboxPlugin: Codable, Sendable, Identifiable, Equatable {
         setup: String? = nil,
         files: [String: String]? = nil,
         tools: [SandboxToolSpec]? = nil,
-        mcp: SandboxMCPSpec? = nil,
         daemon: SandboxDaemonSpec? = nil,
         secrets: [String]? = nil,
         events: SandboxEventsSpec? = nil,
@@ -138,7 +141,6 @@ public struct SandboxPlugin: Codable, Sendable, Identifiable, Equatable {
         self.setup = setup
         self.files = files
         self.tools = tools
-        self.mcp = mcp
         self.daemon = daemon
         self.secrets = secrets
         self.events = events
@@ -186,20 +188,6 @@ public struct SandboxParameterSpec: Codable, Sendable, Equatable {
         self.description = description
         self.default = defaultValue
         self.enum = enumValues
-    }
-}
-
-// MARK: - MCP Server Spec
-
-public struct SandboxMCPSpec: Codable, Sendable, Equatable {
-    /// Command to start the MCP server (stdio transport)
-    public let command: String
-    /// Environment variables for the MCP server process
-    public var env: [String: String]?
-
-    public init(command: String, env: [String: String]? = nil) {
-        self.command = command
-        self.env = env
     }
 }
 

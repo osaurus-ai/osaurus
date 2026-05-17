@@ -28,6 +28,11 @@
         /// digest when bumping the sandbox image — never roll back to a
         /// floating tag.
         ///
+        /// Runtimes guaranteed in this image (see `sandbox/Dockerfile`):
+        ///   bash, python3, pip, node, npm, uv, uvx, git, curl, jq,
+        ///   ripgrep, sqlite, build-base. Stdio MCP servers shipped as
+        ///   `uvx <server>` or `npx -y <server>` work out of the box.
+        ///
         /// To rotate: `crane digest ghcr.io/osaurus-ai/sandbox:latest`
         /// or `docker buildx imagetools inspect ghcr.io/osaurus-ai/sandbox:latest`
         /// and paste the multi-arch index digest here.
@@ -478,6 +483,58 @@
                 stderrTee: stderrTee,
                 onProcessStarted: onProcessStarted
             )
+        }
+
+        // MARK: - Interactive (streaming) Exec
+
+        /// Spawn a long-running container process with bidirectional stdio.
+        /// Unlike `exec(...)`, this returns *before* the process exits and
+        /// hands the caller a `LinuxProcess` they can `kill` / `delete`.
+        ///
+        /// Used by `SandboxStdioRunner` to wire an MCP stdio server's stdin /
+        /// stdout to the host-side `MCP.Client`. Plain `exec()` is unsuitable
+        /// because it accumulates output into a buffer and waits for the
+        /// process to exit; stdio MCP servers are intentionally long-lived.
+        ///
+        /// - Parameters:
+        ///   - stdin / stdout / stderr: Streaming I/O hooks supplied by the
+        ///     caller. The caller owns lifecycle (e.g. flushing on stop).
+        public func execInteractive(
+            user: String? = nil,
+            command: String,
+            env: [String: String] = [:],
+            cwd: String? = nil,
+            stdin: any ReaderStream,
+            stdout: any Writer,
+            stderr: any Writer
+        ) async throws -> LinuxProcess {
+            guard let container = linuxContainer else {
+                throw SandboxError.containerNotRunning
+            }
+
+            let shellCommand = cwd.map { "cd \($0) && \(command)" } ?? command
+            let args: [String]
+            if let user {
+                args = ["su", "-s", "/bin/bash", user, "-c", shellCommand]
+            } else {
+                args = ["sh", "-c", shellCommand]
+            }
+
+            var mergedEnv = env
+            if mergedEnv["PATH"] == nil {
+                mergedEnv["PATH"] = LinuxProcessConfiguration.defaultPath
+            }
+            let environ = mergedEnv.map { "\($0.key)=\($0.value)" }
+
+            let process = try await container.exec(UUID().uuidString) { config in
+                config.arguments = args
+                config.environmentVariables = environ
+                config.stdin = stdin
+                config.stdout = stdout
+                config.stderr = stderr
+            }
+            try await process.start()
+            return process
         }
 
         // MARK: - Agent User Management

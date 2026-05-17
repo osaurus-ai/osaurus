@@ -96,4 +96,56 @@ struct MCPProviderConfigurationMigrationTests {
         )
         #expect(tokens.isExpired)
     }
+
+    /// Records written before the stdio fields existed should decode with
+    /// safe defaults (`.http` + `.sandbox`) and no command/args/env. Without
+    /// this the launch path would crash on any pre-existing config.
+    @Test func legacyJSONDefaultsToHTTPTransport() throws {
+        let legacyJSON = """
+            {
+              "id": "22222222-2222-2222-2222-222222222222",
+              "name": "Legacy",
+              "url": "https://mcp.example.com",
+              "enabled": true,
+              "customHeaders": {},
+              "streamingEnabled": false,
+              "discoveryTimeout": 20,
+              "toolCallTimeout": 45,
+              "autoConnect": true,
+              "secretHeaderKeys": []
+            }
+            """
+        let provider = try JSONDecoder().decode(MCPProvider.self, from: Data(legacyJSON.utf8))
+        #expect(provider.transport == .http)
+        #expect(provider.executionHost == .sandbox)
+        #expect(provider.command == "")
+        #expect(provider.args.isEmpty)
+        #expect(provider.env.isEmpty)
+        #expect(provider.secretEnvKeys.isEmpty)
+        #expect(provider.workingDirectory == nil)
+    }
+
+    @Test func stdioProviderRoundTrips() throws {
+        let provider = MCPProvider(
+            name: "Local FS",
+            url: "",
+            authType: .none,
+            transport: .stdio,
+            executionHost: .sandbox,
+            command: "/usr/local/bin/uvx",
+            args: ["mcp-fs", "--root", "/tmp"],
+            env: ["LOG_LEVEL": "debug"],
+            secretEnvKeys: ["API_KEY"],
+            workingDirectory: "/tmp"
+        )
+        let encoded = try JSONEncoder().encode(provider)
+        let decoded = try JSONDecoder().decode(MCPProvider.self, from: encoded)
+        #expect(decoded.transport == .stdio)
+        #expect(decoded.executionHost == .sandbox)
+        #expect(decoded.command == "/usr/local/bin/uvx")
+        #expect(decoded.args == ["mcp-fs", "--root", "/tmp"])
+        #expect(decoded.env["LOG_LEVEL"] == "debug")
+        #expect(decoded.secretEnvKeys == ["API_KEY"])
+        #expect(decoded.workingDirectory == "/tmp")
+    }
 }

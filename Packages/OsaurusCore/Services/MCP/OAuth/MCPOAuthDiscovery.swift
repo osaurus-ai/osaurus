@@ -34,6 +34,18 @@ public struct MCPProtectedResourceMetadata: Decodable, Sendable, Equatable {
         case scopesSupported = "scopes_supported"
         case bearerMethodsSupported = "bearer_methods_supported"
     }
+
+    public init(
+        resource: String?,
+        authorizationServers: [String],
+        scopesSupported: [String]?,
+        bearerMethodsSupported: [String]?
+    ) {
+        self.resource = resource
+        self.authorizationServers = authorizationServers
+        self.scopesSupported = scopesSupported
+        self.bearerMethodsSupported = bearerMethodsSupported
+    }
 }
 
 /// Subset of RFC 8414 / OIDC discovery the MCP client cares about.
@@ -56,6 +68,26 @@ public struct MCPAuthorizationServerMetadata: Decodable, Sendable, Equatable {
         case codeChallengeMethodsSupported = "code_challenge_methods_supported"
         case grantTypesSupported = "grant_types_supported"
         case tokenEndpointAuthMethodsSupported = "token_endpoint_auth_methods_supported"
+    }
+
+    public init(
+        issuer: String,
+        authorizationEndpoint: String,
+        tokenEndpoint: String,
+        registrationEndpoint: String?,
+        scopesSupported: [String]?,
+        codeChallengeMethodsSupported: [String]?,
+        grantTypesSupported: [String]?,
+        tokenEndpointAuthMethodsSupported: [String]?
+    ) {
+        self.issuer = issuer
+        self.authorizationEndpoint = authorizationEndpoint
+        self.tokenEndpoint = tokenEndpoint
+        self.registrationEndpoint = registrationEndpoint
+        self.scopesSupported = scopesSupported
+        self.codeChallengeMethodsSupported = codeChallengeMethodsSupported
+        self.grantTypesSupported = grantTypesSupported
+        self.tokenEndpointAuthMethodsSupported = tokenEndpointAuthMethodsSupported
     }
 }
 

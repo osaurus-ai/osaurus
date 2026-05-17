@@ -642,31 +642,56 @@ struct GitHubImportSheet: View {
                         icon: "terminal",
                         title: L("MCP servers need manual setup"),
                         message: L(
-                            "Osaurus's remote MCP connector is HTTP/SSE only. These stdio servers must be configured manually:"
+                            "These `.mcp.json` entries were malformed (no `command` and no `url`) and couldn't be imported:"
                         ),
                         items: report.allSkippedStdioServers
                     )
                 }
 
-                if !report.allPlaceholderTokensSkipped.isEmpty {
+                if !report.allStdioProvidersNeedingConfiguration.isEmpty {
+                    InstallReportPendingProvidersNotice(
+                        icon: "terminal.fill",
+                        title: L("Stdio MCP servers need env vars"),
+                        message: L(
+                            "These stdio MCP servers were imported into the Osaurus sandbox but ship with `${VAR}` placeholders for sensitive env vars. Tap one to open its editor:"
+                        ),
+                        items: report.allStdioProvidersNeedingConfiguration,
+                        onSelect: { openMCPProvider(id: $0) }
+                    )
+                }
+
+                if !report.allStdioProvidersBlockedNoSandbox.isEmpty {
                     InstallReportNotice(
+                        icon: "shippingbox.fill",
+                        title: L("Sandbox unavailable — stdio MCP skipped"),
+                        message: L(
+                            "Imported stdio MCP servers run inside the Osaurus sandbox, which isn't available on this machine. These weren't installed:"
+                        ),
+                        items: report.allStdioProvidersBlockedNoSandbox
+                    )
+                }
+
+                if !report.allPlaceholderTokensSkipped.isEmpty {
+                    InstallReportPendingProvidersNotice(
                         icon: "key",
                         title: L("MCP servers need tokens"),
                         message: L(
-                            "These servers ship with placeholder credentials. Paste a real token in MCP settings before enabling them:"
+                            "These servers ship with placeholder credentials. Tap one to open its editor and paste a real token:"
                         ),
-                        items: report.allPlaceholderTokensSkipped
+                        items: report.allPlaceholderTokensSkipped,
+                        onSelect: { openMCPProvider(id: $0) }
                     )
                 }
 
                 if !report.allOAuthProvidersNeedingSignIn.isEmpty {
-                    InstallReportNotice(
+                    InstallReportPendingProvidersNotice(
                         icon: "person.crop.circle.badge.questionmark",
                         title: L("MCP servers need OAuth sign-in"),
                         message: L(
-                            "These providers use OAuth and were created disabled. Open MCP settings, click the provider, and complete sign-in to enable them:"
+                            "These providers use OAuth and were created disabled. Tap one to open its editor and complete sign-in:"
                         ),
-                        items: report.allOAuthProvidersNeedingSignIn
+                        items: report.allOAuthProvidersNeedingSignIn,
+                        onSelect: { openMCPProvider(id: $0) }
                     )
                 }
 
@@ -866,6 +891,18 @@ struct GitHubImportSheet: View {
     private func openScheduleEditor(_ id: UUID) {
         ManagementStateManager.shared.selectedTab = .schedules
         ManagementStateManager.shared.pendingScheduleEditId = id
+        cancel()
+    }
+
+    /// Deep-link from the install summary to the Remote MCP providers tab.
+    /// Used by the OAuth + placeholder-token install notices so the user
+    /// doesn't have to hunt through the sidebar for where Sign In lives.
+    private func openMCPProvider(id: UUID?) {
+        ManagementStateManager.shared.selectedTab = .tools
+        // ToolsTab is internal to OsaurusCore; we know the Remote sub-tab is
+        // raw value "Remote" from `ToolsTab.remote = "Remote"`.
+        ManagementStateManager.shared.pendingToolsSubTab = "Remote"
+        ManagementStateManager.shared.pendingMCPProviderEditId = id
         cancel()
     }
 
@@ -1215,6 +1252,10 @@ private struct InstallReportNotice: View {
     let title: String
     let message: String
     let items: [String]
+    /// Optional CTA shown next to the title (e.g. "Open MCP settings" to
+    /// deep-link from the OAuth notice to the Remote MCP providers tab).
+    var actionLabel: String?
+    var onAction: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1225,6 +1266,21 @@ private struct InstallReportNotice: View {
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.primaryText)
+                Spacer(minLength: 8)
+                if let actionLabel, let onAction {
+                    Button(action: onAction) {
+                        Text(actionLabel)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.accentColor)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.accentColor.opacity(0.12))
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
             }
             Text(message)
                 .font(.system(size: 11))
@@ -1293,6 +1349,78 @@ private struct InstallReportPendingSchedulesNotice: View {
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundColor(theme.accentColor.opacity(0.7))
                             Spacer()
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            .padding(.leading, 4)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+                )
+        )
+    }
+}
+
+/// Renders each `PendingMCPProvider` as a clickable button that deep-links
+/// to the provider's editor. Used by the OAuth, placeholder-token, and
+/// stdio-env-vars install notices so the user goes straight to the row
+/// that needs attention instead of scanning a list of names.
+private struct InstallReportPendingProvidersNotice: View {
+    @Environment(\.theme) private var theme
+
+    let icon: String
+    let title: String
+    let message: String
+    let items: [ClaudePluginInstallReport.PendingMCPProvider]
+    let onSelect: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.orange)
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer(minLength: 8)
+            }
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(items) { item in
+                    Button(action: { onSelect(item.id) }) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text("•")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(theme.secondaryText)
+                                Text(item.name)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(theme.accentColor)
+                                    .underline()
+                                    .lineLimit(1)
+                                Image(systemName: "arrow.up.right.square")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundColor(theme.accentColor.opacity(0.7))
+                                Spacer()
+                            }
+                            if !item.missingKeys.isEmpty {
+                                Text("needs: \(item.missingKeys.joined(separator: ", "))")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(theme.secondaryText)
+                                    .lineLimit(2)
+                                    .padding(.leading, 12)
+                            }
                         }
                     }
                     .buttonStyle(PlainButtonStyle())
