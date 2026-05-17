@@ -194,6 +194,27 @@ public actor StorageMigrator {
         currentVersion() < Self.targetVersion
     }
 
+    /// True when `~/.osaurus/` is absent or contains no user data — i.e. a
+    /// genuine first launch on a clean Mac. `needsMigration()` alone can't
+    /// distinguish "version stamp absent because we need to migrate v1 data"
+    /// from "version stamp absent because there's literally nothing here
+    /// yet"; this helper lets the coordinator skip the migration overlay
+    /// (and its 350 ms success hold) when there's nothing on disk to
+    /// migrate. Dotfiles like `.storage-migration.lock` and
+    /// `.pre-encryption-backup` are ignored so a lingering hidden marker
+    /// from a previous launch doesn't mis-classify a real fresh install.
+    public func isPristineInstall() -> Bool {
+        let fm = FileManager.default
+        let root = OsaurusPaths.root()
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue else {
+            return true
+        }
+        let contents = (try? fm.contentsOfDirectory(atPath: root.path)) ?? []
+        let meaningful = contents.filter { !$0.hasPrefix(".") }
+        return meaningful.isEmpty
+    }
+
     /// Run the migrator. Safe to call repeatedly: completed steps
     /// detect themselves and short-circuit.
     ///

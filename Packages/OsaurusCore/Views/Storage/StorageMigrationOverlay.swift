@@ -201,12 +201,24 @@ public final class StorageMigrationCoordinator: ObservableObject {
     // MARK: - Migration
 
     private func runMigration() async {
+        // Truly first launch on a clean Mac: `~/.osaurus/` is empty or
+        // missing entirely, so there's nothing to migrate. Just stamp the
+        // version and return without ever creating the overlay panel —
+        // otherwise the "Securing your data" card sits on screen for the
+        // 350 ms success hold during what should be an instant launch
+        // (and looks indistinguishable from a stray window flashing
+        // before onboarding paints).
+        if await StorageMigrator.shared.isPristineInstall() {
+            await StorageMigrator.shared.stampCurrentVersionIfMissing()
+            isReady = true
+            return
+        }
+
         let needs = await StorageMigrator.shared.needsMigration()
 
         if !needs {
-            // Fresh install (or already migrated). Make sure the
-            // version stamp is on disk so we don't re-scan every
-            // launch.
+            // Already migrated. Make sure the version stamp is on disk so
+            // we don't re-scan every launch.
             await StorageMigrator.shared.stampCurrentVersionIfMissing()
             // Best-effort cleanup of any leftover backup directory
             // from a previous launch.

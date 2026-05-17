@@ -204,6 +204,9 @@ public final class ToastWindowController: NSObject {
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true
+        // Transient overlay; nothing to restore. Keeps AppKit from snapshotting
+        // an empty pass-through panel on quit.
+        panel.isRestorable = false
 
         // Create a pass-through content view that only responds to hits on subviews
         let passThroughView = ToastPassThroughView()

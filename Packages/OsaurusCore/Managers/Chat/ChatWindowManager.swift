@@ -495,6 +495,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.hidesOnDeactivate = false
         panel.worksWhenModal = true
         panel.isReleasedWhenClosed = false
+        // No AppKit snapshot restoration. Frame autosave (below, via
+        // `applyWindowFramePersistence`) handles position persistence.
+        panel.isRestorable = false
         panel.collectionBehavior = [.fullScreenAuxiliary, .managed]
 
         panel.titleVisibility = .hidden

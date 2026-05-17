@@ -103,6 +103,8 @@ public final class NotchWindowController: NSObject, ObservableObject {
         panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.isMovable = false
+        // Transient overlay; nothing to restore.
+        panel.isRestorable = false
 
         // Pass-through view so clicks outside the notch go to windows below.
         let passThroughView = NotchPassThroughView()

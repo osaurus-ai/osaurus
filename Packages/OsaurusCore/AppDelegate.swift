@@ -9,6 +9,12 @@ import AppKit
 import Combine
 import QuartzCore
 import SwiftUI
+import os.log
+
+/// File-scope logger for the AppDelegate surface. Matches the
+/// `ai.osaurus` subsystem used elsewhere in OsaurusCore so the
+/// whole app can be filtered with one `log stream --subsystem ai.osaurus`.
+private let log = Logger(subsystem: "ai.osaurus", category: "AppDelegate")
 
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
@@ -23,7 +29,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private var vadDot: NSView?
     private var pendingPopoverAction: (@MainActor () -> Void)?
 
-    public func applicationDidFinishLaunching(_ notification: Notification) {
+    /// Runs before AppKit shows its first window. Anything that influences
+    /// window painting on launch (activation policy, automatic-termination
+    /// hold, restoration opt-outs, the SwiftUI Settings-placeholder hide)
+    /// must happen here, not in `applicationDidFinishLaunching` — otherwise
+    /// AppKit gets one or more frames where a stale/auto-presented window
+    /// can flash before our real window is up.
+    public func applicationWillFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
         // Pin the process against macOS automatic termination. We're an
@@ -39,6 +51,66 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             "Osaurus local LLM HTTP server (long-running)"
         )
 
+        // Finalise the activation policy before AppKit paints its first
+        // frame. `LSUIElement=YES` in Info.plist means we launch as
+        // `.accessory`; if the user wants a Dock icon we have to flip to
+        // `.regular` *before* SwiftUI / AppKit can auto-present any window
+        // (e.g. the `Settings { EmptyView() }` placeholder), or that flip
+        // surfaces as a one-frame flash of an unrelated window.
+        let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
+        NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
+
+        // Close (and watch for re-presents of) the SwiftUI-managed
+        // `Settings { EmptyView() }` placeholder window. Our real settings
+        // surface is `ManagementView` opened via `showManagementWindow`;
+        // the placeholder only exists to anchor `.commands`.
+        suppressSwiftUISettingsPlaceholder()
+
+        // Opt out of AppKit snapshot state restoration. Window *positions*
+        // still autosave via `setFrameAutosaveName`; what we're killing is
+        // the launch-time blit of the previous run's window snapshots.
+        disableAppKitStateRestoration()
+    }
+
+    public func applicationSupportsSecureRestorableState(
+        _ app: NSApplication
+    ) -> Bool { true }
+
+    private func disableAppKitStateRestoration() {
+        UserDefaults.standard.register(defaults: [
+            "NSQuitAlwaysKeepsWindows": false
+        ])
+    }
+
+    /// SwiftUI auto-creates an `NSWindow` for the `Settings { EmptyView() }`
+    /// scene with identifier `com_apple_SwiftUI_Settings_window`. On macOS
+    /// builds with `LSUIElement=YES` plus a regular activation policy this
+    /// window can paint for a frame before `applicationDidFinishLaunching`
+    /// presents the onboarding window. Hide it on first pass, then watch
+    /// `didBecomeKeyNotification` for any re-present until our launch Task
+    /// finishes (the observer is removed there).
+    private func suppressSwiftUISettingsPlaceholder() {
+        let id = "com_apple_SwiftUI_Settings_window"
+        for window in NSApp.windows where window.identifier?.rawValue == id {
+            window.orderOut(nil)
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSwiftUIWindowKey(_:)),
+            name: NSWindow.didBecomeKeyNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleSwiftUIWindowKey(_ note: Notification) {
+        guard
+            let w = note.object as? NSWindow,
+            w.identifier?.rawValue == "com_apple_SwiftUI_Settings_window"
+        else { return }
+        w.orderOut(nil)
+    }
+
+    public func applicationDidFinishLaunching(_ notification: Notification) {
         // Make MLX C++ errors recoverable instead of process-fatal. Must run
         // before any model load can call into MLX so the first forward pass
         // is already protected. See `MLXErrorRecovery` for the rationale and
@@ -74,14 +146,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // `DSV4_KV_MODE` unset here so the library default uses its
         // production SWA+CSA+HSA hybrid cache; explicit operator env vars
         // remain honored by vmlx for diagnostics.
-
-        // Configure as regular app (show Dock icon) by default, or accessory if hidden
-        let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
-        if hideDockIcon {
-            NSApp.setActivationPolicy(.accessory)
-        } else {
-            NSApp.setActivationPolicy(.regular)
-        }
 
         // App has launched
         NSLog("Osaurus server app launched")
@@ -119,62 +183,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             LoginItemService.shared.applyStartAtLogin(serverController.configuration.startAtLogin)
         }
 
-        // Create status bar item and attach click handler
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = item.button {
-            if let image = NSImage(named: "osaurus") {
-                image.size = NSSize(width: 18, height: 18)
-                image.isTemplate = true
-                button.image = image
-            } else {
-                button.title = "Osaurus"
-            }
-            button.toolTip = L("Osaurus Server")
-            button.target = self
-            button.action = #selector(togglePopover(_:))
-
-            // Add a small green blinking dot at the bottom-right of the status bar button
-            let dot = NSView()
-            dot.wantsLayer = true
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.isHidden = true
-            button.addSubview(dot)
-            NSLayoutConstraint.activate([
-                dot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -3),
-                dot.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -3),
-                dot.widthAnchor.constraint(equalToConstant: 7),
-                dot.heightAnchor.constraint(equalToConstant: 7),
-            ])
-            if let layer = dot.layer {
-                layer.backgroundColor = NSColor.systemGreen.cgColor
-                layer.cornerRadius = 3.5
-                layer.borderWidth = 1
-                layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
-            }
-            activityDot = dot
-
-            // Add a VAD status dot at the top-right of the status bar button (blue/purple for VAD listening)
-            let vDot = NSView()
-            vDot.wantsLayer = true
-            vDot.translatesAutoresizingMaskIntoConstraints = false
-            vDot.isHidden = true
-            button.addSubview(vDot)
-            NSLayoutConstraint.activate([
-                vDot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -3),
-                vDot.topAnchor.constraint(equalTo: button.topAnchor, constant: 3),
-                vDot.widthAnchor.constraint(equalToConstant: 7),
-                vDot.heightAnchor.constraint(equalToConstant: 7),
-            ])
-            if let layer = vDot.layer {
-                layer.backgroundColor = NSColor.systemBlue.cgColor
-                layer.cornerRadius = 3.5
-                layer.borderWidth = 1
-                layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
-            }
-            vadDot = vDot
-        }
-        statusItem = item
-        updateStatusItemAndMenu()
+        // Create status bar item, attach click handler, and overlay the
+        // activity + VAD indicator dots. See `installStatusItem`.
+        installStatusItem()
 
         // Start main thread watchdog in debug builds to detect UI hangs
         #if DEBUG
@@ -288,12 +299,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize Transcription Mode service
         initializeTranscriptionModeService()
 
-        // Setup global toast notification system
-        ToastWindowController.shared.setup()
-
-        // Setup notch background task indicator
-        NotchWindowController.shared.setup()
-
         // Initialize ScheduleManager to start scheduled tasks
         _ = ScheduleManager.shared
 
@@ -314,37 +319,62 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // call that used to race the registrar's first registration.)
         SandboxToolRegistrar.shared.start()
 
-        // Show onboarding for first-time users
-        if OnboardingService.shared.shouldShowOnboarding {
-            // Slight delay to let the app finish launching
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+        // Present the initial user-facing window. The 300 ms defer keeps
+        // window-server frames clean during the loud first second of launch:
+        //
+        //  - It lets the services started above settle so their first
+        //    `NSPanel`/`orderFrontRegardless` calls don't share a frame
+        //    with the onboarding/chat window, which is when stray "old
+        //    window" flashes surface.
+        //  - `ToastWindowController` and `NotchWindowController` `setup()`
+        //    both build transparent overlay panels and order them front;
+        //    we run them *after* the user-facing window in the same Task
+        //    so they can't paint in its place during launch.
+        //  - The SwiftUI Settings-placeholder key observer
+        //    (`suppressSwiftUISettingsPlaceholder`) is torn down here. By
+        //    the time our window is on screen, Cmd+, routes through
+        //    `settingsCommand` and AppKit won't auto-present the
+        //    placeholder again.
+        let presentOnboarding = OnboardingService.shared.shouldShowOnboarding
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+
+            if presentOnboarding {
                 showOnboardingWindow()
+            } else {
+                presentInitialWindow()
             }
+
+            ToastWindowController.shared.setup()
+            NotchWindowController.shared.setup()
+
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSWindow.didBecomeKeyNotification,
+                object: nil
+            )
+        }
+    }
+
+    /// Present whatever window makes sense on a launch (or dock-icon reopen)
+    /// where onboarding is already complete: focus existing chat windows if
+    /// any are open, fall back to a visible management window, otherwise
+    /// pop a fresh chat overlay.
+    ///
+    /// Deployment target is macOS 15, so we use the post-macOS-14
+    /// `activate(options:)` API directly (the legacy
+    /// `.activateIgnoringOtherApps` flag was deprecated in 14).
+    @MainActor
+    private func presentInitialWindow() {
+        NSApp.unhide(nil)
+        _ = NSRunningApplication.current.activate(options: .activateAllWindows)
+
+        if ChatWindowManager.shared.windowCount > 0 {
+            ChatWindowManager.shared.focusAllWindows()
+        } else if WindowManager.shared.isVisible(.management) {
+            WindowManager.shared.show(.management, center: false)
         } else {
-            // Fresh launch from terminated state: explicitly activate and show window
-            Task { @MainActor in
-                // Delay slightly to ensure services are ready
-                try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
-
-                // Ensure app is unhidden and active
-                NSApp.unhide(nil)
-                if #available(macOS 14.0, *) {
-                    _ = NSRunningApplication.current.activate(options: .activateAllWindows)
-                } else {
-                    _ = NSRunningApplication.current.activate(options: [
-                        .activateAllWindows, .activateIgnoringOtherApps,
-                    ])
-                }
-
-                if ChatWindowManager.shared.windowCount > 0 {
-                    ChatWindowManager.shared.focusAllWindows()
-                } else if WindowManager.shared.isVisible(.management) {
-                    WindowManager.shared.show(.management, center: false)
-                } else {
-                    showChatOverlay()
-                }
-            }
+            showChatOverlay()
         }
     }
 
@@ -366,12 +396,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 if speechService.isModelLoaded {
                     do {
                         try await VADService.shared.start()
-                        print("[AppDelegate] VAD service started successfully on app launch")
+                        log.info("VAD service started successfully on app launch")
                     } catch {
-                        print("[AppDelegate] Failed to start VAD service: \(error)")
+                        log.error("Failed to start VAD service: \(error.localizedDescription, privacy: .public)")
                     }
                 } else {
-                    print("[AppDelegate] VAD service not started - model not loaded after 30 seconds")
+                    log.error("VAD service not started — speech model not loaded after 30s")
                 }
             }
         }
@@ -382,7 +412,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private func initializeTranscriptionModeService() {
         // Initialize the transcription mode service and register hotkey if enabled
         TranscriptionModeService.shared.initialize()
-        print("[AppDelegate] Transcription mode service initialized")
+        log.debug("Transcription mode service initialized")
     }
 
     private func setupVADNotifications() {
@@ -444,7 +474,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     @objc private func handleChatViewClosed(_ notification: Notification) {
-        print("[AppDelegate] Chat view closed, checking if VAD should resume...")
+        log.debug("Chat view closed, checking if VAD should resume…")
         Task { @MainActor in
             // Resume VAD if it was paused
             await VADService.shared.resumeAfterChat()
@@ -452,7 +482,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     @objc private func handleCloseChatOverlay(_ notification: Notification) {
-        print("[AppDelegate] Close chat overlay requested (silence timeout)")
+        log.debug("Close chat overlay requested (silence timeout)")
         Task { @MainActor in
             closeChatOverlay()
         }
@@ -462,7 +492,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         guard let detection = notification.object as? VADDetectionResult else { return }
 
         Task { @MainActor in
-            print("[AppDelegate] VAD detected agent: \(detection.agentName)")
+            log.debug("VAD detected agent: \(detection.agentName, privacy: .public)")
 
             // Check if a window for this agent already exists
             let existingWindows = ChatWindowManager.shared.findWindows(byAgentId: detection.agentId)
@@ -470,17 +500,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             let targetWindowId: UUID
             if let existing = existingWindows.first {
                 // Focus existing window for this agent
-                print("[AppDelegate] Found existing window for agent, focusing...")
+                log.debug("Found existing window for agent, focusing")
                 ChatWindowManager.shared.showWindow(id: existing.id)
                 targetWindowId = existing.id
             } else {
                 // Create a new chat window for the detected agent
-                print("[AppDelegate] Creating new chat window for agent...")
+                log.debug("Creating new chat window for agent")
                 targetWindowId = ChatWindowManager.shared.createWindow(agentId: detection.agentId)
             }
 
-            print(
-                "[AppDelegate] VAD target window: \(targetWindowId), window count: \(ChatWindowManager.shared.windowCount)"
+            log.debug(
+                "VAD target window: \(targetWindowId, privacy: .public), windowCount=\(ChatWindowManager.shared.windowCount)"
             )
 
             // Pause VAD when handling voice input
@@ -490,7 +520,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             let vadConfig = VADConfigurationStore.load()
             if vadConfig.autoStartVoiceInput {
                 try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms - fast handoff
-                print("[AppDelegate] Triggering voice input in chat for window \(targetWindowId)")
+                log.debug("Triggering voice input in chat for window \(targetWindowId, privacy: .public)")
                 NotificationCenter.default.post(
                     name: .startVoiceInputInChat,
                     object: targetWindowId  // Target specific window
@@ -540,13 +570,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 return
             }
 
-            if ChatWindowManager.shared.windowCount > 0 {
-                ChatWindowManager.shared.focusAllWindows()
-            } else if WindowManager.shared.isVisible(.management) {
-                WindowManager.shared.show(.management, center: false)
-            } else {
-                self.showChatOverlay()
-            }
+            self.presentInitialWindow()
         }
 
         return true
@@ -642,6 +666,82 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     // MARK: Status Item / Menu
+
+    /// Which corner of the status-bar button a status dot is pinned to.
+    /// The activity (server-busy) indicator sits at `.bottomTrailing`; the
+    /// VAD indicator sits at `.topTrailing`. Both use a 3 pt inset.
+    private enum StatusDotCorner {
+        case bottomTrailing
+        case topTrailing
+    }
+
+    /// Builds the menu-bar status item (icon, tooltip, click target) and
+    /// installs the two indicator dots. Idempotent at call-site only: this
+    /// is called exactly once from `applicationDidFinishLaunching`.
+    private func installStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = item.button {
+            if let image = NSImage(named: "osaurus") {
+                image.size = NSSize(width: 18, height: 18)
+                image.isTemplate = true
+                button.image = image
+            } else {
+                button.title = "Osaurus"
+            }
+            button.toolTip = L("Osaurus Server")
+            button.target = self
+            button.action = #selector(togglePopover(_:))
+
+            // Green blinking dot — server is generating.
+            activityDot = makeStatusDot(in: button, color: .systemGreen, corner: .bottomTrailing)
+
+            // Blue/red pulse — VAD listening / error.
+            vadDot = makeStatusDot(in: button, color: .systemBlue, corner: .topTrailing)
+        }
+        statusItem = item
+        updateStatusItemAndMenu()
+    }
+
+    /// Creates a 7x7 circular overlay view anchored to one corner of `button`.
+    /// The view starts hidden; callers toggle visibility + animation in
+    /// `updateStatusItemAndMenu`.
+    private func makeStatusDot(
+        in button: NSStatusBarButton,
+        color: NSColor,
+        corner: StatusDotCorner
+    ) -> NSView {
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        dot.isHidden = true
+        button.addSubview(dot)
+
+        // Constants chosen to fit comfortably inside the menu-bar icon's
+        // safe area without clipping at any system text size.
+        let inset: CGFloat = 3
+        let side: CGFloat = 7
+
+        var constraints: [NSLayoutConstraint] = [
+            dot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -inset),
+            dot.widthAnchor.constraint(equalToConstant: side),
+            dot.heightAnchor.constraint(equalToConstant: side),
+        ]
+        switch corner {
+        case .bottomTrailing:
+            constraints.append(dot.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -inset))
+        case .topTrailing:
+            constraints.append(dot.topAnchor.constraint(equalTo: button.topAnchor, constant: inset))
+        }
+        NSLayoutConstraint.activate(constraints)
+
+        if let layer = dot.layer {
+            layer.backgroundColor = color.cgColor
+            layer.cornerRadius = side / 2
+            layer.borderWidth = 1
+            layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
+        }
+        return dot
+    }
 
     private func setupObservers() {
         cancellables.removeAll()
@@ -836,7 +936,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     // MARK: - NSPopoverDelegate
 
     public func popoverDidClose(_ notification: Notification) {
-        print("[AppDelegate] Popover closed, posting chatViewClosed notification")
+        log.debug("Popover closed, posting chatViewClosed notification")
         // Post notification so VAD can resume
         NotificationCenter.default.post(name: .chatViewClosed, object: nil)
 
@@ -1078,7 +1178,7 @@ extension AppDelegate {
     /// Show a new chat window (creates new window via ChatWindowManager)
     @MainActor func showChatOverlay() {
         closePopoverAndPerform {
-            print("[AppDelegate] Creating new chat window via ChatWindowManager...")
+            log.debug("Creating new chat window via ChatWindowManager")
             ChatWindowManager.shared.createWindow()
 
             // start clipboard monitoring and do an immediate check
@@ -1091,7 +1191,7 @@ extension AppDelegate {
                 await VADService.shared.pause()
             }
 
-            print("[AppDelegate] Chat window shown, count: \(ChatWindowManager.shared.windowCount)")
+            log.debug("Chat window shown, count=\(ChatWindowManager.shared.windowCount)")
             NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
         }
     }
@@ -1099,10 +1199,12 @@ extension AppDelegate {
     /// Show a new chat window for a specific agent (used by VAD)
     @MainActor func showChatOverlay(forAgentId agentId: UUID) {
         closePopoverAndPerform {
-            print("[AppDelegate] Creating new chat window for agent \(agentId) via ChatWindowManager...")
+            log.debug(
+                "Creating new chat window for agent \(agentId, privacy: .public) via ChatWindowManager"
+            )
             ChatWindowManager.shared.createWindow(agentId: agentId)
 
-            print("[AppDelegate] Chat window shown for agent, count: \(ChatWindowManager.shared.windowCount)")
+            log.debug("Chat window shown for agent, count=\(ChatWindowManager.shared.windowCount)")
             NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
         }
     }
@@ -1112,7 +1214,7 @@ extension AppDelegate {
         if let lastId = ChatWindowManager.shared.lastFocusedWindowId {
             ChatWindowManager.shared.closeWindow(id: lastId)
         }
-        print("[AppDelegate] Chat overlay closed via closeChatOverlay")
+        log.debug("Chat overlay closed via closeChatOverlay")
     }
 }
 
@@ -1150,6 +1252,7 @@ extension AppDelegate {
             window.contentViewController = hostingController
             window.center()
             window.isReleasedWhenClosed = false
+            window.isRestorable = false
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
             Self.acknowledgementsWindow = window
@@ -1236,6 +1339,7 @@ extension AppDelegate {
             window.contentView = containerView
             window.center()
             window.isReleasedWhenClosed = false
+            window.isRestorable = false
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
             window.standardWindowButton(.closeButton)?.isHidden = true

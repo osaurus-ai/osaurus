@@ -291,6 +291,11 @@ public final class WindowManager: NSObject, ObservableObject {
             window.isReleasedWhenClosed = false
         }
 
+        // Opt out of AppKit snapshot state restoration. Window positions
+        // still persist via `setFrameAutosaveName` below; this only kills
+        // the launch-time blit of the previous run's window snapshots.
+        window.isRestorable = false
+
         // Apply common configuration
         window.titleVisibility = config.titleVisibility
         window.titlebarAppearsTransparent = config.titlebarAppearsTransparent
