@@ -573,39 +573,57 @@ extension ModelManager {
         return f.date(from: ymd) ?? Date(timeIntervalSince1970: 0)
     }
 
+    /// Builds a curated `MLXModel` from a single HF repo id. The id is the
+    /// canonical source for `name` (via `friendlyName`) and `downloadURL`,
+    /// so all three can never drift out of sync — the duplication that
+    /// previously hid the `Nemotron-3-Nano-Omni-30B-A3B-JANGTQ` slug typo
+    /// is no longer possible.
+    nonisolated fileprivate static func curated(
+        id: String,
+        description: String,
+        isTopSuggestion: Bool = false,
+        downloadSizeBytes: Int64? = nil,
+        modelType: String? = nil,
+        releasedAt: Date? = nil
+    ) -> MLXModel {
+        MLXModel(
+            id: id,
+            name: ModelMetadataParser.friendlyName(from: id),
+            description: description,
+            downloadURL: "https://huggingface.co/\(id)",
+            isTopSuggestion: isTopSuggestion,
+            downloadSizeBytes: downloadSizeBytes,
+            modelType: modelType,
+            releasedAt: releasedAt
+        )
+    }
+
     /// Fully curated models with descriptions we control.
     /// Order is a fallback only — `ModelDownloadView.filteredSuggestedModels`
     /// sorts by curated-first → top-pick → `releasedAt` desc → name.
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
         // MARK: Top Picks
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/gemma-4-E2B-it-4bit",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E2B-it-4bit"),
             description: "Smallest multimodal Gemma 4 model. Runs on any Mac.",
-            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-4bit",
-            isTopSuggestion: false,
             downloadSizeBytes: 4_392_120_539,
             modelType: "gemma4",
             releasedAt: date("2026-04-06")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/gemma-4-E4B-it-4bit",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E4B-it-4bit"),
             description: "Multimodal edge model. Handles images, video, and audio. 128K context.",
-            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-4bit",
             isTopSuggestion: true,
             downloadSizeBytes: 6_901_389_946,
             modelType: "gemma4",
             releasedAt: date("2026-04-06")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/gemma-4-26B-A4B-it-mxfp4",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-26B-A4B-it-mxfp4"),
             description: "Best all-around vision model. MoE with only 4B active params. 128K context.",
-            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-26B-A4B-it-mxfp4",
             isTopSuggestion: true,
             downloadSizeBytes: 14_869_637_520,
             modelType: "gemma4",
@@ -620,24 +638,20 @@ extension ModelManager {
         // to Qwen35JANGTQModel at load time based on jang_config.weight_format
         // (`"mxtq"`) — no osaurus-side branching required.
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4"),
             description: "Qwen 3.6 35B MoE vision model. MXFP4 quantization — best quality per byte.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
             isTopSuggestion: true,
             downloadSizeBytes: 19_350_002_112,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16")
         ),
 
-        MLXModel(
+        curated(
             id: "LiquidAI/LFM2-24B-A2B-MLX-8bit",
-            name: ModelMetadataParser.friendlyName(from: "LiquidAI/LFM2-24B-A2B-MLX-8bit"),
             description: "Liquid AI's 24B MoE model. Only ~2B active params per token. 128K context.",
-            downloadURL: "https://huggingface.co/LiquidAI/LFM2-24B-A2B-MLX-8bit",
             isTopSuggestion: true,
-            downloadSizeBytes: 23_600_000_000
+            downloadSizeBytes: 25_339_189_070
         ),
 
         // MARK: MiniMax M2.7 (JANGTQ MoE)
@@ -647,24 +661,20 @@ extension ModelManager {
         // jang_config.json (`weight_format: mxtq`) at load time — no osaurus-side
         // branching required.
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/MiniMax-M2.7-JANGTQ4",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/MiniMax-M2.7-JANGTQ4"),
             description:
                 "MiniMax M2.7 228B agentic MoE, 4-bit TurboQuant routed experts. Near-bf16 quality at ~25% of bf16 disk. 192K context.",
-            downloadURL: "https://huggingface.co/OsaurusAI/MiniMax-M2.7-JANGTQ4",
-            downloadSizeBytes: 116_874_305_053,
+            downloadSizeBytes: 116_891_270_734,
             modelType: "minimax_m2",
             releasedAt: date("2026-04-17")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/MiniMax-M2.7-JANGTQ",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/MiniMax-M2.7-JANGTQ"),
             description:
                 "MiniMax M2.7 228B agentic MoE, 2-bit TurboQuant routed experts. Smallest footprint of the family. 192K context.",
-            downloadURL: "https://huggingface.co/OsaurusAI/MiniMax-M2.7-JANGTQ",
-            downloadSizeBytes: 60_705_324_126,
+            downloadSizeBytes: 60_702_998_032,
             modelType: "minimax_m2",
             releasedAt: date("2026-04-17")
         ),
@@ -694,45 +704,30 @@ extension ModelManager {
         // T=0.6 top_p=0.95 (DeepSeek-style). Bundles ship those defaults
         // in `generation_config.json`; `LocalGenerationDefaults` reads them.
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
-            name: ModelMetadataParser.friendlyName(
-                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4"
-            ),
             description:
                 "NVIDIA Nemotron-3 30B Reasoning hybrid (Mamba-2 + MoE). MXFP4 quantization — fastest decode path. 262K context.",
-            downloadURL:
-                "https://huggingface.co/OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
             isTopSuggestion: true,
-            downloadSizeBytes: 18_002_117_870,
+            downloadSizeBytes: 42_390_177_816,
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
-            name: ModelMetadataParser.friendlyName(
-                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4"
-            ),
             description:
-                "Nemotron-3 30B Reasoning hybrid, 4-bit TurboQuant routed experts. Near-bf16 quality at ~16 GB. 262K context.",
-            downloadURL:
-                "https://huggingface.co/OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
-            downloadSizeBytes: 16_009_341_440,
+                "Nemotron-3 30B Reasoning hybrid, 4-bit TurboQuant routed experts. Near-bf16 quality at ~37 GB. 262K context.",
+            downloadSizeBytes: 37_026_073_381,
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28")
         ),
 
-        MLXModel(
-            id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ",
-            name: ModelMetadataParser.friendlyName(
-                from: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ"
-            ),
+        curated(
+            id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ2",
             description:
-                "Nemotron-3 30B Reasoning hybrid, 2-bit TurboQuant routed experts. Smallest footprint (~9 GB). 262K context.",
-            downloadURL:
-                "https://huggingface.co/OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ",
-            downloadSizeBytes: 9_136_488_448,
+                "Nemotron-3 30B Reasoning hybrid, 2-bit TurboQuant routed experts. Smallest footprint (~21 GB). 262K context.",
+            downloadSizeBytes: 22_338_666_862,
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28")
         ),
@@ -768,26 +763,20 @@ extension ModelManager {
         // mislabeled bundles (sidecar present but `weight_format != "mxtq"`)
         // for any JANGTQ family — Laguna inherits that protection.
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Laguna-XS.2-mxfp4",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Laguna-XS.2-mxfp4"),
             description:
                 "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE. MXFP4 quant — fastest decode. 131K context, 256 experts top-8.",
-            downloadURL:
-                "https://huggingface.co/OsaurusAI/Laguna-XS.2-mxfp4",
-            downloadSizeBytes: 17_500_000_000,
+            downloadSizeBytes: 20_937_722_012,
             modelType: "laguna",
             releasedAt: date("2026-04-30")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Laguna-XS.2-JANGTQ2",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Laguna-XS.2-JANGTQ2"),
             description:
-                "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE, 2-bit TurboQuant routed experts. Smallest footprint (~7 GB). 131K context.",
-            downloadURL:
-                "https://huggingface.co/OsaurusAI/Laguna-XS.2-JANGTQ2",
-            downloadSizeBytes: 7_300_000_000,
+                "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE, 2-bit TurboQuant routed experts. Smallest footprint (~10 GB). 131K context.",
+            downloadSizeBytes: 10_103_047_827,
             modelType: "laguna",
             releasedAt: date("2026-04-30")
         ),
@@ -806,24 +795,20 @@ extension ModelManager {
         // "detailed thinking on/off" system directive inside the Bailing
         // input processor, before tokenizer rendering.
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Ling-2.6-flash-MXFP4",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Ling-2.6-flash-MXFP4"),
             description:
                 "Ling-2.6 Flash BailingHybrid MoE. MXFP4 quantization for the highest quality Ling local path.",
-            downloadURL:
-                "https://huggingface.co/OsaurusAI/Ling-2.6-flash-MXFP4",
+            downloadSizeBytes: 67_238_772_304,
             modelType: "bailing_hybrid",
             releasedAt: date("2026-05-06")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Ling-2.6-flash-JANGTQ",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Ling-2.6-flash-JANGTQ"),
             description:
                 "Ling-2.6 Flash BailingHybrid MoE with TurboQuant routed experts. Smaller local footprint for Mac inference.",
-            downloadURL:
-                "https://huggingface.co/OsaurusAI/Ling-2.6-flash-JANGTQ",
+            downloadSizeBytes: 30_601_532_582,
             modelType: "bailing_hybrid",
             releasedAt: date("2026-05-06")
         ),
@@ -861,154 +846,121 @@ extension ModelManager {
         //
         // Not a Mamba/SSM hybrid — `isKnownHybridModel` does NOT match.
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
-            name: ModelMetadataParser.friendlyName(
-                from: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4"
-            ),
             description:
                 "Mistral Medium 3.5 128B + Pixtral vision. MXFP4 quant — fastest decode. 256K context, 24-language coverage.",
-            downloadURL:
-                "https://huggingface.co/OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
-            downloadSizeBytes: 70_400_000_000,
+            downloadSizeBytes: 85_749_286_883,
             modelType: "mistral3",
             releasedAt: date("2026-04-30")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
-            name: ModelMetadataParser.friendlyName(
-                from: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2"
-            ),
             description:
-                "Mistral Medium 3.5 128B + Pixtral vision, 2-bit TurboQuant text decoder. ~36 GB footprint. 256K context, 24-language coverage.",
-            downloadURL:
-                "https://huggingface.co/OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
-            downloadSizeBytes: 36_700_000_000,
+                "Mistral Medium 3.5 128B + Pixtral vision, 2-bit TurboQuant text decoder. ~41 GB footprint. 256K context, 24-language coverage.",
+            downloadSizeBytes: 40_795_065_942,
             modelType: "mistral3",
             releasedAt: date("2026-04-30")
         ),
 
         // MARK: Large Models
 
-        MLXModel(
+        curated(
             id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
-            name: ModelMetadataParser.friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
             description: "OpenAI's open-source release. Strong all-around performance.",
-            downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit"
+            downloadSizeBytes: 22_256_530_515
         ),
 
-        MLXModel(
+        curated(
             id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
-            name: ModelMetadataParser.friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
             description: "OpenAI's largest open model. Premium quality, requires 64GB+ unified memory.",
-            downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit"
+            downloadSizeBytes: 124_196_929_648
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Gemma-4-31B-it-JANG_4M",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Gemma-4-31B-it-JANG_4M"),
             description: "Gemma 4 31B dense vision model. Top-tier quality with optimized quantization.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-31B-it-JANG_4M",
-            downloadSizeBytes: 22_692_183_936,
+            downloadSizeBytes: 22_692_184_188,
             modelType: "gemma4",
             releasedAt: date("2026-04-16")
         ),
 
         // MARK: Vision Language Models (VLM)
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/gemma-4-26B-A4B-it-4bit",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-26B-A4B-it-4bit"),
             description: "MoE vision model with standard 4-bit quantization. 4B active params.",
-            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-26B-A4B-it-4bit",
             downloadSizeBytes: 15_641_238_761,
             modelType: "gemma4",
             releasedAt: date("2026-04-07")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L"),
             description: "Efficient MoE vision model. Only 4B active params. 256K context.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
-            downloadSizeBytes: 10_676_011_439,
+            downloadSizeBytes: 10_676_011_691,
             modelType: "gemma4",
             releasedAt: date("2026-04-16")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M"),
             description: "Higher-quality MoE vision model. 4B active params with 256K context.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
-            downloadSizeBytes: 16_200_957_903,
+            downloadSizeBytes: 16_200_958_155,
             modelType: "gemma4",
             releasedAt: date("2026-04-16")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/gemma-4-E4B-it-8bit",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E4B-it-8bit"),
             description: "Multimodal edge model at 8-bit precision. Best quality for the E4B family.",
-            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E4B-it-8bit",
             downloadSizeBytes: 8_997_820_763,
             modelType: "gemma4",
             releasedAt: date("2026-04-06")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Qwen3.5-122B-A10B-JANG_4K",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-122B-A10B-JANG_4K"),
             description: "Largest Qwen3.5 MoE vision model. 10B active params with top-tier reasoning.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_4K",
-            downloadSizeBytes: 66_458_339_463,
+            downloadSizeBytes: 66_458_339_720,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S"),
             description: "Qwen3.5 122B MoE vision model. Compact quantization, smaller download.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
-            downloadSizeBytes: 37_770_467_212,
+            downloadSizeBytes: 37_770_467_470,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K"),
             description: "Efficient Qwen3.5 MoE vision model. Only 3B active params.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
-            downloadSizeBytes: 19_667_902_931,
+            downloadSizeBytes: 19_667_903_189,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16")
         ),
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S"),
             description: "Compact Qwen3.5 MoE vision model. Fast and lightweight.",
-            downloadURL: "https://huggingface.co/OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
-            downloadSizeBytes: 11_665_353_755,
+            downloadSizeBytes: 11_665_354_013,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16")
         ),
 
         // MARK: Compact Models
 
-        MLXModel(
+        curated(
             id: "OsaurusAI/gemma-4-E2B-it-8bit",
-            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/gemma-4-E2B-it-8bit"),
             description: "Smallest Gemma 4 at 8-bit precision. Better quality, still runs on any Mac.",
-            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-E2B-it-8bit",
             downloadSizeBytes: 5_932_058_274,
             modelType: "gemma4",
             releasedAt: date("2026-04-06")
         ),
-
     ]
 
     /// Lowercased IDs of curated entries. Used by the Recommended-tab sort to
