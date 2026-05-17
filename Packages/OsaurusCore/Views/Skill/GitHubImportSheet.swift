@@ -42,9 +42,23 @@ struct GitHubImportSheet: View {
     @State private var attachClaudeMd: Bool = true
     /// Whether to also import HTTP/SSE MCP servers from each plugin's `.mcp.json`.
     @State private var importMCPProviders: Bool = true
+    /// Cross-plugin dependency graph populated in the background after the
+    /// plugin list loads — see `loadDependencyGraph(for:)`. Empty by default
+    /// so the picker behaves exactly as before for repos where no agent
+    /// invokes a sibling skill.
+    @State private var pluginDependencies: PluginDependencyGraph =
+        PluginDependencyGraph(dependencies: [:])
+    /// `displayName` of the plugin (if any) whose toggle triggered the most
+    /// recent cascade of dependency-driven auto-selections. Drives the small
+    /// "Selected because <name> invokes them" footer next to the plugin list.
+    @State private var lastAutoSelectionSource: String? = nil
+    /// Plugins that were auto-checked by the dependency graph since the last
+    /// fresh toggle — kept separately so the footer can name them.
+    @State private var lastAutoSelectedPlugins: [String] = []
     @State private var hasAppeared = false
     @State private var isInputFocused = false
     @State private var activeTask: Task<Void, Never>?
+    @State private var dependencyResolverTask: Task<Void, Never>?
 
     // MARK: - Body
 
@@ -71,6 +85,8 @@ struct GitHubImportSheet: View {
         .onDisappear {
             activeTask?.cancel()
             activeTask = nil
+            dependencyResolverTask?.cancel()
+            dependencyResolverTask = nil
         }
     }
 
@@ -511,6 +527,27 @@ struct GitHubImportSheet: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 8)
 
+            // Auto-selection footer — only renders when the user just
+            // toggled a plugin whose agents reference siblings.
+            if let source = lastAutoSelectionSource, !lastAutoSelectedPlugins.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "link")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                        .padding(.top, 2)
+                    Text(
+                        "Also selected: \(lastAutoSelectedPlugins.joined(separator: ", ")) — referenced by \(source).",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 4)
+            }
+
             // Plugin list.
             ScrollView {
                 LazyVStack(spacing: 4) {
@@ -519,18 +556,38 @@ struct GitHubImportSheet: View {
                             plugin: plugin,
                             isSelected: selectedPluginNames.contains(plugin.name)
                         ) {
-                            withAnimation(.easeOut(duration: 0.1)) {
-                                if selectedPluginNames.contains(plugin.name) {
-                                    selectedPluginNames.remove(plugin.name)
-                                } else {
-                                    selectedPluginNames.insert(plugin.name)
-                                }
-                            }
+                            togglePluginSelection(plugin.name)
                         }
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
+            }
+        }
+    }
+
+    /// Toggle a plugin's selection and, if turning it ON, also auto-check
+    /// any sibling plugins it depends on. Surfaces the cascade in the
+    /// footer so the user can see what got pulled in.
+    private func togglePluginSelection(_ name: String) {
+        withAnimation(.easeOut(duration: 0.1)) {
+            if selectedPluginNames.contains(name) {
+                selectedPluginNames.remove(name)
+                // Toggling off clears the auto-select footer so it isn't
+                // stuck around showing stale state.
+                if lastAutoSelectionSource == name {
+                    lastAutoSelectionSource = nil
+                    lastAutoSelectedPlugins = []
+                }
+            } else {
+                selectedPluginNames.insert(name)
+                let deps = pluginDependencies.transitiveDependencies(of: name)
+                let newlyAdded = deps.subtracting(selectedPluginNames)
+                if !newlyAdded.isEmpty {
+                    selectedPluginNames.formUnion(deps)
+                    lastAutoSelectionSource = name
+                    lastAutoSelectedPlugins = newlyAdded.sorted()
+                }
             }
         }
     }
@@ -599,6 +656,17 @@ struct GitHubImportSheet: View {
                             "These servers ship with placeholder credentials. Paste a real token in MCP settings before enabling them:"
                         ),
                         items: report.allPlaceholderTokensSkipped
+                    )
+                }
+
+                if !report.allOAuthProvidersNeedingSignIn.isEmpty {
+                    InstallReportNotice(
+                        icon: "person.crop.circle.badge.questionmark",
+                        title: L("MCP servers need OAuth sign-in"),
+                        message: L(
+                            "These providers use OAuth and were created disabled. Open MCP settings, click the provider, and complete sign-in to enable them:"
+                        ),
+                        items: report.allOAuthProvidersNeedingSignIn
                     )
                 }
 
@@ -836,6 +904,12 @@ struct GitHubImportSheet: View {
                 } else {
                     selectedPluginNames = Set(plugins.plugins.map(\.name))
                     importState = .pluginSelection(plugins)
+                    // Resolve cross-plugin sibling dependencies in the
+                    // background so the picker stays interactive while
+                    // agent bodies are being fetched. The graph is only
+                    // consumed by `togglePluginSelection`, which gracefully
+                    // no-ops when it's still empty.
+                    loadDependencyGraph(for: plugins)
                 }
             } catch is CancellationError {
                 return
@@ -846,6 +920,22 @@ struct GitHubImportSheet: View {
                 guard !Task.isCancelled else { return }
                 importState = .error(.networkError(error))
             }
+        }
+    }
+
+    /// Kick off `resolvePluginDependencies` in a background task. The
+    /// resolver fetches every plugin's agent markdown files and scans them
+    /// for sibling-skill references; the picker uses the resulting graph to
+    /// auto-select cross-plugin dependencies when the user toggles a parent
+    /// plugin on. We don't block on this — if it's still running when the
+    /// user clicks Install, the resulting selection is whatever was
+    /// explicitly checked.
+    private func loadDependencyGraph(for plugins: GitHubPluginsResult) {
+        dependencyResolverTask?.cancel()
+        dependencyResolverTask = Task { @MainActor in
+            let graph = await gitHubService.resolvePluginDependencies(plugins)
+            guard !Task.isCancelled else { return }
+            pluginDependencies = graph
         }
     }
 

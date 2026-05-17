@@ -24,8 +24,15 @@ public struct ClaudePluginSelection: Sendable {
     public var selectedCommandPaths: Set<String>
     /// Whether to import `.mcp.json` HTTP/SSE servers (stdio entries are always skipped).
     public var importMCP: Bool
-    /// Whether to attach `CLAUDE.md` as a reference on every imported skill.
+    /// Whether to attach `CLAUDE.md` (and other plugin-root markdown like
+    /// `CONNECTORS.md` / `README.md`) as references on every imported skill.
     public var attachClaudeMd: Bool
+    /// Whether to walk each skill's directory and pull in co-located
+    /// supporting files (`scripts/`, `references/`, `assets/`,
+    /// `templates/`, plus loose files at the skill's root). On by default
+    /// so plugins like `financial-services` get their Python helpers and
+    /// troubleshooting docs imported instead of silently dropped.
+    public var includeSkillAssets: Bool
 
     public init(
         manifest: ClaudePluginManifest,
@@ -33,7 +40,8 @@ public struct ClaudePluginSelection: Sendable {
         selectedAgentPaths: Set<String>? = nil,
         selectedCommandPaths: Set<String>? = nil,
         importMCP: Bool = true,
-        attachClaudeMd: Bool = true
+        attachClaudeMd: Bool = true,
+        includeSkillAssets: Bool = true
     ) {
         self.manifest = manifest
         self.selectedSkillPaths = selectedSkillPaths ?? Set(manifest.skills.map { $0.path })
@@ -41,6 +49,7 @@ public struct ClaudePluginSelection: Sendable {
         self.selectedCommandPaths = selectedCommandPaths ?? Set(manifest.commands.map { $0.path })
         self.importMCP = importMCP
         self.attachClaudeMd = attachClaudeMd
+        self.includeSkillAssets = includeSkillAssets
     }
 
     public var totalSelected: Int {
@@ -74,6 +83,9 @@ public struct ClaudePluginInstallReport: Sendable {
         public var importedAgentCount: Int = 0
         public var importedCommandCount: Int = 0
         public var importedMCPProviderCount: Int = 0
+        /// Total co-located asset files (Python helpers, references, etc.)
+        /// attached to imported skills.
+        public var importedSkillAssetCount: Int = 0
         /// Server names from `.mcp.json` that we couldn't auto-install because
         /// Osaurus's remote MCP transport is HTTP/SSE only — these need manual
         /// stdio configuration.
@@ -82,6 +94,11 @@ public struct ClaudePluginInstallReport: Sendable {
         /// `${VAULT_TOKEN}`). The provider was created without a token so the
         /// user must paste a real one before enabling.
         public var placeholderTokensSkipped: [String] = []
+        /// OAuth-protected MCP servers (e.g. Slack, Notion in knowledge-work
+        /// plugins) imported as `authType: .oauth` and left disabled. The
+        /// user must complete the OAuth sign-in flow in MCP settings before
+        /// these will actually authenticate.
+        public var oauthProvidersNeedingSignIn: [String] = []
         /// Schedules that couldn't infer a cron — created disabled so the
         /// user can review and configure. Identified by `Schedule.id` so the
         /// UI can deep-link to the editor.
@@ -97,6 +114,9 @@ public struct ClaudePluginInstallReport: Sendable {
     public var totalImportedMCPProviders: Int {
         perPlugin.reduce(0) { $0 + $1.importedMCPProviderCount }
     }
+    public var totalImportedSkillAssets: Int {
+        perPlugin.reduce(0) { $0 + $1.importedSkillAssetCount }
+    }
     public var hasAnyImports: Bool {
         totalImportedSkills + totalImportedAgents + totalImportedCommands + totalImportedMCPProviders
             > 0
@@ -106,6 +126,9 @@ public struct ClaudePluginInstallReport: Sendable {
     }
     public var allPlaceholderTokensSkipped: [String] {
         perPlugin.flatMap { $0.placeholderTokensSkipped }
+    }
+    public var allOAuthProvidersNeedingSignIn: [String] {
+        perPlugin.flatMap { $0.oauthProvidersNeedingSignIn }
     }
     public var allSchedulesNeedingCron: [PendingSchedule] {
         perPlugin.flatMap { $0.schedulesNeedingCron }
@@ -179,13 +202,17 @@ public final class ClaudePluginInstaller {
             // ── Phase 1: fetch every file we need for this plugin in
             // parallel.  Managers are all `@MainActor`, so we cannot apply
             // mutations concurrently, but the network is the dominant cost
-            // and these fetches are independent.
-            let fetched = await fetchArtifacts(for: selection, repo: repo)
+            // and these fetches are independent.  External-source plugins
+            // (`MarketplaceSource.externalRepo`/`.externalSubdir`) carry
+            // their own `sourceRepo` on the manifest — we never hit
+            // the marketplace repo for those file fetches.
+            let fetched = await fetchArtifacts(for: selection)
 
             // ── Phase 2: apply fetched content sequentially on the main
             // actor.
 
-            // 1. Skills (with optional CLAUDE.md attached as a reference).
+            // 1. Skills (with optional CLAUDE.md + auxiliary root docs +
+            // co-located scripts/references attached).
             for fetchedSkill in fetched.skills {
                 defer { tick() }
                 switch fetchedSkill.content {
@@ -193,9 +220,25 @@ public final class ClaudePluginInstaller {
                     summary.errors.append(
                         "skill \(fetchedSkill.entry.path): \(error.localizedDescription)"
                     )
-                case .success(let content):
+                case .success(let rawContent):
                     do {
-                        var parsed = try Skill.parseAnyFormat(from: content)
+                        // Rewrite `${CLAUDE_PLUGIN_ROOT}/...` and relative
+                        // `../../<file>` references inside SKILL.md so they
+                        // point at the local `references/`/`assets/` paths
+                        // we're about to attach. Returns extra root-doc
+                        // attachments we discovered while resolving links.
+                        let rewriteOutcome = Self.rewriteSkillBody(
+                            rawContent,
+                            skillDir: fetchedSkill.entry.path,
+                            sourceDir: manifest.source,
+                            fetchedAssets: fetchedSkill.assets,
+                            fetchedRootDocs: fetched.rootDocs
+                        )
+
+                        var parsed = try Self.parseSkillWithFallback(
+                            rewriteOutcome.rewritten,
+                            skillPath: fetchedSkill.entry.path
+                        )
                         parsed.pluginId = pluginId
                         if parsed.category == nil || parsed.category?.isEmpty == true {
                             parsed.category = manifest.name
@@ -207,15 +250,52 @@ public final class ClaudePluginInstaller {
                         let imported = await SkillManager.shared
                             .importSkillsPreservingPluginId([parsed])
 
-                        if let savedSkill = imported.first,
-                            let claudeMdContent = fetched.claudeMd,
-                            let data = claudeMdContent.data(using: .utf8)
-                        {
-                            try? await SkillManager.shared.addReference(
-                                to: savedSkill.id,
-                                name: "CLAUDE.md",
-                                content: data
-                            )
+                        if let savedSkill = imported.first {
+                            // 1a. Attach plugin-root auxiliary docs (CLAUDE.md,
+                            // CONNECTORS.md, README.md when they exist).
+                            if selection.attachClaudeMd {
+                                for (name, data) in fetched.rootDocs.asReferenceAttachments {
+                                    try? await SkillManager.shared.addReference(
+                                        to: savedSkill.id,
+                                        name: name,
+                                        content: data
+                                    )
+                                    summary.importedSkillAssetCount += 1
+                                }
+                            }
+
+                            // 1b. Attach skill-local co-located assets
+                            // (scripts/, requirements.txt, TROUBLESHOOTING.md,
+                            // dashboard.html, …).
+                            for asset in fetchedSkill.assets {
+                                let basename =
+                                    (asset.relativePath as NSString).lastPathComponent
+                                if Self.shouldStoreAsReference(basename) {
+                                    try? await SkillManager.shared.addReference(
+                                        to: savedSkill.id,
+                                        name: basename,
+                                        content: asset.data
+                                    )
+                                } else {
+                                    try? await SkillManager.shared.addAsset(
+                                        to: savedSkill.id,
+                                        name: basename,
+                                        content: asset.data
+                                    )
+                                }
+                                summary.importedSkillAssetCount += 1
+                            }
+
+                            // 1c. Attach extra references the body rewriter
+                            // discovered (e.g. a `[X](../../X.md)` link).
+                            for extra in rewriteOutcome.additionalReferences {
+                                try? await SkillManager.shared.addReference(
+                                    to: savedSkill.id,
+                                    name: extra.name,
+                                    content: extra.data
+                                )
+                                summary.importedSkillAssetCount += 1
+                            }
                         }
 
                         summary.importedSkillCount += 1
@@ -328,18 +408,59 @@ public final class ClaudePluginInstaller {
                 }
             }
 
-            // 4. MCP providers (HTTP/SSE only — stdio is reported as skipped).
+            // 4. MCP providers (HTTP/SSE only — stdio is reported as
+            //    skipped; OAuth servers are imported with `authType: .oauth`
+            //    and surfaced as needing sign-in).
             if selection.importMCP, let mcpPath = manifest.mcpJsonPath {
                 defer { tick() }
                 if let content = fetched.mcpJson {
                     let parsed = MCPJSONParser.parse(content)
                     for server in parsed.servers {
-                        if let url = server.url, !url.isEmpty {
+                        switch server.kind {
+                        case .stdio, .empty:
+                            summary.skippedStdioMCPServers.append(server.name)
+
+                        case .oauth:
+                            // OAuth provider: create disabled so the user can
+                            // complete the sign-in flow in MCP settings before
+                            // anything tries to connect. We pre-seed the
+                            // `clientId` and a loopback `redirectURI` matching
+                            // the plugin's declared callback port — the MCP
+                            // OAuth service uses these when the user hits
+                            // "Sign in".
+                            guard let url = server.url, !url.isEmpty else {
+                                summary.skippedStdioMCPServers.append(server.name)
+                                continue
+                            }
+                            let oauthConfig = MCPOAuthConfig(
+                                clientId: server.oauth?.clientId,
+                                redirectURI: server.oauth?.callbackPort.map {
+                                    "http://127.0.0.1:\($0)/callback"
+                                }
+                            )
+                            let provider = MCPProvider(
+                                name: "\(manifest.name): \(server.name)",
+                                url: url,
+                                enabled: false,
+                                customHeaders: server.headers ?? [:],
+                                authType: .oauth,
+                                oauth: oauthConfig,
+                                pluginId: pluginId
+                            )
+                            MCPProviderManager.shared.addProvider(provider, token: nil)
+                            summary.oauthProvidersNeedingSignIn.append(server.name)
+                            summary.importedMCPProviderCount += 1
+
+                        case .bearer:
+                            guard let url = server.url, !url.isEmpty else {
+                                summary.skippedStdioMCPServers.append(server.name)
+                                continue
+                            }
                             let hasRealToken = (server.token?.isEmpty == false)
                             let provider = MCPProvider(
                                 name: "\(manifest.name): \(server.name)",
                                 url: url,
-                                enabled: false,  // Created disabled so user reviews tokens first.
+                                enabled: false,
                                 customHeaders: server.headers ?? [:],
                                 authType: hasRealToken ? .bearerToken : .none,
                                 pluginId: pluginId
@@ -352,8 +473,6 @@ public final class ClaudePluginInstaller {
                                 summary.placeholderTokensSkipped.append(server.name)
                             }
                             summary.importedMCPProviderCount += 1
-                        } else {
-                            summary.skippedStdioMCPServers.append(server.name)
                         }
                     }
                 } else {
@@ -369,12 +488,28 @@ public final class ClaudePluginInstaller {
 
     // MARK: - Concurrent fetch helpers
 
+    /// One co-located file pulled from a skill directory or referenced from
+    /// the skill body. `relativePath` is rooted at the skill folder (e.g.
+    /// `scripts/recalc.py`, `TROUBLESHOOTING.md`) — the installer flattens
+    /// it to `references/<basename>` or `assets/<basename>` depending on the
+    /// extension when persisting.
+    internal struct FetchedSkillAsset: Sendable {
+        let relativePath: String
+        let data: Data
+
+        internal init(relativePath: String, data: Data) {
+            self.relativePath = relativePath
+            self.data = data
+        }
+    }
+
     /// Result of fetching one skill / agent / command markdown file. We use
     /// `Result` so a single failure doesn't poison the whole batch — each
     /// failed artifact is reported individually in the install summary.
     private struct FetchedSkill {
         let entry: ClaudeSkillEntry
         let content: Result<String, Error>
+        let assets: [FetchedSkillAsset]
     }
     private struct FetchedAgent {
         let entry: ClaudeAgentEntry
@@ -385,8 +520,29 @@ public final class ClaudePluginInstaller {
         let content: Result<String, Error>
     }
 
+    /// All files we picked up from the plugin's root (CLAUDE.md, CONNECTORS.md,
+    /// README.md). Keyed by basename so the rewriter can resolve
+    /// `[CONNECTORS.md](../../CONNECTORS.md)` style markdown links against
+    /// any of them.
+    internal struct FetchedRootDocs: Sendable {
+        let files: [String: String]  // basename -> content
+
+        internal init(files: [String: String]) {
+            self.files = files
+        }
+
+        var claudeMd: String? { files["CLAUDE.md"] }
+
+        var asReferenceAttachments: [(name: String, data: Data)] {
+            files.compactMap { (name, body) in
+                guard let data = body.data(using: .utf8) else { return nil }
+                return (name: name, data: data)
+            }
+        }
+    }
+
     private struct FetchedArtifacts {
-        let claudeMd: String?
+        let rootDocs: FetchedRootDocs
         let skills: [FetchedSkill]
         let agents: [FetchedAgent]
         let commands: [FetchedCommand]
@@ -396,20 +552,51 @@ public final class ClaudePluginInstaller {
     /// Fetch every file referenced by `selection` in parallel. Preserves the
     /// declared order in `manifest` so the install summary renders in the
     /// same order regardless of which fetch finished first.
+    ///
+    /// Every fetch is gated through `GitHubFetchLimiter.shared` so plugins
+    /// with dozens of co-located assets (e.g. `pitch-agent` × 13 skills ×
+    /// ~5 supporting files) don't blow through the unauthenticated GitHub
+    /// rate limit.
     private func fetchArtifacts(
-        for selection: ClaudePluginSelection,
-        repo: GitHubRepo
+        for selection: ClaudePluginSelection
     ) async -> FetchedArtifacts {
         let manifest = selection.manifest
+        let repo = manifest.sourceRepo
+        let limiter = GitHubFetchLimiter.shared
+        let svc = github
 
-        async let claudeMdTask: String? = {
-            guard selection.attachClaudeMd, let path = manifest.claudeMdPath else { return nil }
-            return await github.fetchOptionalFileContent(from: repo, path: path)
+        async let rootDocsTask: FetchedRootDocs = {
+            guard selection.attachClaudeMd else { return FetchedRootDocs(files: [:]) }
+            var paths = manifest.auxMarkdownPaths
+            // Backwards compatibility: older callers may construct a
+            // manifest with only `claudeMdPath` populated.
+            if paths.isEmpty, let cm = manifest.claudeMdPath {
+                paths = [cm]
+            }
+            guard !paths.isEmpty else { return FetchedRootDocs(files: [:]) }
+            return await withTaskGroup(of: (String, String?).self) { group in
+                for path in paths {
+                    group.addTask {
+                        let body = await limiter.runNoThrow {
+                            await svc.fetchOptionalFileContent(from: repo, path: path)
+                        }
+                        let name = (path as NSString).lastPathComponent
+                        return (name, body)
+                    }
+                }
+                var out: [String: String] = [:]
+                for await (name, body) in group {
+                    if let body = body { out[name] = body }
+                }
+                return FetchedRootDocs(files: out)
+            }
         }()
 
         async let mcpJsonTask: String? = {
             guard selection.importMCP, let path = manifest.mcpJsonPath else { return nil }
-            return await github.fetchOptionalFileContent(from: repo, path: path)
+            return await limiter.runNoThrow {
+                await svc.fetchOptionalFileContent(from: repo, path: path)
+            }
         }()
 
         let skillEntries = manifest.skills.filter {
@@ -424,16 +611,28 @@ public final class ClaudePluginInstaller {
 
         async let skills = withTaskGroup(of: (Int, FetchedSkill).self) { group -> [FetchedSkill] in
             for (idx, entry) in skillEntries.enumerated() {
-                group.addTask { [github] in
+                group.addTask {
+                    let result: Result<String, Error>
                     do {
-                        let content = try await github.fetchSkillContent(
-                            from: repo,
-                            skillPath: entry.path
-                        )
-                        return (idx, FetchedSkill(entry: entry, content: .success(content)))
+                        let content = try await limiter.run {
+                            try await svc.fetchSkillContent(from: repo, skillPath: entry.path)
+                        }
+                        result = .success(content)
                     } catch {
-                        return (idx, FetchedSkill(entry: entry, content: .failure(error)))
+                        result = .failure(error)
                     }
+                    // Skill assets are best-effort — a failure here must
+                    // never block the import of the SKILL.md itself.
+                    var assets: [FetchedSkillAsset] = []
+                    if selection.includeSkillAssets {
+                        assets = await Self.fetchSkillAssets(
+                            entry: entry,
+                            repo: repo,
+                            service: svc,
+                            limiter: limiter
+                        )
+                    }
+                    return (idx, FetchedSkill(entry: entry, content: result, assets: assets))
                 }
             }
             var out: [(Int, FetchedSkill)] = []
@@ -443,9 +642,11 @@ public final class ClaudePluginInstaller {
 
         async let agents = withTaskGroup(of: (Int, FetchedAgent).self) { group -> [FetchedAgent] in
             for (idx, entry) in agentEntries.enumerated() {
-                group.addTask { [github] in
+                group.addTask {
                     do {
-                        let content = try await github.fetchFileContent(from: repo, path: entry.path)
+                        let content = try await limiter.run {
+                            try await svc.fetchFileContent(from: repo, path: entry.path)
+                        }
                         return (idx, FetchedAgent(entry: entry, content: .success(content)))
                     } catch {
                         return (idx, FetchedAgent(entry: entry, content: .failure(error)))
@@ -460,9 +661,11 @@ public final class ClaudePluginInstaller {
         async let commands = withTaskGroup(of: (Int, FetchedCommand).self) {
             group -> [FetchedCommand] in
             for (idx, entry) in commandEntries.enumerated() {
-                group.addTask { [github] in
+                group.addTask {
                     do {
-                        let content = try await github.fetchFileContent(from: repo, path: entry.path)
+                        let content = try await limiter.run {
+                            try await svc.fetchFileContent(from: repo, path: entry.path)
+                        }
                         return (idx, FetchedCommand(entry: entry, content: .success(content)))
                     } catch {
                         return (idx, FetchedCommand(entry: entry, content: .failure(error)))
@@ -475,12 +678,500 @@ public final class ClaudePluginInstaller {
         }
 
         return await FetchedArtifacts(
-            claudeMd: claudeMdTask,
+            rootDocs: rootDocsTask,
             skills: skills,
             agents: agents,
             commands: commands,
             mcpJson: mcpJsonTask
         )
+    }
+
+    /// Walk a single skill directory and grab every supporting file we can
+    /// find (top-level files like `requirements.txt` / `TROUBLESHOOTING.md`,
+    /// plus one level deep into the conventional `scripts/`, `references/`,
+    /// `assets/`, and `templates/` subdirectories). Skips anything larger
+    /// than `maxAssetBytes` to keep imports bounded.
+    nonisolated private static func fetchSkillAssets(
+        entry: ClaudeSkillEntry,
+        repo: GitHubRepo,
+        service: GitHubSkillService,
+        limiter: GitHubFetchLimiter
+    ) async -> [FetchedSkillAsset] {
+        let listing: [GitHubSkillAsset]
+        do {
+            listing = try await limiter.run {
+                try await service.listSkillAssets(repo: repo, skillDir: entry.path)
+            }
+        } catch {
+            return []
+        }
+        let bounded = listing.filter { $0.size <= maxAssetBytes }
+        return await withTaskGroup(of: FetchedSkillAsset?.self) { group in
+            for asset in bounded {
+                group.addTask {
+                    do {
+                        let content = try await limiter.run {
+                            try await service.fetchFileContent(from: repo, path: asset.path)
+                        }
+                        guard let data = content.data(using: .utf8) else {
+                            return FetchedSkillAsset(
+                                relativePath: asset.relativePath,
+                                data: Data()
+                            )
+                        }
+                        return FetchedSkillAsset(
+                            relativePath: asset.relativePath,
+                            data: data
+                        )
+                    } catch {
+                        return nil
+                    }
+                }
+            }
+            var out: [FetchedSkillAsset] = []
+            for await maybeAsset in group {
+                if let asset = maybeAsset { out.append(asset) }
+            }
+            // Sort for determinism (matches manifest iteration order).
+            return out.sorted { $0.relativePath < $1.relativePath }
+        }
+    }
+
+    /// Upper bound on the size of a single co-located skill asset we pull
+    /// down. Plugins like `financial-services` ship per-skill PowerPoint
+    /// templates and similar binaries — anything bigger than ~2 MiB is
+    /// almost certainly something the user wants to fetch themselves.
+    nonisolated private static let maxAssetBytes: Int = 2 * 1024 * 1024
+
+    /// Decide whether a file should land under `references/` (indexed and
+    /// loaded into context by `SkillManager.loadReferenceContents`) or
+    /// `assets/` (carried alongside the skill but not surfaced as part of
+    /// the prompt). Text-y extensions go to references so the agent can
+    /// read them; everything else goes to assets.
+    nonisolated fileprivate static func shouldStoreAsReference(_ name: String) -> Bool {
+        let textExtensions: Set<String> = [
+            "md", "txt", "json", "yaml", "yml", "xml", "html", "css",
+            "js", "ts", "swift", "py", "rb", "go", "rs", "java", "kt",
+            "c", "cpp", "h", "hpp", "sql", "sh", "bash", "zsh",
+            "toml", "ini", "cfg", "conf", "csv", "tsv",
+        ]
+        let ext = (name as NSString).pathExtension.lowercased()
+        // Treat extension-less files (e.g. `Makefile`) as references.
+        if ext.isEmpty { return true }
+        return textExtensions.contains(ext)
+    }
+
+    // MARK: - SKILL.md parsing with free-form fallback
+
+    /// Try to parse a SKILL.md the strict way first (YAML frontmatter with
+    /// either `name:` Agent-Skills format or `id:` Osaurus format). When that
+    /// fails because the file ships *no* frontmatter at all — a real
+    /// production pattern in `anthropics/financial-services/plugins/vertical-plugins/*`
+    /// where each skill starts with `# <Title>\n\ndescription: …\n\n## Workflow`
+    /// instead of a fenced YAML block — synthesise a skill from the H1
+    /// header plus any plain `description:` line we can find near the top.
+    ///
+    /// Anything beyond `.noFrontmatter` / `.missingRequiredField` is bubbled
+    /// up so we don't paper over malformed frontmatter (those probably
+    /// indicate a real authoring bug the user should know about).
+    nonisolated internal static func parseSkillWithFallback(
+        _ content: String,
+        skillPath: String
+    ) throws -> Skill {
+        do {
+            return try Skill.parseAnyFormat(from: content)
+        } catch let error as SkillParseError {
+            switch error {
+            case .noFrontmatter, .missingRequiredField:
+                return synthesizeSkillFromFreeformMarkdown(content, skillPath: skillPath)
+            case .malformedFrontmatter:
+                throw error
+            }
+        }
+    }
+
+    /// Build a `Skill` from a SKILL.md that has no YAML frontmatter at all.
+    /// Heuristics:
+    ///   - `name`: first `# H1` line; otherwise the last component of
+    ///     `skillPath` (e.g. `buyer-list` → "Buyer List").
+    ///   - `description`: first plain-text `description:` line below the H1
+    ///     (Claude Code authors often inline it here instead of in
+    ///     frontmatter). Falls back to the first non-empty paragraph.
+    ///   - `instructions`: the whole document, including the H1 we read
+    ///     `name` from, so the model still sees the original framing.
+    nonisolated internal static func synthesizeSkillFromFreeformMarkdown(
+        _ content: String,
+        skillPath: String
+    ) -> Skill {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = trimmed.components(separatedBy: "\n")
+
+        // Derive a default name from the directory the file lives in.
+        // `plugins/.../investment-banking/skills/buyer-list` → `buyer-list`.
+        let dirName = (skillPath as NSString).lastPathComponent
+        var name = humanReadableName(from: dirName)
+        var firstContentLineIndex = 0
+
+        // Pull the H1 title (single `#`, not `##`, `###`, …) as the name.
+        for (idx, line) in lines.enumerated() {
+            let stripped = line.trimmingCharacters(in: .whitespaces)
+            if stripped.isEmpty { continue }
+            if stripped.hasPrefix("# ") && !stripped.hasPrefix("## ") {
+                let title = String(stripped.dropFirst(2))
+                    .trimmingCharacters(in: .whitespaces)
+                if !title.isEmpty { name = title }
+                firstContentLineIndex = idx + 1
+            }
+            break
+        }
+
+        // Pull the first `description:` line that lives outside YAML
+        // frontmatter (the buyer-list / cim-builder pattern). We scan a
+        // bounded window so we don't accidentally pick up a `description:`
+        // inside a much later code block.
+        var description = ""
+        let scanEnd = min(firstContentLineIndex + 10, lines.count)
+        for idx in firstContentLineIndex..<scanEnd {
+            let stripped = lines[idx].trimmingCharacters(in: .whitespaces)
+            if stripped.isEmpty { continue }
+            if stripped.lowercased().hasPrefix("description:") {
+                description = String(stripped.dropFirst("description:".count))
+                    .trimmingCharacters(in: .whitespaces)
+                break
+            }
+            // Heading or markdown structure — stop searching.
+            if stripped.hasPrefix("#") || stripped.hasPrefix("---") { break }
+            // First plain paragraph: use it as a description fallback so
+            // the picker has *something* to show even when authors didn't
+            // include an explicit description line.
+            if description.isEmpty { description = stripped }
+        }
+
+        return Skill(
+            name: name,
+            description: description,
+            instructions: trimmed,
+            directoryName: dirName
+        )
+    }
+
+    /// `buyer-list` → "Buyer List". Strips path separators just in case.
+    nonisolated private static func humanReadableName(from dirName: String) -> String {
+        let cleaned = dirName.replacingOccurrences(of: "_", with: "-")
+        let words = cleaned.split(separator: "-").map { word -> String in
+            let s = String(word)
+            return s.prefix(1).uppercased() + s.dropFirst()
+        }
+        let joined = words.joined(separator: " ")
+        return joined.isEmpty ? dirName : joined
+    }
+
+    // MARK: - SKILL.md body rewriting
+
+    /// Plugin authors freely use Claude Code-isms in SKILL.md that don't
+    /// resolve once the skill lives in `~/.osaurus/skills/<name>/`:
+    /// `${CLAUDE_PLUGIN_ROOT}/...` (runtime env var pointing at the materialised
+    /// plugin tree), relative markdown links like `[X](../../X.md)` that
+    /// traverse up to the plugin root, and bare references like `python
+    /// recalc.py` that assume the script is on PATH. This rewriter:
+    ///
+    /// - Replaces `${CLAUDE_PLUGIN_ROOT}/<rel>` with `references/<basename>` or
+    ///   `assets/<basename>` when `<rel>` matches a file we already fetched
+    ///   (either co-located under the skill dir or attached as a root doc).
+    /// - Rewrites `[text](../../<file>)` links the same way against the
+    ///   fetched root docs.
+    /// - Appends a short footnote listing the unbundled paths so the user
+    ///   knows what wasn't materialised.
+    ///
+    /// Returns the rewritten body plus any extra reference files the
+    /// rewriter wants attached (e.g. a root-level CONNECTORS.md it pulled
+    /// in to resolve a `../../CONNECTORS.md` link).
+    nonisolated internal static func rewriteSkillBody(
+        _ body: String,
+        skillDir: String,
+        sourceDir: String,
+        fetchedAssets: [FetchedSkillAsset],
+        fetchedRootDocs: FetchedRootDocs
+    ) -> (rewritten: String, additionalReferences: [(name: String, data: Data)]) {
+        // Build a lookup of fetched assets by basename so a rewrite can
+        // map "scripts/recalc.py" → "references/recalc.py".
+        var assetByBasename: [String: String] = [:]   // basename → "references|assets/<name>"
+        for asset in fetchedAssets {
+            let basename = (asset.relativePath as NSString).lastPathComponent
+            let bucket = shouldStoreAsReference(basename) ? "references" : "assets"
+            assetByBasename[basename] = "\(bucket)/\(basename)"
+        }
+
+        // Strip the marketplace-relative skill prefix so a `${CLAUDE_PLUGIN_ROOT}/<plug-rel>`
+        // path can be tested against the assets we did fetch.
+        // We don't need the full prefix machinery — the basename lookup
+        // catches the common cases (`${CLAUDE_PLUGIN_ROOT}/skills/dashboard.html`,
+        // `${CLAUDE_PLUGIN_ROOT}/scripts/recalc.py`, …).
+
+        // Pull in any matching root doc when a link refers to it by name.
+        var additionalRefs: [(name: String, data: Data)] = []
+        var addedNames = Set<String>()
+        var unresolved = Set<String>()
+        _ = skillDir  // Reserved for future per-skill-relative resolution.
+        _ = sourceDir
+
+        var output = body
+
+        // 1. Rewrite `${CLAUDE_PLUGIN_ROOT}/<rel>` occurrences. The right
+        //    boundary is any whitespace or paired-bracket terminator we'd
+        //    plausibly find in markdown / code blocks.
+        if let regex = try? NSRegularExpression(
+            pattern: #"\$\{CLAUDE_PLUGIN_ROOT\}/([^\s\)\]\`"']+)"#,
+            options: []
+        ) {
+            output = Self.replaceMatches(in: output, regex: regex) { rel in
+                let basename = (rel as NSString).lastPathComponent
+                if let local = assetByBasename[basename] {
+                    return local
+                }
+                if let docData = fetchedRootDocs.files[basename]?.data(using: .utf8) {
+                    if addedNames.insert(basename).inserted {
+                        additionalRefs.append((name: basename, data: docData))
+                    }
+                    return "references/\(basename)"
+                }
+                unresolved.insert(rel)
+                return "${CLAUDE_PLUGIN_ROOT}/\(rel)"
+            }
+        }
+
+        // 2. Rewrite relative `../../<file>` (or `../<file>`) markdown link
+        //    targets when the file matches a fetched root doc. We only touch
+        //    the URL component inside `[text](URL)` to avoid mangling code
+        //    or prose that happens to contain `../`.
+        if let mdLink = try? NSRegularExpression(
+            pattern: #"(\[[^\]]+\]\()((?:\.\./){1,4}[^\)]+)(\))"#,
+            options: []
+        ) {
+            output = Self.replaceMatches(in: output, regex: mdLink, captureGroups: [1, 2, 3]) {
+                groups in
+                let lead = groups[0]
+                let target = groups[1]
+                let tail = groups[2]
+                let basename = (target as NSString).lastPathComponent
+                if let docData = fetchedRootDocs.files[basename]?.data(using: .utf8) {
+                    if addedNames.insert(basename).inserted {
+                        additionalRefs.append((name: basename, data: docData))
+                    }
+                    return "\(lead)references/\(basename)\(tail)"
+                }
+                if let local = assetByBasename[basename] {
+                    return "\(lead)\(local)\(tail)"
+                }
+                unresolved.insert(target)
+                return "\(lead)\(target)\(tail)"
+            }
+        }
+
+        // 3. Footer summarising what we attached / couldn't bundle. Keeps the
+        //    operator honest about the difference between Claude Code's
+        //    runtime layout and our snapshot.
+        var footerLines: [String] = []
+        let attached = assetByBasename.values.sorted()
+        if !attached.isEmpty {
+            footerLines.append("")
+            footerLines.append("---")
+            footerLines.append("**Imported assets:**")
+            for path in attached {
+                footerLines.append("- \(path)")
+            }
+        }
+        if !addedNames.isEmpty {
+            if footerLines.isEmpty {
+                footerLines.append("")
+                footerLines.append("---")
+            }
+            footerLines.append("")
+            footerLines.append("**Imported plugin-root docs:**")
+            for name in addedNames.sorted() {
+                footerLines.append("- references/\(name)")
+            }
+        }
+        if !unresolved.isEmpty {
+            if footerLines.isEmpty {
+                footerLines.append("")
+                footerLines.append("---")
+            }
+            footerLines.append("")
+            footerLines.append(
+                "_The following paths were not bundled with this import and may not resolve at run time:_"
+            )
+            for path in unresolved.sorted() {
+                footerLines.append("- `\(path)`")
+            }
+        }
+        if !footerLines.isEmpty {
+            output.append("\n")
+            output.append(footerLines.joined(separator: "\n"))
+            output.append("\n")
+        }
+
+        return (output, additionalRefs)
+    }
+
+    /// Run a single-capture-group regex and replace each match using
+    /// `transform(captured-group-1) -> String`. Iterates in reverse so the
+    /// indices in earlier matches stay valid as we splice in replacements.
+    nonisolated private static func replaceMatches(
+        in input: String,
+        regex: NSRegularExpression,
+        transform: (String) -> String
+    ) -> String {
+        let ns = input as NSString
+        let matches = regex.matches(
+            in: input,
+            options: [],
+            range: NSRange(location: 0, length: ns.length)
+        )
+        guard !matches.isEmpty else { return input }
+        var result = input
+        for match in matches.reversed() {
+            guard match.numberOfRanges >= 2 else { continue }
+            let captured = ns.substring(with: match.range(at: 1))
+            let replacement = transform(captured)
+            let fullRange = match.range(at: 0)
+            if let r = Range(fullRange, in: result) {
+                result.replaceSubrange(r, with: replacement)
+            }
+        }
+        return result
+    }
+
+    // MARK: - Sibling-skill references
+
+    /// Extract every sibling skill name referenced inside an agent-style
+    /// SKILL.md / agent markdown body. Anthropic plugin authors describe
+    /// orchestration like:
+    ///
+    ///     - "Invoke the `comps-analysis` skill"
+    ///     - "Use the `dcf-model` skill"
+    ///     - "Run the `audit-xls` skill"
+    ///     - "this agent uses: `sector-overview` · `comps-analysis`"
+    ///
+    /// The picker uses the returned names to auto-select sibling plugins
+    /// that own those skills, so the user doesn't have to puzzle out which
+    /// vertical-plugin a referenced skill lives in.
+    public nonisolated static func extractSiblingSkillNames(from body: String)
+        -> Set<String>
+    {
+        var names = Set<String>()
+
+        // Phrases like `Invoke the \`comps-analysis\` skill`.
+        let verbPhrases = [
+            #"[Ii]nvoke\s+(?:the\s+)?`([^`]+)`\s+skill"#,
+            #"[Uu]se\s+(?:the\s+)?`([^`]+)`\s+skill"#,
+            #"[Rr]un\s+(?:the\s+)?`([^`]+)`\s+skill"#,
+            #"[Cc]all\s+(?:the\s+)?`([^`]+)`\s+skill"#,
+            #"[Dd]elegate\s+to\s+(?:the\s+)?`([^`]+)`\s+skill"#,
+        ]
+        for pattern in verbPhrases {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { continue }
+            let ns = body as NSString
+            let matches = regex.matches(in: body, range: NSRange(location: 0, length: ns.length))
+            for match in matches where match.numberOfRanges >= 2 {
+                let name = ns.substring(with: match.range(at: 1))
+                let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { names.insert(trimmed) }
+            }
+        }
+
+        // "Skills this agent uses: `a` · `b` · `c`" — pick up the backticked
+        // tokens. We use this as a fallback so we don't have to enumerate
+        // every connecting word ("uses", "invokes", "calls").
+        let listSignals: [String] = [
+            "Skills this agent uses",
+            "Skills used",
+            "Uses skills",
+            "Dependencies",
+        ]
+        for signal in listSignals {
+            guard let signalRange = body.range(of: signal) else { continue }
+            // Capture the rest of the markdown section after the signal so
+            // we pick up backticked names that sit on the line below it
+            // (the common pattern is a `## Skills this agent uses\n\n` header
+            // followed by a single line of pipe/dot-separated names). We
+            // stop at the next markdown heading or a double-blank break.
+            let after = body[signalRange.upperBound...]
+            let endByHeading = after.range(of: "\n#")?.lowerBound
+            let endByDoubleBlank = after.range(of: "\n\n\n")?.lowerBound
+            let blockEnd: Substring.Index = {
+                switch (endByHeading, endByDoubleBlank) {
+                case (let h?, let d?):
+                    return min(h, d)
+                case (let h?, nil):
+                    return h
+                case (nil, let d?):
+                    return d
+                case (nil, nil):
+                    return after.endIndex
+                }
+            }()
+            let block = String(after[..<blockEnd])
+            if let regex = try? NSRegularExpression(pattern: #"`([^`]+)`"#) {
+                let ns = block as NSString
+                let matches = regex.matches(
+                    in: block,
+                    range: NSRange(location: 0, length: ns.length)
+                )
+                for match in matches where match.numberOfRanges >= 2 {
+                    let name = ns.substring(with: match.range(at: 1))
+                    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Filter out paths and shell snippets — sibling skill
+                    // names are lowercase-with-hyphens, no `/`, no spaces.
+                    if !trimmed.isEmpty,
+                        !trimmed.contains("/"),
+                        !trimmed.contains(" "),
+                        !trimmed.contains("$"),
+                        !trimmed.hasPrefix(".")
+                    {
+                        names.insert(trimmed)
+                    }
+                }
+            }
+        }
+
+        return names
+    }
+
+    /// Variant of `replaceMatches` for regexes with multiple capture groups.
+    /// `captureGroups` enumerates the group indices passed (in order) to
+    /// `transform` so callers can drop arbitrary groups.
+    nonisolated private static func replaceMatches(
+        in input: String,
+        regex: NSRegularExpression,
+        captureGroups: [Int],
+        transform: ([String]) -> String
+    ) -> String {
+        let ns = input as NSString
+        let matches = regex.matches(
+            in: input,
+            options: [],
+            range: NSRange(location: 0, length: ns.length)
+        )
+        guard !matches.isEmpty else { return input }
+        var result = input
+        for match in matches.reversed() {
+            var groups: [String] = []
+            var ok = true
+            for groupIdx in captureGroups {
+                guard groupIdx < match.numberOfRanges else { ok = false; break }
+                let range = match.range(at: groupIdx)
+                guard range.location != NSNotFound else { ok = false; break }
+                groups.append(ns.substring(with: range))
+            }
+            guard ok else { continue }
+            let replacement = transform(groups)
+            let fullRange = match.range(at: 0)
+            if let r = Range(fullRange, in: result) {
+                result.replaceSubrange(r, with: replacement)
+            }
+        }
+        return result
     }
 
     // MARK: - Uninstall
@@ -573,12 +1264,36 @@ enum ClaudeMarkdownParser {
     }
 }
 
-/// Minimal `.mcp.json` parser. Supports both the legacy Claude Code shape
-/// (`mcpServers: { "name": { ... } }`) and the equivalent `servers: { ... }`
-/// shape used by some forks. Extracts what we need for HTTP/SSE remote
-/// providers; everything stdio-style is surfaced as a "skipped" entry.
+/// Minimal `.mcp.json` parser. Supports the legacy Claude Code shape
+/// (`mcpServers: { "name": { ... } }`), the equivalent `servers: { ... }`
+/// shape used by some forks, and the OAuth-discovery shape used by Anthropic's
+/// knowledge-work plugins (`type: "http"` + `oauth: { clientId, callbackPort }`).
+/// Everything stdio-style is surfaced as a "skipped" entry; OAuth servers
+/// are surfaced as needing sign-in.
 enum MCPJSONParser {
+    /// Classification of a single `.mcp.json` server entry.
+    enum ServerKind: Sendable, Equatable {
+        /// HTTP/SSE with (optional) bearer token. Default for entries that
+        /// declare a `url`.
+        case bearer
+        /// HTTP/SSE that declares an explicit `oauth` block. The provider
+        /// is created with `authType: .oauth` and left disabled until the
+        /// user finishes sign-in.
+        case oauth
+        /// stdio entry (`command` + `args`). Can't be auto-installed —
+        /// surfaced for manual configuration.
+        case stdio
+        /// Declares HTTP but with an empty `url`. Treated like stdio for
+        /// reporting purposes — the user still has to configure it manually.
+        case empty
+    }
+
     struct Parsed: Sendable {
+        struct OAuth: Sendable, Equatable {
+            let clientId: String?
+            let callbackPort: Int?
+        }
+
         struct Server: Sendable {
             let name: String
             let url: String?
@@ -589,6 +1304,11 @@ enum MCPJSONParser {
             /// manual configuration.
             let tokenIsPlaceholder: Bool
             let headers: [String: String]?
+            /// OAuth client metadata declared inline (knowledge-work-plugins
+            /// shape). When present, `kind == .oauth` and the installer
+            /// stashes these so the OAuth service can complete sign-in.
+            let oauth: OAuth?
+            let kind: ServerKind
         }
         let servers: [Server]
     }
@@ -619,17 +1339,56 @@ enum MCPJSONParser {
                 ?? (serverDict["token"] as? String)
             let isPlaceholder = rawToken.map(Self.isPlaceholder) ?? false
             let token: String? = (rawToken != nil && !isPlaceholder) ? rawToken : nil
+
+            // OAuth metadata block (used by knowledge-work-plugins). We
+            // accept either spelling `clientId` / `client_id`.
+            var oauth: Parsed.OAuth? = nil
+            if let oauthDict = serverDict["oauth"] as? [String: Any] {
+                let clientId =
+                    (oauthDict["clientId"] as? String)
+                    ?? (oauthDict["client_id"] as? String)
+                let callbackPort =
+                    (oauthDict["callbackPort"] as? Int)
+                    ?? (oauthDict["callback_port"] as? Int)
+                    ?? Self.intFromNumberOrString(
+                        oauthDict["callbackPort"] ?? oauthDict["callback_port"]
+                    )
+                oauth = Parsed.OAuth(clientId: clientId, callbackPort: callbackPort)
+            }
+
+            // Classification: explicit oauth block wins, then url presence,
+            // then anything else (stdio-style `command` etc.).
+            let kind: ServerKind
+            if oauth != nil, let u = url, !u.isEmpty {
+                kind = .oauth
+            } else if let u = url, !u.isEmpty {
+                kind = .bearer
+            } else if url != nil {
+                kind = .empty
+            } else {
+                kind = .stdio
+            }
+
             result.append(
                 Parsed.Server(
                     name: name,
                     url: url,
                     token: token,
                     tokenIsPlaceholder: isPlaceholder,
-                    headers: headers
+                    headers: headers,
+                    oauth: oauth,
+                    kind: kind
                 )
             )
         }
         return Parsed(servers: result.sorted { $0.name < $1.name })
+    }
+
+    private static func intFromNumberOrString(_ value: Any?) -> Int? {
+        if let n = value as? Int { return n }
+        if let n = value as? Double { return Int(n) }
+        if let s = value as? String, let n = Int(s) { return n }
+        return nil
     }
 
     /// Recognises env-var / template placeholders that show up in publicly

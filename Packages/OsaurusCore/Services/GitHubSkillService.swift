@@ -46,16 +46,145 @@ public struct MarketplaceMetadata: Codable, Sendable {
     public let repository: String?
 }
 
+/// Where a plugin's content actually lives.
+///
+/// `marketplace.json` files in the wild use one of three shapes for `source`:
+///   - A path string `"./<dir>"` (claude-for-legal, knowledge-work-plugins,
+///     financial-services).
+///   - An object `{ "source": "url", "url": "https://github.com/...", "sha": "..." }`
+///     pointing to an entire external repo (claude-plugins-community).
+///   - An object `{ "source": "git-subdir", "url": "owner/repo", "path": "...",
+///     "ref": "main", "sha": "..." }` pointing to a sub-path inside an external
+///     repo (claude-plugins-community).
+public enum MarketplaceSource: Sendable {
+    /// Plugin content lives at `<relativeDirectory>` inside the marketplace repo.
+    case localDirectory(String)
+    /// Plugin content is an entire external repo, pinned at `ref` (sha or ref).
+    case externalRepo(GitHubRepo, ref: String?)
+    /// Plugin content is at `path` inside an external repo, pinned at `ref`.
+    case externalSubdir(GitHubRepo, path: String, ref: String?)
+
+    private enum ObjectKey: String, CodingKey {
+        case source, url, sha, ref, path
+    }
+
+    /// Hand-rolled decode: try `String` first (legacy shape), fall back to the
+    /// object form keyed by an inner `"source"` discriminator.
+    public init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer(),
+            let str = try? single.decode(String.self)
+        {
+            self = .localDirectory(str)
+            return
+        }
+        let container = try decoder.container(keyedBy: ObjectKey.self)
+        let kind = (try? container.decode(String.self, forKey: .source)) ?? "url"
+        guard let urlOrSlug = try? container.decode(String.self, forKey: .url) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .url,
+                in: container,
+                debugDescription: "MarketplaceSource object requires `url`"
+            )
+        }
+        let sha = try? container.decode(String.self, forKey: .sha)
+        let ref = try? container.decode(String.self, forKey: .ref)
+        let path = try? container.decode(String.self, forKey: .path)
+        // Prefer a pinned sha over a moving ref for reproducibility.
+        let pinned = sha ?? ref
+        guard let parsed = Self.parseRepoURL(urlOrSlug) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .url,
+                in: container,
+                debugDescription: "Could not parse repo url/slug: \(urlOrSlug)"
+            )
+        }
+        // GitHubRepo.branch is what we pass to raw.githubusercontent.com as
+        // the ref, so an opaque SHA works just as well as a branch name.
+        let repo = GitHubRepo(
+            owner: parsed.owner,
+            name: parsed.name,
+            branch: pinned ?? parsed.branch
+        )
+        switch kind {
+        case "git-subdir":
+            guard let path = path, !path.isEmpty else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .path,
+                    in: container,
+                    debugDescription: "git-subdir requires `path`"
+                )
+            }
+            self = .externalSubdir(repo, path: path, ref: pinned)
+        case "url", "github", "":
+            self = .externalRepo(repo, ref: pinned)
+        default:
+            // Unknown discriminator → fall through to "external repo" so we
+            // make a best-effort attempt rather than failing the whole file.
+            self = .externalRepo(repo, ref: pinned)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .localDirectory(let str):
+            var c = encoder.singleValueContainer()
+            try c.encode(str)
+        case .externalRepo(let repo, let ref):
+            var c = encoder.container(keyedBy: ObjectKey.self)
+            try c.encode("url", forKey: .source)
+            try c.encode("https://github.com/\(repo.owner)/\(repo.name).git", forKey: .url)
+            if let ref = ref { try c.encode(ref, forKey: .ref) }
+        case .externalSubdir(let repo, let path, let ref):
+            var c = encoder.container(keyedBy: ObjectKey.self)
+            try c.encode("git-subdir", forKey: .source)
+            try c.encode("\(repo.owner)/\(repo.name)", forKey: .url)
+            try c.encode(path, forKey: .path)
+            if let ref = ref { try c.encode(ref, forKey: .ref) }
+        }
+    }
+
+    /// Parse an `https://github.com/owner/repo.git` URL or a bare `owner/repo`
+    /// slug into a `GitHubRepo` with branch defaulting to `main`.
+    private static func parseRepoURL(_ urlOrSlug: String) -> GitHubRepo? {
+        var s = urlOrSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasSuffix(".git") { s = String(s.dropLast(4)) }
+        while s.hasSuffix("/") { s = String(s.dropLast()) }
+
+        var components: [String] = []
+        if s.contains("github.com") {
+            if let url = URL(string: s.hasPrefix("http") ? s : "https://\(s)") {
+                components = url.pathComponents.filter { $0 != "/" }
+            } else {
+                let parts = s.components(separatedBy: "github.com/")
+                if parts.count == 2 {
+                    components = parts[1].components(separatedBy: "/")
+                }
+            }
+        } else if s.contains("/") {
+            components = s.components(separatedBy: "/")
+        }
+
+        guard components.count >= 2, !components[0].isEmpty, !components[1].isEmpty else {
+            return nil
+        }
+        return GitHubRepo(owner: components[0], name: components[1], branch: "main")
+    }
+}
+
+extension MarketplaceSource: Codable {}
+
 /// Marketplace.json plugin definition.
 ///
-/// Supports two schemas:
-/// - Legacy: declares a flat `skills: [String]` array listing SKILL.md paths.
-/// - New (claude-for-legal): only declares `source: "./<dir>"` and skills/agents/
-///   commands/MCP servers are discovered by directory convention.
+/// Supports three schemas:
+/// - Legacy flat: declares `skills: [String]` listing SKILL.md paths.
+/// - Directory-based: declares `source: "./<dir>"` and skills/agents/commands/MCP
+///   servers are discovered by directory convention.
+/// - Source-as-object: declares `source: { source: "url"|"git-subdir", url: ..., sha: ... }`
+///   pointing to an external repo (used by claude-plugins-community).
 public struct MarketplacePlugin: Codable, Sendable {
     public let name: String
     public let description: String?
-    public let source: String?
+    public let source: MarketplaceSource?
     public let strict: Bool?
     public let skills: [String]?
     public let author: MarketplaceOwner?
@@ -63,7 +192,7 @@ public struct MarketplacePlugin: Codable, Sendable {
     public init(
         name: String,
         description: String? = nil,
-        source: String? = nil,
+        source: MarketplaceSource? = nil,
         strict: Bool? = nil,
         skills: [String]? = nil,
         author: MarketplaceOwner? = nil
@@ -180,12 +309,23 @@ public struct ClaudeCommandEntry: Sendable, Hashable {
 public struct ClaudePluginManifest: Sendable {
     public let name: String
     public let description: String?
-    public let source: String  // root path inside the repo (e.g. "commercial-legal")
+    public let source: String  // root path inside `sourceRepo` (e.g. "commercial-legal")
+    /// Repo that hosts this plugin's files. For `localDirectory` sources this
+    /// is the marketplace repo itself; for `externalRepo` / `externalSubdir`
+    /// this points at the external repo, pinned at the declared sha or ref.
+    public let sourceRepo: GitHubRepo
     public let authorName: String?
     public let skills: [ClaudeSkillEntry]
     public let agents: [ClaudeAgentEntry]
     public let commands: [ClaudeCommandEntry]
+    /// Kept for backwards compatibility — equals the first entry of
+    /// `auxMarkdownPaths` when a CLAUDE.md was found.
     public let claudeMdPath: String?
+    /// Every auxiliary markdown file we picked up at the plugin root
+    /// (CLAUDE.md, CONNECTORS.md, README.md). Attached to imported skills as
+    /// references so SKILL.md cross-references like `[CONNECTORS.md](../../CONNECTORS.md)`
+    /// can resolve locally.
+    public let auxMarkdownPaths: [String]
     public let mcpJsonPath: String?
     /// True when the plugin came from a legacy marketplace.json (`skills: [String]`).
     /// In that case only `skills` is populated.
@@ -195,22 +335,26 @@ public struct ClaudePluginManifest: Sendable {
         name: String,
         description: String?,
         source: String,
+        sourceRepo: GitHubRepo,
         authorName: String? = nil,
         skills: [ClaudeSkillEntry] = [],
         agents: [ClaudeAgentEntry] = [],
         commands: [ClaudeCommandEntry] = [],
         claudeMdPath: String? = nil,
+        auxMarkdownPaths: [String] = [],
         mcpJsonPath: String? = nil,
         isLegacy: Bool = false
     ) {
         self.name = name
         self.description = description
         self.source = source
+        self.sourceRepo = sourceRepo
         self.authorName = authorName
         self.skills = skills
         self.agents = agents
         self.commands = commands
         self.claudeMdPath = claudeMdPath
+        self.auxMarkdownPaths = auxMarkdownPaths
         self.mcpJsonPath = mcpJsonPath
         self.isLegacy = isLegacy
     }
@@ -218,6 +362,7 @@ public struct ClaudePluginManifest: Sendable {
     /// True when there is anything importable beyond skills.
     public var hasNonSkillArtifacts: Bool {
         !agents.isEmpty || !commands.isEmpty || claudeMdPath != nil || mcpJsonPath != nil
+            || !auxMarkdownPaths.isEmpty
     }
 }
 
@@ -240,16 +385,63 @@ public struct GitHubPluginsResult: Sendable {
     }
 }
 
-/// Minimal `contents` API entry. We only need name / path / type.
+/// Sibling-plugin dependency map computed by `resolvePluginDependencies(_:)`.
+///
+/// Each key is a plugin name; the value is the set of *other* plugins it
+/// depends on (because one of its agents invokes a skill that lives in those
+/// plugins). The picker uses this to auto-select cross-plugin dependencies
+/// when the user toggles a parent plugin on — so e.g. selecting `pitch-agent`
+/// in `anthropics/financial-services` also selects `financial-analysis`.
+public struct PluginDependencyGraph: Sendable {
+    public let dependencies: [String: Set<String>]
+
+    public init(dependencies: [String: Set<String>]) {
+        self.dependencies = dependencies
+    }
+
+    /// All dependencies of `plugin`, including transitive ones, *excluding*
+    /// `plugin` itself. Returns an empty set if there are no dependencies.
+    public func transitiveDependencies(of plugin: String) -> Set<String> {
+        var out = Set<String>()
+        var stack = [plugin]
+        while let next = stack.popLast() {
+            for dep in dependencies[next] ?? [] where !out.contains(dep) && dep != plugin {
+                out.insert(dep)
+                stack.append(dep)
+            }
+        }
+        return out
+    }
+}
+
+/// Minimal `contents` API entry. We only need name / path / type / size.
 public struct GitHubTreeEntry: Decodable, Sendable {
     public let name: String
     public let path: String
     public let type: String  // "dir" or "file"
+    /// File size in bytes (GitHub contents API). `nil` / 0 for directories.
+    public let size: Int?
 
-    public init(name: String, path: String, type: String) {
+    public init(name: String, path: String, type: String, size: Int? = nil) {
         self.name = name
         self.path = path
         self.type = type
+        self.size = size
+    }
+}
+
+/// One file inside (or under) a skill directory on GitHub. Carries the
+/// `relativePath` from the skill's own root so the installer can stash it
+/// under `references/` or `assets/` with a predictable name.
+public struct GitHubSkillAsset: Sendable {
+    public let path: String          // full path within the repo
+    public let relativePath: String  // path relative to the skill dir
+    public let size: Int
+
+    public init(path: String, relativePath: String, size: Int) {
+        self.path = path
+        self.relativePath = relativePath
+        self.size = size
     }
 }
 
@@ -398,12 +590,19 @@ public final class GitHubSkillService: ObservableObject {
             // Extract skills. For legacy plugins we have the array directly;
             // for new-style plugins fall back to directory discovery so the
             // existing flat picker keeps working.
+            //
+            // Note: the legacy "flat picker" path can't surface external-
+            // source plugins because it doesn't carry the source repo.
+            // Anything with a `MarketplaceSource.externalRepo` /
+            // `.externalSubdir` source falls through `fetchPlugins(from:)`
+            // instead — `isLegacyOnly` is false for those repos so callers
+            // never land here.
             var skills: [GitHubSkillPreview] = []
             for plugin in marketplace.plugins {
                 let skillPaths: [String]
                 if let declared = plugin.skills, !declared.isEmpty {
                     skillPaths = declared
-                } else if let source = plugin.source {
+                } else if case .localDirectory(let source) = plugin.source {
                     let discovered = try await discoverSkillDirectories(repo: repo, source: source)
                     skillPaths = discovered.map { $0.path }
                 } else {
@@ -476,7 +675,7 @@ public final class GitHubSkillService: ObservableObject {
                     let repoCopy = repoForTasks
                     group.addTask {
                         let manifest = try await self.buildManifest(
-                            repo: repoCopy,
+                            rootRepo: repoCopy,
                             plugin: pluginCopy
                         )
                         return (index, manifest)
@@ -682,7 +881,9 @@ public final class GitHubSkillService: ObservableObject {
         -> [ClaudeSkillEntry]
     {
         let sourceClean = normalizedSource(source)
-        let skillsDir = "\(sourceClean)/skills"
+        // When `source` is empty (external repo at root) we just probe
+        // `skills/` directly.
+        let skillsDir = sourceClean.isEmpty ? "skills" : "\(sourceClean)/skills"
 
         guard let entries = try await listDirectory(repo: repo, path: skillsDir) else {
             return []
@@ -697,44 +898,222 @@ public final class GitHubSkillService: ObservableObject {
         return result.sorted { $0.displayName < $1.displayName }
     }
 
+    // MARK: - Sibling Dependency Resolution
+
+    /// Walk every plugin's agent markdown files looking for references to
+    /// sibling skills (`Invoke the \`comps-analysis\` skill`), and produce
+    /// a dependency map keyed by plugin name. Used by the import picker to
+    /// auto-select cross-plugin dependencies.
+    ///
+    /// Agent-body fetches are gated through the shared
+    /// `GitHubFetchLimiter` so this never bursts past GitHub's
+    /// unauthenticated rate limit even when called on a 20-plugin
+    /// marketplace.
+    public func resolvePluginDependencies(
+        _ result: GitHubPluginsResult
+    ) async -> PluginDependencyGraph {
+        // 1. Index every skill name → which plugin owns it. Skill display
+        // names look like "Comps Analysis"; the on-disk dir is
+        // "comps-analysis". We match against the dir-style form because
+        // that's what plugin authors use in backtick references.
+        var ownersBySkillName: [String: String] = [:]
+        for plugin in result.plugins {
+            for skill in plugin.skills {
+                let dirName = (skill.path as NSString).lastPathComponent
+                let normalised = dirName.lowercased()
+                ownersBySkillName[normalised] = plugin.name
+            }
+        }
+
+        // 2. For every agent in every plugin, fetch its body and scan for
+        // sibling skill references. Run in parallel under the shared
+        // limiter; this is the main cost of this method.
+        let limiter = GitHubFetchLimiter.shared
+        let svc = self
+        struct AgentTarget: Sendable {
+            let pluginName: String
+            let repo: GitHubRepo
+            let path: String
+        }
+        var targets: [AgentTarget] = []
+        for plugin in result.plugins {
+            for agent in plugin.agents {
+                targets.append(
+                    AgentTarget(
+                        pluginName: plugin.name,
+                        repo: plugin.sourceRepo,
+                        path: agent.path
+                    )
+                )
+            }
+        }
+
+        let bodies: [(pluginName: String, body: String)] = await withTaskGroup(
+            of: (String, String?).self
+        ) { group in
+            for target in targets {
+                group.addTask {
+                    let body = await limiter.runNoThrow {
+                        await svc.fetchOptionalFileContent(from: target.repo, path: target.path)
+                    }
+                    return (target.pluginName, body)
+                }
+            }
+            var out: [(String, String)] = []
+            for await (pluginName, maybeBody) in group {
+                if let body = maybeBody {
+                    out.append((pluginName, body))
+                }
+            }
+            return out
+        }
+
+        // 3. Walk the bodies, extract referenced skill names, look up
+        // owning plugins. Skip the plugin's own skills so we don't say a
+        // plugin depends on itself.
+        var deps: [String: Set<String>] = [:]
+        for (pluginName, body) in bodies {
+            let referenced = ClaudePluginInstaller.extractSiblingSkillNames(from: body)
+            var pluginDeps = deps[pluginName] ?? Set<String>()
+            for name in referenced {
+                if let owner = ownersBySkillName[name.lowercased()], owner != pluginName {
+                    pluginDeps.insert(owner)
+                }
+            }
+            if !pluginDeps.isEmpty {
+                deps[pluginName] = pluginDeps
+            }
+        }
+
+        return PluginDependencyGraph(dependencies: deps)
+    }
+
+    // MARK: - Skill Asset Discovery
+
+    /// List every non-`SKILL.md` file inside a skill directory plus the
+    /// conventional first-level subdirectories (`scripts/`, `references/`,
+    /// `assets/`, `templates/`). Used by the installer to fetch co-located
+    /// supporting files (Python helpers, requirements.txt, troubleshooting
+    /// markdown, etc.) alongside the SKILL.md itself.
+    ///
+    /// Bounded to one level deep for each conventional subdir so we don't
+    /// recurse into giant trees (e.g. a `references/data/...` corpus).
+    public nonisolated func listSkillAssets(
+        repo: GitHubRepo,
+        skillDir: String
+    ) async throws -> [GitHubSkillAsset] {
+        let cleanDir = normalizedSource(skillDir)
+        guard let topEntries = try await listDirectory(repo: repo, path: cleanDir) else {
+            return []
+        }
+
+        var results: [GitHubSkillAsset] = []
+        for entry in topEntries {
+            if entry.type == "file" {
+                if entry.name == "SKILL.md" { continue }
+                results.append(
+                    GitHubSkillAsset(
+                        path: entry.path,
+                        relativePath: entry.name,
+                        size: entry.size ?? 0
+                    )
+                )
+            } else if entry.type == "dir",
+                Self.conventionalAssetSubdirs.contains(entry.name)
+            {
+                if let sub = try? await listDirectory(repo: repo, path: entry.path) {
+                    for inner in sub where inner.type == "file" {
+                        results.append(
+                            GitHubSkillAsset(
+                                path: inner.path,
+                                relativePath: "\(entry.name)/\(inner.name)",
+                                size: inner.size ?? 0
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        return results
+    }
+
+    /// Subdirectories of a skill folder we walk one level deep when fetching
+    /// co-located assets. Anthropic plugins land their Python helpers under
+    /// `scripts/`, supporting docs under `references/`, binary templates
+    /// under `assets/` or `templates/`.
+    nonisolated private static let conventionalAssetSubdirs: Set<String> = [
+        "scripts", "references", "assets", "templates"
+    ]
+
     /// Build the full manifest of importable artifacts for one plugin.
     ///
     /// `nonisolated` so a `TaskGroup` in `fetchPlugins(from:)` can drive
     /// many `buildManifest` calls in parallel — at MainActor isolation each
     /// call would serialize through the actor.
     private nonisolated func buildManifest(
-        repo: GitHubRepo,
+        rootRepo: GitHubRepo,
         plugin: MarketplacePlugin
     ) async throws -> ClaudePluginManifest {
-        // Legacy plugins: just resolve declared skills, nothing more.
+        // Resolve where this plugin's files actually live (could be the
+        // marketplace repo, or an external repo entirely).
+        let resolved = await resolveSource(
+            rootRepo: rootRepo,
+            source: plugin.source,
+            pluginName: plugin.name
+        )
+        let sourceRepo = resolved.repo
+        let source = resolved.basePath
+
+        // Legacy plugins: declared `skills: [String]` paths are already
+        // explicit; just resolve them and stop. We still record the
+        // resolved sourceRepo so external-source legacy plugins (if anyone
+        // ever ships them) keep working.
         if let declared = plugin.skills, !declared.isEmpty {
-            let entries = declared.map { ClaudeSkillEntry(path: normalizedSource($0)) }
+            let entries = declared.map { decl -> ClaudeSkillEntry in
+                let p = normalizedSource(decl)
+                let rebased: String
+                if source.isEmpty || p.hasPrefix("\(source)/") || p == source {
+                    rebased = p
+                } else {
+                    rebased = "\(source)/\(p)"
+                }
+                return ClaudeSkillEntry(path: rebased)
+            }
             return ClaudePluginManifest(
                 name: plugin.name,
                 description: plugin.description,
-                source: plugin.source.map(normalizedSource) ?? plugin.name,
+                source: source.isEmpty ? plugin.name : source,
+                sourceRepo: sourceRepo,
                 authorName: plugin.author?.name,
                 skills: entries,
                 isLegacy: true
             )
         }
 
-        // New-style plugins: discover from the source directory.
-        let source = normalizedSource(plugin.source ?? plugin.name)
+        // New-style plugins: discover from the source directory.  Walk it
+        // with a trailing slash semantically: when `source == ""` (external
+        // repo at root) we probe top-level paths like `skills`, `agents`.
+        let prefix = source.isEmpty ? "" : "\(source)/"
 
-        // Run the five independent discovery probes concurrently. Each one
-        // is at least one HTTP round-trip; serializing them was the main
-        // contributor to the ~10-second wait on the picker for repos with
-        // ~13 plugins like `claude-for-legal`.
+        // Run the discovery probes concurrently. Each one is at least one
+        // HTTP round-trip; serializing them was the main contributor to the
+        // ~10-second wait on the picker for repos with ~13 plugins like
+        // `claude-for-legal`. The probes themselves go through the shared
+        // concurrency limiter (`SharedFetchLimiter`) to keep total in-flight
+        // GitHub calls below the rate-limit budget.
         async let skillsTask: [ClaudeSkillEntry] =
-            (try? await discoverSkillDirectories(repo: repo, source: source)) ?? []
+            (try? await discoverSkillDirectories(repo: sourceRepo, source: source)) ?? []
         async let agentsListing =
-            (try? await listDirectory(repo: repo, path: "\(source)/agents"))
-            ?? nil
+            (try? await listDirectory(repo: sourceRepo, path: "\(prefix)agents")) ?? nil
         async let commandsListing =
-            (try? await listDirectory(repo: repo, path: "\(source)/commands")) ?? nil
-        async let hasClaudeMd: Bool = fileExists(repo: repo, path: "\(source)/CLAUDE.md")
-        async let hasMCPJson: Bool = fileExists(repo: repo, path: "\(source)/.mcp.json")
+            (try? await listDirectory(repo: sourceRepo, path: "\(prefix)commands")) ?? nil
+        async let hasClaudeMd: Bool = fileExists(repo: sourceRepo, path: "\(prefix)CLAUDE.md")
+        async let hasConnectorsMd: Bool = fileExists(
+            repo: sourceRepo,
+            path: "\(prefix)CONNECTORS.md"
+        )
+        async let hasReadmeMd: Bool = fileExists(repo: sourceRepo, path: "\(prefix)README.md")
+        async let hasMCPJson: Bool = fileExists(repo: sourceRepo, path: "\(prefix).mcp.json")
 
         let skills = await skillsTask
         let agents: [ClaudeAgentEntry] =
@@ -751,21 +1130,90 @@ public final class GitHubSkillService: ObservableObject {
                     .map { ClaudeCommandEntry(path: $0.path) }
                     .sorted { $0.displayName < $1.displayName }
             } ?? []
-        let claudeMdPath = await hasClaudeMd ? "\(source)/CLAUDE.md" : nil
-        let mcpJsonPath = await hasMCPJson ? "\(source)/.mcp.json" : nil
+        let claudeMdPath = await hasClaudeMd ? "\(prefix)CLAUDE.md" : nil
+        var auxPaths: [String] = []
+        if let claudeMdPath { auxPaths.append(claudeMdPath) }
+        if await hasConnectorsMd { auxPaths.append("\(prefix)CONNECTORS.md") }
+        if await hasReadmeMd { auxPaths.append("\(prefix)README.md") }
+        let mcpJsonPath = await hasMCPJson ? "\(prefix).mcp.json" : nil
 
         return ClaudePluginManifest(
             name: plugin.name,
             description: plugin.description,
-            source: source,
+            source: source.isEmpty ? plugin.name : source,
+            sourceRepo: sourceRepo,
             authorName: plugin.author?.name,
             skills: skills,
             agents: agents,
             commands: commands,
             claudeMdPath: claudeMdPath,
+            auxMarkdownPaths: auxPaths,
             mcpJsonPath: mcpJsonPath,
             isLegacy: false
         )
+    }
+
+    /// Resolve a `MarketplaceSource` to the concrete `(repo, basePath)` pair
+    /// the discovery probes use. For external sources this both pins the
+    /// branch/sha and rewrites the base path so subsequent `listDirectory`
+    /// / `fileExists` calls hit the correct repo.
+    private nonisolated func resolveSource(
+        rootRepo: GitHubRepo,
+        source: MarketplaceSource?,
+        pluginName: String
+    ) async -> (repo: GitHubRepo, basePath: String) {
+        guard let source else {
+            // No source declared at all → treat the plugin's name as the
+            // directory (mirrors the legacy `plugin.source ?? plugin.name`
+            // fallback).
+            return (rootRepo, normalizedSource(pluginName))
+        }
+        switch source {
+        case .localDirectory(let dir):
+            return (rootRepo, normalizedSource(dir))
+        case .externalRepo(let repo, _):
+            let pinned = await pinnedExternalRepo(repo)
+            return (pinned, "")
+        case .externalSubdir(let repo, let path, _):
+            let pinned = await pinnedExternalRepo(repo)
+            return (pinned, normalizedSource(path))
+        }
+    }
+
+    /// When an external source didn't ship a pinned sha, fall back to the
+    /// repo's actual default branch so subsequent raw URL fetches resolve.
+    private nonisolated func pinnedExternalRepo(_ repo: GitHubRepo) async -> GitHubRepo {
+        // Branches like "main" or "master" usually still resolve, so only
+        // consult the API when we still have the default placeholder.
+        if repo.branch != "main" { return repo }
+        return (try? await detectDefaultBranchNonIsolated(repo)) ?? repo
+    }
+
+    /// Same shape as `detectDefaultBranch(_:)` but callable from nonisolated
+    /// contexts. Used when resolving `MarketplaceSource.externalRepo` /
+    /// `.externalSubdir` to pin the correct branch without round-tripping
+    /// through the main actor. Falls back to the input repo on any error.
+    private nonisolated func detectDefaultBranchNonIsolated(
+        _ repo: GitHubRepo
+    ) async throws -> GitHubRepo {
+        guard let apiURL = URL(string: repo.apiURL) else { return repo }
+        var request = URLRequest(url: apiURL)
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await session.data(for: request)
+        if let httpResponse = response as? HTTPURLResponse,
+            let rateLimit = rateLimitError(from: httpResponse)
+        {
+            throw rateLimit
+        }
+        guard let httpResponse = response as? HTTPURLResponse,
+            httpResponse.statusCode == 200,
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let defaultBranch = json["default_branch"] as? String
+        else {
+            return repo
+        }
+        return GitHubRepo(owner: repo.owner, name: repo.name, branch: defaultBranch)
     }
 
     private nonisolated func fileExists(repo: GitHubRepo, path: String) async -> Bool {
@@ -915,5 +1363,73 @@ public final class GitHubSkillService: ObservableObject {
         } catch {
             throw GitHubSkillError.invalidMarketplace(error.localizedDescription)
         }
+    }
+}
+
+// MARK: - GitHub Fetch Concurrency Limiter
+
+/// Bounds the number of in-flight GitHub Contents-API / raw-content fetches
+/// across the importer.
+///
+/// Without this, a plugin like `pitch-agent` (13 skills × ~5 supporting
+/// files each) can burn through GitHub's 60-request unauthenticated rate
+/// limit on a single import. The limiter is a simple async semaphore: each
+/// `run` call waits for a permit before invoking its body and returns the
+/// permit when the body completes (success or failure).
+///
+/// The chosen permit count (8) is small enough to leave headroom for
+/// concurrent UI fetches and large enough that latency-bound calls overlap
+/// well. Bumping it past ~16 starts hitting the rate limit on cold sessions.
+public actor GitHubFetchLimiter {
+    public static let shared = GitHubFetchLimiter(maxConcurrent: 8)
+
+    private let maxConcurrent: Int
+    private var inFlight: Int = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    public init(maxConcurrent: Int) {
+        self.maxConcurrent = max(1, maxConcurrent)
+    }
+
+    /// Acquire a permit, run `body`, release the permit (even if `body`
+    /// throws). The body runs outside the actor so it can hit the network
+    /// without blocking other waiters.
+    public func run<T: Sendable>(_ body: @Sendable () async throws -> T) async throws -> T {
+        await acquire()
+        do {
+            let value = try await body()
+            release()
+            return value
+        } catch {
+            release()
+            throw error
+        }
+    }
+
+    /// Non-throwing variant for closures that capture their own error state.
+    public func runNoThrow<T: Sendable>(_ body: @Sendable () async -> T) async -> T {
+        await acquire()
+        let value = await body()
+        release()
+        return value
+    }
+
+    private func acquire() async {
+        if inFlight < maxConcurrent {
+            inFlight += 1
+            return
+        }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            waiters.append(cont)
+        }
+    }
+
+    private func release() {
+        if let next = waiters.first {
+            waiters.removeFirst()
+            next.resume()
+            return
+        }
+        inFlight = max(0, inFlight - 1)
     }
 }

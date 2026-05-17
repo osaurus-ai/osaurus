@@ -14,6 +14,34 @@
 
 import SwiftUI
 
+// MARK: - Layout constants
+
+/// Magic-number repository for this file. Keeping them in one place
+/// makes it easy to tweak the section's overall density without
+/// hunting through view bodies.
+private enum Metrics {
+    static let cardCornerRadius: CGFloat = 12
+    static let cardPadding: CGFloat = 4
+
+    static let headerCornerRadius: CGFloat = 9
+    static let headerHPadding: CGFloat = 10
+    static let headerVPadding: CGFloat = 9
+    static let headerGlyphSize: CGFloat = 26
+
+    static let rowCornerRadius: CGFloat = 7
+    static let rowHPadding: CGFloat = 10
+    static let rowVPadding: CGFloat = 7
+    static let rowGlyphSize: CGFloat = 24
+
+    /// Time the aggregator waits for a burst of model changes to settle
+    /// before re-aggregating. Sized for the worst-case import (≈170 skills
+    /// trickling in one-by-one from claude-for-legal).
+    static let refreshDebounce: Duration = .milliseconds(200)
+
+    static let expandAnimation: Animation = .easeInOut(duration: 0.18)
+    static let hoverAnimation: Animation = .easeInOut(duration: 0.15)
+}
+
 // MARK: - Artifact kind
 
 /// The four artifact families a Claude plugin can install. Centralising
@@ -124,11 +152,15 @@ final class InstalledPluginsAggregator: ObservableObject {
         self.scheduleManager = scheduleManager
         self.slashCommands = slashCommands
         self.mcpManager = mcpManager
-        // First scan is deferred to the view's `.onAppear`. Doing the
-        // iterate-everything pass synchronously here piles work onto the
-        // same runloop tick that presents the Import sheet from a `Menu`
-        // button, which on macOS can turn the menu-popover/sheet dismissal
-        // race into a hard beachball.
+        // First scan is deferred to the next runloop tick: running it
+        // synchronously in `init` piles work onto the same tick that
+        // presents the Import sheet from a Menu button and beachballs.
+        // Owning the kick-off here (rather than relying on the view's
+        // `.onAppear`) also means an empty initial state can't strand
+        // the section invisible.
+        Task { @MainActor [weak self] in
+            self?.refresh()
+        }
     }
 
     func refresh() {
@@ -233,17 +265,20 @@ struct InstalledPluginsSection: View {
 
     @State private var pendingUninstall: InstalledPluginsAggregator.Summary?
     @State private var isExpanded = true
+    @State private var isHeaderHovered = false
     /// Coalesces aggregator refreshes during heavy imports — claude-for-legal
     /// lands ~170 skills one-by-one, and refreshing on every tick produced
     /// visible jank behind the import sheet.
     @State private var refreshDebounceTask: Task<Void, Never>?
 
     var body: some View {
-        if aggregator.plugins.isEmpty {
-            EmptyView()
-        } else {
-            content
-                .themedAlert(
+        // `.onAppear` and `.onChange` are attached to the outer Group
+        // rather than to `content` so they fire even on the initial empty
+        // render. Attaching them inside the `if` branch breaks first-time
+        // population — see SkillsView regression history.
+        Group {
+            if !aggregator.plugins.isEmpty {
+                content.themedAlert(
                     "Uninstall plugin?",
                     isPresented: Binding(
                         get: { pendingUninstall != nil },
@@ -256,110 +291,155 @@ struct InstalledPluginsSection: View {
                     },
                     secondaryButton: .cancel("Cancel")
                 )
-                .onAppear { aggregator.refresh() }
-                .onChange(of: skillManager.skills.count) { _, _ in scheduleRefresh() }
-                .onChange(of: scheduleManager.schedules.count) { _, _ in scheduleRefresh() }
-                .onChange(of: slashCommands.customCommands.count) { _, _ in scheduleRefresh() }
-                .onChange(of: mcpManager.configuration.providers.count) { _, _ in
-                    scheduleRefresh()
-                }
+            }
+        }
+        .onAppear { aggregator.refresh() }
+        .onChange(of: skillManager.skills.count) { _, _ in scheduleRefresh() }
+        .onChange(of: scheduleManager.schedules.count) { _, _ in scheduleRefresh() }
+        .onChange(of: slashCommands.customCommands.count) { _, _ in scheduleRefresh() }
+        .onChange(of: mcpManager.configuration.providers.count) { _, _ in
+            scheduleRefresh()
         }
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             header
             if isExpanded {
-                VStack(spacing: 6) {
-                    ForEach(aggregator.plugins) { plugin in
-                        PluginRow(
-                            plugin: plugin,
-                            onUninstall: { pendingUninstall = plugin }
-                        )
-                    }
-                }
-                .transition(
-                    .asymmetric(
-                        insertion: .opacity.combined(with: .move(edge: .top)),
-                        removal: .opacity
-                    )
-                )
+                Divider()
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
+                pluginList
             }
         }
-        .padding(14)
+        .padding(Metrics.cardPadding)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: Metrics.cardCornerRadius)
                 .fill(theme.cardBackground)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: Metrics.cardCornerRadius)
                         .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
     }
 
-    // MARK: Header
-
-    private var header: some View {
-        Button(action: toggleExpanded) {
-            HStack(spacing: 10) {
-                headerGlyph
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text("Installed Plugins", bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text("\(aggregator.plugins.count)")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(theme.accentColor.opacity(0.12)))
-                    }
-                    Text(headerTotals)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.secondaryText)
-                }
-                Spacer()
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+    private var pluginList: some View {
+        VStack(spacing: 4) {
+            ForEach(aggregator.plugins) { plugin in
+                PluginRow(
+                    plugin: plugin,
+                    onUninstall: { pendingUninstall = plugin }
+                )
             }
         }
-        .buttonStyle(PlainButtonStyle())
+        .transition(
+            .asymmetric(
+                insertion: .opacity.combined(with: .move(edge: .top)),
+                removal: .opacity
+            )
+        )
+    }
+
+    // MARK: Header
+
+    /// The whole header row is one accordion toggle. `contentShape` makes
+    /// the gaps between icon/label/chevron clickable too — without it the
+    /// user can only land on the literal subviews.
+    private var header: some View {
+        HStack(spacing: 10) {
+            headerGlyph
+            headerLabels
+            Spacer(minLength: 8)
+            chevron
+        }
+        .padding(.horizontal, Metrics.headerHPadding)
+        .padding(.vertical, Metrics.headerVPadding)
+        .contentShape(Rectangle())
+        .background(
+            RoundedRectangle(cornerRadius: Metrics.headerCornerRadius)
+                .fill(theme.primaryBackground.opacity(isHeaderHovered ? 0.35 : 0))
+        )
+        .onHover(perform: handleHeaderHover)
+        .onTapGesture { toggleExpanded() }
+        .animation(Metrics.hoverAnimation, value: isHeaderHovered)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(Text("Installed Plugins, \(aggregator.plugins.count)"))
+        .accessibilityHint(Text(isExpanded ? "Collapse list" : "Expand list"))
+    }
+
+    private var headerLabels: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text("Installed Plugins", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text("\(aggregator.plugins.count)")
+                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(theme.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(theme.accentColor.opacity(0.14)))
+            }
+            Text(headerTotals)
+                .font(.system(size: 10.5))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+        }
     }
 
     private var headerGlyph: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 7)
                 .fill(
                     LinearGradient(
                         colors: [
-                            theme.accentColor.opacity(0.18),
-                            theme.accentColor.opacity(0.06),
+                            theme.accentColor.opacity(0.22),
+                            theme.accentColor.opacity(0.08),
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
             Image(systemName: "shippingbox.fill")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(theme.accentColor)
         }
-        .frame(width: 22, height: 22)
+        .frame(width: Metrics.headerGlyphSize, height: Metrics.headerGlyphSize)
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.down")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(theme.secondaryText)
+            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            .animation(Metrics.expandAnimation, value: isExpanded)
+            .padding(6)
+            .background(
+                Circle().fill(theme.primaryBackground.opacity(isHeaderHovered ? 0.6 : 0))
+            )
     }
 
     private var headerTotals: String {
-        let parts =
-            ArtifactKind.allCases
-            .compactMap { kind -> String? in
-                let count = aggregator.totals[kind]
-                return count > 0 ? kind.label(count: count) : nil
-            }
+        let parts = ArtifactKind.allCases.compactMap { kind -> String? in
+            let count = aggregator.totals[kind]
+            return count > 0 ? kind.label(count: count) : nil
+        }
         return parts.isEmpty ? "No artifacts" : parts.joined(separator: " · ")
     }
 
+    private func handleHeaderHover(_ hovering: Bool) {
+        isHeaderHovered = hovering
+        if hovering {
+            NSCursor.pointingHand.push()
+        } else {
+            NSCursor.pop()
+        }
+    }
+
     private func toggleExpanded() {
-        withAnimation(.easeInOut(duration: 0.18)) { isExpanded.toggle() }
+        withAnimation(Metrics.expandAnimation) { isExpanded.toggle() }
     }
 
     // MARK: Actions
@@ -367,21 +447,21 @@ struct InstalledPluginsSection: View {
     private static func confirmMessage(for plugin: InstalledPluginsAggregator.Summary)
         -> String
     {
-        let suffix = plugin.totalCount == 1 ? "" : "s"
-        return
-            "Remove all \(plugin.totalCount) item\(suffix) installed from \(plugin.displayName)? "
-            + "This deletes its skills, schedules, slash commands, and MCP providers."
+        let items = pluralize(plugin.totalCount, "item")
+        return """
+            Remove all \(items) installed from \(plugin.displayName)? \
+            This deletes its skills, schedules, slash commands, and MCP providers.
+            """
     }
 
     private func confirmUninstall(_ plugin: InstalledPluginsAggregator.Summary) {
         let label = plugin.displayName
-        let total = plugin.totalCount
+        let items = Self.pluralize(plugin.totalCount, "item")
         Task { @MainActor in
             _ = await ClaudePluginInstaller.shared.uninstall(pluginId: plugin.pluginId)
             await skillManager.refresh()
             aggregator.refresh()
-            let suffix = total == 1 ? "" : "s"
-            onMessage("Uninstalled \(total) item\(suffix) from \(label)", false)
+            onMessage("Uninstalled \(items) from \(label)", false)
         }
     }
 
@@ -391,10 +471,14 @@ struct InstalledPluginsSection: View {
     private func scheduleRefresh() {
         refreshDebounceTask?.cancel()
         refreshDebounceTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 200_000_000)  // 200 ms
+            try? await Task.sleep(for: Metrics.refreshDebounce)
             guard !Task.isCancelled else { return }
             aggregator.refresh()
         }
+    }
+
+    private static func pluralize(_ count: Int, _ noun: String) -> String {
+        "\(count) \(noun)\(count == 1 ? "" : "s")"
     }
 }
 
@@ -411,17 +495,21 @@ private struct PluginRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             glyph
             titleStack
             Spacer(minLength: 8)
             chips
             uninstallButton
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(rowBackground)
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .padding(.horizontal, Metrics.rowHPadding)
+        .padding(.vertical, Metrics.rowVPadding)
+        .background(
+            RoundedRectangle(cornerRadius: Metrics.rowCornerRadius)
+                .fill(theme.primaryBackground.opacity(isHovered ? 0.55 : 0))
+        )
+        .contentShape(Rectangle())
+        .animation(Metrics.hoverAnimation, value: isHovered)
         .onHover { hovering in isHovered = hovering }
         .contextMenu {
             Button(role: .destructive, action: onUninstall) {
@@ -432,36 +520,31 @@ private struct PluginRow: View {
 
     private var glyph: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: 6)
                 .fill(theme.accentColor.opacity(0.12))
             Image(systemName: "puzzlepiece.extension.fill")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(theme.accentColor)
         }
-        .frame(width: 30, height: 30)
+        .frame(width: Metrics.rowGlyphSize, height: Metrics.rowGlyphSize)
     }
 
     private var titleStack: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 1) {
             Text(plugin.displayName)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 12.5, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .lineLimit(1)
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.up.right.square")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                Text(plugin.sourceLabel)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            Text(plugin.sourceLabel)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
     }
 
     private var chips: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             ForEach(ArtifactKind.allCases, id: \.self) { kind in
                 let count = plugin.counts[kind]
                 if count > 0 {
@@ -471,8 +554,9 @@ private struct PluginRow: View {
         }
     }
 
-    /// Icon-only when not hovered; expands to "🗑 Uninstall" on hover so
-    /// the row stays uncluttered when the user isn't aiming for it.
+    /// Icon at rest; expands to show the "Uninstall" label on row hover
+    /// so the destructive action is obvious without crowding the resting
+    /// state.
     private var uninstallButton: some View {
         Button(action: onUninstall) {
             HStack(spacing: 4) {
@@ -480,33 +564,21 @@ private struct PluginRow: View {
                     .font(.system(size: 10, weight: .semibold))
                 if isHovered {
                     Text("Uninstall", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 10.5, weight: .semibold))
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
             .foregroundColor(theme.errorColor)
-            .padding(.horizontal, isHovered ? 9 : 6)
-            .padding(.vertical, 5)
+            .padding(.horizontal, isHovered ? 8 : 6)
+            .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.errorColor.opacity(isHovered ? 0.14 : 0.08))
+                    .fill(theme.errorColor.opacity(isHovered ? 0.16 : 0.08))
             )
-            .animation(.easeInOut(duration: 0.15), value: isHovered)
+            .animation(Metrics.hoverAnimation, value: isHovered)
         }
         .buttonStyle(PlainButtonStyle())
         .help("Uninstall \(plugin.displayName)")
-    }
-
-    private var rowBackground: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(theme.primaryBackground.opacity(isHovered ? 0.7 : 0.4))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(
-                        isHovered ? theme.accentColor.opacity(0.18) : .clear,
-                        lineWidth: 1
-                    )
-            )
     }
 }
 
@@ -521,14 +593,14 @@ private struct ArtifactChip: View {
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 8.5, weight: .semibold))
             Text("\(count)")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                 .monospacedDigit()
         }
         .foregroundColor(tint)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(tint.opacity(0.12)))
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(tint.opacity(0.14)))
     }
 }
