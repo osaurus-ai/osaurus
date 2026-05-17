@@ -71,8 +71,8 @@ struct ModelManagerSuggestedTests {
 
         // Sizes from HF `safetensors.totalFileSize`. Locked in so accidental
         // edits to the curated entries are caught.
-        #expect(jangtq4?.downloadSizeBytes == 116_874_305_053)
-        #expect(jangtq?.downloadSizeBytes == 60_705_324_126)
+        #expect(jangtq4?.downloadSizeBytes == 116_891_270_734)
+        #expect(jangtq?.downloadSizeBytes == 60_702_998_032)
 
         // model_type drives pre-download routing through the JANGTQ loader.
         #expect(jangtq4?.modelType == "minimax_m2")
@@ -139,7 +139,7 @@ struct ModelManagerSuggestedTests {
         #expect(curated != nil)
         // Curated metadata should be intact.
         #expect(curated?.modelType == "minimax_m2")
-        #expect(curated?.downloadSizeBytes == 116_874_305_053)
+        #expect(curated?.downloadSizeBytes == 116_891_270_734)
         #expect(curated?.description.contains("MiniMax M2.7") == true)
     }
 
