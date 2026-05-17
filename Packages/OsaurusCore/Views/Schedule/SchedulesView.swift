@@ -1623,6 +1623,11 @@ struct ScheduleEditorSheet: View {
         return nil
     }
 
+    private var existingLastTriggeredAt: Date? {
+        if case .edit(let schedule) = mode { return schedule.lastTriggeredAt }
+        return nil
+    }
+
     private var existingLastChatSessionId: UUID? {
         if case .edit(let schedule) = mode { return schedule.lastChatSessionId }
         return nil
@@ -2524,6 +2529,7 @@ struct ScheduleEditorSheet: View {
             frequency: buildFrequency(),
             isEnabled: isEnabled,
             lastRunAt: existingLastRunAt,
+            lastTriggeredAt: existingLastTriggeredAt,
             lastChatSessionId: existingLastChatSessionId,
             createdAt: existingCreatedAt ?? Date(),
             updatedAt: Date()

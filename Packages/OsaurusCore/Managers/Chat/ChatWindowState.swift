@@ -256,13 +256,20 @@ final class ChatWindowState: ObservableObject {
         let newConfig = newTheme.customThemeConfig
         // Skip only if the full config is identical (not just the ID)
         guard oldConfig != newConfig else { return }
+        let shouldRedecodeBackgroundImage = Self.needsBackgroundImageRedecode(
+            oldConfig: oldConfig,
+            newConfig: newConfig
+        )
 
         theme = newTheme
 
-        // Only re-decode background image when the theme itself changes (different ID)
-        if oldConfig?.metadata.id != newConfig?.metadata.id {
-            decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
+        if shouldRedecodeBackgroundImage {
+            decodeBackgroundImageAsync(themeConfig: newConfig)
         }
+    }
+
+    nonisolated static func needsBackgroundImageRedecode(oldConfig: CustomTheme?, newConfig: CustomTheme?) -> Bool {
+        BackgroundImageDecodeKey(config: oldConfig) != BackgroundImageDecodeKey(config: newConfig)
     }
 
     func refreshAgentConfig() {
@@ -416,6 +423,18 @@ final class ChatWindowState: ObservableObject {
         Task { [weak self] in
             let decoded = themeConfig?.background.decodedImage()
             self?.cachedBackgroundImage = decoded
+        }
+    }
+
+    private struct BackgroundImageDecodeKey: Equatable {
+        let themeId: UUID?
+        let backgroundType: ThemeBackground.BackgroundType?
+        let imageData: String?
+
+        init(config: CustomTheme?) {
+            self.themeId = config?.metadata.id
+            self.backgroundType = config?.background.type
+            self.imageData = config?.background.imageData
         }
     }
 
