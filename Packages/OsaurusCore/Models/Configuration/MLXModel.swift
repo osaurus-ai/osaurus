@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 /// Represents an MLX-compatible LLM that can be downloaded and used
 struct MLXModel: Identifiable, Codable {
@@ -32,6 +33,11 @@ struct MLXModel: Identifiable, Codable {
     /// "Sort by Downloads" option so the most popular models surface first.
     let downloads: Int?
 
+    /// Editorial category for the colored use-case pill (onboarding +
+    /// main download grid). Set on curated entries; `nil` on HF
+    /// auto-discovered ones, which suppresses the pill.
+    let useCase: ModelUseCase?
+
     // When non-nil, pins the model to a specific directory (used by tests).
     // When nil, `localDirectory` resolves dynamically so that user-selected
     // storage path changes are always respected.
@@ -47,6 +53,7 @@ struct MLXModel: Identifiable, Codable {
         modelType: String? = nil,
         releasedAt: Date? = nil,
         downloads: Int? = nil,
+        useCase: ModelUseCase? = nil,
         rootDirectory: URL? = nil
     ) {
         self.id = id
@@ -58,6 +65,7 @@ struct MLXModel: Identifiable, Codable {
         self.modelType = modelType
         self.releasedAt = releasedAt
         self.downloads = downloads
+        self.useCase = useCase
         self.rootDirectory = rootDirectory
     }
 
@@ -77,6 +85,7 @@ struct MLXModel: Identifiable, Codable {
             modelType: modelType,
             releasedAt: releasedAt,
             downloads: downloads,
+            useCase: useCase,
             rootDirectory: rootDirectory
         )
     }
@@ -95,6 +104,7 @@ struct MLXModel: Identifiable, Codable {
             modelType: modelType,
             releasedAt: releasedAt,
             downloads: count,
+            useCase: useCase,
             rootDirectory: rootDirectory
         )
     }
@@ -314,6 +324,21 @@ struct MLXModel: Identifiable, Codable {
         if ratio < 0.95 { return .tight }
         return .tooLarge
     }
+
+    /// Compact "MMM yyyy" form of `releasedAt`, e.g. "Apr 2026". Locale
+    /// is pinned to `en_US_POSIX` so the format stays stable; the
+    /// localized prefix ("Released …") lives at the call site.
+    var formattedReleaseMonth: String? {
+        guard let date = releasedAt else { return nil }
+        return MLXModel.releaseMonthFormatter.string(from: date)
+    }
+
+    private static let releaseMonthFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "MMM yyyy"
+        return f
+    }()
 }
 
 /// Hardware compatibility assessment for a model.
@@ -322,6 +347,64 @@ enum ModelCompatibility {
     case tight
     case tooLarge
     case unknown
+}
+
+// MARK: - Use Case
+
+/// Editorial category for the colored "use case" pill so users can scan
+/// the curated catalog by intent rather than decoding model ids. Set on
+/// curated entries only; HF auto-discovered entries leave it `nil`.
+enum ModelUseCase: String, Codable, CaseIterable {
+    /// Daily chat / writing — the everyday default.
+    case general
+    /// Multimodal (images, video, audio) — the VLM family.
+    case vision
+    /// Chain-of-thought / agentic — Nemotron-3 et al.
+    case reasoning
+    /// Agentic-coding tuned (Laguna).
+    case coding
+    /// Sub-~6 GB — runs on base-RAM Macs.
+    case smallest
+    /// Premium tier — top of the catalog, needs 64 GB+ unified memory.
+    case bestQuality
+
+    /// Localized label rendered inside the badge chip.
+    var displayName: LocalizedStringKey {
+        switch self {
+        case .general: return "General"
+        case .vision: return "Vision"
+        case .reasoning: return "Reasoning"
+        case .coding: return "Coding"
+        case .smallest: return "Runs Anywhere"
+        case .bestQuality: return "Best Quality"
+        }
+    }
+
+    /// SF Symbol used as the leading icon on the badge.
+    var iconName: String {
+        switch self {
+        case .general: return "bubble.left.and.bubble.right.fill"
+        case .vision: return "eye.fill"
+        case .reasoning: return "brain.head.profile"
+        case .coding: return "chevron.left.forwardslash.chevron.right"
+        case .smallest: return "leaf.fill"
+        case .bestQuality: return "sparkles"
+        }
+    }
+
+    /// Tint for the badge chrome. Vision reuses the existing VLM purple
+    /// so the visual language stays consistent with
+    /// `ModelRowView.modelTypeBadge`.
+    var tintColor: Color {
+        switch self {
+        case .general: return Color(hex: "3B82F6")  // blue
+        case .vision: return Color(hex: "A855F7")  // purple (matches VLM pill)
+        case .reasoning: return Color(hex: "F97316")  // orange
+        case .coding: return Color(hex: "22C55E")  // green
+        case .smallest: return Color(hex: "14B8A6")  // teal
+        case .bestQuality: return Color(hex: "EAB308")  // gold
+        }
+    }
 }
 
 /// Download state for tracking progress

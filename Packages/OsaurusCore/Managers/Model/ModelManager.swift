@@ -584,7 +584,8 @@ extension ModelManager {
         isTopSuggestion: Bool = false,
         downloadSizeBytes: Int64? = nil,
         modelType: String? = nil,
-        releasedAt: Date? = nil
+        releasedAt: Date? = nil,
+        useCase: ModelUseCase? = nil
     ) -> MLXModel {
         MLXModel(
             id: id,
@@ -594,7 +595,8 @@ extension ModelManager {
             isTopSuggestion: isTopSuggestion,
             downloadSizeBytes: downloadSizeBytes,
             modelType: modelType,
-            releasedAt: releasedAt
+            releasedAt: releasedAt,
+            useCase: useCase
         )
     }
 
@@ -609,7 +611,8 @@ extension ModelManager {
             description: "Smallest multimodal Gemma 4 model. Runs on any Mac.",
             downloadSizeBytes: 4_392_120_539,
             modelType: "gemma4",
-            releasedAt: date("2026-04-06")
+            releasedAt: date("2026-04-06"),
+            useCase: .smallest
         ),
 
         curated(
@@ -618,7 +621,8 @@ extension ModelManager {
             isTopSuggestion: true,
             downloadSizeBytes: 6_901_389_946,
             modelType: "gemma4",
-            releasedAt: date("2026-04-06")
+            releasedAt: date("2026-04-06"),
+            useCase: .vision
         ),
 
         curated(
@@ -627,7 +631,8 @@ extension ModelManager {
             isTopSuggestion: true,
             downloadSizeBytes: 14_869_637_520,
             modelType: "gemma4",
-            releasedAt: date("2026-04-07")
+            releasedAt: date("2026-04-07"),
+            useCase: .vision
         ),
 
         // MARK: Qwen 3.6
@@ -644,14 +649,16 @@ extension ModelManager {
             isTopSuggestion: true,
             downloadSizeBytes: 19_350_002_112,
             modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16")
+            releasedAt: date("2026-04-16"),
+            useCase: .vision
         ),
 
         curated(
             id: "LiquidAI/LFM2-24B-A2B-MLX-8bit",
             description: "Liquid AI's 24B MoE model. Only ~2B active params per token. 128K context.",
             isTopSuggestion: true,
-            downloadSizeBytes: 25_339_189_070
+            downloadSizeBytes: 25_339_189_070,
+            useCase: .general
         ),
 
         // MARK: MiniMax M2.7 (JANGTQ MoE)
@@ -667,7 +674,8 @@ extension ModelManager {
                 "MiniMax M2.7 228B agentic MoE, 4-bit TurboQuant routed experts. Near-bf16 quality at ~25% of bf16 disk. 192K context.",
             downloadSizeBytes: 116_891_270_734,
             modelType: "minimax_m2",
-            releasedAt: date("2026-04-17")
+            releasedAt: date("2026-04-17"),
+            useCase: .general
         ),
 
         curated(
@@ -676,7 +684,8 @@ extension ModelManager {
                 "MiniMax M2.7 228B agentic MoE, 2-bit TurboQuant routed experts. Smallest footprint of the family. 192K context.",
             downloadSizeBytes: 60_702_998_032,
             modelType: "minimax_m2",
-            releasedAt: date("2026-04-17")
+            releasedAt: date("2026-04-17"),
+            useCase: .general
         ),
 
         // MARK: Nemotron-3 Nano Omni Reasoning (hybrid Mamba-2 SSM + Attn + MoE)
@@ -711,7 +720,8 @@ extension ModelManager {
             isTopSuggestion: true,
             downloadSizeBytes: 42_390_177_816,
             modelType: "nemotron_h",
-            releasedAt: date("2026-04-28")
+            releasedAt: date("2026-04-28"),
+            useCase: .reasoning
         ),
 
         curated(
@@ -720,7 +730,8 @@ extension ModelManager {
                 "Nemotron-3 30B Reasoning hybrid, 4-bit TurboQuant routed experts. Near-bf16 quality at ~37 GB. 262K context.",
             downloadSizeBytes: 37_026_073_381,
             modelType: "nemotron_h",
-            releasedAt: date("2026-04-28")
+            releasedAt: date("2026-04-28"),
+            useCase: .reasoning
         ),
 
         curated(
@@ -729,7 +740,8 @@ extension ModelManager {
                 "Nemotron-3 30B Reasoning hybrid, 2-bit TurboQuant routed experts. Smallest footprint (~21 GB). 262K context.",
             downloadSizeBytes: 22_338_666_862,
             modelType: "nemotron_h",
-            releasedAt: date("2026-04-28")
+            releasedAt: date("2026-04-28"),
+            useCase: .reasoning
         ),
 
         // MARK: Laguna-XS.2 (preview — vmlx engine support pending)
@@ -769,7 +781,8 @@ extension ModelManager {
                 "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE. MXFP4 quant — fastest decode. 131K context, 256 experts top-8.",
             downloadSizeBytes: 20_937_722_012,
             modelType: "laguna",
-            releasedAt: date("2026-04-30")
+            releasedAt: date("2026-04-30"),
+            useCase: .coding
         ),
 
         curated(
@@ -778,7 +791,8 @@ extension ModelManager {
                 "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE, 2-bit TurboQuant routed experts. Smallest footprint (~10 GB). 131K context.",
             downloadSizeBytes: 10_103_047_827,
             modelType: "laguna",
-            releasedAt: date("2026-04-30")
+            releasedAt: date("2026-04-30"),
+            useCase: .coding
         ),
 
         // MARK: Ling-2.6 Flash (BailingHybrid)
@@ -801,7 +815,8 @@ extension ModelManager {
                 "Ling-2.6 Flash BailingHybrid MoE. MXFP4 quantization for the highest quality Ling local path.",
             downloadSizeBytes: 67_238_772_304,
             modelType: "bailing_hybrid",
-            releasedAt: date("2026-05-06")
+            releasedAt: date("2026-05-06"),
+            useCase: .general
         ),
 
         curated(
@@ -810,7 +825,8 @@ extension ModelManager {
                 "Ling-2.6 Flash BailingHybrid MoE with TurboQuant routed experts. Smaller local footprint for Mac inference.",
             downloadSizeBytes: 30_601_532_582,
             modelType: "bailing_hybrid",
-            releasedAt: date("2026-05-06")
+            releasedAt: date("2026-05-06"),
+            useCase: .general
         ),
 
         // MARK: Mistral-Medium-3.5-128B (preview — architecturally supported, end-to-end load unverified)
@@ -852,7 +868,8 @@ extension ModelManager {
                 "Mistral Medium 3.5 128B + Pixtral vision. MXFP4 quant — fastest decode. 256K context, 24-language coverage.",
             downloadSizeBytes: 85_749_286_883,
             modelType: "mistral3",
-            releasedAt: date("2026-04-30")
+            releasedAt: date("2026-04-30"),
+            useCase: .vision
         ),
 
         curated(
@@ -861,7 +878,8 @@ extension ModelManager {
                 "Mistral Medium 3.5 128B + Pixtral vision, 2-bit TurboQuant text decoder. ~41 GB footprint. 256K context, 24-language coverage.",
             downloadSizeBytes: 40_795_065_942,
             modelType: "mistral3",
-            releasedAt: date("2026-04-30")
+            releasedAt: date("2026-04-30"),
+            useCase: .vision
         ),
 
         // MARK: Large Models
@@ -869,13 +887,15 @@ extension ModelManager {
         curated(
             id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
             description: "OpenAI's open-source release. Strong all-around performance.",
-            downloadSizeBytes: 22_256_530_515
+            downloadSizeBytes: 22_256_530_515,
+            useCase: .general
         ),
 
         curated(
             id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
             description: "OpenAI's largest open model. Premium quality, requires 64GB+ unified memory.",
-            downloadSizeBytes: 124_196_929_648
+            downloadSizeBytes: 124_196_929_648,
+            useCase: .bestQuality
         ),
 
         curated(
@@ -883,7 +903,8 @@ extension ModelManager {
             description: "Gemma 4 31B dense vision model. Top-tier quality with optimized quantization.",
             downloadSizeBytes: 22_692_184_188,
             modelType: "gemma4",
-            releasedAt: date("2026-04-16")
+            releasedAt: date("2026-04-16"),
+            useCase: .vision
         ),
 
         // MARK: Vision Language Models (VLM)
@@ -893,7 +914,8 @@ extension ModelManager {
             description: "MoE vision model with standard 4-bit quantization. 4B active params.",
             downloadSizeBytes: 15_641_238_761,
             modelType: "gemma4",
-            releasedAt: date("2026-04-07")
+            releasedAt: date("2026-04-07"),
+            useCase: .vision
         ),
 
         curated(
@@ -901,7 +923,8 @@ extension ModelManager {
             description: "Efficient MoE vision model. Only 4B active params. 256K context.",
             downloadSizeBytes: 10_676_011_691,
             modelType: "gemma4",
-            releasedAt: date("2026-04-16")
+            releasedAt: date("2026-04-16"),
+            useCase: .vision
         ),
 
         curated(
@@ -909,7 +932,8 @@ extension ModelManager {
             description: "Higher-quality MoE vision model. 4B active params with 256K context.",
             downloadSizeBytes: 16_200_958_155,
             modelType: "gemma4",
-            releasedAt: date("2026-04-16")
+            releasedAt: date("2026-04-16"),
+            useCase: .vision
         ),
 
         curated(
@@ -917,7 +941,8 @@ extension ModelManager {
             description: "Multimodal edge model at 8-bit precision. Best quality for the E4B family.",
             downloadSizeBytes: 8_997_820_763,
             modelType: "gemma4",
-            releasedAt: date("2026-04-06")
+            releasedAt: date("2026-04-06"),
+            useCase: .vision
         ),
 
         curated(
@@ -925,7 +950,8 @@ extension ModelManager {
             description: "Largest Qwen3.5 MoE vision model. 10B active params with top-tier reasoning.",
             downloadSizeBytes: 66_458_339_720,
             modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16")
+            releasedAt: date("2026-04-16"),
+            useCase: .vision
         ),
 
         curated(
@@ -933,7 +959,8 @@ extension ModelManager {
             description: "Qwen3.5 122B MoE vision model. Compact quantization, smaller download.",
             downloadSizeBytes: 37_770_467_470,
             modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16")
+            releasedAt: date("2026-04-16"),
+            useCase: .vision
         ),
 
         curated(
@@ -941,7 +968,8 @@ extension ModelManager {
             description: "Efficient Qwen3.5 MoE vision model. Only 3B active params.",
             downloadSizeBytes: 19_667_903_189,
             modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16")
+            releasedAt: date("2026-04-16"),
+            useCase: .vision
         ),
 
         curated(
@@ -949,7 +977,8 @@ extension ModelManager {
             description: "Compact Qwen3.5 MoE vision model. Fast and lightweight.",
             downloadSizeBytes: 11_665_354_013,
             modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16")
+            releasedAt: date("2026-04-16"),
+            useCase: .vision
         ),
 
         // MARK: Compact Models
@@ -959,7 +988,8 @@ extension ModelManager {
             description: "Smallest Gemma 4 at 8-bit precision. Better quality, still runs on any Mac.",
             downloadSizeBytes: 5_932_058_274,
             modelType: "gemma4",
-            releasedAt: date("2026-04-06")
+            releasedAt: date("2026-04-06"),
+            useCase: .smallest
         ),
     ]
 

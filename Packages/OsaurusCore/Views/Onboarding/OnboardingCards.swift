@@ -136,6 +136,14 @@ struct OnboardingRowBadge {
     enum Style {
         case neutral
         case success
+        /// Yellow chip — used for the "Tight fit" capability hint.
+        case warning
+        /// Red chip — used for "Too large for this Mac" on disabled rows.
+        case error
+        /// Category chip whose color, icon, and label all come from the
+        /// `ModelUseCase`. The badge's `text` field is unused for this
+        /// style — `OnboardingBadgeChip` reads from the enum directly.
+        case useCase(ModelUseCase)
     }
 
     let text: String
@@ -144,6 +152,11 @@ struct OnboardingRowBadge {
     init(_ text: String, style: Style = .neutral) {
         self.text = text
         self.style = style
+    }
+
+    /// Convenience constructor for a use-case category badge.
+    static func useCase(_ useCase: ModelUseCase) -> OnboardingRowBadge {
+        OnboardingRowBadge(useCase.rawValue, style: .useCase(useCase))
     }
 }
 
@@ -166,9 +179,16 @@ struct OnboardingRowCard: View {
     let icon: OnboardingRowIcon
     let title: String
     let subtitle: String?
+    /// Muted third line rendered beneath `subtitle` (e.g. "Released Apr 2026").
+    let secondaryLine: String?
     let badges: [OnboardingRowBadge]
     let accessory: OnboardingRowAccessory
     let isSelected: Bool
+    /// When `true` the row is dimmed, the accessory is hidden, and the
+    /// underlying button is disabled — used by the onboarding picker to
+    /// keep too-large curated models visible (so the badge can explain
+    /// why) without letting the user select one that won't run.
+    let isDisabled: Bool
     let action: () -> Void
 
     @Environment(\.theme) private var theme
@@ -177,23 +197,27 @@ struct OnboardingRowCard: View {
         icon: OnboardingRowIcon,
         title: String,
         subtitle: String? = nil,
+        secondaryLine: String? = nil,
         badges: [OnboardingRowBadge] = [],
         accessory: OnboardingRowAccessory = .none,
         isSelected: Bool = false,
+        isDisabled: Bool = false,
         action: @escaping () -> Void
     ) {
         self.icon = icon
         self.title = title
         self.subtitle = subtitle
+        self.secondaryLine = secondaryLine
         self.badges = badges
         self.accessory = accessory
         self.isSelected = isSelected
+        self.isDisabled = isDisabled
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            OnboardingGlassCard(isSelected: isSelected) {
+            OnboardingGlassCard(isSelected: isSelected && !isDisabled) {
                 HStack(spacing: 14) {
                     iconView
 
@@ -222,6 +246,13 @@ struct OnboardingRowCard: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .lineSpacing(2)
                         }
+
+                        if let secondaryLine = secondaryLine, !secondaryLine.isEmpty {
+                            Text(secondaryLine)
+                                .font(theme.font(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                        }
                     }
 
                     Spacer(minLength: 8)
@@ -230,9 +261,11 @@ struct OnboardingRowCard: View {
                 }
                 .padding(.horizontal, OnboardingMetrics.cardPaddingH)
                 .padding(.vertical, OnboardingMetrics.cardPaddingV)
+                .opacity(isDisabled ? 0.55 : 1.0)
             }
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
     }
 
     @ViewBuilder
@@ -265,25 +298,31 @@ struct OnboardingRowCard: View {
 
     @ViewBuilder
     private var accessoryView: some View {
-        switch accessory {
-        case .none:
+        // A radio circle on a grayed row would read as "selectable but
+        // unselected", so disabled rows drop the accessory entirely.
+        if isDisabled {
             EmptyView()
-        case .radio(let selected):
-            ZStack {
-                Circle()
-                    .strokeBorder(
-                        selected ? theme.accentColor : theme.primaryBorder,
-                        lineWidth: selected ? 6 : 1.5
-                    )
-                    .frame(width: 20, height: 20)
-                if selected {
-                    Circle().fill(Color.white).frame(width: 7, height: 7)
+        } else {
+            switch accessory {
+            case .none:
+                EmptyView()
+            case .radio(let selected):
+                ZStack {
+                    Circle()
+                        .strokeBorder(
+                            selected ? theme.accentColor : theme.primaryBorder,
+                            lineWidth: selected ? 6 : 1.5
+                        )
+                        .frame(width: 20, height: 20)
+                    if selected {
+                        Circle().fill(Color.white).frame(width: 7, height: 7)
+                    }
                 }
+            case .chevron:
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
             }
-        case .chevron:
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
         }
     }
 }
@@ -312,18 +351,53 @@ private struct OnboardingBadgeChip: View {
                 .padding(.vertical, 2)
                 .background(shape.fill(theme.secondaryBackground))
         case .success:
+            iconChip(
+                text: badge.text,
+                icon: "checkmark.circle.fill",
+                color: .green
+            )
+        case .warning:
+            iconChip(
+                text: badge.text,
+                icon: "exclamationmark.triangle.fill",
+                color: theme.warningColor
+            )
+        case .error:
+            iconChip(
+                text: badge.text,
+                icon: "xmark.octagon.fill",
+                color: theme.errorColor
+            )
+        case .useCase(let useCase):
             HStack(spacing: 3) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 9, weight: .medium))
-                Text(badge.text)
-                    .font(theme.font(size: 10, weight: .medium))
+                Image(systemName: useCase.iconName)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(useCase.displayName, bundle: .module)
+                    .font(theme.font(size: 10, weight: .semibold))
                     .lineLimit(1)
             }
             .fixedSize(horizontal: true, vertical: false)
-            .foregroundColor(.green)
+            .foregroundColor(useCase.tintColor)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(shape.fill(Color.green.opacity(0.15)))
+            .background(shape.fill(useCase.tintColor.opacity(0.15)))
         }
+    }
+
+    /// Shared layout for the icon-prefixed chip styles
+    /// (success / warning / error).
+    private func iconChip(text: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .medium))
+            Text(text)
+                .font(theme.font(size: 10, weight: .medium))
+                .lineLimit(1)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .foregroundColor(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(shape.fill(color.opacity(0.15)))
     }
 }

@@ -216,11 +216,17 @@ final class ConfigureAIState: ObservableObject {
         }
     }
 
-    func ensureLocalSelection() {
-        if selectedModel == nil {
-            let topModels = ModelManager.shared.suggestedModels.filter { $0.isTopSuggestion }
-            selectedModel = topModels.first
-        }
+    /// Picks the first `isTopSuggestion` model that this Mac can run, so
+    /// onboarding never auto-selects a disabled row that would dead-end
+    /// the CTA. When every candidate is `.tooLarge` `selectedModel`
+    /// stays nil and the picker shows the empty-state redirect instead.
+    /// `.unknown` (no param info / monitor not yet populated) falls
+    /// through as eligible.
+    func ensureLocalSelection(totalMemoryGB: Double) {
+        guard selectedModel == nil else { return }
+        selectedModel = ModelManager.shared.suggestedModels.first(where: {
+            $0.isTopSuggestion && $0.compatibility(totalMemoryGB: totalMemoryGB) != .tooLarge
+        })
     }
 
     func startLocalDownloadOrContinue(onComplete: () -> Void) {
@@ -413,6 +419,11 @@ struct ConfigureAIBody: View {
 
     @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = ModelManager.shared
+    /// Drives the capability filter on the local picker. `totalMemoryGB`
+    /// is populated synchronously in `SystemMonitorService.init`, so the
+    /// first onboarding frame already has a real value to classify
+    /// curated top suggestions against.
+    @ObservedObject private var systemMonitor = SystemMonitorService.shared
 
     var body: some View {
         OnboardingTwoColumnBody(
@@ -443,7 +454,7 @@ struct ConfigureAIBody: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .onAppear { state.ensureLocalSelection() }
+        .onAppear { state.ensureLocalSelection(totalMemoryGB: systemMonitor.totalMemoryGB) }
     }
 
     // MARK: - Path subtitle
@@ -686,35 +697,180 @@ struct ConfigureAIBody: View {
 
     // MARK: - Local picker
 
+    /// Top-suggestion curated models paired with their compatibility
+    /// verdict against the current `totalMemoryGB`. `.unknown` is treated
+    /// as "let through" — same fail-open behavior as
+    /// `ModelFilterState.PerformanceFilter.hideTooLarge`, so the list
+    /// isn't blank during startup before the system monitor reports.
+    private var topSuggestionsWithCompatibility: [(model: MLXModel, compatibility: ModelCompatibility)] {
+        let totalMemoryGB = systemMonitor.totalMemoryGB
+        return modelManager.suggestedModels
+            .filter(\.isTopSuggestion)
+            .map { ($0, $0.compatibility(totalMemoryGB: totalMemoryGB)) }
+    }
+
+    @ViewBuilder
     private var localPickerView: some View {
-        VStack(spacing: OnboardingMetrics.cardSpacing) {
-            ForEach(modelManager.suggestedModels.filter(\.isTopSuggestion), id: \.id) { model in
-                OnboardingRowCard(
-                    icon: .symbol(model.isVLM ? "eye" : "cpu"),
-                    title: model.name,
-                    subtitle: model.description,
-                    badges: localBadges(for: model),
-                    accessory: .radio(isSelected: state.selectedModel?.id == model.id),
-                    isSelected: state.selectedModel?.id == model.id
-                ) {
-                    // No `withAnimation` — selecting a model otherwise
-                    // morphs the CTA between "Continue" and
-                    // "Download & Install" as a side-effect of the
-                    // shared transaction.
-                    state.selectedModel = model
+        let pairs = topSuggestionsWithCompatibility
+        let hasAnyRunnable = pairs.contains(where: { $0.compatibility != .tooLarge })
+
+        // When nothing fits (or there are no top suggestions at all),
+        // redirecting to Apple Intelligence / cloud beats a dead-end
+        // list of disabled rows.
+        if !hasAnyRunnable {
+            localNoCompatibleModelsView
+        } else {
+            VStack(spacing: OnboardingMetrics.cardSpacing) {
+                computeIntensiveCallout
+                ForEach(pairs, id: \.model.id) { pair in
+                    let model = pair.model
+                    OnboardingRowCard(
+                        icon: .symbol(model.isVLM ? "eye" : "cpu"),
+                        title: model.name,
+                        subtitle: model.description,
+                        secondaryLine: model.formattedReleaseMonth.map { L("Released \($0)") },
+                        badges: localBadges(for: model, compatibility: pair.compatibility),
+                        accessory: .radio(isSelected: state.selectedModel?.id == model.id),
+                        isSelected: state.selectedModel?.id == model.id,
+                        isDisabled: pair.compatibility == .tooLarge
+                    ) {
+                        // No `withAnimation` — selecting a model otherwise
+                        // morphs the CTA between "Continue" and
+                        // "Download & Install" as a side-effect of the
+                        // shared transaction.
+                        state.selectedModel = model
+                    }
                 }
             }
         }
     }
 
-    private func localBadges(for model: MLXModel) -> [OnboardingRowBadge] {
+    /// Inline explainer rendered above the curated list — first-time
+    /// users don't realize local models actually run on their Mac, so
+    /// we set the RAM / latency / offline expectation up front rather
+    /// than burying it in the model detail view.
+    private var computeIntensiveCallout: some View {
+        OnboardingGlassCard {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(theme.accentColor.opacity(0.14))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: "cpu")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                }
+                Text(
+                    "Local models run on your Mac's unified memory — they're compute-intensive but stay available offline.",
+                    bundle: .module
+                )
+                .font(theme.font(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+    }
+
+    /// Empty-state shown when no curated top suggestion can run on this
+    /// Mac. Buttons drive the same `selectPath(...)` machinery as the
+    /// segmented control so the substate slide stays consistent.
+    private var localNoCompatibleModelsView: some View {
+        OnboardingGlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(theme.warningColor.opacity(0.14))
+                            .frame(
+                                width: OnboardingMetrics.cardIcon,
+                                height: OnboardingMetrics.cardIcon
+                            )
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(theme.warningColor)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("No local models fit this Mac", bundle: .module)
+                            .font(theme.font(size: 14, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(
+                            "Local models are compute-intensive and our curated picks need more unified memory than this machine has. We recommend a different path.",
+                            bundle: .module
+                        )
+                        .font(theme.font(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 10) {
+                    Spacer()
+                    if state.foundationAvailable {
+                        Button {
+                            state.selectPath(.appleFoundation)
+                        } label: {
+                            Text("Use Apple Intelligence", bundle: .module)
+                                .font(theme.font(size: 12, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(theme.accentColor)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button {
+                        state.selectPath(.apiProvider)
+                    } label: {
+                        Text("Use a cloud provider", bundle: .module)
+                            .font(theme.font(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(theme.cardBorder, lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, OnboardingMetrics.cardPaddingH)
+            .padding(.vertical, OnboardingMetrics.cardPaddingV)
+        }
+    }
+
+    /// Order: use-case category (leading scannable signal) → status /
+    /// size → modality → capability verdict (trailing, near the
+    /// accessory where the eye lands to evaluate the row).
+    private func localBadges(
+        for model: MLXModel,
+        compatibility: ModelCompatibility
+    ) -> [OnboardingRowBadge] {
         var result: [OnboardingRowBadge] = []
+        if let useCase = model.useCase {
+            result.append(.useCase(useCase))
+        }
         if model.isDownloaded {
             result.append(OnboardingRowBadge(L("Downloaded"), style: .success))
         } else if let size = model.formattedDownloadSize {
             result.append(OnboardingRowBadge(size))
         }
         result.append(OnboardingRowBadge(model.isVLM ? "VLM" : "LLM"))
+        switch compatibility {
+        case .tight:
+            result.append(OnboardingRowBadge(L("Tight fit"), style: .warning))
+        case .tooLarge:
+            result.append(OnboardingRowBadge(L("Too large for this Mac"), style: .error))
+        case .compatible, .unknown:
+            break
+        }
         return result
     }
 

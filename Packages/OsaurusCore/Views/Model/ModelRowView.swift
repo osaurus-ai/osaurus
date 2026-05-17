@@ -66,6 +66,16 @@ struct ModelRowView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
+                    // Publication marker. Curated entries set `releasedAt`
+                    // explicitly; HF auto-fetched ones pick it up from
+                    // `lastModified` — either way the prefix is "Released".
+                    if let released = model.formattedReleaseMonth {
+                        Text(L("Released \(released)"))
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+
                     switch downloadState {
                     case .downloading(let progress):
                         downloadProgressView(progress: progress, isPaused: false)
@@ -209,7 +219,12 @@ struct ModelRowView: View {
     // MARK: - Metadata Badges
 
     private var metadataBadges: some View {
+        // Use-case pill leads (when set) so the eye lands on the
+        // editorial category before size / compatibility metadata.
         FlowLayout(spacing: 6) {
+            if let useCase = model.useCase {
+                UseCasePill(useCase: useCase)
+            }
             if let size = model.formattedDownloadSize {
                 MetadataPill(text: size, icon: "internaldrive")
             }
@@ -382,6 +397,31 @@ private struct CompatibilityPill: View {
         .background(
             Capsule()
                 .fill(color.opacity(0.12))
+        )
+    }
+}
+
+// MARK: - Use Case Pill Component
+
+/// Colored pill surfacing a model's editorial use-case category. Tint +
+/// icon come from `ModelUseCase` so the vocabulary matches the onboarding
+/// picker's `.useCase(...)` chip.
+private struct UseCasePill: View {
+    let useCase: ModelUseCase
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: useCase.iconName)
+                .font(.system(size: 8, weight: .semibold))
+            Text(useCase.displayName, bundle: .module)
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .foregroundColor(useCase.tintColor)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(useCase.tintColor.opacity(0.12))
         )
     }
 }
