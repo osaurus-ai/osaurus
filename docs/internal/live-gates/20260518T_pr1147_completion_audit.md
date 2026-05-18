@@ -47,7 +47,7 @@ HTTP APIs, that consolidated `vmlx-swift` handles each local model family with:
 | Nemotron Omni / Parakeet / RADIO | Live matrix names Parakeet pre-encode, RADIO/vision facts, live voice chunk stability, repeated-video alias, and no reasoning-only short-budget false pass. Local census confirms Nemotron Omni variants and processor files. | Osaurus app/API audio/video/image/text-only resume rows, live voice resident pre-encode, cache stats, TTFT/tok/s/RSS/footprint, and unsupported-media error proof. |
 | DSV4 Flash renderer and runtime | Source-policy tests pin native DSV4 cache copy, SWA+CSA+HSA, fixed/disabled block size 256, generic q4/q8 disabled, pool quant visible, JIT disabled, model metadata defaults, and invalid CLI flags omitted. | Final Osaurus UI screenshot/log and API artifacts proving those exact rendered settings, DSML tool rows, `reasoning_effort=max` pass-through, native cache stats, long/growing-chat behavior, TTFT/tok/s/footprint. |
 | MiniMax reasoning/tools | Live matrix requires reasoning channel separation, MiniMax tool parser, no MTP from CRACK/name, cache stats, and no forced close or repetition penalty. | Osaurus UI/API multi-turn reasoning and tool-result artifacts with stream terminal usage and cache proof. |
-| Ling / Hy3 / hybrid SSM | Live matrix requires stale Qwen thinking ignored, hybrid cache topology, SSM companion hits/misses/stores, and no KV-only unsafe hit. | Osaurus long-prompt, prefix-overlap, prefix-mismatch, API tool rows, re-derive status, cache stats, and TTFT/footprint artifacts. |
+| Ling / Hy3 / hybrid SSM | Live matrix requires Ling default-off plus explicit opt-in reasoning routing, stale Qwen thinking ignored, hybrid cache topology, SSM companion hits/misses/stores, and no KV-only unsafe hit. | Osaurus long-prompt, prefix-overlap, prefix-mismatch, API tool rows, reasoning on/off/default rows, re-derive status, cache stats, and TTFT/footprint artifacts. |
 | GLM / GPT-OSS / Mistral / parser families | Live matrix requires parser from base architecture, no marker leakage, and tools only where supported. | Live local model rows when models are present; no production claim without artifacts. |
 | Generation defaults and top-k | Live matrix requires UI defaults and omitted HTTP sampler fields to resolve from `generation_config.json` / `jang_config.json`, including native `top_k`. Local census confirms generation config files across target families. | Per-model resolved-kwargs logs from Osaurus UI and every API route; explicit sampler override proof; no hidden temperature/top-p/top-k/repetition floors. |
 | Forced behavior audit | Live matrix now requires source/live search for forced sampler defaults, repetition penalties, reasoning rail rewrites, forced `</think>` close tokens, token/logit shaping, and parser output repair. | For every hit, artifact why it was originally added, whether it still fires, and the real template/decode/tokenizer/cache fix or a red-row status. Do not promote app-shaped output as model coherency. |
@@ -298,10 +298,12 @@ The forced-behavior source audit is:
 `docs/internal/live-gates/pr1147/forced-behavior-audit-20260518T1545/REPORT.md`.
 It currently marks source hits for background `no_think`, explicit
 `frequency_penalty` mapping, family reasoning-template bridges, MiniMax template
-fallback, Ling reasoning merging, and metadata/fallback sampler resolution. This
-audit is a triage artifact only. It must be paired with live model rows before
-release, and the Ling row stays red until the real vmlx template/parser/runtime
-path is proven coherent without UI-side reasoning merging as a fake pass.
+fallback, the now-fixed Ling force-off/reasoning-merge path, and
+metadata/fallback sampler resolution. This audit is a triage artifact only. It
+must be paired with live model rows before release. The Ling fake-merge source
+hit has a fresh vmlx no-guard proof plus Osaurus focused tests, but the family
+still needs app/API long-output, cache, SSM, memory, and saved-setting carryover
+artifacts before production-clear.
 
 ## Current Audit Outcome
 

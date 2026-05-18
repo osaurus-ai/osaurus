@@ -343,7 +343,7 @@ struct RuntimePolicySourceTests {
             "source anchors",
             "UI/API/cache/parser",
             "forced-behavior-audit-20260518T1545/REPORT.md",
-            "Ling row stays red",
+            "fresh vmlx no-guard proof",
         ] {
             #expect(
                 completionAudit.contains(required),
@@ -567,7 +567,7 @@ struct RuntimePolicySourceTests {
             "explicit user/API kwargs",
             "Final old-library and zombie-code sweep",
             "forced-behavior-audit-20260518T1545/REPORT.md",
-            "Ling's force-off plus reasoning merge",
+            "Ling's pre-fix force-off plus reasoning",
         ] {
             #expect(
                 componentMatrix.contains(required),
@@ -597,9 +597,10 @@ struct RuntimePolicySourceTests {
             "FBA-005",
             "DSV4 defaults to `instruct`",
             "FBA-006",
-            "Ling force-sets `enable_thinking=false`",
-            "highest-risk source hit",
-            "root-cause the vmlx template/parser/decode path",
+            "Pre-fix: `MLXBatchAdapter.additionalContext` Ling branch",
+            "Ling no longer force-clamps all requests",
+            "Source hit fixed; still not production-clear",
+            "explicit user/API opt-in reaches vmlx",
             "FBA-007",
             "MiniMax no-thinking uses a minimal fallback template",
             "explicit user/API `reasoning_effort` wins",
@@ -610,7 +611,7 @@ struct RuntimePolicySourceTests {
             "No family may get a hidden temperature",
             "FBA-010",
             "Detects reasoning support from templates or JANG config",
-            "The Ling row is explicitly red",
+            "The first Ling fake-merge source hit is now closed",
             "no `</think>` close token is forced",
             "no parser output is repaired into a pass",
             "no token/logit bias",

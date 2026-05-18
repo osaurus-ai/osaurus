@@ -500,7 +500,11 @@ struct MLXBatchAdapter {
         }
 
         if ModelFamilyNames.isLingFamily(modelName) {
-            context["enable_thinking"] = false
+            if let disableThinking {
+                context["enable_thinking"] = !disableThinking
+            } else {
+                context["enable_thinking"] = hasPositiveReasoningEffort
+            }
             return context
         }
 

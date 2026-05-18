@@ -190,15 +190,11 @@ struct GenerationEventMapperTests {
         #expect(reasoning == ["kept"])
     }
 
-    /// Production repro on 2026-05-07: Ling 2.6 Flash, despite
-    /// `enable_thinking=false` clamped at three layers (host profile +
-    /// MLXBatchAdapter short-circuit + vmlx Bailing template "thinking off"),
-    /// occasionally emits a `<think>` token mid-stream after a tiny visible
-    /// greeting. vmlx's parser then routes the long inner reasoning chain to
-    /// `.reasoning` deltas — chat UIs that don't render reasoning see
-    /// "greeting → 30s freeze → end". The mapper now promotes `.reasoning` to
-    /// `.tokens` for Ling so the visible stream never goes silent.
-    @Test func reasoning_merges_to_tokens_for_ling_family() async throws {
+    /// Ling/Bailing uses the same typed reasoning channel as other local
+    /// reasoning-capable families. If a no-thinking prompt still emits
+    /// `.reasoning`, that is a runtime/template/parser row to root-cause, not
+    /// something Osaurus should hide by merging reasoning into visible content.
+    @Test func reasoning_stays_separate_for_ling_family() async throws {
         let events: [Generation] = [
             .chunk("Hi! "),
             .reasoning("(silent thinking that would otherwise hang the UI)"),
@@ -210,18 +206,16 @@ struct GenerationEventMapperTests {
             "JANGQ-AI/Ling-2.6-flash-JANGTQ2-CRACK",
         ] {
             let out = try await collect(events: events, modelName: modelName)
-            // Reasoning must NOT appear as a separate channel for Ling.
             #expect(
-                !out.contains(where: { if case .reasoning = $0 { true } else { false } }),
-                "Ling should never emit .reasoning runtime events: \(modelName)"
+                out.contains(where: { if case .reasoning = $0 { true } else { false } }),
+                "Ling reasoning must stay on the reasoning rail for root-cause visibility: \(modelName)"
             )
             let assembled = out.compactMap {
                 if case .tokens(let s) = $0 { s } else { nil }
             }.joined()
             #expect(
-                assembled
-                    == "Hi! (silent thinking that would otherwise hang the UI) 7×6=42.",
-                "Ling stream must surface inner reasoning text as visible tokens: \(modelName) — got \(assembled)"
+                assembled == "Hi!  7×6=42.",
+                "Ling visible content must not include hidden reasoning text: \(modelName) — got \(assembled)"
             )
         }
     }

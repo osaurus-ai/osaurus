@@ -79,11 +79,12 @@ codebook entries on Metal).
   neither touches the `recurrentGLA` kernel state.
 * Ling MXFP4 / JANGTQ4 (4-bit) variants stream the same long prompt
   cleanly. The codebook tier is the discriminator.
-* The osaurus-side stream-wiring fixes in this PR
-  (`MLXBatchAdapter.additionalContext` Ling clamp, eager
-  `setHybrid(true)`, reasoning-merge in `GenerationEventMapper`, SSM
-  re-derive disable) all test green at clean prompts and small
-  preambles; the crash is downstream of every osaurus call.
+* Historical note: the original osaurus-side stream-wiring fixes included
+  a Ling `enable_thinking=false` clamp and reasoning merge. PR #1147 has
+  since replaced that with default-off profile policy, explicit opt-in, and
+  reasoning-channel preservation. The crash investigated here is still
+  downstream of the osaurus call path and remains separate from that
+  app-side policy cleanup.
 
 ## Workarounds for users
 

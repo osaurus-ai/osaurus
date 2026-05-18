@@ -60,10 +60,12 @@ host-side prompt construction.
 
 ## Why this is *not* a vmlx bug
 
-* `enable_thinking=false` is correctly forced for Ling. ZAYA1 is
-  reasoning-capable: osaurus defaults it to `enable_thinking=false` only
-  when the caller has not made an explicit choice, and preserves
-  `disableThinking=false` as a real opt-in to reasoning mode.
+* Ling defaults to `enable_thinking=false` through profile policy, but
+  explicit opt-in reaches vmlx and reasoning deltas remain on the reasoning
+  channel. ZAYA1 is reasoning-capable: osaurus defaults it to
+  `enable_thinking=false` only when the caller has not made an explicit
+  choice, and preserves `disableThinking=false` as a real opt-in to
+  reasoning mode.
 * `installCacheCoordinator: hybrid=true` fires for both families.
 * Decode tok/s is in the expected range for the bundle quant tier.
 * A clean 37-token prompt produces correct multi-turn behaviour:

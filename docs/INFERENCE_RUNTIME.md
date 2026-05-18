@@ -155,10 +155,11 @@ These are deliberately not papered over in osaurus because they belong in
   bug at ~2 k tokens, surfacing as `EXC_BAD_ACCESS` on Ling JANGTQ2 long
   prompts. `b9da180` ports the recurrent GLA to a fused Metal kernel
   (`bailing_recurrent_gla` via a singleton kernel manager) so the loop
-  runs in one command, eliminating the lifetime bug. Osaurus still
-  forces Ling into a non-reasoning profile (`enable_thinking=false`) and
-  recommends MXFP4/JANGTQ4 for long preambles for the orthogonal
-  JANGTQ2 quality-ceiling reason. See
+  runs in one command, eliminating the lifetime bug. Osaurus now defaults
+  Ling thinking off through the model profile, but preserves explicit
+  user/API opt-in and keeps any `.reasoning` output on the reasoning rail
+  for root-cause visibility. MXFP4/JANGTQ4 remain recommended for long
+  preambles for the orthogonal JANGTQ2 quality-ceiling reason. See
   `LING_JANGTQ2_LONG_PROMPT_CRASH.md`.
 - vmlx pin `b9da180` reorders the SSM re-derive pass to run AFTER the
   generation yields completion `.info`, so the SSE stream no longer
@@ -217,7 +218,7 @@ reasoning gets dropped together with the other sentinels.
 
 | File | Coverage |
 |---|---|
-| `MLXBatchAdapterTests` | Max-batch-size flag clamping; Ling forced thinking-off context; ZAYA default-off but explicit thinking opt-in context; registry-shutdown safety. |
+| `MLXBatchAdapterTests` | Max-batch-size flag clamping; Ling default-off plus explicit thinking opt-in context; ZAYA default-off but explicit thinking opt-in context; registry-shutdown safety. |
 | `ModelResidencyManagerTests` | Timer scheduling, cancellation on new use, never policy, and active-lease protection. |
 | `TaskCoalescerTests` | Single-flight engine-creation discipline and teardown-during-creation races. |
 | `RuntimePolicySourceTests` | Source-level guardrails for DSV4 cache ownership, vmlx pin, SSM re-derive opt-out, idle residency wiring, and max-batch docs. |

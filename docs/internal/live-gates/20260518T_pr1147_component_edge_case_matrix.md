@@ -26,7 +26,7 @@ metadata routes can close only their own subchecks.
 
 | Source surface | What it owns | Artifact proof required |
 |---|---|---|
-| `ModelOptions.swift` | Reasoning UI controls and defaults: DSV4 `instruct/high/max`, Qwen/Nemotron/ZAYA disable-thinking toggles, Hy3 `no_think/low/high`, Ling no exposed thinking control. | `ui_chat_settings.log`, `carryover_inverse.json`, and route payload summaries showing selected values enter only valid model families. |
+| `ModelOptions.swift` | Reasoning UI controls and defaults: DSV4 `instruct/high/max`, Qwen/Nemotron/ZAYA/Ling disable-thinking toggles, Hy3 `no_think/low/high`. Ling defaults off but preserves explicit opt-in. | `ui_chat_settings.log`, `carryover_inverse.json`, and route payload summaries showing selected values enter only valid model families. |
 | `ModelMediaCapabilities.swift` | Chat-composer media controls: Qwen/Holo image+video, Gemma image-only unless bundle proves more, Nemotron Omni image+video+audio, ZAYA-VL image/video by real bundle capability. | `ui_chat_settings.log`, `media_sequence.json`, and unsupported-media row proving controls match capability and errors are clean. |
 | `LocalGenerationDefaults.swift` | Omitted sampler defaults: `jang_config.json > chat.sampling_defaults` first, then `generation_config.json`, including native `top_k`. | Route payload/resolved-default logs for omitted fields and explicit override logs showing no hidden temp/top-p/top-k/min-p/repetition guards. |
 | `MLXBatchAdapter.swift` | Chat history, media parts, assistant reasoning, tool calls, and tool-result ids passed into vmlx input. | `chat_ui_turns.json`, `tool_reasoning_parser.json`, and route artifacts for chat, responses, messages, and Ollama where supported. |
@@ -47,7 +47,7 @@ metadata routes can close only their own subchecks.
 | ZAYA / ZAYA-VL | `JANGQ/ZAYA1-VL-8B-JANGTQ4`, `JANGQ/ZAYA1-VL-8B-JANGTQ_K`, `Osaurus/ZAYA1-VL-8B-MXFP4`, text ZAYA controls | Default no-thinking unless supported; ZAYA-VL media controls require real VL bundle; text and VL profiles cannot share stale thinking/media state. | Image/video grounded T1, text-only T2, different media T3, text-only model switch and back, saved-thinking isolation. | ZayaCCACache/path-dependent media state, media salt hit/miss, prefix/paged/L2 where valid, speed target watch, memory footprint. | No stale Qwen/DSV4 parser; no CCA state attached to wrong media; tools only if capability says yes. | Known ZAYA direct-mode math red row remains red until root-caused; do not hide with temp/top-k/repetition/forced thinking. |
 | Nemotron Omni / Parakeet / RADIO | `dealign.ai/Nemotron-Omni-Nano-*` | Audio/video/image controls only with Omni sidecar/runtime; live voice state separate from text-only readiness; no media reasoning UI unless grounded media-thinking row exists. | Audio/pre-encode T1, image T1, video T1, text-only T2, repeated-video hit, unsupported-media error, sleep/wake. | Parakeet pre-encode reuse, RADIO/vision evidence, media salt, raw-to-effective media cache alias, repeated-media hit, TTFT/tok/s/RSS/physical footprint. | Nemotron tool parser structured; no XML marker leak; no reasoning-only short-budget false pass. | Media row that only proves text path is PARTIAL; reasoning-only max-token output is FAIL. |
 | MiniMax | `MiniMax-M2.7-JANGTQ_K-CRACK`, `MiniMax-M2.7-JANG_K-CRACK`, `MiniMax-M2.7-Small-JANGTQ` | Reasoning UI visible for reasoning-capable MiniMax; MTP hidden unless real `mtp.*` tensors exist. | Multi-turn reasoning, tool call card, save/relaunch, switch from DSV4/Qwen and verify no stale parser. | Prefix/paged/L2/TurboQuant KV where valid, B=1 and B=2 when feasible, no permanent overlay, tok/s/RSS/physical footprint. | MiniMax reasoning rail separate; MiniMax XML/JSON parser selected from base architecture; tool result second turn. | No forced close tag, repetition penalty, or name-only MTP. |
-| Ling / Hy3 hybrid SSM | `Ling-2.6-flash-*`, `Hy3-preview-*` | Ling exposes no generic thinking control; Hy3 exposes `no_think/low/high`; stale Qwen thinking ignored. | Long prompt T1, prefix-overlap T2, prefix-mismatch T3, cancel/stop/retry. | SSM companion hits/misses/rederives, no KV-only unsafe hit, paged/L2, async rederive status, TTFT/tok/s/RSS/physical footprint. | GLM/Hunyuan/Ling markers do not leak; tool result order preserved when tools are supported. | Any KV-only hit without SSM companion state is FAIL. |
+| Ling / Hy3 hybrid SSM | `Ling-2.6-flash-*`, `Hy3-preview-*` | Ling default `disableThinking=true` maps to `enable_thinking=false`, explicit opt-in maps to `enable_thinking=true`; Hy3 exposes `no_think/low/high`; stale Qwen thinking ignored. | Long prompt T1, prefix-overlap T2, prefix-mismatch T3, cancel/stop/retry. | SSM companion hits/misses/rederives, no KV-only unsafe hit, paged/L2, async rederive status, TTFT/tok/s/RSS/physical footprint. | GLM/Hunyuan/Ling markers do not leak; Ling reasoning deltas stay on the reasoning rail for root-cause visibility; tool result order preserved when tools are supported. | Any KV-only hit without SSM companion state is FAIL. |
 | GLM / GPT-OSS / Mistral / local parser families | Present local bundles only | Parser/reasoning controls from base architecture, not display name. | One UI row per present family with enough output tokens to catch leaks and loops. | Declared dense/sliding/hybrid topology, prefix/paged/L2, TTFT/tok/s/RSS. | Harmony, bracket-think, GLM/Hunyuan, Mistral, JSON, and tool sentinels stay out of visible content. | N-A only when bundle path is absent and the path checked is recorded. |
 | Kimi | Excluded for this PR unless user re-adds it | N-A | N-A | N-A | N-A | Do not spend this PR budget on Kimi. |
 
@@ -112,7 +112,7 @@ For each representative attention/cache topology:
 
 | Switch | Required proof |
 |---|---|
-| Qwen thinking to Ling/Hy3 | Enable Qwen thinking, quit/reopen, switch to Ling and Hy3. Ling sends no thinking field; Hy3 sends only its native `reasoning_effort` value. |
+| Qwen thinking to Ling/Hy3 | Enable Qwen thinking, quit/reopen, switch to Ling and Hy3. Ling defaults to `enable_thinking=false` unless explicitly opted in; Hy3 sends only its native `reasoning_effort` value. |
 | DSV4 `max` to other families | Set DSV4 Max, switch to Qwen/Gemma/ZAYA/Nemotron, then back. Only DSV4 retains/passes `max`; others do not inherit it. |
 | VLM to text-only | Start with image/video, switch to text-only model/session. No media salt, media cache key, processor state, or image placeholder enters text-only request. |
 | Text-only back to VLM | Return to VLM. Media controls and processor path restore only for that model; prior text cache does not attach to media turn. |
@@ -128,9 +128,10 @@ Rows from that artifact must be resolved before production-clear. In
 particular, background `no_think` calls for preflight/greetings must prove they
 never enter user chat cache scope; explicit `frequency_penalty` mapping must
 stay request-only; MiniMax fallback/template bridges must move into real
-template/runtime fixes when needed; and Ling's force-off plus reasoning merge
-must remain red until live vmlx evidence proves the model path is coherent
-without UI-side repair.
+template/runtime fixes when needed; and Ling's pre-fix force-off plus reasoning
+merge is now replaced by default-off UI policy, explicit opt-in, and reasoning
+rail preservation. The Ling family still needs app/API cache and long-output
+artifacts before it can be production-clear.
 
 ## Artifact Acceptance Rules
 
@@ -195,7 +196,8 @@ The following remain open until concrete artifacts exist:
   RADIO evidence.
 - DSV4 UI settings visuals, DSML route proof, native cache stats, and long chat.
 - MiniMax reasoning/tool route proof with no forced close or sampler guard.
-- Ling/Hy3 hybrid SSM rederive and no KV-only unsafe cache hit.
+- Ling/Hy3 hybrid SSM rederive, reasoning on/off/default app/API rows, and no
+  KV-only unsafe cache hit.
 - All route parity rows across chat, responses, messages, Ollama chat/generate,
   streaming and non-streaming.
 - Final old-library and zombie-code sweep after live rows are attached.
