@@ -107,6 +107,30 @@ struct IdentityBody: View {
         "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
 
     var body: some View {
+        // The BIP39 grid needs the full window to render without
+        // clipping words, so `.recovery` swaps to a full-width body and
+        // the outer animation cross-fades when crossing that boundary.
+        // Intra-two-column phase changes keep using the inner ZStack's
+        // slide transition.
+        Group {
+            switch state.phase {
+            case .recovery(let info):
+                OnboardingFullWidthBody(subtitle: subtitle) {
+                    recoveryBody(info: info)
+                }
+                .transition(.opacity)
+            default:
+                twoColumnBody
+                    .transition(.opacity)
+            }
+        }
+        .animation(IdentityBody.layoutSwapAnimation, value: isRecoveryPhase)
+    }
+
+    private static let layoutSwapAnimation: Animation =
+        .spring(response: 0.5, dampingFraction: 0.85)
+
+    private var twoColumnBody: some View {
         OnboardingTwoColumnBody(
             illustrationAsset: "osaurus-identity",
             leftHeadline: leftHeadline,
@@ -118,8 +142,13 @@ struct IdentityBody: View {
                     .id(phaseID)
                     .transition(phaseTransition)
             }
-            .animation(.spring(response: 0.5, dampingFraction: 0.85), value: phaseID)
+            .animation(IdentityBody.layoutSwapAnimation, value: phaseID)
         }
+    }
+
+    private var isRecoveryPhase: Bool {
+        if case .recovery = state.phase { return true }
+        return false
     }
 
     // MARK: - Copy

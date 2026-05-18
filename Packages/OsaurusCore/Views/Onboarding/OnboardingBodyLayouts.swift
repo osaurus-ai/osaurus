@@ -6,11 +6,14 @@
 //
 //  - `OnboardingTwoColumnBody` — illustration + helper copy on the left,
 //    scrollable form content on the right. Used by Create Agent, Configure
-//    AI, and Identity.
+//    AI, and Identity (non-recovery phases).
+//  - `OnboardingFullWidthBody` — single-column full-width content. Used
+//    when the illustration rail would crowd out the primary content
+//    (e.g. Identity's `.recovery` phase).
 //  - `OnboardingHeroBody` — single-column centered illustration + headline
 //    + subtitle. Used by Welcome and the Walkthrough's internal pages.
 //
-//  Both layouts share a graceful illustration placeholder that draws when
+//  All layouts share a graceful illustration placeholder that draws when
 //  the supplied imageset hasn't been filled in yet, so the screen never
 //  visually collapses around an empty image.
 //
@@ -174,6 +177,49 @@ extension OnboardingTwoColumnBody where LeftContent == OnboardingIllustrationLef
             },
             rightContent: rightContent
         )
+    }
+}
+
+// MARK: - Full-Width Body
+
+/// Single-column body for step phases where the illustration rail
+/// would crowd out the primary content (e.g. the BIP39 recovery
+/// grid). Mirrors `OnboardingTwoColumnBody`'s right-column padding so
+/// content stays vertically aligned across phases that swap layouts.
+struct OnboardingFullWidthBody<Content: View>: View {
+    let subtitle: LocalizedStringKey?
+    let content: Content
+
+    @Environment(\.theme) private var theme
+
+    init(
+        subtitle: LocalizedStringKey? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.subtitle = subtitle
+        self.content = content()
+    }
+
+    var body: some View {
+        OnboardingScrollContainer {
+            VStack(alignment: .leading, spacing: 0) {
+                if let subtitle = subtitle {
+                    Text(subtitle, bundle: .module)
+                        .font(theme.font(size: OnboardingMetrics.subtitleSize))
+                        .foregroundColor(theme.secondaryText)
+                        .multilineTextAlignment(.leading)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 14)
+                }
+
+                content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, OnboardingMetrics.rightColumnHorizontalPadding)
+            .padding(.vertical, OnboardingMetrics.bodyVerticalPadding)
+        }
     }
 }
 

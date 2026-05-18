@@ -82,32 +82,50 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         ])
     }
 
-    /// SwiftUI auto-creates an `NSWindow` for the `Settings { EmptyView() }`
-    /// scene with identifier `com_apple_SwiftUI_Settings_window`. On macOS
-    /// builds with `LSUIElement=YES` plus a regular activation policy this
-    /// window can paint for a frame before `applicationDidFinishLaunching`
-    /// presents the onboarding window. Hide it on first pass, then watch
-    /// `didBecomeKeyNotification` for any re-present until our launch Task
-    /// finishes (the observer is removed there).
+    /// Hide SwiftUI's `Settings { EmptyView() }` placeholder window so it
+    /// can't paint for a frame before our onboarding window appears. We
+    /// observe both key and occlusion-state changes because the window
+    /// can be ordered on-screen without becoming key (background launch
+    /// or another app frontmost). The deferred-Task sweep is the
+    /// belt-and-suspenders for the case where neither notification fires
+    /// before SwiftUI paints.
+    private static let swiftUISettingsPlaceholderID = "com_apple_SwiftUI_Settings_window"
+
+    private static let swiftUISettingsPlaceholderNotifications: [Notification.Name] = [
+        NSWindow.didBecomeKeyNotification,
+        NSWindow.didChangeOcclusionStateNotification,
+    ]
+
     private func suppressSwiftUISettingsPlaceholder() {
-        let id = "com_apple_SwiftUI_Settings_window"
-        for window in NSApp.windows where window.identifier?.rawValue == id {
-            window.orderOut(nil)
+        sweepSwiftUISettingsPlaceholder()
+        for name in Self.swiftUISettingsPlaceholderNotifications {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleSwiftUIPlaceholderEvent(_:)),
+                name: name,
+                object: nil
+            )
         }
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleSwiftUIWindowKey(_:)),
-            name: NSWindow.didBecomeKeyNotification,
-            object: nil
-        )
     }
 
-    @objc private func handleSwiftUIWindowKey(_ note: Notification) {
+    private func sweepSwiftUISettingsPlaceholder() {
+        for window in NSApp.windows
+        where window.identifier?.rawValue == Self.swiftUISettingsPlaceholderID {
+            hidePlaceholder(window)
+        }
+    }
+
+    @objc private func handleSwiftUIPlaceholderEvent(_ note: Notification) {
         guard
-            let w = note.object as? NSWindow,
-            w.identifier?.rawValue == "com_apple_SwiftUI_Settings_window"
+            let window = note.object as? NSWindow,
+            window.identifier?.rawValue == Self.swiftUISettingsPlaceholderID
         else { return }
-        w.orderOut(nil)
+        hidePlaceholder(window)
+    }
+
+    private func hidePlaceholder(_ window: NSWindow) {
+        window.orderOut(nil)
+        window.setIsVisible(false)
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
@@ -339,6 +357,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
 
+            // Final sweep: catches any Settings placeholder that SwiftUI
+            // created after `applicationWillFinishLaunching` ran.
+            sweepSwiftUISettingsPlaceholder()
+
             if presentOnboarding {
                 showOnboardingWindow()
             } else {
@@ -348,11 +370,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             ToastWindowController.shared.setup()
             NotchWindowController.shared.setup()
 
-            NotificationCenter.default.removeObserver(
-                self,
-                name: NSWindow.didBecomeKeyNotification,
-                object: nil
-            )
+            for name in Self.swiftUISettingsPlaceholderNotifications {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: name,
+                    object: nil
+                )
+            }
 
             // Once the initial window has had a beat to settle, prewarm
             // the AI-greeting pool for whichever (agent, model) the
