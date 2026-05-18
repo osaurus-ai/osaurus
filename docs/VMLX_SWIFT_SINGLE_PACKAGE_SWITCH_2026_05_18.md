@@ -8,7 +8,7 @@ consolidated `vmlx-swift` package.
 OsaurusCore now has one direct inference dependency:
 
 - `https://github.com/osaurus-ai/vmlx-swift`
-- revision `c2400100c4f73ea1e414aa292a1177713a4a72f6`
+- revision `0b85cad0a9d22d69ddeb787d7695b796fd00275b`
 
 That package is expected to export the runtime modules Osaurus previously pulled
 from separate roots:
@@ -75,6 +75,12 @@ Explicit user flags cannot force MTP sidecar loading on a bundle that fails that
 gate. This is intentional: MTP must be detected from the model artifact, not from
 the model name, and activation must be driven by measured tuning rather than a
 generic fallback.
+
+The pinned package commit includes a fresh Qwen MTP census artifact at
+`docs/internal/live-gates/20260518T_qwen_mtp_census_refresh/`. It proves the
+27B/35B MXFP4/MXFP8 MTP variants all require real `mtp.*` tensors and usable
+`vmlx_mtp_tuning.json` before auto-launch; 27B MXFP4 selects D2, while 27B
+MXFP8 and both 35B variants select D3 from their tuning files.
 
 ## Release Gate Still Required
 
