@@ -49,6 +49,44 @@ struct RuntimePolicySourceTests {
         #expect(source.contains("SWA+CSA+HSA"))
     }
 
+    @Test("AppDelegate starts storage-heavy embedding init off the main actor")
+    func appDelegateDoesNotBlockServerStartupOnEmbeddingStorageInit() throws {
+        let source = try Self.source("AppDelegate.swift")
+
+        #expect(source.contains("let embeddingInitTask = Task.detached(priority: .utility)"))
+        #expect(source.contains("await serverController.startServer()"))
+        #expect(
+            source.range(of: "let embeddingInitTask = Task {") == nil,
+            "startup memory/vector initialization must not inherit MainActor and block server startup"
+        )
+    }
+
+    @Test("AppDelegate binds HTTP server before Parakeet/CoreML startup")
+    func appDelegateStartsServerBeforeSpeechAutoload() throws {
+        let source = try Self.source("AppDelegate.swift")
+        let serverTask = try #require(source.range(of: "let serverStartupTask = Task { @MainActor in"))
+        let serverStart = try #require(source.range(of: "await serverController.startServer()"))
+        let providerConnect = try #require(source.range(of: "await MCPProviderManager.shared.connectEnabledProviders()"))
+        let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
+        let speechAutoload = try #require(source.range(of: "await SpeechService.shared.autoLoadIfNeeded()"))
+
+        #expect(serverTask.lowerBound < providerConnect.lowerBound)
+        #expect(serverStart.lowerBound < schedulerStart.lowerBound)
+        #expect(serverStart.lowerBound < speechAutoload.lowerBound)
+        #expect(source.contains("await serverStartupTask.value"))
+    }
+
+    @Test("ServerController relies on NIO bind instead of a startup port probe")
+    func serverControllerDoesNotPreflightPortWithNetworkConnection() throws {
+        let source = try Self.source("Networking/ServerController.swift")
+
+        #expect(!source.contains("import Network"))
+        #expect(!source.contains("NWConnection"))
+        #expect(!source.contains("isAnyListenerActive"))
+        #expect(source.contains("try await server.start("))
+        #expect(source.contains("\"Port \\(configuration.port) is already in use. Choose a different port in Settings.\""))
+    }
+
     @Test("vmlx pin uses consolidated package with runtime hardening")
     func vmlxPinIncludesRuntimeHardening() throws {
         let manifest = try Self.source("Package.swift")

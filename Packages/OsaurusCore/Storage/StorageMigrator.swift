@@ -211,8 +211,58 @@ public actor StorageMigrator {
             return true
         }
         let contents = (try? fm.contentsOfDirectory(atPath: root.path)) ?? []
-        let meaningful = contents.filter { !$0.hasPrefix(".") }
+        let meaningful = contents.filter { entry in
+            guard !entry.hasPrefix(".") else { return false }
+            return !isFreshInstallBootstrapEntry(entry, under: root)
+        }
         return meaningful.isEmpty
+    }
+
+    private func isFreshInstallBootstrapEntry(_ entry: String, under root: URL) -> Bool {
+        let url = root.appendingPathComponent(entry)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+            return false
+        }
+
+        if isDirectoryEmpty(url) {
+            return true
+        }
+
+        if entry == "themes" {
+            return containsOnlyBuiltInThemeJSON(url)
+        }
+
+        return false
+    }
+
+    private func isDirectoryEmpty(_ url: URL) -> Bool {
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        return contents.isEmpty
+    }
+
+    private func containsOnlyBuiltInThemeJSON(_ url: URL) -> Bool {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        guard !files.isEmpty else { return true }
+
+        for file in files {
+            guard file.pathExtension == "json",
+                  let data = try? Data(contentsOf: file),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["isBuiltIn"] as? Bool == true
+            else {
+                return false
+            }
+        }
+        return true
     }
 
     /// Run the migrator. Safe to call repeatedly: completed steps

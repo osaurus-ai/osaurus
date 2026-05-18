@@ -11,7 +11,6 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 import NIOPosix
-import Network
 
 /// Main controller responsible for managing the server lifecycle
 @MainActor
@@ -78,19 +77,6 @@ final class ServerController: ObservableObject {
         guard !isRunning else { return }
         guard configuration.isValidPort else {
             lastErrorMessage = "Invalid port: \(configuration.port). Port must be between 1 and 65535."
-            serverHealth = .error(lastErrorMessage!)
-            return
-        }
-
-        // Preflight: if anything is already listening on this port, abort early with a friendly message
-        var hostsToProbe = ["127.0.0.1", "::1"]
-        if configuration.exposeToNetwork {
-            let lanIP = self.getLocalIPAddress()
-            if !hostsToProbe.contains(lanIP) { hostsToProbe.append(lanIP) }
-        }
-        if await isAnyListenerActive(on: hostsToProbe, port: configuration.port, timeout: 0.25) {
-            lastErrorMessage =
-                "Port \(configuration.port) is already in use. Choose a different port in Settings."
             serverHealth = .error(lastErrorMessage!)
             return
         }
@@ -257,72 +243,6 @@ final class ServerController: ObservableObject {
             lastErrorMessage = error.localizedDescription
         }
         serverHealth = .error(lastErrorMessage ?? error.localizedDescription)
-    }
-
-    // MARK: - Port Probe (Network-based, concurrency-safe)
-
-    private func isAnyListenerActive(on hosts: [String], port: Int, timeout: TimeInterval) async
-        -> Bool
-    {
-        for host in hosts {
-            if await isListenerActive(host: host, port: port, timeout: timeout) {
-                return true
-            }
-        }
-        return false
-    }
-
-    private func isListenerActive(host: String, port: Int, timeout: TimeInterval) async -> Bool {
-        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else { return false }
-        let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
-
-        let stateStream = AsyncStream<NWConnection.State> { continuation in
-            connection.stateUpdateHandler = { state in
-                continuation.yield(state)
-                switch state {
-                case .ready, .failed(_), .cancelled:
-                    continuation.finish()
-                    // Avoid further callbacks
-                    connection.stateUpdateHandler = nil
-                default:
-                    break
-                }
-            }
-            connection.start(queue: DispatchQueue.global(qos: .utility))
-        }
-
-        return await withTaskGroup(of: Bool.self) { group in
-            // Task 1: Wait for connection state
-            group.addTask {
-                for await state in stateStream {
-                    switch state {
-                    case .ready:
-                        connection.cancel()
-                        return true
-                    case .failed(_), .cancelled:
-                        return false
-                    default:
-                        break
-                    }
-                }
-                return false
-            }
-
-            // Task 2: Timeout
-            group.addTask {
-                let ns = UInt64(max(0, timeout) * 1_000_000_000)
-                // Best-effort timeout; ignore cancellation/throwing semantics
-                try? await Task.sleep(nanoseconds: ns)
-                connection.cancel()
-                return false
-            }
-
-            let result = await group.next() ?? false
-            group.cancelAll()
-            // Ensure no further callbacks are delivered after we decide
-            connection.stateUpdateHandler = nil
-            return result
-        }
     }
 
     private func stopServerIfNeeded() async throws {

@@ -79,6 +79,58 @@ struct StorageMigrationGapTests {
         }
     }
 
+    @Test
+    func freshInstall_ignoresBuiltInThemeBootstrap() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpTempRoot()
+            defer { Self.tearDown(root) }
+
+            let themes = root.appendingPathComponent("themes", isDirectory: true)
+            try FileManager.default.createDirectory(at: themes, withIntermediateDirectories: true)
+            let builtInTheme = """
+                {
+                  "isBuiltIn": true,
+                  "metadata": {
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "name": "Dark"
+                  }
+                }
+                """
+            try Data(builtInTheme.utf8).write(
+                to: themes.appendingPathComponent("00000000-0000-0000-0000-000000000001.json")
+            )
+
+            let pristine = await StorageMigrator.shared.isPristineInstall()
+            #expect(pristine)
+        }
+    }
+
+    @Test
+    func freshInstall_treatsCustomThemeAsUserData() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpTempRoot()
+            defer { Self.tearDown(root) }
+
+            let themes = root.appendingPathComponent("themes", isDirectory: true)
+            try FileManager.default.createDirectory(at: themes, withIntermediateDirectories: true)
+            let customTheme = """
+                {
+                  "isBuiltIn": false,
+                  "metadata": {
+                    "id": "11111111-1111-1111-1111-111111111111",
+                    "name": "Custom"
+                  }
+                }
+                """
+            try Data(customTheme.utf8).write(
+                to: themes.appendingPathComponent("11111111-1111-1111-1111-111111111111.json")
+            )
+
+            let pristine = await StorageMigrator.shared.isPristineInstall()
+            #expect(!pristine)
+        }
+    }
+
     // MARK: - Backup retention
 
     @Test

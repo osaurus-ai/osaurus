@@ -1,0 +1,1 @@
+16069 /Users/eric/.config/superpowers/worktrees/osaurus/codex-vmlx-swift-package-switch/build/XcodeDerivedData-codex-live-pr1147/Build/Products/Debug/osaurus.app/Contents/MacOS/osaurus

@@ -251,6 +251,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         _ = SpeechConfigurationStore.load()
         ModelPickerItemCache.shared.prewarm()
 
+        // Bind the local HTTP server before heavier optional startup work such
+        // as provider connection, scheduler DB polling, sandbox registration,
+        // or Parakeet/CoreML auto-load can occupy the main actor or accelerator.
+        let serverStartupTask = Task { @MainActor in
+            await serverController.startServer()
+        }
+
         // Auto-connect to enabled providers, then update model cache with remote models
         Task { @MainActor in
             await MCPProviderManager.shared.connectEnabledProviders()
@@ -269,7 +276,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // `*Database.shared.open()` also calls the gate
         // defensively (no-op fast path) for the plugin/HTTP entry
         // points that don't go through this Task.
-        let embeddingInitTask = Task {
+        let embeddingInitTask = Task.detached(priority: .utility) {
             var memoryDBOpened = false
             for attempt in 1 ... 3 {
                 do {
@@ -312,16 +319,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
-        // Auto-start server on app launch
-        Task { @MainActor in
-            await serverController.startServer()
-        }
-
         // Setup global hotkey for Chat overlay (configured)
         applyChatHotkey()
 
         // Auto-load speech model if voice features are enabled
         Task { @MainActor in
+            await serverStartupTask.value
             await SpeechService.shared.autoLoadIfNeeded()
         }
 
