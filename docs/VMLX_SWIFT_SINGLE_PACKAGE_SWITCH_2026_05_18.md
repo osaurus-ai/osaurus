@@ -8,7 +8,7 @@ consolidated `vmlx-swift` package.
 OsaurusCore now has one direct inference dependency:
 
 - `https://github.com/osaurus-ai/vmlx-swift`
-- revision `982857e3c678cc9506bee09136cde3c35156614a`
+- revision `ff172509e787712652f617818cedd608da889109`
 
 That package is expected to export the runtime modules Osaurus previously pulled
 from separate roots:
@@ -106,7 +106,9 @@ the `vmlx-swift` DSV4 fallback. That fallback must render:
 
 - top-level OpenAI `tools[]` as DSV4 DSML schema instructions;
 - previous assistant `message.tool_calls` as `<｜DSML｜tool_calls>` history;
-- `role=tool` outputs as `<tool_result>...</tool_result>`; and
+- `role=tool` outputs merged into the next user turn as
+  `<tool_result>...</tool_result>` followed by the user's text in the same
+  `<｜User｜>` block, matching DSV4's Python encoder; and
 - original OpenAI tool-call ids so the next tool result can correlate with the
   correct assistant call.
 
