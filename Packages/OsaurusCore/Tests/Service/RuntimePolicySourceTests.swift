@@ -185,6 +185,9 @@ struct RuntimePolicySourceTests {
         let executionManifest = try Self.source(
             "../../docs/internal/live-gates/20260518T_pr1147_live_user_api_execution_manifest.md"
         )
+        let componentMatrix = try Self.source(
+            "../../docs/internal/live-gates/20260518T_pr1147_component_edge_case_matrix.md"
+        )
 
         #expect(switchDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
         #expect(runtimeDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
@@ -317,6 +320,7 @@ struct RuntimePolicySourceTests {
             "Do not run",
             "fake `HOME`",
             "20260518T_pr1147_live_user_api_execution_manifest.md",
+            "20260518T_pr1147_component_edge_case_matrix.md",
             "source anchors",
             "UI/API/cache/parser",
         ] {
@@ -435,11 +439,69 @@ struct RuntimePolicySourceTests {
             "Inverse Rows",
             "Request Construction Checks",
             "UI and Saved-Setting Carryover Checks",
+            "20260518T_pr1147_component_edge_case_matrix.md",
             "No row in this manifest is production-clear",
         ] {
             #expect(
                 executionManifest.contains(required),
                 "missing live execution manifest requirement: \(required)"
+            )
+        }
+
+        for required in [
+            "Current Evidence Boundary",
+            "Source-To-Artifact Wiring",
+            "Per-Family Live Matrix",
+            "Required Live Sequences",
+            "VLM / Omni Sequence",
+            "Reasoning / Parser Sequence",
+            "Cache / Memory Sequence",
+            "Startup / Lifecycle Sequence",
+            "Saved-Setting And Cache-Key Inverses",
+            "Artifact Acceptance Rules",
+            "Open Until Proven",
+            "ModelOptions.swift",
+            "ModelMediaCapabilities.swift",
+            "LocalGenerationDefaults.swift",
+            "MLXBatchAdapter.swift",
+            "GenerationEventMapper.swift",
+            "ModelRuntime.swift",
+            "HTTPHandler.swift",
+            "DSV4 Flash",
+            "Reasoning mode defaults to `instruct`",
+            "`reasoning_effort=max`",
+            "block size fixed/disabled at 256",
+            "Qwen3.6 MTP/VL",
+            "media salt nil/absent",
+            "vmlx_mtp_tuning.json",
+            "real `mtp.*` tensors",
+            "Gemma4 / Gemma VLM",
+            "Gemma3n text",
+            "ZAYA / ZAYA-VL",
+            "ZayaCCACache/path-dependent media state",
+            "Nemotron Omni / Parakeet / RADIO",
+            "Parakeet pre-encode reuse",
+            "RADIO/vision evidence",
+            "MiniMax",
+            "Ling / Hy3 hybrid SSM",
+            "no KV-only unsafe hit",
+            "GLM / GPT-OSS / Mistral",
+            "Kimi",
+            "Do not spend this PR budget on Kimi",
+            "native `top_k`",
+            "coding prompt/tool schema injection",
+            "Tool/coding context",
+            "RSS and Activity Monitor physical footprint",
+            "TTFT, tok/s",
+            "fake `HOME` artifacts are invalid",
+            "name-based MTP detection",
+            "hidden sampler, EOS, repetition",
+            "forced reasoning-close repair",
+            "Final old-library and zombie-code sweep",
+        ] {
+            #expect(
+                componentMatrix.contains(required),
+                "missing component edge-case matrix requirement: \(required)"
             )
         }
     }

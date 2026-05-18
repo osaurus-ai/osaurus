@@ -203,6 +203,13 @@ It names the source anchors, artifact file contract, UI/API/cache/parser
 inverses, saved-setting carryover rows, and model-family sequences that must
 exist before this PR can be undrafted.
 
+The component-level edge-case matrix is:
+`docs/internal/live-gates/20260518T_pr1147_component_edge_case_matrix.md`. It
+breaks the manifest into source-to-artifact wiring, per-family UI defaults,
+media turn sequences, cache/scheduler proof, parser and reasoning leak checks,
+saved-setting/cache-key inverses, and artifact acceptance rules. It is still a
+checklist, not a pass report.
+
 ## Current Audit Outcome
 
 Not complete.

@@ -131,6 +131,11 @@ Run these in the chat app after a keychain-safe launch:
 
 - `docs/internal/live-gates/pr1147/bundle-census/` closes file-level bundle
   census only.
+- `docs/internal/live-gates/20260518T_pr1147_component_edge_case_matrix.md`
+  expands this manifest into a component-by-component checklist for UI clicked
+  defaults, route parity, VL/video/audio preprocessing, saved-setting
+  carryover, cache-key inverses, native `top_k`, MTP tuning, parser leaks,
+  memory/TTFT/token/s, and old-library/zombie-code sweeps.
 - `scripts/pr1147_http_route_probe.py` is available for route capture but is
   not model proof by itself.
 - `docs/internal/live-gates/20260518T_pr1147_keychain_safe_launch.md` is
