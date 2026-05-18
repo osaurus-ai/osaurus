@@ -239,6 +239,15 @@ ZAYA-VL live sequence checkpoint:
   `.immediately` idle-residency policy, so the next cache-proof rerun must set
   non-immediate residency through the app/settings path or capture stream-time
   snapshots while the lease is held. This is a real live gap, not a pass.
+- source capability fix:
+  ZAYA1-VL is now classified as `.imageOnly` from both model-id and
+  directory/`model_type` capability paths. This matches current vmlx-swift
+  engine support: image/text is implemented, while video throws
+  `ZAYA1-VL video input is not implemented` until a real ZAYA video processor
+  exists. Focused tests now pin picker/composer gating so image is accepted and
+  video/audio are rejected for ZAYA1-VL. This prevents the UI from advertising
+  a fake video path; it does not make the red different-image grounding row or
+  live cache proof pass.
 
 Metadata route probe checkpoint:
 

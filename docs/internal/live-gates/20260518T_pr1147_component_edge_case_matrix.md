@@ -170,11 +170,13 @@ The following remain open until concrete artifacts exist:
 - Gemma4 VLM and Gemma3n text rows, including the known Gemma3n UTF red row.
 - ZAYA-VL media and ZAYA text direct-mode root cause. Current
   `zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/` evidence is red because the
-  blue-image turn still described red, video returned unsupported, and cache
-  proof was not collected under a residency mode that can keep the model visible
-  after the request. The Responses generic-media source bug was traced to
-  dropped `input_image` parts and fixed with a unit test, but live Responses
-  grounding still needs a fresh keychain-safe rerun.
+  blue-image turn still described red and cache proof was not collected under a
+  residency mode that can keep the model visible after the request. The
+  Responses generic-media source bug was traced to dropped `input_image` parts
+  and fixed with a unit test, but live Responses grounding still needs a fresh
+  keychain-safe rerun. ZAYA1-VL video remains intentionally unsupported until a
+  real engine video processor exists; Osaurus now gates ZAYA1-VL as image-only
+  so the UI/composer does not advertise a fake video path.
 - Nemotron Omni audio/video/image rows through Osaurus, including Parakeet and
   RADIO evidence.
 - DSV4 UI settings visuals, DSML route proof, native cache stats, and long chat.

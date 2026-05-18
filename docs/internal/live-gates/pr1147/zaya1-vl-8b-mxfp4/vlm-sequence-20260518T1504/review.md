@@ -55,6 +55,13 @@ values before entering `MLXBatchAdapter`. This explains the generic Responses
 media answers in this artifact, but it does not make the row green until a
 fresh keychain-safe live rerun shows grounded Responses image output.
 
+Source trace for the unsupported video row:
+vmlx-swift's `Zaya1VLProcessor` and `Zaya1VLModel.prepare` reject video input
+with `ZAYA1-VL video input is not implemented`. Osaurus now classifies
+ZAYA1-VL as image-only from model-id and directory capability detection, and
+focused picker/composer tests pin image accepted plus video/audio rejected.
+This is the honest current boundary until a real ZAYA video processor exists.
+
 ## Consequence
 
 This artifact is useful proof that the live app/API path is being exercised,
@@ -62,4 +69,5 @@ but it is not production proof for ZAYA-VL. The row remains red until the media
 switch grounding, source-fixed Responses media handling, unsupported-video
 capability, and loaded-model/cache-stats proof path are root-caused and fixed
 without sampler or prompt guards. Source-level Responses image preservation is
-fixed; live Responses grounding is still unproven in this artifact.
+fixed and unsupported-video UI gating is fixed; live Responses grounding and
+cache proof are still unproven in this artifact.

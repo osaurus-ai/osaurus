@@ -9,11 +9,12 @@
 //   D2: matches `qwen[2-3](\.\d+|_\d+)?[-_]?vl`               → .imageVideo
 //   D3: matches `qwen3\.[5-6].*[-_]vl|holo3.*[-_]vl`          → .imageVideo
 //   D4: contains `smolvlm|smol-vlm`                           → .imageVideo
-//   D5: any of {paligemma, idefics3, fastvlm, llava-qwen2,
+//   D5: matches ZAYA1-VL family                                 → .imageOnly
+//   D6: any of {paligemma, idefics3, fastvlm, llava-qwen2,
 //               pixtral, glm-ocr, lfm2-vl, gemma-3, gemma3,
 //               gemma-4-it}                                    → .imageOnly
-//   D6: matches `mistral[-_](3|medium-3)`                     → .imageOnly
-//   D7: matches `mistral[-_]?4.*[-_]vl`                       → .imageOnly
+//   D7: matches `mistral[-_](3|medium-3)`                     → .imageOnly
+//   D8: matches `mistral[-_]?4.*[-_]vl`                       → .imageOnly
 //   else                                                       → .textOnly
 
 import Foundation
@@ -125,49 +126,71 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(ModelMediaCapabilities.from(modelId: "smolvlm-instruct") == .imageVideo)
     }
 
-    // MARK: - D5: Image-only VLM families
+    // MARK: - D5: ZAYA1-VL image-only family
 
-    @Test("D5: PaliGemma → .imageOnly")
-    func d5_paligemma() {
+    @Test("D5: ZAYA1-VL → .imageOnly")
+    func d5_zaya1VL() {
+        let cap = ModelMediaCapabilities.from(modelId: "Zyphra/ZAYA1-VL-8B-MXFP4")
+        #expect(cap == .imageOnly)
+        #expect(cap.supportsImage)
+        #expect(!cap.supportsVideo)
+        #expect(!cap.supportsAudio)
+    }
+
+    @Test("D5: ZAYA1-VL flat picker id → .imageOnly")
+    func d5_zaya1VLFlatPicker() {
+        #expect(ModelMediaCapabilities.from(modelId: "zaya1-vl-8b-mxfp4") == .imageOnly)
+    }
+
+    @Test("D5 boundary: text ZAYA remains text-only")
+    func d5_textZaya_notVL() {
+        #expect(ModelMediaCapabilities.from(modelId: "Zyphra/ZAYA1-8B-MXFP4") == .textOnly)
+        #expect(ModelMediaCapabilities.from(modelId: "zaya1-8b-mxfp4") == .textOnly)
+    }
+
+    // MARK: - D6: Image-only VLM families
+
+    @Test("D6: PaliGemma → .imageOnly")
+    func d6_paligemma() {
         #expect(ModelMediaCapabilities.from(modelId: "google/paligemma2-3b-mix") == .imageOnly)
     }
 
-    @Test("D5: Idefics 3 → .imageOnly")
-    func d5_idefics3() {
+    @Test("D6: Idefics 3 → .imageOnly")
+    func d6_idefics3() {
         #expect(ModelMediaCapabilities.from(modelId: "HuggingFaceM4/Idefics3-8B") == .imageOnly)
     }
 
-    @Test("D5: FastVLM / LLava-Qwen2 → .imageOnly")
-    func d5_fastVLM() {
+    @Test("D6: FastVLM / LLava-Qwen2 → .imageOnly")
+    func d6_fastVLM() {
         #expect(ModelMediaCapabilities.from(modelId: "apple/FastVLM-7B") == .imageOnly)
         #expect(ModelMediaCapabilities.from(modelId: "llava-hf/llava_qwen2-7b") == .imageOnly)
     }
 
-    @Test("D5: Pixtral standalone → .imageOnly")
-    func d5_pixtral() {
+    @Test("D6: Pixtral standalone → .imageOnly")
+    func d6_pixtral() {
         #expect(ModelMediaCapabilities.from(modelId: "mistralai/Pixtral-12B-2409") == .imageOnly)
     }
 
-    @Test("D5: GLM OCR → .imageOnly")
-    func d5_glmOcr() {
+    @Test("D6: GLM OCR → .imageOnly")
+    func d6_glmOcr() {
         #expect(ModelMediaCapabilities.from(modelId: "THUDM/GLM-OCR-large") == .imageOnly)
     }
 
-    @Test("D5: LFM2-VL → .imageOnly")
-    func d5_lfm2VL() {
+    @Test("D6: LFM2-VL → .imageOnly")
+    func d6_lfm2VL() {
         #expect(ModelMediaCapabilities.from(modelId: "LiquidAI/LFM2-VL-1.6B") == .imageOnly)
     }
 
-    @Test("D5: Gemma 3 / 4 (VLM) → .imageOnly")
-    func d5_gemmaVLM() {
+    @Test("D6: Gemma 3 / 4 (VLM) → .imageOnly")
+    func d6_gemmaVLM() {
         #expect(ModelMediaCapabilities.from(modelId: "google/gemma-3-27b-it") == .imageOnly)
         #expect(ModelMediaCapabilities.from(modelId: "OsaurusAI/Gemma-4-it-26B-A4B") == .imageOnly)
     }
 
-    // MARK: - D6: Mistral 3 / 3.5 (image only via Pixtral wrap)
+    // MARK: - D7: Mistral 3 / 3.5 (image only via Pixtral wrap)
 
-    @Test("D6: Mistral 3 / 3.5 → .imageOnly")
-    func d6_mistral3() {
+    @Test("D7: Mistral 3 / 3.5 → .imageOnly")
+    func d7_mistral3() {
         #expect(ModelMediaCapabilities.from(modelId: "mistralai/Mistral-3-Small-24B") == .imageOnly)
         #expect(
             ModelMediaCapabilities.from(modelId: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4")
@@ -175,22 +198,22 @@ struct ModelMediaCapabilitiesMCDCTests {
         )
     }
 
-    @Test("D6 boundary: bare 'mistral-7b' (no 3 or medium-3) → .textOnly")
-    func d6_bareMistral_notImage() {
+    @Test("D7 boundary: bare 'mistral-7b' (no 3 or medium-3) → .textOnly")
+    func d7_bareMistral_notImage() {
         #expect(ModelMediaCapabilities.from(modelId: "mistralai/Mistral-7B-v0.3") == .textOnly)
     }
 
-    // MARK: - D7: Mistral 4 VLM (image only)
+    // MARK: - D8: Mistral 4 VLM (image only)
 
-    @Test("D7: Mistral 4 VL → .imageOnly")
-    func d7_mistral4VL() {
+    @Test("D8: Mistral 4 VL → .imageOnly")
+    func d8_mistral4VL() {
         #expect(
             ModelMediaCapabilities.from(modelId: "OsaurusAI/Mistral-4-VL-Future") == .imageOnly
         )
     }
 
-    @Test("D7 boundary: Mistral 4 dense (no -vl) → .textOnly")
-    func d7_mistral4Dense_notImage() {
+    @Test("D8 boundary: Mistral 4 dense (no -vl) → .textOnly")
+    func d8_mistral4Dense_notImage() {
         #expect(
             ModelMediaCapabilities.from(modelId: "mistralai/Mistral-4-Small-24B-Instruct")
                 == .textOnly

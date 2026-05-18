@@ -133,6 +133,12 @@ public enum ModelMediaCapabilities {
             return .imageVideo
         }
 
+        // ZAYA1-VL — native image/text only. The vmlx engine rejects video
+        // input for this family until a real ZAYA video processor exists.
+        if ModelFamilyNames.isZayaVLFamily(modelId) {
+            return .imageOnly
+        }
+
         // Image-only VLM families. Substring-match the bundle name.
         let imageOnlyPatterns: [String] = [
             "paligemma", "idefics3", "fastvlm", "llava-qwen2", "llava_qwen2",
