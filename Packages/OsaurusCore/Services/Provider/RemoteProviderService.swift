@@ -2906,10 +2906,15 @@ extension RemoteProviderService {
     /// Fetch models from a remote provider and create a service instance
     public static func fetchModels(from provider: RemoteProvider) async throws -> [String] {
         if provider.providerType == .openAICodex {
-            guard provider.hasOAuthTokens else {
+            guard var tokens = provider.getOAuthTokens() else {
                 throw RemoteProviderServiceError.requestFailed("Missing ChatGPT/Codex sign-in tokens")
             }
-            return OpenAICodexOAuthService.supportedModels
+            if tokens.isExpired {
+                let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
+                _ = RemoteProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
+                tokens = refreshed
+            }
+            return await OpenAICodexOAuthService.availableModels(for: tokens)
         }
 
         if provider.providerType == .anthropic {

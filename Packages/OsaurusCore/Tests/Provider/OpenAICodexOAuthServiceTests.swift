@@ -64,6 +64,33 @@ struct OpenAICodexOAuthServiceTests {
         #expect(tokens.isExpired)
     }
 
+    @Test func supportedModels_containsCurrentCatalog() {
+        let models = OpenAICodexOAuthService.supportedModels
+        let expected = [
+            "gpt-5.5",
+            "gpt-5.5-pro",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.4-nano",
+            "gpt-5.3-codex",
+            "gpt-5.3-codex-spark",
+        ]
+        for slug in expected {
+            #expect(models.contains(slug), "static fallback is missing \(slug)")
+        }
+        #expect(Set(models).count == models.count, "static fallback has duplicate slugs")
+    }
+
+    @Test func supportedModels_allUseCodexSlugFormat() {
+        // Mirrors the live `/models` filter: Codex-compatible slugs use a
+        // dotted version ("gpt-5.4-codex"), chat-only slugs use dashes
+        // ("gpt-5-4-thinking") and would 400 if invoked.
+        for slug in OpenAICodexOAuthService.supportedModels {
+            let matches = slug.range(of: #"^gpt-\d+\.\d+"#, options: .regularExpression) != nil
+            #expect(matches, "static fallback slug \(slug) does not use Codex naming")
+        }
+    }
+
     private static func makeJWT(payload: [String: Any]) throws -> String {
         let headerData = try JSONSerialization.data(withJSONObject: ["alg": "none"])
         let payloadData = try JSONSerialization.data(withJSONObject: payload)

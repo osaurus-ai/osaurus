@@ -476,6 +476,10 @@ public final class RemoteProviderManager: ObservableObject {
         headers: [String: String]
     ) async throws -> [String] {
         if authType == .openAICodexOAuth && providerType == .openAICodex {
+            // testConnection runs before sign-in (no OAuth tokens exist yet), so
+            // we can't query the live /models endpoint here. The static fallback
+            // is enough to render the "test succeeded" UI; the real catalog is
+            // fetched on connect via RemoteProviderService.fetchModels.
             return OpenAICodexOAuthService.supportedModels
         }
 

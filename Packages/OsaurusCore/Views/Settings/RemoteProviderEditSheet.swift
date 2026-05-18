@@ -1005,7 +1005,7 @@ private struct AddProviderFlow: View {
                     await MainActor.run {
                         oauthTokens = tokens
                     }
-                    models = OpenAICodexOAuthService.supportedModels
+                    models = await OpenAICodexOAuthService.availableModels(for: tokens)
                 } else {
                     models = try await RemoteProviderManager.shared.testConnection(
                         host: connection.host,

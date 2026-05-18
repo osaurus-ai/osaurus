@@ -32,6 +32,9 @@ public enum OpenAICodexOAuthError: LocalizedError, Sendable {
 }
 
 public enum OpenAICodexOAuthService {
+
+    // MARK: - Configuration
+
     public static let clientId = "app_EMoamEEZ73f0CkXaXp7hrann"
     public static let authorizeURL = URL(string: "https://auth.openai.com/oauth/authorize")!
     public static let tokenURL = URL(string: "https://auth.openai.com/oauth/token")!
@@ -39,15 +42,9 @@ public enum OpenAICodexOAuthService {
     public static let scope = "openid profile email offline_access"
     public static let codexBaseHost = "chatgpt.com"
     public static let codexBasePath = "/backend-api"
+    public static let modelsURL = URL(string: "https://\(codexBaseHost)\(codexBasePath)/models")!
 
-    public static let supportedModels: [String] = [
-        "gpt-5.2",
-        "gpt-5.2-codex",
-        "gpt-5.1-codex-max",
-        "gpt-5.1-codex",
-        "gpt-5.1-codex-mini",
-        "gpt-5.1",
-    ]
+    // MARK: - Provider Factory
 
     public static func makeProvider(id: UUID = UUID()) -> RemoteProvider {
         RemoteProvider(
@@ -65,6 +62,8 @@ public enum OpenAICodexOAuthService {
             timeout: 300
         )
     }
+
+    // MARK: - Sign-in / Token Refresh
 
     @MainActor
     public static func signIn() async throws -> RemoteProviderOAuthTokens {
@@ -85,6 +84,98 @@ public enum OpenAICodexOAuthService {
             ]
         )
     }
+
+    // MARK: - Model Catalog
+
+    /// Offline / pre-auth fallback list. The live catalog (fetched via
+    /// `fetchAvailableModels(tokens:)`) is preferred whenever OAuth tokens are
+    /// available, but this list keeps the UI usable before sign-in and when the
+    /// `/models` endpoint cannot be reached.
+    public static let supportedModels: [String] = [
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5.3-codex",
+        "gpt-5.3-codex-spark",
+        "gpt-5.2",
+        "gpt-5.2-codex",
+        "gpt-5.1-codex-max",
+        "gpt-5.1-codex",
+        "gpt-5.1-codex-mini",
+        "gpt-5.1",
+    ]
+
+    /// Live model catalog fetched from the ChatGPT/Codex backend, matching what
+    /// `codex-rs`'s `ModelsClient.list_models` does. Filters out chat-only
+    /// models so callers only see Codex-Responses-compatible slugs.
+    public static func fetchAvailableModels(
+        tokens: RemoteProviderOAuthTokens
+    ) async throws -> [String] {
+        var components = URLComponents(url: modelsURL, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "client_version", value: clientVersion())
+        ]
+
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(tokens.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(tokens.accountId, forHTTPHeaderField: "chatgpt-account-id")
+        request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
+        request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
+
+        let data = try await performRequest(request)
+        guard let decoded = try? JSONDecoder().decode(ModelsResponse.self, from: data) else {
+            throw OpenAICodexOAuthError.invalidTokenResponse
+        }
+
+        return decoded.models
+            .filter(isCodexCompatible)
+            .sorted { ($0.priority ?? .max) < ($1.priority ?? .max) }
+            .map(\.slug)
+            .uniqued()
+    }
+
+    /// True when a `/models` entry can be used through the Codex Responses
+    /// backend with a ChatGPT subscription. The same endpoint also returns
+    /// chat-only models (e.g. `gpt-5-4-thinking`), which fail with
+    /// `HTTP 400 "model is not supported when using Codex with a ChatGPT
+    /// account"` if we surface them.
+    private static func isCodexCompatible(_ entry: ModelEntry) -> Bool {
+        guard !entry.slug.isEmpty else { return false }
+
+        // Must be a picker-visible model.
+        guard (entry.visibility ?? "list").lowercased() == "list" else { return false }
+
+        // Codex requires shell-tool support. Chat-only models come back with
+        // `shell_type: "disabled"`. Treat a missing field as "unknown -> allow"
+        // and rely on the slug check below to catch it.
+        if let shellType = entry.shell_type, shellType.lowercased() == "disabled" {
+            return false
+        }
+
+        // Codex slugs always use a dotted version (e.g. "gpt-5.4-codex").
+        // Chat-only slugs use dashes throughout (e.g. "gpt-5-4-thinking",
+        // "gpt-4o"). Match the dotted "<family>-<major>.<minor>" prefix.
+        return entry.slug.range(of: #"^gpt-\d+\.\d+"#, options: .regularExpression) != nil
+    }
+
+    /// Convenience wrapper used by call sites that want a single "best
+    /// available" list: prefer the live catalog when we have tokens, otherwise
+    /// fall back to `supportedModels`.
+    public static func availableModels(for tokens: RemoteProviderOAuthTokens?) async -> [String] {
+        guard let tokens,
+            let live = try? await fetchAvailableModels(tokens: tokens),
+            !live.isEmpty
+        else {
+            return supportedModels
+        }
+        return live
+    }
+
+    // MARK: - OAuth Helpers
 
     public static func authorizationURL(codeChallenge: String, state: String) -> URL {
         var components = URLComponents(url: authorizeURL, resolvingAgainstBaseURL: false)!
@@ -144,12 +235,44 @@ public enum OpenAICodexOAuthService {
         )
     }
 
-    private static func requestTokens(form: [String: String]) async throws -> RemoteProviderOAuthTokens {
-        var request = URLRequest(url: tokenURL)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = OAuthFormEncoding.encode(form).data(using: .utf8)
+    // MARK: - Internals
 
+    /// `client_version` query parameter sent to the Codex `/models` endpoint.
+    /// Mirrors what the Codex CLI does (it sends its own crate version) so the
+    /// backend can gate model availability per client.
+    private static func clientVersion() -> String {
+        let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        if let bundleVersion, !bundleVersion.isEmpty {
+            return "osaurus-\(bundleVersion)"
+        }
+        return "0.99.0"
+    }
+
+    // MARK: Wire types
+
+    private struct ModelsResponse: Decodable {
+        let models: [ModelEntry]
+    }
+
+    private struct ModelEntry: Decodable {
+        let slug: String
+        let visibility: String?
+        let priority: Int?
+        let shell_type: String?
+    }
+
+    private struct TokenResponse: Decodable {
+        let access_token: String
+        let refresh_token: String
+        let expires_in: TimeInterval
+    }
+
+    // MARK: Networking
+
+    /// Executes `request`, returning the body on success. Throws
+    /// `.invalidTokenResponse` for non-HTTP responses and `.tokenRequestFailed`
+    /// for any HTTP error (body included in the message for diagnostics).
+    private static func performRequest(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw OpenAICodexOAuthError.invalidTokenResponse
@@ -158,24 +281,27 @@ public enum OpenAICodexOAuthService {
             let body = String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)"
             throw OpenAICodexOAuthError.tokenRequestFailed(body)
         }
+        return data
+    }
 
-        struct TokenResponse: Decodable {
-            let access_token: String
-            let refresh_token: String
-            let expires_in: TimeInterval
-        }
+    private static func requestTokens(form: [String: String]) async throws -> RemoteProviderOAuthTokens {
+        var request = URLRequest(url: tokenURL)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = OAuthFormEncoding.encode(form).data(using: .utf8)
 
-        guard let tokenResponse = try? JSONDecoder().decode(TokenResponse.self, from: data) else {
+        let data = try await performRequest(request)
+        guard let response = try? JSONDecoder().decode(TokenResponse.self, from: data) else {
             throw OpenAICodexOAuthError.invalidTokenResponse
         }
-        guard let accountId = extractAccountId(from: tokenResponse.access_token) else {
+        guard let accountId = extractAccountId(from: response.access_token) else {
             throw OpenAICodexOAuthError.missingAccountId
         }
 
         return RemoteProviderOAuthTokens(
-            accessToken: tokenResponse.access_token,
-            refreshToken: tokenResponse.refresh_token,
-            expiresAt: Date().addingTimeInterval(tokenResponse.expires_in),
+            accessToken: response.access_token,
+            refreshToken: response.refresh_token,
+            expiresAt: Date().addingTimeInterval(response.expires_in),
             accountId: accountId
         )
     }
@@ -207,5 +333,14 @@ public enum OpenAICodexOAuthService {
             throw OpenAICodexOAuthError.invalidAuthorizationCallback
         }
     }
+}
 
+// MARK: - Helpers
+
+extension Sequence where Element: Hashable {
+    /// Returns the receiver's elements in order, dropping later duplicates.
+    fileprivate func uniqued() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
+    }
 }

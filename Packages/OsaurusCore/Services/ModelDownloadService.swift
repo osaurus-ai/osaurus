@@ -200,7 +200,9 @@ final class ModelDownloadService: ObservableObject {
             let refusal = Self.storageRefusalMessage(neededBytes: needed, freeBytes: freeBytes)
         {
             downloadAlert = Self.makeAlert(
-                modelId: model.id, rawError: refusal, stage: "preflight"
+                modelId: model.id,
+                rawError: refusal,
+                stage: "preflight"
             )
             return
         }
@@ -228,7 +230,9 @@ final class ModelDownloadService: ObservableObject {
             let message = "Failed to create directory: \(error.localizedDescription)"
             downloadStates[model.id] = .failed(error: message)
             downloadAlert = Self.makeAlert(
-                modelId: model.id, rawError: message, stage: "create-directory"
+                modelId: model.id,
+                rawError: message,
+                stage: "create-directory"
             )
             clearDownloadTracking(for: model.id)
             return
@@ -389,7 +393,8 @@ final class ModelDownloadService: ObservableObject {
                     )
                 } else {
                     finalState = .failed(
-                        error: "Download incomplete: \(missing.count) of \(files.count) files are missing or have wrong size"
+                        error:
+                            "Download incomplete: \(missing.count) of \(files.count) files are missing or have wrong size"
                     )
                 }
                 await MainActor.run {
