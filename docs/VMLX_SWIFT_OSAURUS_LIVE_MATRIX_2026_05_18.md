@@ -36,6 +36,42 @@ Each live row needs an artifact folder with:
 
 Passing unit tests can support a row, but they do not replace live proof.
 
+Status words in this file are strict:
+
+- `source-wired`: static code or unit tests cover the routing contract.
+- `vmlx-live`: the consolidated engine has a live artifact outside Osaurus.
+- `osaurus-live`: the packaged/current Osaurus UI or HTTP route has a live
+  artifact with cache, speed, memory, and visible output.
+- `production-clear`: all required `osaurus-live` artifacts exist for the row.
+
+Do not promote `source-wired` or `vmlx-live` to `production-clear`.
+
+## Prompt-to-Artifact Checklist
+
+Every live row must map a user-visible behavior to a concrete artifact path. A
+single model load, a single API route, or a unit test does not cover the row.
+
+| ID | Requirement | Required artifact evidence | Current status |
+|---|---|---|---|
+| A1 | Bundle census and autodetect | JSON/text artifact with `config.json`, `generation_config.json`, `tokenizer_config.json`, chat template source, JANG/JANGTQ sidecars, real `mtp.*` tensor count, `vmlx_mtp_tuning.json`, VLM processor files, and detected family/parser/cache topology. | Partly `vmlx-live`; Osaurus artifact still pending per model. |
+| A2 | App launch and model picker | Screenshot/log proving the model appears with correct name/path, VLM/audio/video badges, MTP status from tuning, parser family, cache topology, and no stale saved profile. | Pending `osaurus-live`. |
+| A3 | Chat settings visual defaults | Screenshot/log for defaults after selecting the model: DSV4 `instruct` selected, DSV4 `max` selectable and passed as `reasoning_effort=max`, Qwen no-thinking default where applicable, ZAYA/Nemotron no-thinking defaults, MiniMax reasoning channel, Gemma Harmony controls, and no controls for unsupported features. | Source-wired for profiles; pending UI proof. |
+| A4 | Server settings and CLI preview | Screenshot/log of cache, batching, sleep/wake, generation, tool, reasoning, VLM, and MTP sections; CLI preview omits topology-invalid flags and shows metadata-derived defaults including native `top_k`. | DSV4 checklist source-locked; pending final UI/CLI artifact. |
+| A5 | Chat UI default cache stack | Three-turn chat from the app using default cache stack: cold T1, T2 follow-up with prefix/paged/L2/path-dependent cache stats, T3 model/media switch, then return to original session. Include TTFT, tok/s, RSS, Activity Monitor physical footprint, and visible coherent output. | Pending `osaurus-live`. |
+| A6 | `/v1/chat/completions` | Stream and non-stream HTTP artifacts with omitted sampler fields, explicit sampler fields, tools on/off, reasoning on/off, media where supported, terminal usage, `[DONE]`, no raw parser markers, and cache stats around each turn. | Pending `osaurus-live`. |
+| A7 | `/v1/responses` | Same sequence as A6 plus prior-response/session continuity and reasoning response shape; prove no route-specific loss of cache scope, tool calls, or reasoning deltas. | Pending `osaurus-live`. |
+| A8 | `/v1/messages` | Anthropic stream/non-stream artifacts for applicable families with thinking/tool-use mapping, media content, terminal tail, and no raw `<think>`, Harmony, DSML, Qwen XML, MiniMax, GLM/Hunyuan, or Nemotron tags in visible text. | Pending `osaurus-live`. |
+| A9 | Ollama compatibility | `/api/chat` and `/api/generate` stream/non-stream artifacts with omitted/supplied options, proper final tail frame, no hidden sampler defaults, and no stale saved reasoning setting entering the request. | Pending `osaurus-live`. |
+| A10 | VLM/omni media cache sequence | Image+text T1, text-only T2 with media-salt nil/absent, different-image T3, video frame row when supported, unsupported-media error, repeated media cache hit/alias, and audio/Parakeet pre-encode when applicable. | Source-wired for media preservation; pending live Qwen/Gemma/ZAYA/Nemotron rows. |
+| A11 | Tool context injection and parser split | First turn with tools, structured `tool_calls`; second turn with `tool_result`; third visible answer. Prove no plaintext tool schema/result leak, no cache-key drift from tool history, and parser family matches base architecture. | DSV4 `vmlx-live`; remaining families pending Osaurus API/UI rows. |
+| A12 | Reasoning inverse and leak checks | For each reasoning family, run off/default/on/max or native efforts. Capture reasoning channel, visible content, final tail, token counts, and prove unsupported families hide/ignore stale settings instead of sending invalid fields. | Source-wired for profiles; pending live rows. |
+| A13 | Cache inverse checks | Prefix, paged, block L2, SSM companion, path-dependent media/CCA/DSV4 caches ON by default where valid; OFF rows do not crash; ON again restores counters/hits. Include disk bytes and max-GB enforcement for L2. | Pending `osaurus-live`. |
+| A14 | Batch and scheduler | Single-user chat uses max batch size 1; same-model concurrent API requests hit continuous batching; different-model sessions stay isolated; cancel drains in-flight stats and leaves no zombie Swift engine. | Source-wired for adapter behavior; pending live concurrency/cancel rows. |
+| A15 | JANG/JANGTQ/TurboQuant path | Loader derives real quant/cache metadata from sidecars and weights, not names. Artifacts show JANG/JANGTQ format, TurboQuant KV encode/decode status when valid, and no permanent overlay or name-only MTP claim. | Partly `vmlx-live`; Osaurus health/settings proof pending. |
+| A16 | UI persistence and cross-model carryover | Save settings, quit/reopen, switch across Qwen, DSV4, Ling/non-reasoning, VLM, and text-only models. Prove saved reasoning/cache/media settings are scoped correctly and do not slow or poison another session. | Pending `osaurus-live`. |
+| A17 | Startup, sleep/wake, and memory | Load from app, deep sleep, wake, generate without disk reload when expected, record Activity Monitor physical footprint and RAM drop/recovery, then repeat cache hit checks. | Pending `osaurus-live`. |
+| A18 | Visual state and errors | Screenshots/logs for model loading/ready/generating/error/sleeping, unsupported media, model load failure, mid-stream cancel, and parser/tool errors rendered cleanly without stack traces. | Pending `osaurus-live`. |
+
 ## Cross-Layer Gates
 
 | Gate | Required proof | Current status |
