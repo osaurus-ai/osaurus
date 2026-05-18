@@ -6,7 +6,7 @@ Status: proposal for PR #1057 follow-up implementation. This document is intenti
 
 Let users choose how long a local model stays resident after API or chat activity before Osaurus unloads the model from memory.
 
-This is an Osaurus runtime policy, not a vmlx-swift-lm engine feature. vmlx-swift-lm should continue to own model execution, `BatchEngine`, tokenizer/cache primitives, and shutdown mechanics. Osaurus owns user settings, API semantics, window/session state, memory policy, and the future server control panel.
+This is an Osaurus runtime policy, not a vmlx-swift engine feature. vmlx-swift should continue to own model execution, `BatchEngine`, tokenizer/cache primitives, and shutdown mechanics. Osaurus owns user settings, API semantics, window/session state, memory policy, and the future server control panel.
 
 ## Current State
 
@@ -310,7 +310,7 @@ Steps:
 
 1. Document the distinction between eviction policy and idle residency policy.
 2. Document that idle unload preserves disk cache.
-3. Document that vmlx-swift-lm remains the execution/cache primitive provider while Osaurus owns user residency policy.
+3. Document that vmlx-swift remains the execution/cache primitive provider while Osaurus owns user residency policy.
 4. Document status fields if Task 5 lands.
 
 Expected checks:
@@ -339,14 +339,14 @@ git diff --check
 ## Non-Goals
 
 - Do not add sleep/wake `NSWorkspace` observers in this feature.
-- Do not change vmlx-swift-lm APIs.
+- Do not change vmlx-swift APIs.
 - Do not change JIT, batching, reasoning, tokenizer, tool-call, or cache-scope behavior.
 - Do not delete disk cache on idle unload.
 - Do not add model preloading or scheduled warmup.
 
 ## Implementation Notes
 
-- Keep all runtime changes in Osaurus. Do not add app-policy timers to vmlx-swift-lm.
+- Keep all runtime changes in Osaurus. Do not add app-policy timers to vmlx-swift.
 - Keep timer code actor-isolated and injectable for unit tests.
 - Avoid using `Task.detached`; use regular tasks created from the actor and cancel them explicitly.
 - Avoid sleeping on the main actor.

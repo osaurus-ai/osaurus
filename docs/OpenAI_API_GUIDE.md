@@ -290,7 +290,7 @@ Keep `session_id` stable per conversation and per model.
 
 ### Prefix Caching and `prefix_hash`
 
-KV cache reuse across requests is **automatic and content-addressed** — Osaurus delegates prefix cache management to vmlx-swift-lm's `CacheCoordinator`. Two requests that share the same prefix tokens (system prompt, tools, prior turns) automatically share the cached KV blocks. There is no client-side opt-in or cache key to manage.
+KV cache reuse across requests is **automatic and content-addressed** — Osaurus delegates prefix cache management to vmlx-swift's `CacheCoordinator`. Two requests that share the same prefix tokens (system prompt, tools, prior turns) automatically share the cached KV blocks. There is no client-side opt-in or cache key to manage.
 
 For visibility, every response carries a `prefix_hash` field — a stable hash of the system prompt + canonical tool schemas that produced this generation. Clients can use it to detect when the system prefix changed across requests:
 
@@ -655,10 +655,10 @@ Example response:
 
 1. **Model Availability**: Only models that have been downloaded through the Osaurus UI will be available via the API.
 
-2. **Performance**: The first request to a model loads it; subsequent requests skip this step. Concurrent same-model requests share a single forward pass via vmlx-swift-lm's `BatchEngine` continuous batching. Multi-turn KV cache reuse is automatic and content-addressed via vmlx's `CacheCoordinator` — repeated prefixes (system prompt, tools, prior turns) are matched without any client opt-in. The `prefix_hash` response field is informational; `session_id` groups history but is not a cache key.
+2. **Performance**: The first request to a model loads it; subsequent requests skip this step. Concurrent same-model requests share a single forward pass via vmlx-swift's `BatchEngine` continuous batching. Multi-turn KV cache reuse is automatic and content-addressed via vmlx's `CacheCoordinator` — repeated prefixes (system prompt, tools, prior turns) are matched without any client opt-in. The `prefix_hash` response field is informational; `session_id` groups history but is not a cache key.
 
-3. **Memory Management**: Models are loaded into memory on demand and governed by Settings > Local Inference > Model Management. The eviction policy controls strict one-model versus flexible multi-model residency; "Keep model loaded after use" controls idle unload timing after the final request/window lease drops. Idle unload releases weights and runtime buffers only — downloaded models and disk KV cache entries remain intact. `/health` keeps `loaded`, `current_model`, and `inflight`, and adds `resident_models[]` entries with `idle_unload_at` and `idle_seconds_remaining`. KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for hybrid models) is owned by vmlx-swift-lm's `CacheCoordinator`, which sizes each tier per model.
+3. **Memory Management**: Models are loaded into memory on demand and governed by Settings > Local Inference > Model Management. The eviction policy controls strict one-model versus flexible multi-model residency; "Keep model loaded after use" controls idle unload timing after the final request/window lease drops. Idle unload releases weights and runtime buffers only — downloaded models and disk KV cache entries remain intact. `/health` keeps `loaded`, `current_model`, and `inflight`, and adds `resident_models[]` entries with `idle_unload_at` and `idle_seconds_remaining`. KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for hybrid models) is owned by vmlx-swift's `CacheCoordinator`, which sizes each tier per model.
 
 4. **GPU Acceleration**: MLX uses Apple Silicon unified memory for GPU-accelerated inference.
 
-5. **Context Length**: Each model has its own architectural context limit (the engine respects per-layer sliding windows, e.g. Gemma-4's 1024-position windows, automatically). Osaurus does not expose a user-facing global KV cache cap any more — vmlx-swift-lm picks model-aware defaults per release.
+5. **Context Length**: Each model has its own architectural context limit (the engine respects per-layer sliding windows, e.g. Gemma-4's 1024-position windows, automatically). Osaurus does not expose a user-facing global KV cache cap any more — vmlx-swift picks model-aware defaults per release.

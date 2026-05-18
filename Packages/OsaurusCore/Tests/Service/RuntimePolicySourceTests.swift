@@ -200,6 +200,21 @@ struct RuntimePolicySourceTests {
         #expect(contributing.contains("Keep the two mirror files in sync"))
     }
 
+    @Test("Current runtime docs name consolidated vmlx-swift package")
+    func currentRuntimeDocsDoNotTeachOldPackageGraph() throws {
+        for docPath in [
+            "../../docs/OpenAI_API_GUIDE.md",
+            "../../docs/FEATURES.md",
+            "../../docs/DEVELOPER_TOOLS.md",
+            "../../docs/MODEL_COMPATIBILITY_RESEARCH.md",
+            "../../docs/MODEL_IDLE_RESIDENCY_SPEC.md",
+            "../../docs/INFERENCE_RUNTIME.md",
+        ] {
+            let doc = try Self.source(docPath)
+            #expect(!doc.contains("vmlx-swift-lm"), "\(docPath) still names the retired direct inference package")
+        }
+    }
+
     /// Lock the post-generation SSM re-derive opt-out. vmlx defaults
     /// `enableSSMReDerive=true`. Pre-`b9da180` this ran a FULL second
     /// prefill BEFORE yielding `.info` (the Ling stuck-before-end
