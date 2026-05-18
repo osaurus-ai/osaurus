@@ -33,7 +33,7 @@ let package = Package(
         // live model, cache, parser, API, and UI evidence.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "fe460c2a50c289ee77198e6ae525544da28333c6"
+            revision: "c57903adf7677b699041d9ce2c6a6058e271973e"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -164,7 +164,7 @@ let package = Package(
                 .product(name: "MLXLLM", package: "vmlx-swift"),
                 .product(name: "MLXVLM", package: "vmlx-swift"),
                 .product(name: "MLXLMCommon", package: "vmlx-swift"),
-                .product(name: "Tokenizers", package: "vmlx-swift"),
+                .product(name: "VMLXTokenizers", package: "vmlx-swift"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
@@ -184,7 +184,7 @@ let package = Package(
             dependencies: [
                 "OsaurusCore",
                 "OsaurusSQLCipher",
-                .product(name: "Jinja", package: "vmlx-swift"),
+                .product(name: "VMLXJinja", package: "vmlx-swift"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
             ],

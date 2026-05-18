@@ -59,12 +59,13 @@ struct RuntimePolicySourceTests {
             "../../App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
         )
 
-        // This revision is the first consolidated vmlx-swift pin for Osaurus
-        // with the vendored Tokenizers/Jinja/EventSource/Hub/HuggingFace/
-        // Generation/Models modules prefixed inside vmlx-swift itself. yyjson
-        // stays a single shared C dependency to avoid duplicate public symbols.
-        // Osaurus must not carry SwiftPM moduleAliases for that collision.
-        let currentVmlxRevision = "fe460c2a50c289ee77198e6ae525544da28333c6"
+        // This revision keeps the consolidated vmlx-swift pin for Osaurus
+        // with vendored Jinja/Hub/Tokenizers/Transformers exposed through
+        // VMLX-prefixed products. That avoids Xcode PIF duplicate-product
+        // collisions with the app graph while keeping yyjson as one shared C
+        // dependency. Osaurus must not carry SwiftPM moduleAliases for that
+        // collision.
+        let currentVmlxRevision = "c57903adf7677b699041d9ce2c6a6058e271973e"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
@@ -77,8 +78,8 @@ struct RuntimePolicySourceTests {
         #expect(manifest.contains(".product(name: \"MLXLLM\", package: \"vmlx-swift\")"))
         #expect(manifest.contains(".product(name: \"MLXVLM\", package: \"vmlx-swift\")"))
         #expect(manifest.contains(".product(name: \"MLXLMCommon\", package: \"vmlx-swift\")"))
-        #expect(manifest.contains(".product(name: \"Tokenizers\", package: \"vmlx-swift\")"))
-        #expect(manifest.contains(".product(name: \"Jinja\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"VMLXTokenizers\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"VMLXJinja\", package: \"vmlx-swift\")"))
     }
 
     @Test("SwiftPM graph keeps vmlx inference modules unshadowed")
