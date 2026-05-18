@@ -64,7 +64,7 @@ struct RuntimePolicySourceTests {
         // Generation/Models modules prefixed inside vmlx-swift itself. yyjson
         // stays a single shared C dependency to avoid duplicate public symbols.
         // Osaurus must not carry SwiftPM moduleAliases for that collision.
-        let currentVmlxRevision = "85fdef633b00d90035741e66c285b6b35da2299a"
+        let currentVmlxRevision = "fe460c2a50c289ee77198e6ae525544da28333c6"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
