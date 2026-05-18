@@ -1,0 +1,74 @@
+{
+  "capability_evidence": {
+    "audio_config": false,
+    "image_tokens": false,
+    "preprocessor_config": true,
+    "video_preprocessor_config": false,
+    "video_tokens": false,
+    "vision_config": false
+  },
+  "config": {
+    "architectures": [
+      "NemotronHForCausalLM"
+    ],
+    "max_position_embeddings": 262144,
+    "model_type": "nemotron_h",
+    "sliding_window": null,
+    "use_cache": true
+  },
+  "exists": true,
+  "files": {
+    "chat_template.jinja": true,
+    "config.json": true,
+    "generation_config.json": true,
+    "jang_config.json": true,
+    "model.safetensors.index.json": true,
+    "preprocessor_config.json": true,
+    "tokenizer_config.json": true,
+    "video_preprocessor_config.json": false,
+    "vmlx_mtp_tuning.json": false
+  },
+  "generation_defaults": {
+    "eos_token_id": [
+      2,
+      11
+    ],
+    "max_new_tokens": 16384,
+    "pad_token_id": 0,
+    "repetition_penalty": 1.0,
+    "temperature": 0.6,
+    "top_p": 0.95
+  },
+  "jang": {
+    "modality": "omni"
+  },
+  "label": "dealign.ai/Nemotron-Omni-Nano-JANGTQ4-CRACK",
+  "mtp": {
+    "artifact": null,
+    "auto_enable": false,
+    "baseline_tok_s": null,
+    "best_depth": null,
+    "best_tok_s": null,
+    "cache_mode": null,
+    "config_mtp_num_hidden_layers": null,
+    "has_tensor_evidence": false,
+    "jang_bundle_has_mtp": false,
+    "reason": "no native MTP evidence",
+    "speedup_vs_baseline": null,
+    "tuning_blocked": false,
+    "tuning_present": false,
+    "tuning_validated": false
+  },
+  "path": "/Users/eric/models/dealign.ai/Nemotron-Omni-Nano-JANGTQ4-CRACK",
+  "safetensors_index": {
+    "audio_tensor_count": 0,
+    "audio_tensor_examples": [],
+    "mtp_tensor_count": 0,
+    "mtp_tensor_examples": [],
+    "present": true,
+    "tensor_count": 19361,
+    "total_size": 19941096668,
+    "vision_tensor_count": 0,
+    "vision_tensor_examples": []
+  }
+}

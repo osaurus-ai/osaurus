@@ -124,6 +124,29 @@ Each folder must contain:
 - `carryover_inverse.json`
 - `summary.md`
 
+The first required artifact can be collected without launching a model:
+
+```sh
+python3 scripts/pr1147_collect_bundle_census.py \
+  --models-root /Users/eric/models \
+  --output-dir docs/internal/live-gates/pr1147/bundle-census
+```
+
+That helper only reads local metadata and safetensors index files. It fails
+closed for native MTP: `auto_enable` can become true only when real `mtp.*`
+tensor evidence and a validated, unblocked `vmlx_mtp_tuning.json` are both
+present.
+
+Executed for this checkpoint:
+
+- aggregate: `docs/internal/live-gates/pr1147/bundle-census/bundle_census.json`
+- table: `docs/internal/live-gates/pr1147/bundle-census/summary.md`
+- per-bundle files:
+  `docs/internal/live-gates/pr1147/bundle-census/<model-slug>/bundle_census.json`
+
+This closes the file-level census artifact only. It does not close live UI,
+HTTP, cache-hit, coherency, media, parser, or memory proof.
+
 ## Current Audit Outcome
 
 Not complete.

@@ -174,6 +174,7 @@ struct RuntimePolicySourceTests {
         let completionAudit = try Self.source(
             "../../docs/internal/live-gates/20260518T_pr1147_completion_audit.md"
         )
+        let censusHelper = try Self.source("../../scripts/pr1147_collect_bundle_census.py")
 
         #expect(switchDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
         #expect(runtimeDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
@@ -294,10 +295,30 @@ struct RuntimePolicySourceTests {
             "media_sequence.json",
             "tool_reasoning_parser.json",
             "carryover_inverse.json",
+            "scripts/pr1147_collect_bundle_census.py",
+            "real `mtp.*`",
+            "tensor evidence",
+            "docs/internal/live-gates/pr1147/bundle-census/bundle_census.json",
+            "does not close live UI",
         ] {
             #expect(
                 completionAudit.contains(required),
                 "missing completion-audit requirement: \(required)"
+            )
+        }
+
+        for required in [
+            "DEFAULT_MODEL_RELATIVE_PATHS",
+            "model.safetensors.index.json",
+            "vmlx_mtp_tuning.json",
+            "mtp_tensor_count",
+            "auto_enable = bool(has_tensor_evidence and tuning_validated and not tuning_blocked)",
+            "config metadata mentions MTP, but no mtp tensor evidence was found",
+            "This is file-level evidence only",
+        ] {
+            #expect(
+                censusHelper.contains(required),
+                "missing bundle-census helper requirement: \(required)"
             )
         }
     }

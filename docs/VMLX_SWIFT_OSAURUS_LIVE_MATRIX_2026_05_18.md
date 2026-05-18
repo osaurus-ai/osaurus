@@ -59,7 +59,7 @@ single model load, a single API route, or a unit test does not cover the row.
 
 | ID | Requirement | Required artifact evidence | Current status |
 |---|---|---|---|
-| A1 | Bundle census and autodetect | JSON/text artifact with `config.json`, `generation_config.json`, `tokenizer_config.json`, chat template source, JANG/JANGTQ sidecars, real `mtp.*` tensor count, `vmlx_mtp_tuning.json`, VLM processor files, and detected family/parser/cache topology. | Partly `vmlx-live`; Osaurus artifact still pending per model. |
+| A1 | Bundle census and autodetect | JSON/text artifact with `config.json`, `generation_config.json`, `tokenizer_config.json`, chat template source, JANG/JANGTQ sidecars, real `mtp.*` tensor count, `vmlx_mtp_tuning.json`, VLM processor files, and detected family/parser/cache topology. | File-level census artifact exists under `docs/internal/live-gates/pr1147/bundle-census`; live UI/API detection proof is still pending per model. |
 | A2 | App launch and model picker | Screenshot/log proving the model appears with correct name/path, VLM/audio/video badges, MTP status from tuning, parser family, cache topology, and no stale saved profile. | Pending `osaurus-live`. |
 | A3 | Chat settings visual defaults | Screenshot/log for defaults after selecting the model: DSV4 `instruct` selected, DSV4 `max` selectable and passed as `reasoning_effort=max`, Qwen no-thinking default where applicable, ZAYA/Nemotron no-thinking defaults, MiniMax reasoning channel, Gemma Harmony controls, and no controls for unsupported features. | Source-wired for profiles; pending UI proof. |
 | A4 | Server settings and CLI preview | Screenshot/log of cache, batching, sleep/wake, generation, tool, reasoning, VLM, and MTP sections; DSV4 row must prove native DSV4 cache copy present, block size fixed/disabled at 256, generic KV q4/q8 disabled, pool quant visible, JIT disabled, generation defaults shown from `generation_config.json` / `jang_config.json` metadata including native `top_k`, and CLI preview omits topology-invalid flags: `--kv-cache-quantization`, `--enable-jit`, `--is-mllm`, and `--speculative-model`. | DSV4 checklist source-locked; pending final UI/CLI artifact. |
@@ -82,7 +82,7 @@ single model load, a single API route, or a unit test does not cover the row.
 
 | Gate | Required proof | Current status |
 |---|---|---|
-| Model discovery | Osaurus detects family, VLM/audio/video support, parser profile, MTP from real tensors plus `vmlx_mtp_tuning.json`, and bundle generation defaults. | Partly source-tested; live UI/API matrix pending. |
+| Model discovery | Osaurus detects family, VLM/audio/video support, parser profile, MTP from real tensors plus `vmlx_mtp_tuning.json`, and bundle generation defaults. | File-level bundle census exists; live UI/API matrix pending. |
 | Generation defaults | UI/API requests with no sampler fields use model metadata first, then engine fallback; no hidden temperature/top-p/top-k/repetition floors. | Partly proven in vmlx artifacts; final Osaurus UI/API rows pending. |
 | Reasoning settings | Saved settings and per-request overrides map to the correct family field: `enable_thinking`, `reasoning_effort`, `no_think`, DSV4 `instruct`/`max`, or no control. | Source-tested in Osaurus; live app setting persistence still pending. |
 | Parser split | Reasoning goes only to reasoning UI/API channels, tools only to structured tool calls, final text only to visible content. | Parser source tests exist; family live API matrix pending. |
