@@ -215,6 +215,27 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("Osaurus source does not import unvendored tokenizer or template modules")
+    func osaurusSourceUsesVMLXPrefixedTokenizerAndTemplateModules() throws {
+        let disallowedImports = [
+            "import Tokenizers",
+            "import Jinja",
+            "import Hub",
+            "import Transformers",
+        ]
+
+        for url in try Self.swiftFiles(under: ".") where !url.path.contains("/.build/") {
+            let source = try String(contentsOf: url, encoding: .utf8)
+            for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                #expect(
+                    !disallowedImports.contains(trimmed),
+                    "\(url.path) imports \(trimmed); use the VMLX-prefixed products from vmlx-swift"
+                )
+            }
+        }
+    }
+
     /// Lock the post-generation SSM re-derive opt-out. vmlx defaults
     /// `enableSSMReDerive=true`. Pre-`b9da180` this ran a FULL second
     /// prefill BEFORE yielding `.info` (the Ling stuck-before-end
