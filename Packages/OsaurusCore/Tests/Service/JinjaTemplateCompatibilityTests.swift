@@ -1,6 +1,6 @@
 // Copyright © 2026 osaurus.
 
-import Jinja
+import VMLXJinja
 import Testing
 
 @Suite("Jinja template compatibility")

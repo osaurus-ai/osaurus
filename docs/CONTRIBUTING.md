@@ -102,8 +102,8 @@ The core library (`Packages/OsaurusCore/`) follows a layered architecture. Each 
 ### Tool calling (developer notes)
 
 - OpenAI‑compatible DTOs live in `Models/API/OpenAIAPI.swift` (`Tool`, `ToolFunction`, `ToolCall`, `DeltaToolCall`, etc.).
-- Prompt templating is handled internally by vmlx-swift-lm. Osaurus does not assemble prompts manually.
-- Tool-call detection lives entirely in vmlx-swift-lm's `BatchEngine.generate`, which emits authoritative `Generation.toolCall(ToolCall)` events. Osaurus's `GenerationEventMapper` simply translates each one into a `ModelRuntimeEvent.toolInvocation`.
+- Prompt templating is handled internally by `vmlx-swift`. Osaurus does not assemble prompts manually.
+- Tool-call detection lives entirely in `vmlx-swift`'s `BatchEngine.generate`, which emits authoritative `Generation.toolCall(ToolCall)` events. Osaurus's `GenerationEventMapper` simply translates each one into a `ModelRuntimeEvent.toolInvocation`.
 - Streaming tool calls reach the wire as OpenAI-style deltas inside `Networking/HTTPHandler.swift` (and the equivalent Anthropic / Open Responses writers in `Models/Chat/ResponseWriters.swift`).
 
 ## Development workflow
@@ -127,15 +127,29 @@ is the single source of truth for pinned dependency versions. Xcode updates
 this file automatically when you add, remove, or update a package. Commit
 the changed `Package.resolved` alongside your other changes.
 
-SwiftPM mirrors live in both `osaurus.xcworkspace/xcshareddata/swiftpm/configuration/`
+OsaurusCore uses a single consolidated `vmlx-swift` pin for local inference:
+MLX, MLXLMCommon, MLXLLM, MLXVLM, Tokenizers, Jinja, chat templates, reasoning
+parsers, cache layers, media plumbing, and runtime MTP policy all come from
+that package. Do not add separate root dependencies on `mlx-swift`,
+`vmlx-swift-lm`, `swift-transformers`, or `Jinja` for inference work.
+
+SwiftPM mirrors still live in both `osaurus.xcworkspace/xcshareddata/swiftpm/configuration/`
 and `App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration/`.
-They keep transitive `swift-transformers` and `swift-jinja` identities on the
-Osaurus-owned `swift-transformers` / `Jinja` chain that matches vmlx-swift-lm.
-The root package also pins the Jinja parser fix at `58d21aa` so clean resolves
-keep support for for-loop iterable expressions such as
-`loop_messages + [{'role': '__sentinel__'}]`. Keep the two mirror files in sync
-until upstream transitive packages no longer refer to the Hugging Face package
-identities.
+They only protect transitive non-inference packages that still reference the
+Hugging Face package identities. The vendored tokenizer/template/runtime helper
+modules are prefixed inside `vmlx-swift` itself (`VMLXTokenizers`, `VMLXJinja`,
+`VMLXEventSource`, `VMLXHuggingFace`, `VMLXHub`, `VMLXGeneration`,
+`VMLXModels`), so Osaurus must not add package-level `moduleAliases` for the
+inference graph. `yyjson` remains the single shared C package dependency because
+linking both a vendored copy and the transitive upstream copy exports duplicate
+`yyjson_*` symbols. Keep the two mirror files in sync until upstream transitive
+packages no longer refer to the Hugging Face package identities.
+
+`swift-sdk` also pulls `EventSource` transitively. OsaurusCore declares the same
+package at the root with the `AsyncHTTPClient` trait enabled so EventSource's
+conditional AsyncHTTPClient transport compiles with declared NIO and shim
+dependencies when the consolidated MLX/Numerics graph is present. This is a
+non-inference graph fix; do not replace it with tokenizer/runtime roots.
 
 CI resolves dependencies from this committed lockfile and builds with
 `-disableAutomaticPackageResolution`, so it uses the exact same versions

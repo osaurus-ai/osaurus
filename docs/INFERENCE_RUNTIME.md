@@ -1,6 +1,6 @@
 # Inference runtime
 
-osaurus's MLX inference path is a thin shell around vmlx-swift-lm's
+osaurus's MLX inference path is a thin shell around `vmlx-swift`'s
 `BatchEngine`. Tool-call parsing, reasoning extraction, KV cache
 management, and per-model scheduling all live inside the library. This
 document describes the small slice osaurus owns.
@@ -133,7 +133,7 @@ requested batch size. Other errors (e.g. caller-side
 ## Upstream runtime boundaries
 
 These are deliberately not papered over in osaurus because they belong in
-vmlx-swift-lm or mlx-swift, but the app has explicit policy around each one:
+`vmlx-swift`, but the app has explicit policy around each one:
 
 - Ling JANGTQ2 long prompts (`BailingLinearAttention.recurrentGLA`):
   pre-`b9da180`, vmlx dispatched the recurrent loop as `L * layers` small

@@ -49,7 +49,7 @@ struct RuntimePolicySourceTests {
         #expect(source.contains("SWA+CSA+HSA"))
     }
 
-    @Test("vmlx pin includes Ling, ZAYA, and DSV4 hardening commits")
+    @Test("vmlx pin uses consolidated package with runtime hardening")
     func vmlxPinIncludesRuntimeHardening() throws {
         let manifest = try Self.source("Package.swift")
         let workspaceResolved = try Self.source(
@@ -59,88 +59,30 @@ struct RuntimePolicySourceTests {
             "../../App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
         )
 
-        // Bumped 2026-05-10 from b9da180 to ac60b5d. This keeps the
-        // 2026-05-07 Bailing/ZAYA/Gemma4/Ling hardening and adds the
-        // Osaurus readiness wave: Hy3 native runtime, native ZAYA1-VL
-        // image/text generation with disk-backed CCA cache restore,
-        // reasoning/media cache-scope salt, generation_config defaults,
-        // JANGTQ top-k override plumbing, B>1 admission coalescing, and
-        // the MiniMax B=1 BatchEngine speed restoration. It also keeps bare
-        // `zaya` out of the VLM registry so text bundles stay on MLXLLM, closes
-        // the solo lifecycle completion race, indexes pre-stacked streaming
-        // experts, advances Qwen3.5-VL gated-delta cache offsets, and routes
-        // MiniMax tool-call wrappers correctly through reasoning streams. It
-        // also synthesizes terminal `.info` on early token-stream close so
-        // reasoning-only completions preserve final stats and `unclosedReasoning`.
-        // `fee2583` reverts a later MiniMax blank-content watchdog, keeping this
-        // pin free of heuristic generation cutoffs. `bf4087f` then keeps
-        // MiniMax tool-call parsing lossless so invalid tag-looking reasoning
-        // text cannot freeze behind a missing closing wrapper. `ac60b5d` also
-        // widens defensive EOS token coverage for Laguna / wide-pipe
-        // DeepSeek-style bundles in both generation paths. `d8c2bb2` keeps
-        // TokenIterator's B=1 disk-cache restore materialization aligned with
-        // BatchEngine. `541b380` hardens MiniMax close-token detection and
-        // removes Hy3's per-token fp32 dequantized lm_head hot path. `78cf6ac`
-        // adds Gemma4 PLE-off config tolerance, process-wide safetensors disk
-        // cache IO serialization, MiniMax compile denial / forced-close removal,
-        // B=1 full-cache-hit trimming, `reasoning_content` plumbing, ZAYA
-        // reasoning stamps, and JangPress overlay load hygiene. `b350af6`
-        // preserves DSV4 JANGTQ-K routed expert layer bit plans, skips routed
-        // bit-plan metadata in generic quantization decoding, and wires DSV4
-        // routed MoE top-k into the lower-only runtime override path.
-        // `6de602c` makes DSV4's fallback chat template byte-match the
-        // canonical multi-turn encoder so UI-generated cache boundaries can
-        // be reused on growing chat prompts. `ad1d231` synchronizes before and
-        // after safetensors disk writes against the GPU stream after generation.
-        // `c0f8b3b` adds Nemotron Omni live-voice handoff support and preserves
-        // pre-encoded Parakeet/audio embeddings. `e497f61` adds the reusable
-        // retained live PCM buffer plus a streaming cursor for VAD/call-mode
-        // polling without losing the final full-turn waveform. `638024b`
-        // adds a tracked OmniAudioLatencyBench for raw PCM vs pre-encoded
-        // Parakeet call-mode measurements. `fb8fb39` makes Omni media cache
-        // restore token-aware and records prompt/media topology in the bench
-        // output. `b57fe98` refreshes the Parakeet/RADIO integration docs
-        // consumed by Osaurus live-voice work. `81c8ef7` adds the
-        // OmniAudioChunkStabilityBench proof that current Parakeet embeddings
-        // cannot be concatenated safely across independently encoded chunks.
-        // `f728718` fixes DSV4 Flash long-prompt HSA selection by masking
-        // future compressed-pool chunks before indexer top-k. `6561a72`
-        // preserves DSV4's ratio-4 overlap-compressor state across decode
-        // calls, preventing the previous complete pool window from being
-        // zeroed after a single-token generation boundary. `e1280c3` is a
-        // build-time fix that breaks up a nested ternary + four-level `??`
-        // chain in LLMModelFactory.swift that the Swift type checker could
-        // not solve within its time budget; runtime behavior is unchanged.
-        let currentVmlxRevision = "e1280c3978d68e9204006923e922e62cb2ea5628"
+        // This revision is the first consolidated vmlx-swift pin for Osaurus
+        // with the vendored Tokenizers/Jinja/EventSource/Hub/HuggingFace/
+        // Generation/Models modules prefixed inside vmlx-swift itself. yyjson
+        // stays a single shared C dependency to avoid duplicate public symbols.
+        // Osaurus must not carry SwiftPM moduleAliases for that collision.
+        let currentVmlxRevision = "85fdef633b00d90035741e66c285b6b35da2299a"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
-        #expect(!workspaceResolved.contains("b57fe98845bd1f678bd8f722dc50dba56f11d029"))
-        #expect(!appResolved.contains("b57fe98845bd1f678bd8f722dc50dba56f11d029"))
-        #expect(!appResolved.contains("fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e"))
-        #expect(!workspaceResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
-        #expect(!appResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
-        #expect(!workspaceResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
-        #expect(!appResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
-        #expect(!workspaceResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
-        #expect(!appResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
-        #expect(!workspaceResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
-        #expect(!appResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
-        #expect(!workspaceResolved.contains("6de602c6d18daf2c1a07cef16b79b507a25feafd"))
-        #expect(!appResolved.contains("6de602c6d18daf2c1a07cef16b79b507a25feafd"))
-        #expect(!workspaceResolved.contains("b350af6daad0d25c39335356f56de2ae8d70226c"))
-        #expect(!appResolved.contains("b350af6daad0d25c39335356f56de2ae8d70226c"))
-        #expect(!workspaceResolved.contains("541b380784f812eef9098f370eebaea2ae4948c9"))
-        #expect(!appResolved.contains("541b380784f812eef9098f370eebaea2ae4948c9"))
-        #expect(!workspaceResolved.contains("f07214428be2a6ab742a992075c844f2c78dabaf"))
-        #expect(!appResolved.contains("f07214428be2a6ab742a992075c844f2c78dabaf"))
-        #expect(manifest.contains("d8c2bb2"))
-        #expect(manifest.contains("DeepseekV4Cache"))
-        #expect(manifest.contains("Laguna include-only bundles"))
+        #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
+        #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
+        #expect(!manifest.contains("https://github.com/osaurus-ai/mlx-swift"))
+        #expect(!manifest.contains("https://github.com/osaurus-ai/swift-transformers"))
+        #expect(!manifest.contains("https://github.com/osaurus-ai/Jinja.git"))
+        #expect(manifest.contains(".product(name: \"MLX\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"MLXLLM\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"MLXVLM\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"MLXLMCommon\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"Tokenizers\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"Jinja\", package: \"vmlx-swift\")"))
     }
 
-    @Test("SwiftPM graph stays on Osaurus transformers/Jinja chain")
-    func swiftPMGraphUsesOsaurusTransformerForks() throws {
+    @Test("SwiftPM graph keeps vmlx inference modules unshadowed")
+    func swiftPMGraphUsesConsolidatedVMLXRuntime() throws {
         let manifest = try Self.source("Package.swift")
         let workspaceMirrors = try Self.source(
             "../../osaurus.xcworkspace/xcshareddata/swiftpm/configuration/mirrors.json"
@@ -150,13 +92,22 @@ struct RuntimePolicySourceTests {
         )
         let contributing = try Self.source("../../docs/CONTRIBUTING.md")
 
-        #expect(manifest.contains("https://github.com/osaurus-ai/swift-transformers"))
-        #expect(manifest.contains("087a66b17e482220b94909c5cf98688383ae481a"))
-        #expect(manifest.contains("https://github.com/osaurus-ai/Jinja.git"))
-        #expect(manifest.contains("58d21aa5b69fdd9eb7e23ce2c3730f47db8e0c9d"))
-        #expect(manifest.contains(".product(name: \"Jinja\", package: \"jinja\")"))
-        #expect(!manifest.contains("https://github.com/huggingface/swift-transformers\","))
-        #expect(!manifest.contains("https://github.com/osaurus-ai/swift-jinja"))
+        let tokenizerLoader = try Self.source(
+            "Services/ModelRuntime/SwiftTransformersTokenizerLoader.swift"
+        )
+        let jinjaTests = try Self.source("Tests/Service/JinjaTemplateCompatibilityTests.swift")
+
+        #expect(!manifest.contains("vmlxRuntimeModuleAliases"))
+        #expect(!manifest.contains("moduleAliases:"))
+        #expect(manifest.contains("https://github.com/mattt/eventsource.git"))
+        #expect(manifest.contains("traits: [.trait(name: \"AsyncHTTPClient\")]"))
+        #expect(!manifest.contains("https://github.com/ibireme/yyjson.git"))
+        #expect(manifest.contains(".product(name: \"MCP\", package: \"swift-sdk\")"))
+        #expect(manifest.contains(".product(name: \"VecturaKit\", package: \"VecturaKit\")"))
+        #expect(tokenizerLoader.contains("import VMLXTokenizers"))
+        #expect(!tokenizerLoader.contains("import Tokenizers"))
+        #expect(jinjaTests.contains("import VMLXJinja"))
+        #expect(!jinjaTests.contains("import Jinja"))
 
         for mirrors in [workspaceMirrors, appProjectMirrors] {
             #expect(mirrors.contains("\"original\" : \"https://github.com/huggingface/swift-transformers\""))
@@ -167,8 +118,8 @@ struct RuntimePolicySourceTests {
             #expect(mirrors.contains("\"mirror\" : \"https://github.com/osaurus-ai/Jinja.git\""))
         }
 
-        #expect(contributing.contains("Osaurus-owned `swift-transformers` / `Jinja` chain"))
-        #expect(contributing.contains("Jinja parser fix at `58d21aa`"))
+        #expect(contributing.contains("single consolidated `vmlx-swift` pin"))
+        #expect(contributing.contains("prefixed inside `vmlx-swift`"))
         #expect(contributing.contains("Keep the two mirror files in sync"))
     }
 

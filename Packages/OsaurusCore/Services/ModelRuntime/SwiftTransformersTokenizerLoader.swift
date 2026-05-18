@@ -2,13 +2,13 @@
 //  SwiftTransformersTokenizerLoader.swift
 //  osaurus
 //
-//  Bridges the swift-transformers AutoTokenizer to the MLXLMCommon
-//  TokenizerLoader protocol introduced in mlx-swift-lm 3.x.
+//  Bridges vmlx-swift's AutoTokenizer to the MLXLMCommon TokenizerLoader
+//  protocol.
 //
 
 import Foundation
 import MLXLMCommon
-import Tokenizers
+import VMLXTokenizers
 
 struct SwiftTransformersTokenizerLoader: TokenizerLoader, @unchecked Sendable {
     func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
@@ -17,12 +17,12 @@ struct SwiftTransformersTokenizerLoader: TokenizerLoader, @unchecked Sendable {
     }
 }
 
-/// Adapts a `Tokenizers.Tokenizer` (from swift-transformers) to the
+/// Adapts a `VMLXTokenizers.Tokenizer` to the
 /// `MLXLMCommon.Tokenizer` protocol. Keep the chat-template fallback logic in
 /// sync with vmlx's HuggingFace tokenizer bridge: Osaurus uses this loader in
 /// production instead of the macro bridge.
 private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
-    let upstream: any Tokenizers.Tokenizer
+    let upstream: any VMLXTokenizers.Tokenizer
 
     private static let dsv4Bos =
         "<" + String(UnicodeScalar(0xFF5C)!)
@@ -68,14 +68,14 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
             do {
                 return try upstream.applyChatTemplate(
                     messages: messages,
-                    chatTemplate: Tokenizers.ChatTemplateArgument.literal(src),
+                    chatTemplate: VMLXTokenizers.ChatTemplateArgument.literal(src),
                     addGenerationPrompt: true,
                     truncation: false,
                     maxLength: nil,
                     tools: tools,
                     additionalContext: additionalContext
                 )
-            } catch Tokenizers.TokenizerError.missingChatTemplate {
+            } catch VMLXTokenizers.TokenizerError.missingChatTemplate {
                 throw MLXLMCommon.TokenizerError.missingChatTemplate
             }
         }
@@ -150,7 +150,7 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                 tools: tools,
                 additionalContext: adjustedContext
             )
-        } catch Tokenizers.TokenizerError.missingChatTemplate {
+        } catch VMLXTokenizers.TokenizerError.missingChatTemplate {
             guard (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
                 throw MLXLMCommon.TokenizerError.missingChatTemplate
             }
@@ -267,7 +267,7 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
         }
         return try upstream.applyChatTemplate(
             messages: messages,
-            chatTemplate: Tokenizers.ChatTemplateArgument.literal(template),
+            chatTemplate: VMLXTokenizers.ChatTemplateArgument.literal(template),
             addGenerationPrompt: true,
             truncation: false,
             maxLength: nil,
