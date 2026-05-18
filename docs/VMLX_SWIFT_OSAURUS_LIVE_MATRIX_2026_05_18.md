@@ -121,7 +121,7 @@ stability when Nemotron Omni is resident.
 | `/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-JANGTQ-CRACK` | Qwen3.6 MoE VL, Qwen3VLProcessor, path-dependent cache | vmlx live prod/cache/VL/media-salt artifacts exist. | Osaurus app chat + API rows for image/text/video, reasoning on/off, generation defaults, saved settings, and cache stats. |
 | `/Users/eric/models/JANGQ/Qwen3.6-27B-MXFP4-MTP` and MXFP8/35B variants | Qwen MTP/VL only when tensors plus `vmlx_mtp_tuning.json` are valid | vmlx source/tests require tuning and fail closed without it. | Osaurus status UI/API must show MTP off/on reason, use `vmlx_mtp_tuning.json`, and prove MTP on/off speed/coherence/cache rows. |
 | `/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK` | Gemma4 VLM/Harmony reasoning/tool parser | vmlx parser/source contracts exist. | Live Osaurus image/text/video rows, Harmony no-leak API rows, Gemma settings defaults, and cache stats. |
-| `/Users/eric/models/mlx-community/gemma-3n-E2B-it-4bit` | Gemma3n text row in current artifacts | vmlx text cache row passes; vision/audio is not claimed. | If exposed as VL/audio, add media rows first; otherwise UI must not overclaim media capability. |
+| `/Users/eric/models/mlx-community/gemma-3n-E2B-it-4bit` | Gemma3n text row in current artifacts | vmlx production BatchEngine probe is partial: math/reasoning-on/off/cache rows are coherent at about 120 tok/s and ~2.7 GiB RSS with disk L2 hits/stores, but the UTF literal row fails at bundle defaults and greedy diagnostics. | Do not call Gemma3n production-clear until the UTF drift is root-caused. If exposed as VL/audio, add media rows first; otherwise UI must not overclaim media capability. |
 | `/Users/eric/models/JANGQ/ZAYA1-VL-8B-JANGTQ4` and `/Users/eric/models/Osaurus/ZAYA1-VL-8B-MXFP4` | ZAYA-VL CCA/path-dependent cache | Source profiles default thinking off; ZAYA text direct-mode is currently not production-clear. | Separate ZAYA-VL media rows, CCA cache stats, no stale thinking setting, speed target, and no sampler workaround. |
 | `/Users/eric/models/dealign.ai/Nemotron-Omni-Nano-*` | Nemotron Omni text/image/audio/video, Parakeet/RADIO, media placeholders | Prior PR docs and vmlx artifacts cover structural paths with caveats. | Final Osaurus app/API audio/video/image/text-only resume rows, live voice resident pre-encode, repeated-video cache alias, and no reasoning-only short-budget false pass. |
 | `/Users/eric/models/dealign.ai/MiniMax-M2.7-*` | MiniMax reasoning/tool parser, JANG/JANGTQ | vmlx fresh rows pass for some bundles; MTP must not be assumed from name. | Osaurus API tool result row, UI reasoning behavior, cache stats, and no visible reasoning leak. |
@@ -156,6 +156,10 @@ Kimi is intentionally excluded from this matrix for now per current scope.
 - The final Osaurus app has not yet run the full UI/API matrix for Qwen-VL,
   Gemma VLM, ZAYA-VL, Nemotron Omni, DSV4, MiniMax, Ling, Hy3, and the parser
   families listed above.
+- Gemma3n E2B has a fresh vmlx production-path partial row: no loop in the
+  math/cache turns, but a UTF literal prompt drifts into unrelated Chinese
+  text. Treat it as an open runtime/tokenizer/template investigation, not a
+  sampler-default workaround.
 - DSV4 has live vmlx tool/cache proof, but the final settings renderer still
   needs visible UI/CLI evidence.
 - ZAYA text direct mode remains a real red row. Do not call ZAYA production

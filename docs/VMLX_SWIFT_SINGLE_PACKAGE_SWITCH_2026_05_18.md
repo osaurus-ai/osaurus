@@ -8,7 +8,7 @@ consolidated `vmlx-swift` package.
 OsaurusCore now has one direct inference dependency:
 
 - `https://github.com/osaurus-ai/vmlx-swift`
-- revision `176da37fef9ef2ad4e5a8e1e51076fdac1e16624`
+- revision `cc00b21a261176d947faa6f1b31f718c10dc1185`
 
 That package is expected to export the runtime modules Osaurus previously pulled
 from separate roots:
