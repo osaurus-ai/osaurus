@@ -42,6 +42,20 @@ Use one of these modes instead:
 3. Prefer non-app source/unit tests or route probes against an already-running
    trusted app instance when the row does not require UI or app persistence.
 
+Helper:
+
+```sh
+scripts/pr1147_keychain_safe_app_launch.sh \
+  --app build/XcodeDerivedData-codex-live-pr1147/Build/Products/Debug/osaurus.app \
+  --models-dir /Users/eric/models
+```
+
+The helper launches the `.app` bundle through LaunchServices, refuses fake
+`HOME`, exposes `OSU_MODELS_DIR` with `launchctl setenv`, waits briefly for the
+LaunchServices request to be accepted, and restores the previous launchctl
+environment. Use `--dry-run` to inspect the launch plan without changing
+launchctl state.
+
 ## Gate Boundary
 
 The HTTP route probe helper remains valid, but route artifacts are blocked

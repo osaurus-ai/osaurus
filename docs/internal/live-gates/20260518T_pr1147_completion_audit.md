@@ -174,6 +174,9 @@ Keychain-safe app launch is required for live app/API gates:
 `docs/internal/live-gates/20260518T_pr1147_keychain_safe_launch.md`. Do not run
 the app binary with a fake `HOME`; that can break macOS Keychain access for the
 database encryption key and produces invalid live-gate evidence.
+The helper `scripts/pr1147_keychain_safe_app_launch.sh` launches the debug app
+through LaunchServices, refuses fake `HOME`, sets `OSU_MODELS_DIR` through
+`launchctl`, and restores the prior launchctl environment.
 
 The per-family execution manifest for the remaining real-user rows is:
 `docs/internal/live-gates/20260518T_pr1147_live_user_api_execution_manifest.md`.

@@ -176,6 +176,9 @@ struct RuntimePolicySourceTests {
         )
         let censusHelper = try Self.source("../../scripts/pr1147_collect_bundle_census.py")
         let routeProbeHelper = try Self.source("../../scripts/pr1147_http_route_probe.py")
+        let keychainLaunchHelper = try Self.source(
+            "../../scripts/pr1147_keychain_safe_app_launch.sh"
+        )
         let keychainLaunchNote = try Self.source(
             "../../docs/internal/live-gates/20260518T_pr1147_keychain_safe_launch.md"
         )
@@ -310,6 +313,7 @@ struct RuntimePolicySourceTests {
             "scripts/pr1147_http_route_probe.py",
             "Do not count a route-probe artifact as model proof",
             "20260518T_pr1147_keychain_safe_launch.md",
+            "scripts/pr1147_keychain_safe_app_launch.sh",
             "Do not run",
             "fake `HOME`",
             "20260518T_pr1147_live_user_api_execution_manifest.md",
@@ -367,10 +371,28 @@ struct RuntimePolicySourceTests {
             "restore the original keychain search list",
             "route artifacts are blocked",
             "must not be counted",
+            "scripts/pr1147_keychain_safe_app_launch.sh",
         ] {
             #expect(
                 keychainLaunchNote.contains(required),
                 "missing keychain-safe launch requirement: \(required)"
+            )
+        }
+
+        for required in [
+            "LaunchServices",
+            "Refusing to launch: HOME must be the real user home",
+            "Do not use fake HOME",
+            "launchctl setenv",
+            "launchctl unsetenv",
+            "open -n",
+            "--dry-run",
+            "--env may not set HOME",
+            "OSU_MODELS_DIR",
+        ] {
+            #expect(
+                keychainLaunchHelper.contains(required),
+                "missing keychain-safe launch helper requirement: \(required)"
             )
         }
 
