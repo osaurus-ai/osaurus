@@ -181,6 +181,15 @@ struct ModelDownloadView: View {
             )
             .environment(\.theme, themeManager.currentTheme)
         }
+        .themedAlert(
+            "Not enough disk space to download this model",
+            isPresented: Binding(
+                get: { modelManager.downloadAlert != nil },
+                set: { if !$0 { modelManager.downloadAlert = nil } }
+            ),
+            message: modelManager.downloadAlert,
+            primaryButton: .primary("OK") { modelManager.downloadAlert = nil }
+        )
     }
 
     // MARK: - Header View

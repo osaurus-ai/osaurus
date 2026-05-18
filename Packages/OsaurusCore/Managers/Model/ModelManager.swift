@@ -507,6 +507,10 @@ final class ModelManager: NSObject, ObservableObject {
     var totalDownloadedSize: Int64 { downloadService.totalDownloadedSize }
     var totalDownloadedSizeString: String { downloadService.totalDownloadedSizeString }
     var activeDownloadsCount: Int { downloadService.activeDownloadsCount }
+    var downloadAlert: String? {
+        get { downloadService.downloadAlert }
+        set { downloadService.downloadAlert = newValue }
+    }
 
     /// Deduplicated merge of suggestedModels + availableModels, preferring curated descriptions.
     func deduplicatedModels() -> [MLXModel] {

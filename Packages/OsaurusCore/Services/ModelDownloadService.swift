@@ -63,6 +63,8 @@ final class ModelDownloadService: ObservableObject {
 
     @Published var downloadStates: [String: DownloadState] = [:]
     @Published var downloadMetrics: [String: DownloadMetrics] = [:]
+    /// Blocking error that prevented a download from starting
+    @Published var downloadAlert: String?
 
     // MARK: - Properties
 
@@ -118,12 +120,22 @@ final class ModelDownloadService: ObservableObject {
     }
 
     private func startOrchestration(model: MLXModel, resuming: PausedSnapshot?) {
-        if model.isDownloaded {
-            downloadStates[model.id] = .completed
-            return
-        }
+        // `model.isDownloaded` is satisfied by config + tokenizer + any single
+        // shard so don't short-circuit on it. the per-file size check below
+        // is authoritative
         let state = downloadStates[model.id] ?? .notStarted
         if case .downloading = state { return }
+
+        // upfront disk-space preflight so we alert instead of flashing a
+        // progress bar that the in-task check would rip down ~300ms later.
+        if let needed = model.totalSizeEstimateBytes,
+            let probePath = Self.existingAncestor(of: model.localDirectory),
+            let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: probePath.path),
+            let refusal = Self.storageRefusalMessage(neededBytes: needed, freeBytes: freeBytes)
+        {
+            downloadAlert = refusal
+            return
+        }
 
         activeDownloadTasks[model.id]?.cancel()
         activeDownloaders[model.id]?.invalidate()
@@ -592,6 +604,19 @@ final class ModelDownloadService: ObservableObject {
     /// "unknown, proceed" rather than "zero, block".
     static func freeBytesOnVolume(containing url: URL) -> Int64? {
         OsaurusPaths.volumeFreeBytes(forPath: url.path)
+    }
+
+    /// Nearest ancestor of `url` that exists on disk, so volume-capacity
+    /// queries have a statable path before the per-model dir is created.
+    static func existingAncestor(of url: URL) -> URL? {
+        var current = url
+        let fm = FileManager.default
+        while !fm.fileExists(atPath: current.path) {
+            let parent = current.deletingLastPathComponent()
+            if parent.path == current.path { return nil }
+            current = parent
+        }
+        return current
     }
 
     private func updateDownloadProgress(
