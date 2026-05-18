@@ -61,3 +61,11 @@ level: vmlx produced coherent visible Ling output without sampler or reasoning
 repair, and Osaurus no longer converts Ling reasoning into visible content.
 The family remains not production-clear until the app/API Ling and Hy3 rows add
 long-output, cache, SSM, memory, and saved-setting carryover artifacts.
+
+Hy3 also has fresh vmlx-only evidence in
+`/Users/eric/vmlx-swift/docs/internal/live-gates/20260518T_hy3_jangtq_no_guard_refresh/`.
+The important contract finding is that generic `enable_thinking=true` is not a
+Hy3 thinking control: the prompt tail remains `reasoning_effort:no_think`.
+Native `reasoning_effort=low/high` rows route reasoning deltas cleanly and stop
+normally. Osaurus must keep Hy3 on the native effort bridge, and the app/API row
+still needs route, cache, memory, tools, and saved-setting proof.

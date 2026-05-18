@@ -133,6 +133,11 @@ merge is now replaced by default-off UI policy, explicit opt-in, and reasoning
 rail preservation. The Ling family still needs app/API cache and long-output
 artifacts before it can be production-clear.
 
+Fresh vmlx-only Hy3 evidence exists at
+`/Users/eric/vmlx-swift/docs/internal/live-gates/20260518T_hy3_jangtq_no_guard_refresh/`.
+Use it as a contract anchor: Hy3 native reasoning uses `reasoning_effort`, not
+generic `enable_thinking`; Osaurus still needs its own UI/API/cache row.
+
 ## Artifact Acceptance Rules
 
 Each model folder must include:

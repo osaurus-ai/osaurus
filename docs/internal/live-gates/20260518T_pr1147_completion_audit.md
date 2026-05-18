@@ -305,6 +305,13 @@ hit has a fresh vmlx no-guard proof plus Osaurus focused tests, but the family
 still needs app/API long-output, cache, SSM, memory, and saved-setting carryover
 artifacts before production-clear.
 
+Hy3 has fresh vmlx-only proof at
+`/Users/eric/vmlx-swift/docs/internal/live-gates/20260518T_hy3_jangtq_no_guard_refresh/`.
+That proof confirms generic `enable_thinking=true` is not the Hy3 reasoning
+control, while native `reasoning_effort=low/high` routes reasoning cleanly. It
+supports Osaurus's native Hy3 effort bridge but does not close the Osaurus
+app/API Hy3 row.
+
 ## Current Audit Outcome
 
 Not complete.
