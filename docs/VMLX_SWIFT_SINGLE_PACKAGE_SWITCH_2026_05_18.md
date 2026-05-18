@@ -8,7 +8,7 @@ consolidated `vmlx-swift` package.
 OsaurusCore now has one direct inference dependency:
 
 - `https://github.com/osaurus-ai/vmlx-swift`
-- revision `6a03b76baaa84d249989fdf7c5fd832437811405`
+- revision `ddb84eac5d7daaf489b96412608782a4d6a7da66`
 
 That package is expected to export the runtime modules Osaurus previously pulled
 from separate roots:
@@ -132,3 +132,32 @@ and zero `.toolCall` events. The pinned `vmlx-swift` revision now accepts that
 observed DSV4 variant in the DSML parser. Post-fix live output emitted one
 structured `get_weather({"location":"Tokyo"})` call, no raw DSML marker leakage
 in `.chunk`, and no reasoning leakage.
+
+## Fresh Engine Process Rows
+
+After explicit approval to run live model processes, the pinned vMLX checkout
+was rebuilt in release mode and re-tested with fresh process rows under:
+
+```text
+docs/local/live-model-matrix/20260518T_fresh_user_allowed_process_rows/
+```
+
+Current results relevant to Osaurus wiring:
+
+- `dsv4_dsml_toolcall_fresh.log`: `DeepSeek-V4-Flash-JANGTQ-K` loads through
+  the vMLX `BatchEngine`, reports `Tool format: dsml`, emits one structured
+  `get_weather({"location":"Tokyo"})` event, stops normally, and leaks no raw
+  DSML or reasoning marker into visible `.chunk` text.
+- `gemma3n_e2b_prod_default_cache_fresh.log`: the local Gemma3n E2B text path
+  passes 7/7 with bundle generation defaults (`temp=0.600 topP=0.950 topK=64
+  rep=nil`), no reasoning parser, no loop, about 122 tok/s, and disk L2 stats
+  `hits=1,misses=21,stores=21`. This is text-only proof; Gemma3n vision/audio
+  support is not claimed.
+- `gemma4_e2b_prod_default_cache_fresh.log`: the Osaurus-local Gemma4 E2B row
+  is retained as a red default-sampling artifact. It passes 6/7 without loop or
+  crash, but at bundle defaults (`temp=1.000 topP=0.950 topK=64 rep=nil`) the
+  UTF-8 inclusion prompt produced coherent Chinese with `你好` and omitted the
+  literal `cafe`/`café` token. The paired
+  `gemma4_e2b_prod_greedy_cache_fresh.log` passes 7/7 with explicit greedy
+  parameters and no repetition penalty. Osaurus must not turn that into a hidden
+  default sampler clamp; it is a visible validation/default-temperature caveat.
