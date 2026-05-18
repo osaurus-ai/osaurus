@@ -44,6 +44,7 @@ struct ManagementView: View {
 
     let deeplinkModelId: String?
     let deeplinkFile: String?
+    let deeplinkAgentId: UUID?
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -52,7 +53,8 @@ struct ManagementView: View {
     init(
         initialTab: ManagementTab? = nil,
         deeplinkModelId: String? = nil,
-        deeplinkFile: String? = nil
+        deeplinkFile: String? = nil,
+        deeplinkAgentId: UUID? = nil
     ) {
         // Use provided initialTab if any, otherwise fall back to the last selected tab in this session.
         if let tab = initialTab {
@@ -60,6 +62,7 @@ struct ManagementView: View {
         }
         self.deeplinkModelId = deeplinkModelId
         self.deeplinkFile = deeplinkFile
+        self.deeplinkAgentId = deeplinkAgentId
     }
 
     // MARK: Body
@@ -158,7 +161,7 @@ private extension ManagementView {
         case .providers:
             RemoteProvidersView()
         case .agents:
-            AgentsView()
+            AgentsView(deeplinkAgentId: deeplinkAgentId)
         case .plugins:
             PluginsView()
         case .sandbox:

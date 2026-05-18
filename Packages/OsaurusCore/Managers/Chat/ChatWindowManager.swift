@@ -794,7 +794,15 @@ private struct ChatToolbarAgentView: View {
                     userInfo: ["windowId": windowState.windowId]
                 )
             },
-            activeRelayAgent: windowState.selectedRelayAgent
+            activeRelayAgent: windowState.selectedRelayAgent,
+            onOpenActiveAgentSettings: {
+                let active = windowState.agents.first { $0.id == windowState.agentId }
+                let deeplinkId = (active?.isBuiltIn == false) ? active?.id : nil
+                AppDelegate.shared?.showManagementWindow(
+                    initialTab: .agents,
+                    deeplinkAgentId: deeplinkId
+                )
+            }
         )
         .environment(\.theme, windowState.theme)
     }

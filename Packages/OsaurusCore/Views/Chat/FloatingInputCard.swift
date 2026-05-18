@@ -3201,17 +3201,28 @@ private struct ContextBreakdownPopover: View {
     // MARK: - Stacked Bar
 
     private var barChart: some View {
-        let scale = budgetCap > 0 ? budgetCap : 1
         let entries = breakdown.allEntries.filter { $0.tokens > 0 }
+        let hasCeiling = maxTokens != nil
+        // When there is no ceiling, the bar reports each segment's share of
+        // the current total instead of a fixed budget — so percentages and
+        // bar widths agree, and the track always fills.
+        let scale = hasCeiling ? max(budgetCap, 1) : max(breakdown.total, 1)
         return GeometryReader { geo in
+            let gapTotal = CGFloat(max(entries.count - 1, 0))
+            let available = max(0, geo.size.width - gapTotal)
+            let widths = computeContextBudgetSegmentWidths(
+                tokens: entries.map(\.tokens),
+                totalTokens: scale,
+                available: available,
+                fillsTrack: !hasCeiling
+            )
             HStack(spacing: 1) {
-                ForEach(entries) { entry in
-                    let fraction = CGFloat(entry.tokens) / CGFloat(scale)
+                ForEach(Array(zip(entries, widths)), id: \.0.id) { entry, width in
                     RoundedRectangle(cornerRadius: 2)
                         .fill(color(for: entry.tint).opacity(0.85))
-                        .frame(width: max(fraction * geo.size.width, fraction > 0 ? 3 : 0))
+                        .frame(width: width)
                 }
-                if maxTokens != nil { Spacer(minLength: 0) }
+                if hasCeiling { Spacer(minLength: 0) }
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
@@ -3309,6 +3320,67 @@ private struct ContextBreakdownPopover: View {
                 lineWidth: 1
             )
     }
+}
+
+// MARK: - Context Budget Segment Widths
+
+/// Pre-allocates pixel widths for the Context Budget stacked bar so the
+/// rendered segments never overflow `available` (the GeometryReader width
+/// minus the 1pt gaps between segments) and — when `fillsTrack` is true —
+/// fill the track exactly even after rounding/floor adjustments.
+///
+/// Behavior:
+/// - Returns zeros when `available <= 0` or `totalTokens <= 0`.
+/// - Initial widths are proportional to `tokens[i] / totalTokens * available`.
+/// - Non-zero entries get a 1pt floor so tiny segments stay visible without
+///   dominating the bar (the old `3pt` floor caused overflow with 4+ tiny
+///   entries plus 1pt inter-item spacing).
+/// - If the sum overflows `available`, all widths are scaled by
+///   `available / sum` so they fit exactly. This guarantees the bar never
+///   spills past the GeometryReader background.
+/// - When `fillsTrack` is true (no ceiling case), any remaining slack is
+///   redistributed weighted by `tokens[i]` so segments cover the full track.
+///   When false (ceiling present), the leftover is the caller's headroom
+///   slot, surfaced as a trailing `Spacer`.
+func computeContextBudgetSegmentWidths(
+    tokens: [Int],
+    totalTokens: Int,
+    available: CGFloat,
+    fillsTrack: Bool
+) -> [CGFloat] {
+    guard !tokens.isEmpty else { return [] }
+    guard available > 0, totalTokens > 0 else {
+        return Array(repeating: 0, count: tokens.count)
+    }
+
+    let totalDouble = Double(totalTokens)
+    let availableDouble = Double(available)
+
+    var widths: [Double] = tokens.map { count in
+        guard count > 0 else { return 0 }
+        let raw = Double(count) / totalDouble * availableDouble
+        return max(raw, 1)
+    }
+
+    var sum = widths.reduce(0, +)
+
+    if sum > availableDouble && sum > 0 {
+        let scale = availableDouble / sum
+        widths = widths.map { $0 * scale }
+        sum = widths.reduce(0, +)
+    }
+
+    if fillsTrack, sum < availableDouble {
+        let slack = availableDouble - sum
+        let tokenTotal = tokens.reduce(0, +)
+        if tokenTotal > 0 {
+            for i in widths.indices where tokens[i] > 0 {
+                widths[i] += slack * Double(tokens[i]) / Double(tokenTotal)
+            }
+        }
+    }
+
+    return widths.map { CGFloat($0) }
 }
 
 // MARK: - Selector Chip

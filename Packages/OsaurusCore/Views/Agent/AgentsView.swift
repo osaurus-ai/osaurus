@@ -38,6 +38,13 @@ struct AgentsView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
+    /// One-shot deep-link target: when set on construction (e.g. from the chat
+    /// header's gear button), the matching local agent is opened in detail
+    /// view as soon as the tab appears. Consumed exactly once via
+    /// `consumedDeeplinkAgentId` so subsequent navigation back to the grid
+    /// doesn't re-fire the auto-select.
+    let deeplinkAgentId: UUID?
+
     @State private var selectedAgent: Agent?
     @State private var selectedRemoteAgentId: UUID?
     @State private var isCreating = false
@@ -45,6 +52,11 @@ struct AgentsView: View {
     @State private var hasAppeared = false
     @State private var successMessage: String?
     @State private var sandboxCleanupNotice: SandboxCleanupNotice?
+    @State private var consumedDeeplinkAgentId: UUID?
+
+    init(deeplinkAgentId: UUID? = nil) {
+        self.deeplinkAgentId = deeplinkAgentId
+    }
 
     private var customAgents: [Agent] {
         agentManager.agents.filter { !$0.isBuiltIn }
@@ -152,6 +164,11 @@ struct AgentsView: View {
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
+            consumeDeeplinkIfPossible()
+        }
+        .onChange(of: agentManager.agents) { _, _ in
+            // Agent list may load asynchronously after the view appears.
+            consumeDeeplinkIfPossible()
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
             // Notification-tap deep-link router (spec §3.3). Resolves
@@ -322,6 +339,24 @@ struct AgentsView: View {
             withAnimation(theme.animationQuick()) {
                 successMessage = nil
             }
+        }
+    }
+
+    // MARK: - Deeplink
+
+    /// Auto-selects a non-built-in agent when the tab was opened with a
+    /// deeplink target (e.g. via the chat header's gear button). Runs at
+    /// most once per construction.
+    private func consumeDeeplinkIfPossible() {
+        guard let target = deeplinkAgentId,
+            consumedDeeplinkAgentId != target,
+            let agent = agentManager.agents.first(where: { $0.id == target }),
+            !agent.isBuiltIn
+        else { return }
+        consumedDeeplinkAgentId = target
+        withAnimation(Self.navTransition) {
+            selectedRemoteAgentId = nil
+            selectedAgent = agent
         }
     }
 

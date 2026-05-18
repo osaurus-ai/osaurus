@@ -123,8 +123,13 @@ struct AgentPill: View {
     var pairedRelayAgents: [PairedRelayAgent] = []
     var onSelectRelayAgent: ((PairedRelayAgent) -> Void)? = nil
     var activeRelayAgent: PairedRelayAgent? = nil
+    /// Optional callback to open the active agent's settings via the inline
+    /// gear button. When `nil`, the gear is hidden entirely so the pill
+    /// collapses back to its original single-button form.
+    var onOpenActiveAgentSettings: (() -> Void)? = nil
 
     @State private var isHovered = false
+    @State private var isGearHovered = false
     @State private var isPopoverPresented = false
     @Environment(\.theme) private var theme
 
@@ -198,7 +203,43 @@ struct AgentPill: View {
         }
     }
 
+    /// True when either half of the pill is hovered. The chrome
+    /// (background, border, shadow) responds to both as a single unit so
+    /// the gear and the main tap area share one capsule highlight.
+    private var isPillHighlighted: Bool { isHovered || isGearHovered }
+
+    /// Whether the inline gear button should render. Remote/relay agents
+    /// don't have local config to edit, so we keep the pill compact in
+    /// that case regardless of whether a callback was supplied.
+    private var showsGearButton: Bool {
+        onOpenActiveAgentSettings != nil && !isRemoteActive
+    }
+
     var body: some View {
+        HStack(spacing: 0) {
+            mainTapArea
+
+            if showsGearButton {
+                gearDivider
+                gearButton
+            }
+        }
+        .background(pillBackground)
+        .overlay(pillBorder)
+        .shadow(
+            color: isPillHighlighted ? theme.accentColor.opacity(0.1) : .clear,
+            radius: 6,
+            x: 0,
+            y: 2
+        )
+        .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
+            popoverContent
+        }
+    }
+
+    // MARK: - Subviews
+
+    private var mainTapArea: some View {
         Button {
             isPopoverPresented.toggle()
         } label: {
@@ -213,58 +254,79 @@ struct AgentPill: View {
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(isHovered ? theme.secondaryText : theme.tertiaryText)
             }
-            .padding(.horizontal, 14)
+            .padding(.leading, 14)
+            .padding(.trailing, showsGearButton ? 10 : 14)
             .padding(.vertical, 6)
-            .background(
-                ZStack {
-                    Capsule()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.65))
-
-                    if isHovered {
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        theme.accentColor.opacity(0.08),
-                                        Color.clear,
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                    }
-                }
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.2 : 0.12),
-                                (isHovered ? theme.accentColor : theme.primaryBorder).opacity(isHovered ? 0.25 : 0.15),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: isHovered ? theme.accentColor.opacity(0.1) : .clear,
-                radius: 6,
-                x: 0,
-                y: 2
-            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
-            popoverContent
-        }
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
             }
         }
+    }
+
+    private var gearButton: some View {
+        Button {
+            onOpenActiveAgentSettings?()
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(isGearHovered ? theme.accentColor : theme.secondaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(Text("Edit agent settings", bundle: .module))
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isGearHovered = hovering
+            }
+        }
+    }
+
+    private var gearDivider: some View {
+        Rectangle()
+            .fill(theme.primaryBorder.opacity(0.2))
+            .frame(width: 1, height: 16)
+    }
+
+    // MARK: - Chrome
+
+    private var pillBackground: some View {
+        ZStack {
+            Capsule()
+                .fill(theme.secondaryBackground.opacity(isPillHighlighted ? 0.9 : 0.65))
+
+            if isPillHighlighted {
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [theme.accentColor.opacity(0.08), Color.clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        }
+    }
+
+    private var pillBorder: some View {
+        Capsule()
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(isPillHighlighted ? 0.2 : 0.12),
+                        (isPillHighlighted ? theme.accentColor : theme.primaryBorder)
+                            .opacity(isPillHighlighted ? 0.25 : 0.15),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
     }
 
     // MARK: - Popover

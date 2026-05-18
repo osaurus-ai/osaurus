@@ -1394,7 +1394,8 @@ extension AppDelegate {
     @MainActor public func showManagementWindow(
         initialTab: ManagementTab? = nil,
         deeplinkModelId: String? = nil,
-        deeplinkFile: String? = nil
+        deeplinkFile: String? = nil,
+        deeplinkAgentId: UUID? = nil
     ) {
         closePopoverAndPerform { [weak self] in
             guard let self = self else { return }
@@ -1403,7 +1404,8 @@ extension AppDelegate {
             let root = ManagementView(
                 initialTab: initialTab,
                 deeplinkModelId: deeplinkModelId,
-                deeplinkFile: deeplinkFile
+                deeplinkFile: deeplinkFile,
+                deeplinkAgentId: deeplinkAgentId
             )
             .environmentObject(self.serverController)
             .environmentObject(self.updater)
