@@ -344,6 +344,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     method: method,
                     path: path
                 )
+            } else if head.method == .GET, path == "/admin/cache-stats" {
+                handleCacheStatsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path
+                )
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
@@ -480,6 +489,133 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             stateRef.value.requestHead = nil
             stateRef.value.requestBodyBuffer = nil
+        }
+    }
+
+    /// `/admin/cache-stats` exposes the current vmlx `CacheCoordinator`
+    /// counters for loaded models. It is intentionally read-only and does not
+    /// load a model by itself; an empty `models` array is the correct cold
+    /// startup state.
+    private func handleCacheStatsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+
+        Task(priority: .userInitiated) {
+            let cached = await ModelRuntime.shared.cachedModelSummaries()
+            var aggregate: [String: Int] = [
+                "prefix_hits": 0,
+                "prefix_misses": 0,
+                "paged_hits": 0,
+                "paged_misses": 0,
+                "disk_l2_hits": 0,
+                "disk_l2_misses": 0,
+                "disk_l2_stores": 0,
+                "ssm_companion_hits": 0,
+                "ssm_companion_misses": 0,
+                "ssm_companion_rederives": 0,
+            ]
+
+            let models: [[String: Any]] = cached.map { summary in
+                var row: [String: Any] = [
+                    "name": summary.name,
+                    "is_current": summary.isCurrent,
+                    "weights_bytes": summary.bytes,
+                ]
+                guard let stats = summary.cacheStats else {
+                    row["cache_enabled"] = false
+                    return row
+                }
+
+                row["cache_enabled"] = true
+                row["is_hybrid"] = stats.isHybrid
+                row["is_paged_incompatible"] = stats.isPagedIncompatible
+
+                var paged: [String: Any] = ["enabled": stats.pagedEnabled]
+                if let pagedStats = stats.pagedStats {
+                    paged["total_blocks"] = pagedStats.totalBlocks
+                    paged["allocated_blocks"] = pagedStats.allocatedBlocks
+                    paged["free_blocks"] = pagedStats.freeBlocks
+                    paged["hits"] = pagedStats.cacheHits
+                    paged["misses"] = pagedStats.cacheMisses
+                    paged["evictions"] = pagedStats.evictions
+                    aggregate["paged_hits", default: 0] += pagedStats.cacheHits
+                    aggregate["paged_misses", default: 0] += pagedStats.cacheMisses
+                    aggregate["prefix_hits", default: 0] += pagedStats.cacheHits
+                    aggregate["prefix_misses", default: 0] += pagedStats.cacheMisses
+                }
+                row["paged_cache"] = paged
+
+                var disk: [String: Any] = ["enabled": stats.diskEnabled]
+                if let diskStats = stats.diskStats {
+                    disk["hits"] = diskStats.hits
+                    disk["misses"] = diskStats.misses
+                    disk["stores"] = diskStats.stores
+                    disk["max_size_bytes"] = diskStats.maxSizeBytes
+                    aggregate["disk_l2_hits", default: 0] += diskStats.hits
+                    aggregate["disk_l2_misses", default: 0] += diskStats.misses
+                    aggregate["disk_l2_stores", default: 0] += diskStats.stores
+                    aggregate["prefix_hits", default: 0] += diskStats.hits
+                    aggregate["prefix_misses", default: 0] += diskStats.misses
+                }
+                row["block_disk_store"] = disk
+
+                let ssm = stats.ssmStats
+                row["ssm_companion_cache"] = [
+                    "hits": ssm.hits,
+                    "misses": ssm.misses,
+                    "rederives": ssm.reDerives,
+                ]
+                aggregate["ssm_companion_hits", default: 0] += ssm.hits
+                aggregate["ssm_companion_misses", default: 0] += ssm.misses
+                aggregate["ssm_companion_rederives", default: 0] += ssm.reDerives
+                return row
+            }
+
+            let obj: [String: Any] = [
+                "status": "ok",
+                "timestamp": Date().ISO8601Format(),
+                "models": models,
+                "aggregate": aggregate,
+            ]
+            let data = try? JSONSerialization.data(withJSONObject: obj)
+            let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")]
+                + cors
+
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: .ok,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
         }
     }
 

@@ -22,6 +22,7 @@ These source files are the wiring that every live row must exercise:
 | Media capability detection | `Packages/OsaurusCore/Models/Configuration/ModelMediaCapabilities.swift` | Qwen/Gemma/ZAYA/Nemotron image, video, and audio controls match real bundle capability. |
 | Family/profile split | `Packages/OsaurusCore/Models/Configuration/ModelFamilyNames.swift` and `ModelManager.swift` | DSV4, MiniMax, Ling, ZAYA-VL, Nemotron, Qwen, Gemma, Hy3 profiles do not inherit stale reasoning/parser/cache settings. |
 | HTTP adapters | `Packages/OsaurusCore/Networking/HTTPHandler.swift` | `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/api/chat`, `/api/generate` all preserve media, tools, reasoning, streaming terminal frames, and usage. |
+| Cache stats route | `Packages/OsaurusCore/Networking/HTTPHandler.swift` and `Packages/OsaurusCore/Services/ModelRuntime.swift` | `/admin/cache-stats` returns a read-only cold snapshot without loading a model, then reports prefix, paged, block-L2, and SSM companion counters for loaded vmlx models. |
 | Old library removal | `Packages/OsaurusCore/Package.swift` plus SwiftPM lockfiles | Active inference uses the single `vmlx-swift` dependency and VMLX-prefixed Tokenizers/Jinja products. |
 
 ## Required Artifact Shape
@@ -135,6 +136,11 @@ Run these in the chat app after a keychain-safe launch:
 - `docs/internal/live-gates/20260518T_pr1147_keychain_safe_launch.md` is
   mandatory before app/API live gates. Fake-`HOME` direct binary launches are
   invalid.
+- `docs/internal/live-gates/pr1147/http-route-probe-metadata-20260518T1425/`
+  captured the pre-fix `/admin/cache-stats` 404. The post-fix checkpoint at
+  `docs/internal/live-gates/pr1147/http-route-probe-metadata-20260518Tpost-cache-stats/`
+  captures the same metadata probe with `/admin/cache-stats` returning HTTP 200
+  and cold aggregate counters at zero.
 - No row in this manifest is production-clear until its model folder contains
   the required live artifacts and `summary.md` says PASS with concrete output,
   cache, timing, memory, and no-leak evidence.

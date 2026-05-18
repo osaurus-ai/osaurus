@@ -35,6 +35,7 @@ public actor ModelRuntime {
         let name: String
         let bytes: Int64
         let isCurrent: Bool
+        let cacheStats: CacheCoordinatorStatsSnapshot?
     }
 
     struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
@@ -128,7 +129,8 @@ public actor ModelRuntime {
             ModelCacheSummary(
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
-                isCurrent: holder.name == currentModelName
+                isCurrent: holder.name == currentModelName,
+                cacheStats: holder.container.cacheCoordinator?.snapshotStats()
             )
         }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }

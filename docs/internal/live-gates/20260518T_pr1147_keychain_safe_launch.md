@@ -62,3 +62,23 @@ The HTTP route probe helper remains valid, but route artifacts are blocked
 until the server is started with a Keychain-safe launch mode. A route probe
 collected from a broken fake-HOME launch must not be counted as startup,
 settings, cache, model, or UI proof.
+
+## Verified Checkpoint
+
+The keychain-safe helper was used against the PR #1147 debug app with the real
+user home and `/Users/eric/models`:
+
+```sh
+scripts/pr1147_keychain_safe_app_launch.sh \
+  --app build/XcodeDerivedData-codex-live-pr1147/Build/Products/Debug/osaurus.app \
+  --models-dir /Users/eric/models \
+  --hold-seconds 8
+```
+
+The launched app bound `127.0.0.1:4242`, and the metadata route probe artifact
+at
+`docs/internal/live-gates/pr1147/http-route-probe-metadata-20260518Tpost-cache-stats/`
+shows `/health`, `/v1/models`, `/models`, `/tags`, `/mcp/health`, and
+`/admin/cache-stats` all returning HTTP 200. This proves the route-probe
+startup path is keychain-safe for metadata checks. It is not model generation
+or cache-hit proof.

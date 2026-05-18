@@ -4,7 +4,7 @@ Timestamp: 2026-05-18 13:53 PDT
 
 PR: https://github.com/osaurus-ai/osaurus/pull/1147
 
-Head at audit: `67a24031`
+Head at audit: `82c763eb` plus the working-tree `/admin/cache-stats` fix.
 
 This is a completion audit for the Osaurus switch to consolidated
 `vmlx-swift`. It is intentionally not a production-clear report. The current
@@ -170,6 +170,25 @@ Do not count a route-probe artifact as model proof unless the same folder also
 has cache stats, visible output review, parser/no-leak review, timing, and
 memory artifacts for the model row.
 
+Metadata route probe checkpoint:
+
+- pre-fix artifact:
+  `docs/internal/live-gates/pr1147/http-route-probe-metadata-20260518T1425/`
+  shows `/admin/cache-stats` returned HTTP 404 with body `Not Found`.
+- fix: `HTTPHandler` now exposes a read-only `/admin/cache-stats` endpoint
+  backed by `ModelRuntime.cachedModelSummaries()` and
+  `CacheCoordinator.snapshotStats()` when a model is loaded. The route does not
+  load a model by itself.
+- post-fix artifact:
+  `docs/internal/live-gates/pr1147/http-route-probe-metadata-20260518Tpost-cache-stats/`
+  shows `/admin/cache-stats` returned HTTP 200 with an empty cold-start
+  `models` array and zero aggregate counters for prefix, paged, block-L2, and
+  SSM companion cache fields.
+
+This closes only the metadata/admin-route existence row. It does not prove any
+model-specific cache hit, L2 write, SSM rederive, coherency, speed, or memory
+row.
+
 Keychain-safe app launch is required for live app/API gates:
 `docs/internal/live-gates/20260518T_pr1147_keychain_safe_launch.md`. Do not run
 the app binary with a fake `HOME`; that can break macOS Keychain access for the
@@ -189,8 +208,9 @@ exist before this PR can be undrafted.
 Not complete.
 
 The PR currently has strong source-policy gates, documented model-family
-contracts, and startup/server binding proof. It does not yet have the full live
-Osaurus app/API artifact set for Qwen VL, Gemma VLM, ZAYA-VL, Nemotron Omni,
-DSV4, MiniMax, Ling, Hy3, and other parser families. Do not undraft or call the
-switch production-ready until those artifact folders exist and pass with real
-visible output, cache stats, timing, memory, and no parser/tag leakage.
+contracts, startup/server binding proof, and a cold-start
+`/admin/cache-stats` route proof. It does not yet have the full live Osaurus
+app/API artifact set for Qwen VL, Gemma VLM, ZAYA-VL, Nemotron Omni, DSV4,
+MiniMax, Ling, Hy3, and other parser families. Do not undraft or call the switch
+production-ready until those artifact folders exist and pass with real visible
+output, cache stats, timing, memory, and no parser/tag leakage.

@@ -30,6 +30,27 @@ struct MCPHTTPHandlerTests {
         #expect(body.contains(#""status":"ok"#))
     }
 
+    @Test func admin_cache_stats_returns_empty_snapshot_without_loading_model() async throws {
+        let server = try await startTestServer()
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/admin/cache-stats")!)
+        request.authenticate()
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        #expect(status == 200)
+
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(json["status"] as? String == "ok")
+        let models = try #require(json["models"] as? [[String: Any]])
+        #expect(models.isEmpty)
+        let aggregate = try #require(json["aggregate"] as? [String: Any])
+        #expect(aggregate["prefix_hits"] as? Int == 0)
+        #expect(aggregate["paged_hits"] as? Int == 0)
+        #expect(aggregate["disk_l2_hits"] as? Int == 0)
+        #expect(aggregate["ssm_companion_hits"] as? Int == 0)
+    }
+
     @Test func mcp_tools_lists_only_enabled_tools() async throws {
         // `EchoTool` is a dynamic tool registered into the process-wide
         // `ToolRegistry.shared`. `PluginCreatorInjectionTests` reads

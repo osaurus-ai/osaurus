@@ -361,6 +361,25 @@ struct RuntimePolicySourceTests {
             )
         }
 
+        let httpHandler = try Self.source("Networking/HTTPHandler.swift")
+        let modelRuntime = try Self.source("Services/ModelRuntime.swift")
+        for required in [
+            "path == \"/admin/cache-stats\"",
+            "handleCacheStatsEndpoint",
+            "\"prefix_hits\"",
+            "\"paged_hits\"",
+            "\"disk_l2_hits\"",
+            "\"block_disk_store\"",
+            "\"ssm_companion_cache\"",
+        ] {
+            #expect(
+                httpHandler.contains(required),
+                "missing /admin/cache-stats endpoint requirement: \(required)"
+            )
+        }
+        #expect(modelRuntime.contains("let cacheStats: CacheCoordinatorStatsSnapshot?"))
+        #expect(modelRuntime.contains("cacheStats: holder.container.cacheCoordinator?.snapshotStats()"))
+
         for required in [
             "Keychain cannot be found to store data encryption key",
             "not equivalent to a user app launch",
