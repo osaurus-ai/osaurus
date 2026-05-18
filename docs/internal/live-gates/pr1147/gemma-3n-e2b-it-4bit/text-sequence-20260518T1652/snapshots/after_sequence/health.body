@@ -1,0 +1,1 @@
+{"status":"healthy","loaded":["gemma-3n-e2b-it-4bit"],"timestamp":"2026-05-18T23:51:47Z","current_model":"gemma-3n-e2b-it-4bit","inflight":{},"resident_models":[{"idle_seconds_remaining":300,"idle_unload_at":"2026-05-18T23:56:47Z","name":"gemma-3n-e2b-it-4bit","inflight":0,"is_current":true}]}

@@ -1,0 +1,12 @@
+{
+  "model": "gemma-3n-e2b-it-4bit",
+  "stream": false,
+  "max_output_tokens": 64,
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": "Answer exactly 4 and no extra words: what is 2+2?"
+    }
+  ]
+}

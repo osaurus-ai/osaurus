@@ -1,0 +1,32 @@
+{
+  "model": "gemma-3n-e2b-it-4bit",
+  "stream": false,
+  "max_output_tokens": 96,
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": "Answer exactly 4 and no extra words: what is 2+2?"
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": "Okay, let's break this down. It's a bit of a word puzzle!\n\nThe question is asking: **What is 2 + 2?**\n\nThe words are just a distraction. The answer is simply:\n\n**4**\n\n2 + 2 = 4"
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": "In one short sentence, say what number you answered previously and why."
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": "Okay, let's break this down. It's a bit of a word puzzle!\n\nThe question is: **In one short sentence, say what number you answered previously and why.**\n\nThe answer is: **4, because 2 + 2 = 4.**"
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": "Write exactly this UTF-8 string and nothing else: café 東京 🚀"
+    }
+  ]
+}
