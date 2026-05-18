@@ -176,6 +176,9 @@ struct RuntimePolicySourceTests {
         )
         let censusHelper = try Self.source("../../scripts/pr1147_collect_bundle_census.py")
         let routeProbeHelper = try Self.source("../../scripts/pr1147_http_route_probe.py")
+        let keychainLaunchNote = try Self.source(
+            "../../docs/internal/live-gates/20260518T_pr1147_keychain_safe_launch.md"
+        )
 
         #expect(switchDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
         #expect(runtimeDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
@@ -303,6 +306,9 @@ struct RuntimePolicySourceTests {
             "does not close live UI",
             "scripts/pr1147_http_route_probe.py",
             "Do not count a route-probe artifact as model proof",
+            "20260518T_pr1147_keychain_safe_launch.md",
+            "Do not run",
+            "fake `HOME`",
         ] {
             #expect(
                 completionAudit.contains(required),
@@ -342,6 +348,23 @@ struct RuntimePolicySourceTests {
             #expect(
                 routeProbeHelper.contains(required),
                 "missing HTTP route-probe helper requirement: \(required)"
+            )
+        }
+
+        for required in [
+            "Keychain cannot be found to store data encryption key",
+            "not equivalent to a user app launch",
+            "normal LaunchServices",
+            "real user keychain context",
+            "launchctl setenv",
+            "temporary test keychain",
+            "restore the original keychain search list",
+            "route artifacts are blocked",
+            "must not be counted",
+        ] {
+            #expect(
+                keychainLaunchNote.contains(required),
+                "missing keychain-safe launch requirement: \(required)"
             )
         }
     }

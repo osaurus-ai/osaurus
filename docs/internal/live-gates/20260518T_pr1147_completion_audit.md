@@ -170,6 +170,11 @@ Do not count a route-probe artifact as model proof unless the same folder also
 has cache stats, visible output review, parser/no-leak review, timing, and
 memory artifacts for the model row.
 
+Keychain-safe app launch is required for live app/API gates:
+`docs/internal/live-gates/20260518T_pr1147_keychain_safe_launch.md`. Do not run
+the app binary with a fake `HOME`; that can break macOS Keychain access for the
+database encryption key and produces invalid live-gate evidence.
+
 ## Current Audit Outcome
 
 Not complete.
