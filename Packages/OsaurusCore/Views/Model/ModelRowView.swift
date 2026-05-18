@@ -76,15 +76,6 @@ struct ModelRowView: View {
                             .lineLimit(1)
                     }
 
-                    switch downloadState {
-                    case .downloading(let progress):
-                        downloadProgressView(progress: progress, isPaused: false)
-                    case .paused(let progress):
-                        downloadProgressView(progress: progress, isPaused: true)
-                    default:
-                        EmptyView()
-                    }
-
                     Spacer(minLength: 0)
                 }
                 .padding(14)
@@ -158,9 +149,97 @@ struct ModelRowView: View {
                 Spacer(minLength: 0)
             }
             .padding(10)
+
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                headerProgressStrip
+            }
         }
-        .frame(height: 110)
+        .frame(height: 140)
         .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var headerProgressStrip: some View {
+        switch downloadState {
+        case .downloading(let progress):
+            progressStrip(progress: progress, isPaused: false)
+        case .paused(let progress):
+            progressStrip(progress: progress, isPaused: true)
+        default:
+            EmptyView()
+        }
+    }
+
+    private func progressStrip(progress: Double, isPaused: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(.white.opacity(0.25))
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(isPaused ? Color.white.opacity(0.6) : .white)
+                            .frame(width: geometry.size.width * progress)
+                            .animation(.easeOut(duration: 0.3), value: progress)
+                    }
+                }
+                .frame(height: 4)
+
+                Text("\(Int(progress * 100))%")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
+
+                if isPaused, let onResume {
+                    Button(action: onResume) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(Text("Resume download", bundle: .module))
+                } else if !isPaused, let onPause {
+                    Button(action: onPause) {
+                        Image(systemName: "pause.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(Text("Pause download", bundle: .module))
+                }
+
+                if let onCancel {
+                    Button(action: onCancel) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(Text("Cancel download", bundle: .module))
+                }
+            }
+
+            if isPaused {
+                Text("Paused", bundle: .module)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.9))
+            } else if let line = metrics?.formattedLine {
+                Text(line)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            LinearGradient(
+                colors: [.black.opacity(0), .black.opacity(0.55)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 
     @ViewBuilder
@@ -272,75 +351,6 @@ struct ModelRowView: View {
         )
     }
 
-    // MARK: - Download Progress View
-
-    private func downloadProgressView(progress: Double, isPaused: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(theme.tertiaryBackground)
-
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(isPaused ? theme.tertiaryText : theme.accentColor)
-                            .frame(width: geometry.size.width * progress)
-                            .animation(.easeOut(duration: 0.3), value: progress)
-                    }
-                }
-                .frame(height: 6)
-
-                if isPaused, let onResume = onResume {
-                    Button(action: onResume) {
-                        Image(systemName: "play.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(theme.accentColor)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(Text("Resume download", bundle: .module))
-                } else if !isPaused, let onPause = onPause {
-                    Button(action: onPause) {
-                        Image(systemName: "pause.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(Text("Pause download", bundle: .module))
-                }
-
-                if let onCancel = onCancel {
-                    Button(action: onCancel) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(Text("Cancel download", bundle: .module))
-                }
-            }
-
-            if isPaused {
-                Text("Paused", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.warningColor)
-            } else if let line = formattedMetricsLine() {
-                Text(line)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-    }
-
-    // MARK: - Metrics Formatting
-
-    /// Formats download metrics into a single human-readable line
-    ///
-    /// Example output: "150 MB / 2 GB • 5.2 MB/s • ETA 3:45"
-    ///
-    /// - Returns: Formatted string with available metrics, or nil if no metrics exist
-    private func formattedMetricsLine() -> String? {
-        metrics?.formattedLine
-    }
 }
 
 // MARK: - Metadata Pill Component
