@@ -2,7 +2,7 @@
 //  GenerationEventMapper.swift
 //  osaurus
 //
-//  Bridge from vmlx-swift-lm `Generation` events to osaurus's typed
+//  Bridge from vmlx-swift `Generation` events to osaurus's typed
 //  `ModelRuntimeEvent`. Reasoning stripping, tool-call extraction, AND
 //  text-level stop-sequence matching all live inside `BatchEngine.generate`,
 //  so this layer is purely a translation step:

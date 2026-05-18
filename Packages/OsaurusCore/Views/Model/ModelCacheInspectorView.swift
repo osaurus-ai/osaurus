@@ -132,7 +132,7 @@ struct ModelCacheInspectorView: View {
 
 // Note: the previous `InferenceSchedulerSection` HUD was retired together
 // with the osaurus-side priority scheduler. MLX inference is now serialized
-// inside vmlx-swift-lm's `BatchEngine`, which exposes its own queue depth
+// inside vmlx-swift's `BatchEngine`, which exposes its own queue depth
 // counters via signposts. A new HUD can be added here when needed.
 
 // MARK: - Refresh Button

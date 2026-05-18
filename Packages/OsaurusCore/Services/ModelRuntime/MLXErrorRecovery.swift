@@ -19,7 +19,7 @@
 //
 //  ### Why a global handler, not `withErrorHandler`/`withError`
 //
-//  vmlx-swift-lm's `BatchEngine` runs its scheduling loop in a long-lived
+//  vmlx-swift's `BatchEngine` runs its scheduling loop in a long-lived
 //  background `Task` created when the engine is instantiated, not per request.
 //  TaskLocal handlers (the non-deprecated `withErrorHandler` API) only flow
 //  through structured concurrency — they do **not** reach a pre-existing task,

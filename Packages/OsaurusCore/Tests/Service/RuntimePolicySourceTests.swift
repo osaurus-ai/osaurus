@@ -131,25 +131,36 @@ struct RuntimePolicySourceTests {
             "/v1/messages",
             "/api/chat",
             "/api/generate",
+            "Chat UI route",
+            "default cache stack",
+            "Activity Monitor physical footprint",
             "Qwen-VL",
+            "Qwen3VLProcessor",
             "Gemma VLM",
+            "Gemma4",
             "ZAYA-VL",
+            "ZayaCCACache",
             "Nemotron Omni",
+            "Parakeet/RADIO",
             "DSV4",
             "MiniMax",
             "Ling",
             "Hy3",
             "media salt",
+            "media-salt nil",
             "prefix",
             "paged",
             "block L2",
             "SSM companion",
             "vmlx_mtp_tuning.json",
             "generation_config.json",
+            "top-k",
             "reasoning_effort=max",
             "saved settings",
             "no leaked",
             "tool markers",
+            "L2 disk bytes",
+            "MTP status from tuning",
         ] {
             #expect(matrix.contains(required), "missing live-matrix requirement: \(required)")
         }
@@ -212,6 +223,27 @@ struct RuntimePolicySourceTests {
         ] {
             let doc = try Self.source(docPath)
             #expect(!doc.contains("vmlx-swift-lm"), "\(docPath) still names the retired direct inference package")
+        }
+    }
+
+    @Test("Current runtime source comments name consolidated vmlx-swift package")
+    func currentRuntimeSourcesDoNotTeachOldPackageGraph() throws {
+        for relativePath in [
+            "Services",
+            "Views",
+            "Managers",
+        ] {
+            for url in try Self.swiftFiles(under: relativePath) where !url.path.contains("/.build/") {
+                let source = try String(contentsOf: url, encoding: .utf8)
+                #expect(
+                    !source.contains("vmlx-swift-lm"),
+                    "\(url.path) still names the retired direct inference package"
+                )
+                #expect(
+                    !source.contains("mlx-swift-lm"),
+                    "\(url.path) still names the retired direct inference package"
+                )
+            }
         }
     }
 

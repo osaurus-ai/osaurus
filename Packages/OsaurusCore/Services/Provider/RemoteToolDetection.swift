@@ -4,7 +4,7 @@
 //
 //  Best-effort detection of inline tool-call JSON in generated text for the
 //  remote (non-MLX) provider path.  The MLX path delegates to the upstream
-//  ToolCallProcessor from mlx-swift-lm instead.
+//  ToolCallProcessor from vmlx-swift instead.
 //
 
 import Foundation
@@ -16,7 +16,7 @@ import Foundation
 /// `tool_calls` field.  This helper parses those out as a fallback.
 ///
 /// The MLX local-inference path does NOT use this — it delegates entirely to
-/// `ToolCallProcessor` from `MLXLMCommon` (mlx-swift-lm).
+/// `ToolCallProcessor` from `MLXLMCommon` (vmlx-swift).
 enum RemoteToolDetection {
     /// Best-effort detector for inline tool-call JSON in generated text. Returns (toolName, argsJSON).
     ///

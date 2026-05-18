@@ -3,9 +3,9 @@
 //  osaurus
 //
 //  Owns the lifecycle of MLX `ModelContainer` instances and submits each
-//  request through `MLXBatchAdapter` (a thin wrapper over vmlx-swift-lm's
+//  request through `MLXBatchAdapter` (a thin wrapper over vmlx-swift's
 //  `BatchEngine`). KV caching, tool-call parsing, and reasoning extraction
-//  are entirely owned by vmlx-swift-lm — see OSAURUS-INTEGRATION.md.
+//  are entirely owned by vmlx-swift — see OSAURUS-INTEGRATION.md.
 //
 
 import CoreImage
@@ -332,7 +332,7 @@ public actor ModelRuntime {
         currentModelName = name
         Memory.cacheLimit = mlxCacheLimit()
 
-        // Enable multi-tier KV caching via vmlx-swift-lm's CacheCoordinator.
+        // Enable multi-tier KV caching via vmlx-swift's CacheCoordinator.
         // Cache tier config is entirely osaurus-internal — not user-visible.
         await installCacheCoordinator(on: holder)
 
@@ -618,7 +618,7 @@ public actor ModelRuntime {
         }
 
         // Tool-call format + reasoning parser are stamped automatically by
-        // vmlx-swift-lm's LLM/VLM factories from `jang_config.json` capabilities
+        // vmlx-swift's LLM/VLM factories from `jang_config.json` capabilities
         // and `config.json.model_type`. Osaurus no longer resolves them at
         // the app layer — `BatchEngine.generate` reads them directly from
         // the resolved `ModelConfiguration` to emit `.toolCall` events.
@@ -672,7 +672,7 @@ public actor ModelRuntime {
 
     // MARK: - Cache coordinator plumbing
     //
-    // KV caching is package-owned by vmlx-swift-lm — `CacheCoordinator`
+    // KV caching is package-owned by vmlx-swift — `CacheCoordinator`
     // selects model-aware cache types per layer (rotating for sliding-window
     // attention, paged for global attention, SSM state for Mamba layers),
     // sizes them based on the loaded model, and auto-flips into hybrid mode
@@ -757,7 +757,7 @@ public actor ModelRuntime {
     // `ssmMaxEntries`) is left at the library default.
 
     /// Builds a `CacheCoordinatorConfig` with the overrides recommended
-    /// by vmlx-swift-lm's `OSAURUS-INTEGRATION.md` (Coordinator-owned KV
+    /// by vmlx-swift's `OSAURUS-INTEGRATION.md` (Coordinator-owned KV
     /// sizing) plus osaurus's per-environment disk-path config. See the
     /// file-level comment for rationale on each knob.
     private nonisolated static func buildCacheCoordinatorConfig(
@@ -776,7 +776,7 @@ public actor ModelRuntime {
         //
         // The Metal `notifyExternalReferencesNonZeroOnDealloc` crash on the
         // `Cache disk hit … prefilling 0 remaining` path is fixed upstream
-        // in vmlx-swift-lm `0756dc0` ("close trim-path Metal lifecycle crash
+        // in vmlx-swift `0756dc0` ("close trim-path Metal lifecycle crash
         // on full disk-cache hit") — the trimmed compiled-cache list is now
         // forced to realize before its underlying Metal buffers go out of
         // scope. Now wired in through the `0e22eba` pin. The
@@ -1159,7 +1159,7 @@ public actor ModelRuntime {
             modelName: modelName
         )
         // Drain the entire stream so multiple tool invocations parsed by
-        // vmlx-swift-lm in a single completion are surfaced together
+        // vmlx-swift in a single completion are surfaced together
         // (`BatchEngine.generate` emits one `.toolCall` event per detected
         // call, so iterating to natural EOS captures all of them).
         for try await ev in events {
@@ -1208,7 +1208,7 @@ public actor ModelRuntime {
         let producerTask = Task {
             // Collect every tool invocation parsed from this completion. Local
             // models can emit multiple `<tool_call>` blocks per response;
-            // vmlx-swift-lm's `BatchEngine.generate` surfaces each as its own
+            // vmlx-swift's `BatchEngine.generate` surfaces each as its own
             // `.toolCall` event, so we keep iterating until the stream
             // finishes naturally instead of bailing on the first invocation.
             var pendingTools: [ServiceToolInvocation] = []
@@ -1329,7 +1329,7 @@ public actor ModelRuntime {
     /// Build the `GenerateParameters` value handed to `BatchEngine.generate`.
     ///
     /// We deliberately do NOT pass `maxKVSize`. Cache sizing is owned by
-    /// vmlx-swift-lm's `CacheCoordinator` and by each model's own
+    /// vmlx-swift's `CacheCoordinator` and by each model's own
     /// architecture (sliding-window attention layers carry a fixed per-layer
     /// cache window — Gemma-4's is 1024). Forcing a global rotating window
     /// from the app layer here historically caused
@@ -1939,7 +1939,7 @@ public actor ModelRuntime {
     ///    routes to the JANGTQ class purely on the stamp, then
     ///    `TurboQuantSwitchLinear.callAsFunction` `fatalError`s on the first
     ///    forward pass when the runtime cache is empty. (As of
-    ///    `vmlx-swift-lm 9e647a6` vmlx fails-fast with an NSError at load
+    ///    `vmlx-swift 9e647a6` vmlx fails-fast with an NSError at load
     ///    time instead of aborting, but defense-in-depth costs nothing.)
     ///
     /// 2. **Inverse mismatch (mislabeled bundle)**: sidecar IS present but

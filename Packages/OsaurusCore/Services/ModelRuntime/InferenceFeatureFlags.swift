@@ -7,8 +7,8 @@
 //  Today the only knob is `mlxBatchEngineMaxBatchSize` — `BatchEngine` is the
 //  single MLX entry point (no per-request `TokenIterator` fallback) and the
 //  prior osaurus-side scheduler / cooperative-yield / multi-stream gates have
-//  all been retired. Their behaviour is now provided by vmlx-swift-lm's actor
-//  loop (see `vmlx-swift-lm/Libraries/MLXLMCommon/BatchEngine/BATCH_ENGINE.md`).
+//  all been retired. Their behaviour is now provided by vmlx-swift's actor
+//  loop (see `vmlx-swift/Libraries/MLXLMCommon/BatchEngine/BATCH_ENGINE.md`).
 //
 
 import Foundation

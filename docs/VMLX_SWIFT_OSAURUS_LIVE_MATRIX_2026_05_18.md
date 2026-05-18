@@ -50,6 +50,21 @@ Passing unit tests can support a row, but they do not replace live proof.
 | Settings renderer | Server settings and CLI preview show only topology-valid controls and omit invalid flags. | DSV4 checklist locked; other families still need final UI pass. |
 | Tool integration | Tool schema injection, tool-call parsing, and second turn with tool result work for each parser family without cache-breaking prompt drift. | DSV4 live vmlx row passed; remaining families need live API rows. |
 
+## Route-Specific Live Gate
+
+Each route below must be tested with the same default cache stack that a normal
+Osaurus user gets after selecting the model. Do not disable a cache layer just to
+make a row pass unless the row is explicitly an inverse test.
+
+| Route or surface | Required live sequence | Cache and parser evidence |
+|---|---|---|
+| Chat UI route | Open app, select model, inspect settings defaults, send T1 cold prompt, T2 follow-up, T3 model/media switch, Stop/Retry once, quit/reopen and resume. | Visible answer, reasoning pane state, tool card if used, token/s, TTFT, Activity Monitor physical footprint, cache stats before/after each turn. |
+| `/v1/chat/completions` | Stream and non-stream with no sampler fields, tools on/off, reasoning on/off, media where supported. | SSE `[DONE]`, usage, structured `tool_calls`, no parser marker leakage, metadata generation defaults, prefix/paged/L2/SSM/media-salt stats. |
+| `/v1/responses` | Stream and non-stream, standard and reasoning request, previous response/session continuity. | Same cache key and parser behavior as chat completions, no route-specific loss of reasoning/tool events, terminal usage emitted. |
+| `/v1/messages` | Anthropic stream and non-stream for reasoning and media-capable families. | Thinking/tool-use mapping preserved without leaking raw `<think>`, Harmony, DSML, Qwen XML, Hunyuan, MiniMax, or Nemotron tags. |
+| `/api/chat` and `/api/generate` | Ollama stream and non-stream, explicit `stream=false`, model options omitted and supplied. | Proper Ollama tail frame, no hidden app-level sampler defaults, no stale saved reasoning setting entering the request. |
+| Server settings UI | Change batching/cache/sleep/generation/tool/reasoning settings, save, reset, relaunch. | Settings visible only when topology-valid; saved values are scoped to the right model family and do not alter cache scope for another family. |
+
 ## UI Settings Contract
 
 The final Osaurus UI must show defaults from runtime metadata, not stale saved
@@ -112,6 +127,24 @@ For video, include frame count, resize target, EVS/effective prompt token
 count, post-prepare cache key alias, and repeated-video cache hit proof. For
 audio, include Parakeet/pre-encoded embedding evidence and live-voice chunk
 stability when Nemotron Omni is resident.
+
+## Architecture and Cache Topology Checklist
+
+Every model row must declare which cache layers are expected to be active and
+which layers are intentionally N-A. A missing counter is a failure unless the
+model legitimately cannot exercise that layer.
+
+| Architecture or feature | Default Osaurus behavior | Live proof required |
+|---|---|---|
+| Dense/global attention text | Prefix cache, paged cache, and block L2 disk default on when enabled by settings. | T2 prefix hit, paged block allocation or hit counter, L2 disk bytes/stores/hits, lower TTFT than T1. |
+| Sliding-window attention | Engine-selected rotating/sliding cache, no app-forced global `maxKVSize`. | Health/settings show sliding-window topology; long prompt does not broadcast-shape crash; cache reuse remains coherent. |
+| DSV4 Flash SWA+CSA+HSA | Native `DeepseekV4Cache`; generic paged counters may be zero when `pagedIncompatible=true`; generic KV q4/q8 and JIT disabled in UI. | Native DSV4 cache copy, fixed 256 block display row, pool quant visible, DSML tools, reasoning `instruct` and `max`, growing-chat disk restore. |
+| Qwen VL / Qwen3.6 MTP VL | Qwen3VLProcessor, MRoPE/media salt, MTP only from `mtp.*` tensors plus `vmlx_mtp_tuning.json`. | Image+text, text-only media-salt nil, different image miss, video frame row, MTP on/off speed/coherence/cache row, status UI shows tuning depth. |
+| Gemma4/Gemma3n | Gemma4 Harmony parser and Gemma VLM path; Gemma3n text proof does not imply media support. | Harmony reasoning separated, Gemma tool cards structured, image/video rows for Gemma4, Gemma3n media controls hidden unless live media proof exists. |
+| ZAYA / ZAYA-VL CCA | ZayaCCACache/path-dependent CCA state; default no-thinking unless explicitly enabled. | CCA cache state present, image/video turns grounded, direct-mode red rows not hidden by sampler clamps, no stale thinking option from Qwen/DSV4. |
+| Nemotron Omni | Parakeet audio encoder, RADIO vision, video/audio placeholders, media salt and SSM companion isolation. | Live voice pre-encode, audio/video/image/text-only resume, repeated-video cache alias, Parakeet/RADIO evidence, no reasoning-only short-budget false pass. |
+| Hybrid SSM / linear attention | SSM companion cache and optional re-derive only when profitable for the workflow. | SSM hits/misses/stores, no KV-only unsafe hit, coherent multi-turn after prefix mismatch, re-derive status and TTFT captured. |
+| JANG/JANGTQ/TurboQuant | Loader derives real bit metadata from bundle sidecars; no name-only MTP/JANGTQ claims. | JANG/JANGTQ format, TurboQuant KV encode/decode status when enabled, no shape-inferred metadata hidden from logs, no permanent overlay unless explicit diagnostic. |
 
 ## Model Matrix
 

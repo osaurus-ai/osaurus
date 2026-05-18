@@ -99,7 +99,7 @@ struct ServiceToolInvocation: Error, Sendable {
 /// Batch of tool invocations parsed out of a single model completion.
 ///
 /// Local (MLX) models can emit multiple tool-call blocks per response.
-/// vmlx-swift-lm's `BatchEngine.generate` surfaces each as its own
+/// vmlx-swift's `BatchEngine.generate` surfaces each as its own
 /// `Generation.toolCall(ToolCall)` event; `GenerationEventMapper`
 /// translates them to `ModelRuntimeEvent.toolInvocation(...)`, and
 /// `ModelRuntime.streamWithTools` collects them into this batch error so
