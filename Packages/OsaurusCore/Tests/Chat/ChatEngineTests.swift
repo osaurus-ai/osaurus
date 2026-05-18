@@ -45,6 +45,34 @@ struct ChatEngineTests {
         #expect(chat.model == "JANGQ-AI/Hy3-preview-JANGTQ")
     }
 
+    @Test func openResponsesRequest_preservesInputImageIntoChatRequest() throws {
+        let image = "data:image/png;base64,AAAA"
+        let data = Data(
+            """
+            {
+              "model": "zaya1-vl-8b-mxfp4",
+              "input": [
+                {
+                  "type": "message",
+                  "role": "user",
+                  "content": [
+                    {"type": "input_text", "text": "Describe this image."},
+                    {"type": "input_image", "image_url": "\(image)", "detail": "low"}
+                  ]
+                }
+              ]
+            }
+            """.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        let chat = request.toChatCompletionRequest()
+
+        #expect(chat.messages.count == 1)
+        #expect(chat.messages[0].content == "Describe this image.")
+        #expect(chat.messages[0].imageUrls == [image])
+    }
+
     @Test func streamChat_yields_deltas_success() async throws {
         let svc = FakeModelService(deltas: ["a", "b", "c"])
         let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })

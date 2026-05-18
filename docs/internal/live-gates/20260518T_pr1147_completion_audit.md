@@ -219,6 +219,15 @@ ZAYA-VL live sequence checkpoint:
   `docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/`
   completed 10 route rows and wrote per-turn request, response, health,
   cache-stats, and process-memory artifacts.
+- Responses source fix:
+  the `vlm-sequence-20260518T1504/` Responses rows returned generic
+  "media" text because `OpenResponsesRequest.toChatCompletionRequest()`
+  flattened content through `OpenResponsesMessageContent.plainText`, which
+  drops `input_image`. The PR now preserves Responses `input_image` as
+  Chat Completions `MessageContentPart.image_url` and pins it with
+  `ChatEngineTests.openResponsesRequest_preservesInputImageIntoChatRequest`.
+  This is source/test proof only; a fresh keychain-safe live rerun is required
+  before Responses image grounding can be marked passing.
 - review:
   `docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/review.md`
   marks the row FAIL/PARTIAL. Chat grounds the first red image and text-only
@@ -279,8 +288,9 @@ The PR currently has strong source-policy gates, documented model-family
 contracts, startup/server binding proof, and a cold-start
 `/admin/cache-stats` route proof. It now also has one real ZAYA-VL app/API
 artifact set, and that artifact is explicitly red: media switch grounding,
-Responses media grounding, ZAYA-VL video capability, and loaded-model/cache
-reporting are not production-ready. It does not yet have passing live Osaurus
+live Responses media grounding after the source fix, ZAYA-VL video capability,
+and loaded-model/cache reporting are not production-ready. It does not yet have
+passing live Osaurus
 app/API artifact sets for Qwen VL, Gemma VLM, ZAYA-VL, Nemotron Omni, DSV4,
 MiniMax, Ling, Hy3, and other parser families. Do not undraft or call the
 switch production-ready until those artifact folders exist and pass with real

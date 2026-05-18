@@ -430,6 +430,19 @@ extension ChatMessage {
         self.reasoning_content = reasoning_content
     }
 
+    /// Initialize from a route adapter that already normalized OpenAI-style
+    /// multimodal content parts. Keeps media available to `imageUrls`,
+    /// `videoUrls`, and `audioInputs` instead of flattening the message to text.
+    init(role: String, content: String?, contentParts: [MessageContentPart]?) {
+        self.role = role
+        self.content = content
+        self.contentParts = contentParts
+        self.localAudioSamples = []
+        self.tool_calls = nil
+        self.tool_call_id = nil
+        self.reasoning_content = nil
+    }
+
     /// Initialize with multimodal content (text and images)
     init(role: String, text: String, imageData: [Data]) {
         self.role = role

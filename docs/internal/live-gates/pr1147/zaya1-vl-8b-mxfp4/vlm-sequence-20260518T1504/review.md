@@ -46,10 +46,20 @@ The next cache-proof rerun must either set a non-immediate idle residency
 policy through the app/settings path or capture stream-time snapshots while
 the model lease is still held.
 
+Source trace for the Responses generic-media output:
+`OpenResponsesRequest.toChatCompletionRequest()` flattened message content with
+`OpenResponsesMessageContent.plainText`, which preserves only `input_text` and
+drops `input_image`. The PR now has a source/test fix that converts Responses
+`input_text` + `input_image` parts into Chat Completions `MessageContentPart`
+values before entering `MLXBatchAdapter`. This explains the generic Responses
+media answers in this artifact, but it does not make the row green until a
+fresh keychain-safe live rerun shows grounded Responses image output.
+
 ## Consequence
 
 This artifact is useful proof that the live app/API path is being exercised,
 but it is not production proof for ZAYA-VL. The row remains red until the media
-switch grounding, Responses media handling, unsupported-video capability, and
-loaded-model/cache-stats proof path are root-caused and fixed without sampler
-or prompt guards.
+switch grounding, source-fixed Responses media handling, unsupported-video
+capability, and loaded-model/cache-stats proof path are root-caused and fixed
+without sampler or prompt guards. Source-level Responses image preservation is
+fixed; live Responses grounding is still unproven in this artifact.
