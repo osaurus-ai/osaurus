@@ -179,6 +179,9 @@ struct RuntimePolicySourceTests {
         let keychainLaunchNote = try Self.source(
             "../../docs/internal/live-gates/20260518T_pr1147_keychain_safe_launch.md"
         )
+        let executionManifest = try Self.source(
+            "../../docs/internal/live-gates/20260518T_pr1147_live_user_api_execution_manifest.md"
+        )
 
         #expect(switchDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
         #expect(runtimeDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
@@ -309,6 +312,9 @@ struct RuntimePolicySourceTests {
             "20260518T_pr1147_keychain_safe_launch.md",
             "Do not run",
             "fake `HOME`",
+            "20260518T_pr1147_live_user_api_execution_manifest.md",
+            "source anchors",
+            "UI/API/cache/parser",
         ] {
             #expect(
                 completionAudit.contains(required),
@@ -365,6 +371,34 @@ struct RuntimePolicySourceTests {
             #expect(
                 keychainLaunchNote.contains(required),
                 "missing keychain-safe launch requirement: \(required)"
+            )
+        }
+
+        for required in [
+            "Source Anchors to Verify During Live Rows",
+            "ModelRuntime.swift",
+            "MLXBatchAdapter.swift",
+            "GenerationEventMapper.swift",
+            "LocalGenerationDefaults.swift",
+            "ModelMediaCapabilities.swift",
+            "HTTPHandler.swift",
+            "Every live model folder must live under",
+            "DSV4 Flash",
+            "Qwen VL / Qwen3.6 MTP VL",
+            "Gemma4 / Gemma VLM",
+            "Gemma3n text",
+            "ZAYA / ZAYA-VL",
+            "Nemotron Omni / Parakeet / RADIO",
+            "MiniMax",
+            "Ling / Hy3 / hybrid SSM",
+            "Inverse Rows",
+            "Request Construction Checks",
+            "UI and Saved-Setting Carryover Checks",
+            "No row in this manifest is production-clear",
+        ] {
+            #expect(
+                executionManifest.contains(required),
+                "missing live execution manifest requirement: \(required)"
             )
         }
     }

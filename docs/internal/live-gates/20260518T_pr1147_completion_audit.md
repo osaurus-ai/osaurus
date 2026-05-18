@@ -175,6 +175,12 @@ Keychain-safe app launch is required for live app/API gates:
 the app binary with a fake `HOME`; that can break macOS Keychain access for the
 database encryption key and produces invalid live-gate evidence.
 
+The per-family execution manifest for the remaining real-user rows is:
+`docs/internal/live-gates/20260518T_pr1147_live_user_api_execution_manifest.md`.
+It names the source anchors, artifact file contract, UI/API/cache/parser
+inverses, saved-setting carryover rows, and model-family sequences that must
+exist before this PR can be undrafted.
+
 ## Current Audit Outcome
 
 Not complete.
