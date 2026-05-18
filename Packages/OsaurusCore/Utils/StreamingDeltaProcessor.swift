@@ -6,7 +6,7 @@
 //  buffering and per-frame UI sync.
 //
 //  Reasoning routing is owned by the engine layer:
-//    - Local MLX models: vmlx-swift-lm's `BatchEngine.generate` emits
+//    - Local MLX models: vmlx-swift's `BatchEngine.generate` emits
 //      `Generation.reasoning(String)` deltas on a dedicated channel.
 //      `GenerationEventMapper` translates each one to
 //      `ModelRuntimeEvent.reasoning(_:)`, which `streamWithTools`

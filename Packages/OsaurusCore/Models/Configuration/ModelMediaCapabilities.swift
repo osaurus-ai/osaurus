@@ -19,7 +19,7 @@
 //   - Audio support today is exclusively Nemotron-3-Nano-Omni — gated by
 //     the `config_omni.json` sidecar.
 //
-//  The matrix here mirrors `vmlx-swift-lm/Libraries/MLXLMCommon/
+//  The matrix here mirrors `vmlx-swift/Libraries/MLXLMCommon/
 //  BatchEngine/MEDIA-MODEL-MATRIX.md`. Keep them in sync — when vmlx
 //  adds video support to a new family (e.g. Mistral 3.5 follow-up),
 //  update both this matcher AND the matrix doc.

@@ -177,7 +177,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await StorageMaintenance.shared.start()
         }
 
-        // DSV4 cache topology is owned by vmlx-swift-lm. Leave
+        // DSV4 cache topology is owned by vmlx-swift. Leave
         // `DSV4_KV_MODE` unset here so the library default uses its
         // production SWA+CSA+HSA hybrid cache; explicit operator env vars
         // remain honored by vmlx for diagnostics.

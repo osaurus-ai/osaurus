@@ -145,8 +145,8 @@ ready, the final renderer needs a row proving all of:
 
 - native DSV4 cache copy is present and displayed as the active
   SWA+CSA+HSA / `DeepseekV4Cache` topology;
-- paged block-size control is fixed/disabled for DSV4, including the expected
-  256 display row when active runtime metadata reports that value, and no
+- paged block-size control is fixed/disabled at 256 for DSV4 when active
+  runtime metadata reports that value, and no
   generic paged block-size override is passed back to vmlx for DSV4;
 - generic KV q4/q8 controls are disabled for DSV4 unless an operator
   deliberately selects the diagnostic `DSV4_KV_MODE=tq` path;

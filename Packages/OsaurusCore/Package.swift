@@ -28,8 +28,8 @@ let package = Package(
         // Single consolidated vMLX dependency. This package vendors the MLX,
         // MLXLMCommon, MLXLLM, MLXVLM, Tokenizers, Jinja, cache, parser,
         // MTP, and media-runtime surfaces Osaurus previously pulled from
-        // separate mlx-swift / vmlx-swift-lm / swift-transformers / Jinja
-        // pins. Keep this revision pinned until the package-switch gate has
+        // separate MLX, inference, tokenizer, template, and transformer pins.
+        // Keep this revision pinned until the package-switch gate has
         // live model, cache, parser, API, and UI evidence.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",

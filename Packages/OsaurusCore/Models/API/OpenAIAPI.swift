@@ -529,7 +529,7 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// OpenAI tool_choice ("none" | "auto" | {"type":"function","function":{"name":...}})
     let tool_choice: ToolChoiceOption?
     /// Optional session identifier for chat/history grouping. Not a KV cache key —
-    /// vmlx-swift-lm's `CacheCoordinator` is content-addressed and discovers
+    /// vmlx-swift's `CacheCoordinator` is content-addressed and discovers
     /// reusable prefixes autonomously.
     var session_id: String? = nil
     /// Deterministic-sampling seed (OpenAI v1.x). When set, identical

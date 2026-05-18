@@ -51,7 +51,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
 
     /// Legacy: maximum KV cache size in tokens.
     ///
-    /// No longer applied at runtime — vmlx-swift-lm's `CacheCoordinator` owns
+    /// No longer applied at runtime — vmlx-swift's `CacheCoordinator` owns
     /// KV cache sizing per model (sliding-window vs global vs SSM layers each
     /// have their own per-layer cache geometry). Forcing a global rotating
     /// window from osaurus historically caused broadcast crashes on
@@ -61,7 +61,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     public var genMaxKVSize: Int?
 
     // KV cache quantization (kvBits, kvGroupSize, quantizedKVStart, turboQuant)
-    // and prefill step sizing are owned by the vmlx-swift-lm package.
+    // and prefill step sizing are owned by the vmlx-swift package.
 
     /// List of allowed origins for CORS. Empty disables CORS. Use "*" to allow any origin.
     public var allowedOrigins: [String]

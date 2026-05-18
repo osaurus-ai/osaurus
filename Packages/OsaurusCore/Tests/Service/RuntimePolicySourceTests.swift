@@ -91,8 +91,7 @@ struct RuntimePolicySourceTests {
             "native DSV4 cache copy",
             "SWA+CSA+HSA",
             "DeepseekV4Cache",
-            "paged block-size control is fixed/disabled",
-            "256 display row",
+            "block-size control is fixed/disabled at 256",
             "generic KV q4/q8 controls are disabled",
             "pool quant state is visible",
             "JIT is disabled",
@@ -229,7 +228,24 @@ struct RuntimePolicySourceTests {
     @Test("Current runtime source comments name consolidated vmlx-swift package")
     func currentRuntimeSourcesDoNotTeachOldPackageGraph() throws {
         for relativePath in [
+            "Package.swift",
+            "AppDelegate.swift",
+        ] {
+            let source = try Self.source(relativePath)
+            #expect(
+                !source.contains("vmlx-swift-lm"),
+                "\(relativePath) still names the retired direct inference package"
+            )
+            #expect(
+                !source.contains("mlx-swift-lm"),
+                "\(relativePath) still names the retired direct inference package"
+            )
+        }
+
+        for relativePath in [
+            "Models",
             "Services",
+            "Utils",
             "Views",
             "Managers",
         ] {
