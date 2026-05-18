@@ -1,5 +1,5 @@
 <p align="center">
-<img width="1920" height="1080" alt="osaurus-techcrunch-1" src="https://github.com/user-attachments/assets/8614b2a6-8b12-487f-983d-5f51aa6e1825" />
+<img width="1920" height="1080" alt="osaurus-techcrunch-1" src="https://github.com/user-attachments/assets/d7905005-71fe-41ba-b69f-e8968af29b5c" />
 </p>
 
 <h1 align="center">Osaurus</h1>
