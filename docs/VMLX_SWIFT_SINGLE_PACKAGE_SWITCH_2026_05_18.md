@@ -8,7 +8,7 @@ consolidated `vmlx-swift` package.
 OsaurusCore now has one direct inference dependency:
 
 - `https://github.com/osaurus-ai/vmlx-swift`
-- revision `783f2c0c3a2215471a7ad5e80530132f77fbdc17`
+- revision `6a03b76baaa84d249989fdf7c5fd832437811405`
 
 That package is expected to export the runtime modules Osaurus previously pulled
 from separate roots:
@@ -123,3 +123,12 @@ is passed through to `vmlx-swift` as `reasoning_effort: "max"` with thinking
 enabled. Osaurus must not downgrade it to `"high"` behind an environment flag;
 if max-mode output is incoherent, that is an engine/runtime issue to reproduce
 and fix in `vmlx-swift`.
+
+Live DSV4 tool-call proof on 2026-05-18 used
+`DeepSeek-V4-Flash-JANGTQ-K` through `BENCH_BATCH_TOOLCALL=1`. Pre-fix raw
+decode produced a valid DSML envelope with an abbreviated invoke close
+`</｜DSML｜inv>`, which the strict parser dropped, yielding blank visible text
+and zero `.toolCall` events. The pinned `vmlx-swift` revision now accepts that
+observed DSV4 variant in the DSML parser. Post-fix live output emitted one
+structured `get_weather({"location":"Tokyo"})` call, no raw DSML marker leakage
+in `.chunk`, and no reasoning leakage.
