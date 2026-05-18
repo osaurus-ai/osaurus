@@ -33,6 +33,10 @@ struct ConfigurationView: View {
     @State private var tempCoreModelName: String = ""
     @State private var coreModelPickerItems: [ModelPickerItem] = []
     @State private var tempEnableClipboardMonitoring: Bool = false
+    /// Master switch for AI-generated empty-state greetings. Defaults to
+    /// OFF; users opt in here. Per-agent overrides on
+    /// `AgentSettings.generativeGreetingsEnabled` still win when set.
+    @State private var tempGenerativeGreetingsEnabled: Bool = false
     /// Free-text "voice" instruction for AI-generated empty-state
     /// greetings. Empty = use the built-in playful default. Per-agent
     /// overrides live on `AgentSettings.greetingPersona`.
@@ -380,14 +384,23 @@ struct ConfigurationView: View {
                                     SettingsDivider()
 
                                     SettingsSubsection(label: "Generative Greetings") {
-                                        VStack(alignment: .leading, spacing: 8) {
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            VStack(alignment: .leading, spacing: 8) {
+                                                Toggle(isOn: $tempGenerativeGreetingsEnabled) {
+                                                    Text("AI-generated greetings", bundle: .module)
+                                                        .font(.system(size: 12))
+                                                }
+                                                Text(
+                                                    "Off by default. When on, each empty state generates a fresh greeting + quick actions on the configured Core Model. The first generation can feel slow on small models like Foundation; the static greeting still paints instantly. Per-agent overrides in the Customization tab still win.",
+                                                    bundle: .module
+                                                )
+                                                .font(.system(size: 11))
+                                                .foregroundColor(theme.tertiaryText)
+                                            }
+
                                             personalityEditorBlock
-                                            Text(
-                                                "Each agent runs at most one generation per session on the configured Core Model, with a silent fallback to the static defaults on any failure. The feature is on automatically whenever a Core Model is configured; flip it off per-agent in the Customization tab.",
-                                                bundle: .module
-                                            )
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.tertiaryText)
+                                                .disabled(!tempGenerativeGreetingsEnabled)
+                                                .opacity(tempGenerativeGreetingsEnabled ? 1 : 0.5)
                                         }
                                     }
 
@@ -818,6 +831,7 @@ struct ConfigurationView: View {
         tempCoreModelProvider = chat.coreModelProvider ?? ""
         tempCoreModelName = chat.coreModelName ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
+        tempGenerativeGreetingsEnabled = chat.generativeGreetingsEnabled
         // Storage convention: empty string = "use the built-in default."
         // The editor never displays an empty state — we hydrate it with
         // the built-in default so the text is selectable, copyable, and
@@ -882,6 +896,7 @@ struct ConfigurationView: View {
         tempCoreModelProvider = chatDefaults.coreModelProvider ?? ""
         tempCoreModelName = chatDefaults.coreModelName ?? ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
+        tempGenerativeGreetingsEnabled = chatDefaults.generativeGreetingsEnabled
         // Match `loadConfiguration`: hydrate the editor with the
         // built-in default rather than leaving it blank. Saving with
         // this exact text collapses back to "" so future default
@@ -1052,6 +1067,7 @@ struct ConfigurationView: View {
             preflightSearchMode: tempPreflightSearchMode,
             disableTools: tempDisableTools,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
+            generativeGreetingsEnabled: tempGenerativeGreetingsEnabled,
             greetingPersona: {
                 // Collapse an unedited built-in default back to "" so
                 // the storage stays in "inherit the default" mode.

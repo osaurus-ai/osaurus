@@ -123,11 +123,14 @@ struct ChatEmptyState: View {
     let agents: [Agent]
     let activeAgentId: UUID
     let quickActions: [AgentQuickAction]
-    /// Lifecycle of the AI-produced greeting/subtitle/actions. `.idle` and
-    /// `.failed` render the static defaults, `.loading` shows an animated
-    /// skeleton, and `.ready(payload)` shows the generated content with a
-    /// shimmer fade-in. Defaults to `.idle` so previews and tests don't
-    /// have to opt in.
+    /// Lifecycle of the AI-produced greeting/subtitle/actions. `.idle`,
+    /// `.loading`, and `.failed` all render the static defaults (the
+    /// agent's configured greeting + quick actions, or the time-of-day
+    /// fallback). Only `.ready(payload)` swaps in the AI content, with
+    /// a shimmer fade-in. We deliberately don't render a skeleton during
+    /// `.loading` — small Core Models can take several seconds to
+    /// produce a greeting, and a skeleton makes that wait feel slow
+    /// even though the static greeting is perfectly usable.
     var generativeGreetingState: GenerativeGreetingState = .idle
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
@@ -148,12 +151,6 @@ struct ChatEmptyState: View {
     private var readyGreeting: GenerativeGreeting? {
         if case .ready(let g) = generativeGreetingState { return g }
         return nil
-    }
-
-    /// True while inference is in flight — drives the skeleton render.
-    private var isLoadingGenerativeGreeting: Bool {
-        if case .loading = generativeGreetingState { return true }
-        return false
     }
 
     /// Title text rendered above the subtitle. Resolution order:
@@ -220,14 +217,6 @@ struct ChatEmptyState: View {
         return "static"
     }
 
-    /// Coarse identity that flips between skeleton and content blocks. We
-    /// fold all non-loading states (idle, ready, failed) into a single
-    /// "content" key so the cross-fade plays exactly once on the
-    /// loading→content boundary instead of also retriggering on failure.
-    private var contentBlockKey: String {
-        isLoadingGenerativeGreeting ? "skeleton" : "content"
-    }
-
     var body: some View {
         GeometryReader { geometry in
             ScrollView(.vertical, showsIndicators: false) {
@@ -270,34 +259,23 @@ struct ChatEmptyState: View {
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
 
-            // Skeleton vs real content. Pure cross-fade so the arrival
-            // reads as a "shimmer fade load": the skeleton dissolves
-            // while `realGreetingBlock`'s `shimmerFadeIn` modifiers
-            // sweep a gradient across the freshly visible text and
-            // quick-actions. A spring would re-introduce a perceptible
-            // vertical wiggle here — `easeOut(0.45)` keeps the
-            // transition flat and quiet.
-            ZStack {
-                if isLoadingGenerativeGreeting {
-                    GreetingSkeleton()
-                        .transition(.opacity)
-                } else {
-                    realGreetingBlock
-                        .transition(.opacity)
-                }
-            }
-            .animation(.easeOut(duration: 0.45), value: contentBlockKey)
+            // Always paint the greeting block. When the AI response
+            // arrives later (state flips to `.ready`), the
+            // `shimmerFadeIn` modifiers inside sweep a highlight
+            // across the new text + quick actions so the swap reads
+            // as intentional rather than a hard cut.
+            greetingBlock
         }
         .padding(.horizontal, 40)
     }
 
-    /// The real (non-skeleton) greeting + subtitle + quick actions block.
-    /// Rendered for `.idle`, `.failed`, and `.ready`. The shimmer-fade-in
-    /// modifier inside is a no-op until the generative fingerprint
-    /// becomes non-static, at which point it sweeps once across the new
-    /// content.
+    /// Greeting + subtitle + quick actions block. Rendered for every
+    /// generative state — including `.loading` — so the empty state
+    /// always paints instantly. When `.ready` finally lands, the
+    /// `shimmerFadeIn` modifiers below sweep a highlight across the
+    /// freshly visible text and quick-action grid as a soft swap-in cue.
     @ViewBuilder
-    private var realGreetingBlock: some View {
+    private var greetingBlock: some View {
         VStack(spacing: 14) {
             VStack(spacing: 8) {
                 HStack(spacing: 6) {
@@ -403,120 +381,6 @@ struct ChatEmptyState: View {
         case 12 ..< 17: return L("Good afternoon")
         case 17 ..< 22: return L("Good evening")
         default: return L("Hello")
-        }
-    }
-}
-
-// MARK: - Greeting Skeleton
-
-/// Animated placeholder shown while `GenerativeGreetingService` is in
-/// flight. Layout is hand-tuned to match `realGreetingBlock`'s metrics so
-/// the loading→ready cross-fade introduces zero layout shift: a wide
-/// title bar (greeting), a narrower bar (subtitle), then four
-/// rounded-rect cards in the same 2x2 grid as `staggeredQuickActions`.
-/// Shimmer pattern mirrors `OnboardingButtons`' `shimmerPhase` —
-/// continuous left-to-right sweep that reads as "thinking" without being
-/// loud.
-private struct GreetingSkeleton: View {
-    @Environment(\.theme) private var theme
-    @State private var phase: CGFloat = -0.4
-
-    var body: some View {
-        VStack(spacing: 14) {
-            VStack(spacing: 8) {
-                placeholderBar(width: 200, height: 24, corner: 6)
-                placeholderBar(width: 260, height: 16, corner: 5)
-            }
-
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: 12),
-                    GridItem(.flexible(), spacing: 12),
-                ],
-                spacing: 12
-            ) {
-                ForEach(0 ..< 4, id: \.self) { _ in
-                    placeholderCard
-                }
-            }
-            .frame(maxWidth: 440)
-        }
-        .onAppear {
-            // Continuous sweep — repeatForever drives the shimmer until
-            // the parent swaps the skeleton out for the real content
-            // block. SwiftUI tears down the @State on disappear so the
-            // next mount restarts cleanly.
-            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: false)) {
-                phase = 1.4
-            }
-        }
-    }
-
-    /// Single horizontal bar (used for the greeting and subtitle lines).
-    private func placeholderBar(width: CGFloat, height: CGFloat, corner: CGFloat) -> some View {
-        let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
-        return
-            shape
-            .fill(baseFill)
-            .frame(width: width, height: height)
-            .overlay(shimmerBand(width: width).clipShape(shape))
-    }
-
-    /// One quick-action card, sized to roughly match `QuickActionButton`'s
-    /// 16pt vertical padding + 13pt label height. We only render an inner
-    /// label bar instead of mimicking the icon/arrow chrome so the
-    /// skeleton reads as "filling in" rather than promising specific
-    /// glyphs.
-    private var placeholderCard: some View {
-        let cardShape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-        return ZStack(alignment: .leading) {
-            cardShape
-                .fill(baseFill)
-                .overlay(
-                    cardShape.strokeBorder(
-                        theme.primaryBorder.opacity(theme.isDark ? 0.3 : 0.5),
-                        lineWidth: 1
-                    )
-                )
-
-            // Inner "label" bar — placed at the same horizontal inset as
-            // a real `QuickActionButton`'s text would sit (16pt padding +
-            // 20pt icon column + 10pt gap = ~46pt from leading edge).
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(theme.primaryText.opacity(theme.isDark ? 0.18 : 0.14))
-                .frame(width: 110, height: 10)
-                .padding(.leading, 46)
-        }
-        .frame(height: 50)
-        .overlay(shimmerBand(width: nil).clipShape(cardShape))
-    }
-
-    /// Base fill used by both the bars and the cards. Slightly more
-    /// opaque than `QuickActionButton`'s idle background so the skeleton
-    /// reads as "placeholder" rather than "empty button".
-    private var baseFill: Color {
-        theme.secondaryBackground.opacity(theme.isDark ? 0.55 : 0.85)
-    }
-
-    /// Moving highlight band layered over each placeholder. We keep the
-    /// gradient narrow (40pt-ish) so it feels like a sweep instead of a
-    /// flood, and apply a small blur so the edge isn't sharp on Retina.
-    private func shimmerBand(width: CGFloat?) -> some View {
-        GeometryReader { geo in
-            let drawWidth = width ?? geo.size.width
-            LinearGradient(
-                colors: [
-                    .clear,
-                    theme.primaryText.opacity(theme.isDark ? 0.20 : 0.14),
-                    .clear,
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .frame(width: 60)
-            .offset(x: phase * drawWidth)
-            .blur(radius: 1.5)
-            .allowsHitTesting(false)
         }
     }
 }

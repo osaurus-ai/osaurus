@@ -502,10 +502,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Storage quota + per-run cost ceilings (Phase 4).
     public var limits: AgentLimitsSettings
     /// Per-agent on/off for the generative greetings feature.
-    /// `nil` means "auto" — the feature runs whenever a Core Model is
-    /// configured, the canonical sync proxy used elsewhere
-    /// (`MemoryService.hasCoreModel()`). Explicit `true`/`false` always
-    /// wins over the auto resolution.
+    /// `nil` defers to the global master switch on
+    /// `ChatConfiguration.generativeGreetingsEnabled` (opt-in,
+    /// default off). Explicit `true`/`false` always wins over the
+    /// global flag — see `Agent.shouldUseGenerativeGreetings`.
     public var generativeGreetingsEnabled: Bool?
     /// Per-agent override for the empty-state greeting voice. `nil` (or
     /// an empty string after trimming) inherits the global persona from
@@ -593,11 +593,11 @@ public struct AgentSettings: Codable, Sendable, Equatable {
 
 extension Agent {
     /// Resolves whether generative greetings should run for this agent.
-    /// Explicit per-agent on/off always wins; otherwise we auto-enable
-    /// the feature whenever a Core Model is configured. Pass
-    /// `coreModelConfigured: AppConfiguration.shared.chatConfig.coreModelIdentifier != nil`
-    /// at the call site (the canonical sync proxy used elsewhere).
-    public func shouldUseGenerativeGreetings(coreModelConfigured: Bool) -> Bool {
-        settings.generativeGreetingsEnabled ?? coreModelConfigured
+    /// Explicit per-agent on/off always wins; otherwise the value falls
+    /// through to the global master switch on `ChatConfiguration`. Pass
+    /// `globallyEnabled: AppConfiguration.shared.chatConfig.generativeGreetingsEnabled`
+    /// at the call site.
+    public func shouldUseGenerativeGreetings(globallyEnabled: Bool) -> Bool {
+        settings.generativeGreetingsEnabled ?? globallyEnabled
     }
 }

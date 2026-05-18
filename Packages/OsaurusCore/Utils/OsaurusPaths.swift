@@ -391,6 +391,12 @@ public enum OsaurusPaths {
     public static func transcriptionConfigFile() -> URL { voiceConfig().appendingPathComponent("transcription.json") }
     public static func remoteProviderConfigFile() -> URL { providers().appendingPathComponent("remote.json") }
     public static func mcpProviderConfigFile() -> URL { providers().appendingPathComponent("mcp.json") }
+    /// On-disk cache for `GenerativeGreetingPool` so app-launches start
+    /// with already-warmed greetings instead of a cold inference path.
+    /// One JSON file, tiny payload (a handful of strings per agent).
+    public static func greetingPoolCacheFile() -> URL {
+        cache().appendingPathComponent("greeting-pool.json")
+    }
     public static func workDatabaseFile() -> URL { workData().appendingPathComponent("work.db") }
     public static func memoryDatabaseFile() -> URL { memory().appendingPathComponent("memory.sqlite") }
     public static func chatHistoryDatabaseFile() -> URL {

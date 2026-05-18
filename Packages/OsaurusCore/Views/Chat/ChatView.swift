@@ -67,16 +67,15 @@ private struct GenerativeGreetingTrigger: ViewModifier {
     }
 
     private func trigger() {
-        // The master "enable generative greetings" toggle in Settings was
-        // retired in favor of a per-agent on/off (auto-on when a Core
-        // Model is configured). The Core-Model presence check here is
-        // the canonical sync proxy used elsewhere — see
-        // `MemoryService.hasCoreModel()`.
-        let coreModelConfigured =
-            AppConfiguration.shared.chatConfig.coreModelIdentifier != nil
+        // AI greetings are an opt-in master switch on Settings → Chat;
+        // per-agent values can still flip the resolved state on/off
+        // independently. We read the global flag synchronously here so
+        // the trigger stays cheap.
+        let globallyEnabled =
+            AppConfiguration.shared.chatConfig.generativeGreetingsEnabled
         session.loadGenerativeGreetingIfNeeded(
             agent: windowState.activeAgent,
-            coreModelConfigured: coreModelConfigured
+            globallyEnabled: globallyEnabled
         )
     }
 }
@@ -911,8 +910,8 @@ final class ChatSession: ObservableObject {
     /// flight) → `ready(payload)` on success, `failed` on any throw or
     /// cancellation. The UI uses `loading` to render a skeleton, and both
     /// `idle` and `failed` to render the static fallback.
-    func loadGenerativeGreetingIfNeeded(agent: Agent, coreModelConfigured: Bool) {
-        guard agent.shouldUseGenerativeGreetings(coreModelConfigured: coreModelConfigured) else {
+    func loadGenerativeGreetingIfNeeded(agent: Agent, globallyEnabled: Bool) {
+        guard agent.shouldUseGenerativeGreetings(globallyEnabled: globallyEnabled) else {
             generativeGreetingState = .idle
             generativeGreetingKey = nil
             generativeGreetingTask?.cancel()

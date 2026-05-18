@@ -353,6 +353,31 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 name: NSWindow.didBecomeKeyNotification,
                 object: nil
             )
+
+            // Once the initial window has had a beat to settle, prewarm
+            // the AI-greeting pool for whichever (agent, model) the
+            // user last had open. This is purely additive: if the user
+            // opens a *different* agent first, the chat view's own
+            // `setActive` / `warmUp` calls will still drive the right
+            // pool — but for the common "reopen the same agent I just
+            // had" workflow this trims the cold inference wait off the
+            // first chat session of the launch.
+            prewarmGreetingPoolIfEnabled()
+        }
+    }
+
+    /// Fire-and-forget launch prewarm. Skipped when the global AI
+    /// greetings toggle is off, when no last-active context was ever
+    /// recorded (fresh install), or when that agent is no longer in
+    /// the store (it was deleted between launches).
+    @MainActor
+    private func prewarmGreetingPoolIfEnabled() {
+        guard AppConfiguration.shared.chatConfig.generativeGreetingsEnabled,
+            let last = GenerativeGreetingPool.lastActiveContext(),
+            let agent = AgentManager.shared.agents.first(where: { $0.id == last.agentId })
+        else { return }
+        Task.detached(priority: .utility) { [agent, model = last.model] in
+            await GenerativeGreetingPool.shared.warmUp(for: agent, model: model)
         }
     }
 
@@ -663,6 +688,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         ToastWindowController.shared.teardown()
         NotchWindowController.shared.teardown()
         SharedConfigurationService.shared.remove()
+        // `applicationWillTerminate` is sync and the process exits as
+        // soon as it returns. Bridge to the actor synchronously so
+        // any debounced greeting-pool entries land on disk — without
+        // this, a quit within the 1s save debounce silently throws
+        // away the latest seeds and the next launch is cold again.
+        flushGreetingPoolSync()
+    }
+
+    /// Synchronously bridge to the greeting-pool actor so its
+    /// debounced save lands before the process exits. Capped at
+    /// 1.5s so a stalled write can't block the user's quit.
+    private func flushGreetingPoolSync() {
+        let done = DispatchSemaphore(value: 0)
+        Task.detached(priority: .userInitiated) {
+            await GenerativeGreetingPool.shared.flushPendingSave()
+            done.signal()
+        }
+        _ = done.wait(timeout: .now() + 1.5)
     }
 
     // MARK: Status Item / Menu

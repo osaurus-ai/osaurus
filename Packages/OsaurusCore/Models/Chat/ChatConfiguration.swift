@@ -105,13 +105,19 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var enableClipboardMonitoring: Bool
 
     // MARK: - Generative Greetings
+    /// Global master switch for the AI-generated empty-state greetings.
+    /// Defaults to `false` because the first generation against a small
+    /// Core Model (Foundation in particular) blocks for several seconds
+    /// and the output quality varies — opt-in keeps the chat empty state
+    /// snappy out of the box. Per-agent `AgentSettings.generativeGreetingsEnabled`
+    /// still wins when explicitly set; `nil` (the per-agent default)
+    /// inherits this global flag.
+    public var generativeGreetingsEnabled: Bool
     /// Free-text "voice" instruction that shapes the AI-generated empty-state
     /// greetings and quick actions. Empty string means "use the built-in
     /// playful default" baked into `GenerativeGreetingService`. Per-agent
     /// overrides live on `AgentSettings.greetingPersona` and take precedence
-    /// when non-empty. Whether the feature runs at all is decided per-agent
-    /// via `AgentSettings.generativeGreetingsEnabled` (auto-on when a Core
-    /// Model is configured).
+    /// when non-empty.
     public var greetingPersona: String
 
     public init(
@@ -136,6 +142,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultManualToolNames: [String]? = nil,
         defaultManualSkillNames: [String]? = nil,
         enableClipboardMonitoring: Bool = true,
+        generativeGreetingsEnabled: Bool = false,
         greetingPersona: String = ""
     ) {
         self.hotkey = hotkey
@@ -159,6 +166,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.defaultManualToolNames = defaultManualToolNames
         self.defaultManualSkillNames = defaultManualSkillNames
         self.enableClipboardMonitoring = enableClipboardMonitoring
+        self.generativeGreetingsEnabled = generativeGreetingsEnabled
         self.greetingPersona = greetingPersona
     }
 
@@ -200,12 +208,13 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             forKey: .defaultManualSkillNames
         )
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
-        // Older persisted JSON may carry an `enableGenerativeGreetings`
-        // boolean from before the master toggle was retired in favor of
-        // a per-agent on/off (auto-on when a Core Model is configured).
-        // Auto-synthesized `Codable` ignores unknown keys on decode so
-        // we don't have to mention it here — the legacy value is simply
-        // dropped on the next save.
+        // Master switch for AI-generated greetings. Older persisted JSON
+        // may carry an `enableGenerativeGreetings` boolean from a prior
+        // shape of this toggle — auto-synthesized `Codable` ignores
+        // unknown keys, so legacy values are simply dropped on the next
+        // save. Default `false` matches the new opt-in behavior.
+        generativeGreetingsEnabled =
+            try container.decodeIfPresent(Bool.self, forKey: .generativeGreetingsEnabled) ?? false
         greetingPersona = try container.decodeIfPresent(String.self, forKey: .greetingPersona) ?? ""
     }
 
@@ -238,12 +247,14 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             defaultAutonomousExec: nil,
             preflightSearchMode: .balanced,
             enableClipboardMonitoring: true,
+            // Master AI-greetings switch defaults to OFF: cold-start cost
+            // and small-model output quality made it a poor default. Users
+            // opt in from Settings → Chat or per-agent in the Customization
+            // tab.
+            generativeGreetingsEnabled: false,
             // Empty persona = "use built-in playful default". Users opt
             // into a custom voice from Settings → Chat (or per-agent
-            // override in the Customization tab). The on/off decision
-            // moved off `ChatConfiguration` entirely — it's now a
-            // per-agent setting that auto-resolves to true when a Core
-            // Model is configured.
+            // override in the Customization tab).
             greetingPersona: ""
         )
     }

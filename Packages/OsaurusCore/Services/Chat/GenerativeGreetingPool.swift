@@ -37,14 +37,36 @@ public actor GenerativeGreetingPool {
     /// inference path. The `agentRevision` (a hash over persona +
     /// system prompt + persona-relevant settings) lets us discard
     /// stale entries when an agent is edited without waiting for TTL.
-    private struct Entry {
+    /// `Codable` so the pool can survive app relaunches via
+    /// `OsaurusPaths.greetingPoolCacheFile()` — the very first chat
+    /// open after a relaunch would otherwise always pay the cold
+    /// inference cost.
+    private struct Entry: Codable {
         let greeting: GenerativeGreeting
         let model: String
         let agentRevision: Int
         let createdAt: Date
     }
 
+    /// On-disk envelope for `pools`. Versioned so a future format
+    /// change can reject older payloads cleanly rather than crashing
+    /// the decoder.
+    private struct PersistedPool: Codable {
+        static let currentSchemaVersion: Int = 1
+        var schemaVersion: Int
+        var pools: [String: [Entry]]
+    }
+
     private var pools: [UUID: [Entry]] = [:]
+
+    /// Coalesces rapid `seed`/`invalidate`/expire calls into a single
+    /// disk write. Cancelled on every dirtying mutation and re-armed.
+    private var pendingSaveTask: Task<Void, Never>?
+    /// Debounce window for `pendingSaveTask`. Short enough that a
+    /// crash within a few seconds of a successful generation still
+    /// preserves at least the last entry; long enough that a refill
+    /// burst (target = 3) collapses to one disk write.
+    private let saveDebounce: UInt64 = 1_000_000_000
     /// Per-agent serializer. Coalesces concurrent `warmUp` calls so the
     /// pool refills sequentially even under a burst (e.g. user
     /// rapid-flipping between sessions). Removed when the task ends so
@@ -80,6 +102,12 @@ public actor GenerativeGreetingPool {
     /// call so unit tests / preview targets that never instantiate the
     /// pool don't pay for the timer.
     private var tickerStarted = false
+
+    /// Set to `true` after `restoreFromDisk()` finishes its first pass,
+    /// so the debounced saver doesn't race against a partial in-memory
+    /// state on startup. Without this guard, an early `seed` call could
+    /// snapshot `pools` while the restore is still inflating it.
+    private var didRestoreFromDisk = false
 
     /// True while the host is asleep / suspended. Short-circuits both
     /// `warmUp` and the periodic ticker so we don't fire a batch of
@@ -128,6 +156,7 @@ public actor GenerativeGreetingPool {
         pools[agent.id] = queue
         touch(agentId: agent.id)
         stats.hits += 1
+        scheduleSave()
         return head.greeting
     }
 
@@ -154,6 +183,7 @@ public actor GenerativeGreetingPool {
         pools[agent.id] = queue
         touch(agentId: agent.id)
         evictLRUIfNeeded()
+        scheduleSave()
     }
 
     /// Records the (agent, model) the user is currently looking at so
@@ -163,6 +193,32 @@ public actor GenerativeGreetingPool {
         activeAgent = agent
         activeModel = model
         touch(agentId: agent.id)
+        // Mirror to UserDefaults so the next launch's prewarm can fire
+        // against the same (agent, model) the user just had open,
+        // instead of waiting for the chat view to mount and call us.
+        UserDefaults.standard.set(agent.id.uuidString, forKey: Self.lastActiveAgentKey)
+        UserDefaults.standard.set(model, forKey: Self.lastActiveModelKey)
+    }
+
+    /// UserDefaults keys used by `setActive` / `lastActiveContext()`
+    /// to survive process restarts. Versioned (`v1`) so a format
+    /// change can ignore stale values on the next launch.
+    private static let lastActiveAgentKey = "GenerativeGreetingPool.lastActiveAgentId.v1"
+    private static let lastActiveModelKey = "GenerativeGreetingPool.lastActiveModel.v1"
+
+    /// Returns the (agentId, model) recorded by the most recent
+    /// `setActive` call across launches. Used by
+    /// `AppDelegate.applicationDidFinishLaunching` to prime the pool
+    /// before the user opens chat for the first time after a relaunch.
+    /// Static so it can be read without spinning up the actor.
+    public static func lastActiveContext() -> (agentId: UUID, model: String)? {
+        guard
+            let raw = UserDefaults.standard.string(forKey: lastActiveAgentKey),
+            let id = UUID(uuidString: raw),
+            let model = UserDefaults.standard.string(forKey: lastActiveModelKey),
+            !model.isEmpty
+        else { return nil }
+        return (id, model)
     }
 
     /// Drops the recorded active context if it still matches `agentId`.
@@ -192,6 +248,7 @@ public actor GenerativeGreetingPool {
             task.cancel()
         }
         lruOrder.removeAll { $0 == agentId }
+        scheduleSave()
     }
 
     /// Background top-up. Generates greetings sequentially until the
@@ -363,15 +420,20 @@ public actor GenerativeGreetingPool {
     private func prune(agentId: UUID, model: String, revision: Int) {
         guard var queue = pools[agentId] else { return }
         let now = Date()
+        let originalCount = queue.count
         queue.removeAll { entry in
             entry.model != model
                 || entry.agentRevision != revision
                 || now.timeIntervalSince(entry.createdAt) > ttl
         }
+        let mutated = queue.count != originalCount
         if queue.isEmpty {
             pools.removeValue(forKey: agentId)
         } else {
             pools[agentId] = queue
+        }
+        if mutated {
+            scheduleSave()
         }
     }
 
@@ -406,9 +468,106 @@ public actor GenerativeGreetingPool {
     private func startTickerIfNeeded() {
         guard !tickerStarted else { return }
         tickerStarted = true
+        // Restore previously persisted entries off the main path so the
+        // very first user-visible chat open after relaunch can already
+        // pop a warmed entry. Sequenced before the ticker loop so the
+        // periodic sweep doesn't observe a partially-hydrated pool.
         Task { [weak self] in
             guard let self else { return }
+            await self.restoreFromDisk()
             await self.runTickerLoop()
+        }
+    }
+
+    // MARK: - Persistence
+
+    /// Loads the on-disk JSON cache and merges its entries into `pools`,
+    /// applying the existing TTL filter so anything older than `ttl`
+    /// gets dropped immediately. Revision drift is handled lazily on
+    /// the next `popFresh` / `runRefill` call, since the live revision
+    /// isn't known here without hopping to `AgentManager`.
+    private func restoreFromDisk() async {
+        defer { didRestoreFromDisk = true }
+        let url = OsaurusPaths.greetingPoolCacheFile()
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let payload = try JSONDecoder().decode(PersistedPool.self, from: data)
+            guard payload.schemaVersion == PersistedPool.currentSchemaVersion else {
+                poolLogger.info(
+                    "greeting pool: dropping persisted cache with schema v\(payload.schemaVersion)"
+                )
+                return
+            }
+            let now = Date()
+            var restored: [UUID: [Entry]] = [:]
+            for (key, entries) in payload.pools {
+                guard let agentId = UUID(uuidString: key) else { continue }
+                let kept = entries.filter { now.timeIntervalSince($0.createdAt) <= ttl }
+                if !kept.isEmpty {
+                    restored[agentId] = kept
+                }
+            }
+            // Merge so any entries seeded between actor init and the
+            // restore completing aren't clobbered.
+            for (agentId, entries) in restored {
+                pools[agentId, default: []].append(contentsOf: entries)
+                touch(agentId: agentId)
+            }
+            evictLRUIfNeeded()
+            poolLogger.info(
+                "greeting pool: restored \(restored.values.reduce(0) { $0 + $1.count }) entries across \(restored.count) agents"
+            )
+        } catch {
+            poolLogger.warning(
+                "greeting pool: restore failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Debounced disk write. Calling this multiple times within
+    /// `saveDebounce` collapses to a single save. Skipped while the
+    /// initial restore is still running so we don't truncate the file
+    /// to a partial snapshot.
+    private func scheduleSave() {
+        guard didRestoreFromDisk else { return }
+        pendingSaveTask?.cancel()
+        let interval = saveDebounce
+        pendingSaveTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: interval)
+            guard !Task.isCancelled else { return }
+            await self?.saveToDiskNow()
+        }
+    }
+
+    /// Synchronously flush any pending save. Wired to
+    /// `applicationWillTerminate` so a clean quit always preserves
+    /// the latest entries.
+    public func flushPendingSave() async {
+        pendingSaveTask?.cancel()
+        pendingSaveTask = nil
+        await saveToDiskNow()
+    }
+
+    private func saveToDiskNow() async {
+        let snapshot: [String: [Entry]] = pools.reduce(into: [:]) { acc, pair in
+            acc[pair.key.uuidString] = pair.value
+        }
+        let payload = PersistedPool(
+            schemaVersion: PersistedPool.currentSchemaVersion,
+            pools: snapshot
+        )
+        let url = OsaurusPaths.greetingPoolCacheFile()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        do {
+            let data = try JSONEncoder().encode(payload)
+            // Atomic write so a crash mid-save can't leave the file in
+            // a half-written state that breaks the next restore.
+            try data.write(to: url, options: [.atomic])
+        } catch {
+            poolLogger.warning(
+                "greeting pool: save failed: \(error.localizedDescription)"
+            )
         }
     }
 
@@ -450,13 +609,53 @@ public actor GenerativeGreetingPool {
 
     private func purgeAllExpired() {
         let now = Date()
+        var changed = false
         for (agentId, queue) in pools {
             let kept = queue.filter { now.timeIntervalSince($0.createdAt) <= ttl }
             if kept.isEmpty {
                 pools.removeValue(forKey: agentId)
+                changed = true
             } else if kept.count != queue.count {
                 pools[agentId] = kept
+                changed = true
             }
+        }
+        if changed {
+            scheduleSave()
         }
     }
 }
+
+// MARK: - Test hooks
+
+#if DEBUG
+    extension GenerativeGreetingPool {
+        /// Clear the in-memory pool and re-run the on-disk restore.
+        /// Production code never touches this — the singleton's
+        /// `tickerStarted` guard makes restore a one-shot, but the
+        /// persistence tests need to drive multiple restore cycles
+        /// against synthetic disk payloads.
+        internal func _testingReloadFromDisk() async {
+            pools.removeAll()
+            lruOrder.removeAll()
+            didRestoreFromDisk = false
+            await restoreFromDisk()
+        }
+
+        /// Wipe in-memory state without touching disk so persistence
+        /// tests start from a known-empty baseline even though the
+        /// singleton survives across cases.
+        internal func _testingResetInMemory() {
+            pools.removeAll()
+            lruOrder.removeAll()
+            pendingSaveTask?.cancel()
+            pendingSaveTask = nil
+            didRestoreFromDisk = true
+        }
+
+        /// In-memory entry count for `agentId`.
+        internal func _testingEntryCount(for agentId: UUID) -> Int {
+            pools[agentId]?.count ?? 0
+        }
+    }
+#endif

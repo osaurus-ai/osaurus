@@ -2061,19 +2061,19 @@ struct AgentDetailView: View {
 
     /// Two-way choice the user makes for an agent's chat empty state.
     /// `Bool?` on disk; `EmptyStateMode` in the picker. `auto` resolves
-    /// against `coreModelConfigured` so the picker reflects what the
-    /// runtime would actually do.
+    /// against the global master switch on `ChatConfiguration` so the
+    /// picker reflects what the runtime would actually do.
     private enum EmptyStateMode: Hashable {
         case ai
         case manual
     }
 
     /// Resolved on/off state for this agent's generative greeting.
-    /// `nil` defers to "auto" — on iff a Core Model is configured.
+    /// `nil` defers to the global master switch on Settings → Chat.
     private var isGenerativeOn: Bool {
-        let coreModelConfigured =
-            AppConfiguration.shared.chatConfig.coreModelIdentifier != nil
-        return generativeGreetingsEnabled ?? coreModelConfigured
+        let globallyEnabled =
+            AppConfiguration.shared.chatConfig.generativeGreetingsEnabled
+        return generativeGreetingsEnabled ?? globallyEnabled
     }
 
     /// Picker binding. Reads the resolved state, writes an explicit
