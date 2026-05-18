@@ -90,6 +90,29 @@ class LiveSequenceProbeTests(unittest.TestCase):
             self.assertEqual(response_content[1]["type"], "input_image")
             self.assertTrue(response_content[1]["image_url"].startswith("data:image/png;base64,"))
 
+    def test_ps_line_parser_handles_paths_with_spaces(self) -> None:
+        probe = load_probe_module()
+        row = probe.parse_ps_line(
+            "19315     1 132688 /Applications/vMLX.app/Contents/MacOS/vMLX"
+        )
+        self.assertEqual(row["pid"], 19315)
+        self.assertEqual(row["ppid"], 1)
+        self.assertEqual(row["rss_kb"], 132688)
+        self.assertEqual(row["command"], "/Applications/vMLX.app/Contents/MacOS/vMLX")
+
+    def test_responses_history_keeps_responses_media_shape(self) -> None:
+        probe = load_probe_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "a.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\nimage-a")
+            turn = probe.build_vlm_turn_plan(image=image, prompt="describe")[0]
+
+            message = probe.user_history_message("responses", turn)
+            content = message["content"]
+            self.assertEqual(content[0]["type"], "input_text")
+            self.assertEqual(content[1]["type"], "input_image")
+            self.assertNotIn("image_url", content[1].get("type", ""))
+
 
 if __name__ == "__main__":
     unittest.main()

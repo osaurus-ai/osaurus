@@ -45,9 +45,27 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def parse_ps_line(line: str) -> dict[str, Any] | None:
+    parts = line.strip().split(maxsplit=3)
+    if len(parts) < 4:
+        return None
+    try:
+        pid = int(parts[0])
+        ppid = int(parts[1])
+        rss_kb = int(parts[2])
+    except ValueError:
+        return None
+    return {
+        "pid": pid,
+        "ppid": ppid,
+        "rss_kb": rss_kb,
+        "command": parts[3],
+    }
+
+
 def memory_snapshot() -> list[dict[str, Any]]:
     proc = subprocess.run(
-        ["ps", "-axo", "pid,ppid,rss,etimes,comm,args"],
+        ["ps", "-axo", "pid=,ppid=,rss=,command="],
         check=False,
         capture_output=True,
         text=True,
@@ -63,19 +81,9 @@ def memory_snapshot() -> list[dict[str, Any]]:
             and "swift-frontend" not in lower
         ):
             continue
-        parts = stripped.split(maxsplit=5)
-        if len(parts) < 6:
-            continue
-        rows.append(
-            {
-                "pid": int(parts[0]),
-                "ppid": int(parts[1]),
-                "rss_kb": int(parts[2]),
-                "etimes_s": int(parts[3]),
-                "comm": parts[4],
-                "args": parts[5],
-            }
-        )
+        row = parse_ps_line(stripped)
+        if row is not None:
+            rows.append(row)
     return rows
 
 

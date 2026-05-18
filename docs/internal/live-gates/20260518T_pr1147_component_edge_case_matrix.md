@@ -19,6 +19,7 @@ metadata routes can close only their own subchecks.
 | Keychain-safe app launch | PASS for metadata launch path | `20260518T_pr1147_keychain_safe_launch.md` | Reuse for model rows; do not use fake `HOME`. |
 | Metadata routes | PARTIAL | `http-route-probe-metadata-20260518Tpost-cache-stats/` | Generation routes with loaded models, stream tails, usage, and cache stats. |
 | `/admin/cache-stats` route existence | PASS cold route | `get_admin_cache-stats.body` shows empty `models` and zero counters | Loaded-model cache-hit, L2 write, SSM rederive, and media-cache rows. |
+| ZAYA-VL live sequence | FAIL / PARTIAL | `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/review.md` | Root-cause blue-image stale red answer, Responses generic media output, unsupported video exposure, and empty loaded-model/cache stats. |
 | Model production readiness | NOT COMPLETE | Manifest and this matrix | Real visible multi-turn output, no loops/leaks, TTFT, tok/s, RSS, physical footprint, and per-topology cache proof. |
 
 ## Source-To-Artifact Wiring
@@ -161,7 +162,10 @@ The following remain open until concrete artifacts exist:
 
 - Qwen3.6 VL/MTP UI and API media rows with cache stats and MTP tuning proof.
 - Gemma4 VLM and Gemma3n text rows, including the known Gemma3n UTF red row.
-- ZAYA-VL media and ZAYA text direct-mode root cause.
+- ZAYA-VL media and ZAYA text direct-mode root cause. Current
+  `zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/` evidence is red because the
+  blue-image turn still described red, Responses was not grounded, video
+  returned unsupported, and `/health` plus `/admin/cache-stats` remained empty.
 - Nemotron Omni audio/video/image rows through Osaurus, including Parakeet and
   RADIO evidence.
 - DSV4 UI settings visuals, DSML route proof, native cache stats, and long chat.

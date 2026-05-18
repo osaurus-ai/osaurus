@@ -197,6 +197,30 @@ output tails. It is still an artifact collector; the row needs explicit human
 review for grounding, parser leaks, stop reason, cache hit correctness, TTFT,
 tok/s, RSS, and physical footprint.
 
+ZAYA-VL live sequence checkpoint:
+
+- pre-fix artifact:
+  `docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1458/`
+  showed the probe helper was carrying Chat Completions media history into
+  Responses follow-up requests. The first Responses turn returned 200, but
+  later Responses turns returned 400 because prior media used the wrong route
+  shape.
+- probe fix: `scripts/pr1147_live_sequence_probe.py` now stores prior user
+  history in route-native shape. Chat uses `text` / `image_url`; Responses uses
+  `input_text` / `input_image`.
+- post-fix artifact:
+  `docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/`
+  completed 10 route rows and wrote per-turn request, response, health,
+  cache-stats, and process-memory artifacts.
+- review:
+  `docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/review.md`
+  marks the row FAIL/PARTIAL. Chat grounds the first red image and text-only
+  follow-up, but the different blue image is answered as red, Responses returns
+  generic "media" text instead of grounded image answers, ZAYA1-VL video returns
+  HTTP 500 `ZAYA1-VL video input is not implemented`, and `/health` plus
+  `/admin/cache-stats` still report no loaded model/cache counters. This is a
+  real live gap, not a pass.
+
 Metadata route probe checkpoint:
 
 - pre-fix artifact:
@@ -243,8 +267,11 @@ Not complete.
 
 The PR currently has strong source-policy gates, documented model-family
 contracts, startup/server binding proof, and a cold-start
-`/admin/cache-stats` route proof. It does not yet have the full live Osaurus
-app/API artifact set for Qwen VL, Gemma VLM, ZAYA-VL, Nemotron Omni, DSV4,
-MiniMax, Ling, Hy3, and other parser families. Do not undraft or call the switch
-production-ready until those artifact folders exist and pass with real visible
-output, cache stats, timing, memory, and no parser/tag leakage.
+`/admin/cache-stats` route proof. It now also has one real ZAYA-VL app/API
+artifact set, and that artifact is explicitly red: media switch grounding,
+Responses media grounding, ZAYA-VL video capability, and loaded-model/cache
+reporting are not production-ready. It does not yet have passing live Osaurus
+app/API artifact sets for Qwen VL, Gemma VLM, ZAYA-VL, Nemotron Omni, DSV4,
+MiniMax, Ling, Hy3, and other parser families. Do not undraft or call the
+switch production-ready until those artifact folders exist and pass with real
+visible output, cache stats, timing, memory, and no parser/tag leakage.

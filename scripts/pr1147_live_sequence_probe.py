@@ -242,6 +242,12 @@ def responses_request_body(
     return body
 
 
+def user_history_message(route_name: str, turn: dict[str, Any]) -> dict[str, Any]:
+    if route_name == "responses":
+        return {"role": "user", "content": responses_content_for_turn(turn)}
+    return {"role": "user", "content": chat_content_for_turn(turn)}
+
+
 def request_json_or_body(
     base_url: str,
     path: str,
@@ -330,9 +336,27 @@ def extract_output_tail(payload: bytes, path: str) -> str:
     return text[-800:]
 
 
+def parse_ps_line(line: str) -> dict[str, Any] | None:
+    parts = line.strip().split(maxsplit=3)
+    if len(parts) < 4:
+        return None
+    try:
+        pid = int(parts[0])
+        ppid = int(parts[1])
+        rss_kb = int(parts[2])
+    except ValueError:
+        return None
+    return {
+        "pid": pid,
+        "ppid": ppid,
+        "rss_kb": rss_kb,
+        "command": parts[3],
+    }
+
+
 def memory_snapshot() -> list[dict[str, Any]]:
     proc = subprocess.run(
-        ["ps", "-axo", "pid,ppid,rss,etimes,comm,args"],
+        ["ps", "-axo", "pid=,ppid=,rss=,command="],
         check=False,
         capture_output=True,
         text=True,
@@ -343,19 +367,9 @@ def memory_snapshot() -> list[dict[str, Any]]:
         lower = stripped.lower()
         if not stripped or ("osaurus" not in lower and "vmlx" not in lower and "runbench" not in lower):
             continue
-        parts = stripped.split(maxsplit=5)
-        if len(parts) < 6:
-            continue
-        rows.append(
-            {
-                "pid": int(parts[0]),
-                "ppid": int(parts[1]),
-                "rss_kb": int(parts[2]),
-                "etimes_s": int(parts[3]),
-                "comm": parts[4],
-                "args": parts[5],
-            }
-        )
+        row = parse_ps_line(stripped)
+        if row is not None:
+            rows.append(row)
     return rows
 
 
@@ -437,7 +451,7 @@ def main() -> int:
             result["turn"] = turn
             result["route_name"] = route_name
             results.append(result)
-            messages.append({"role": "user", "content": chat_content_for_turn(turn)})
+            messages.append(user_history_message(route_name, turn))
             assistant_tail = result.get("output_tail") or ""
             if assistant_tail:
                 messages.append({"role": "assistant", "content": assistant_tail})

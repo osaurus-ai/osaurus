@@ -1,0 +1,1 @@
+{"created":1779141278,"model":"zaya1-vl-8b-mxfp4","id":"chatcmpl-A7D5C2B15AFA","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"The image shows a red rectangle against a white background."},"index":0}],"object":"chat.completion","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","usage":{"completion_tokens":14,"prompt_tokens":135,"total_tokens":149}}
