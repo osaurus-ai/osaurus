@@ -294,6 +294,15 @@ media turn sequences, cache/scheduler proof, parser and reasoning leak checks,
 saved-setting/cache-key inverses, and artifact acceptance rules. It is still a
 checklist, not a pass report.
 
+The forced-behavior source audit is:
+`docs/internal/live-gates/pr1147/forced-behavior-audit-20260518T1545/REPORT.md`.
+It currently marks source hits for background `no_think`, explicit
+`frequency_penalty` mapping, family reasoning-template bridges, MiniMax template
+fallback, Ling reasoning merging, and metadata/fallback sampler resolution. This
+audit is a triage artifact only. It must be paired with live model rows before
+release, and the Ling row stays red until the real vmlx template/parser/runtime
+path is proven coherent without UI-side reasoning merging as a fake pass.
+
 ## Current Audit Outcome
 
 Not complete.

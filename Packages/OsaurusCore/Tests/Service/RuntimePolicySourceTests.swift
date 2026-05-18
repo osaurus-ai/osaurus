@@ -195,6 +195,9 @@ struct RuntimePolicySourceTests {
         let componentMatrix = try Self.source(
             "../../docs/internal/live-gates/20260518T_pr1147_component_edge_case_matrix.md"
         )
+        let forcedBehaviorAudit = try Self.source(
+            "../../docs/internal/live-gates/pr1147/forced-behavior-audit-20260518T1545/REPORT.md"
+        )
 
         #expect(switchDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
         #expect(runtimeDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
@@ -339,6 +342,8 @@ struct RuntimePolicySourceTests {
             "20260518T_pr1147_component_edge_case_matrix.md",
             "source anchors",
             "UI/API/cache/parser",
+            "forced-behavior-audit-20260518T1545/REPORT.md",
+            "Ling row stays red",
         ] {
             #expect(
                 completionAudit.contains(required),
@@ -561,10 +566,58 @@ struct RuntimePolicySourceTests {
             "token/logit shaping",
             "explicit user/API kwargs",
             "Final old-library and zombie-code sweep",
+            "forced-behavior-audit-20260518T1545/REPORT.md",
+            "Ling's force-off plus reasoning merge",
         ] {
             #expect(
                 componentMatrix.contains(required),
                 "missing component edge-case matrix requirement: \(required)"
+            )
+        }
+
+        for required in [
+            "PR 1147 Forced Behavior Audit",
+            "not live model proof",
+            "only allowed generation defaults",
+            "generation_config.json",
+            "jang_config.json",
+            "explicit user or API kwargs",
+            "engine fallback defaults only after metadata is absent",
+            "FBA-001",
+            "PreflightCapabilitySearch.defaultLLM",
+            "background-only",
+            "FBA-002",
+            "GenerativeGreetingService",
+            "cooler temperature",
+            "FBA-003",
+            "frequency_penalty",
+            "repetitionPenalty=nil",
+            "FBA-004",
+            "ChatEngine.dispatch",
+            "FBA-005",
+            "DSV4 defaults to `instruct`",
+            "FBA-006",
+            "Ling force-sets `enable_thinking=false`",
+            "highest-risk source hit",
+            "root-cause the vmlx template/parser/decode path",
+            "FBA-007",
+            "MiniMax no-thinking uses a minimal fallback template",
+            "explicit user/API `reasoning_effort` wins",
+            "FBA-008",
+            "Family defaults expose no-thinking",
+            "FBA-009",
+            "metadata defaults",
+            "No family may get a hidden temperature",
+            "FBA-010",
+            "Detects reasoning support from templates or JANG config",
+            "The Ling row is explicitly red",
+            "no `</think>` close token is forced",
+            "no parser output is repaired into a pass",
+            "no token/logit bias",
+        ] {
+            #expect(
+                forcedBehaviorAudit.contains(required),
+                "missing forced-behavior audit requirement: \(required)"
             )
         }
     }

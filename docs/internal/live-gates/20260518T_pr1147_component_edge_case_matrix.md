@@ -122,6 +122,16 @@ For each representative attention/cache topology:
 | Forced behavior audit | Search source, settings previews, prompt dumps, and live output for forced sampler defaults, forced repetition penalties, forced reasoning rail selection, forced `</think>` close tokens, token/logit shaping, or parser output repair. Any hit must record why it was built, prove whether it still fires, and be replaced by a real template/decode/tokenizer/cache/root-cause fix or left as a red row. |
 | MTP | Non-MTP bundles show disabled with `no mtp tensor evidence`; valid Qwen bundles use tuning file depth; blocked tuning stays off. |
 
+Initial source audit artifact:
+`docs/internal/live-gates/pr1147/forced-behavior-audit-20260518T1545/REPORT.md`.
+Rows from that artifact must be resolved before production-clear. In
+particular, background `no_think` calls for preflight/greetings must prove they
+never enter user chat cache scope; explicit `frequency_penalty` mapping must
+stay request-only; MiniMax fallback/template bridges must move into real
+template/runtime fixes when needed; and Ling's force-off plus reasoning merge
+must remain red until live vmlx evidence proves the model path is coherent
+without UI-side repair.
+
 ## Artifact Acceptance Rules
 
 Each model folder must include:
