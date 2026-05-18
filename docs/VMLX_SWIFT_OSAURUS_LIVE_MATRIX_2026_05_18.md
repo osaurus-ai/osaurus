@@ -8,6 +8,12 @@ and parser-leak checks.
 
 This document is also the place to record rows that are not clear yet. Do not turn red rows into hidden sampler defaults, fake repetition penalties, forced reasoning close tokens, or app-side parser repairs.
 
+Current completion audit:
+`docs/internal/live-gates/20260518T_pr1147_completion_audit.md`. That audit
+maps the user's requested VL/cache/UI/API/parser/defaults/carryover proof to
+artifact paths and explicitly records that the switch is not production-clear
+until the live Osaurus app/API folders exist.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:

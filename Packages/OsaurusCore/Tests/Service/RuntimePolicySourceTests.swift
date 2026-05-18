@@ -171,9 +171,13 @@ struct RuntimePolicySourceTests {
         let switchDoc = try Self.source("../../docs/VMLX_SWIFT_SINGLE_PACKAGE_SWITCH_2026_05_18.md")
         let runtimeDoc = try Self.source("../../docs/INFERENCE_RUNTIME.md")
         let matrix = try Self.source("../../docs/VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md")
+        let completionAudit = try Self.source(
+            "../../docs/internal/live-gates/20260518T_pr1147_completion_audit.md"
+        )
 
         #expect(switchDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
         #expect(runtimeDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
+        #expect(matrix.contains("20260518T_pr1147_completion_audit.md"))
 
         for required in [
             "/v1/chat/completions",
@@ -263,6 +267,39 @@ struct RuntimePolicySourceTests {
 
         #expect(matrix.contains("Do not turn red rows into hidden sampler defaults"))
         #expect(matrix.contains("Kimi is intentionally excluded"))
+
+        for required in [
+            "Objective Restated",
+            "Prompt-to-Artifact Completion Map",
+            "Local Model Census Snapshot",
+            "Live Artifact Contract",
+            "Current Audit Outcome",
+            "Not complete.",
+            "Qwen VL / Qwen3.6 MTP VL through UI and APIs",
+            "Gemma VL / Gemma reasoning",
+            "ZAYA / ZAYA-VL",
+            "Nemotron Omni / Parakeet / RADIO",
+            "DSV4 Flash renderer and runtime",
+            "MiniMax reasoning/tools",
+            "Ling / Hy3 / hybrid SSM",
+            "Generation defaults and top-k",
+            "Settings carryover and cache-key isolation",
+            "Old-library and zombie-code removal",
+            "Qwen3.6 27B MXFP4 MTP tuning selects best depth 2",
+            "Qwen3.6 35B JANG_2K MTP tuning is blocked",
+            "chat_completions_stream.jsonl",
+            "responses_stream.jsonl",
+            "cache_stats_before_after.json",
+            "process_memory.csv",
+            "media_sequence.json",
+            "tool_reasoning_parser.json",
+            "carryover_inverse.json",
+        ] {
+            #expect(
+                completionAudit.contains(required),
+                "missing completion-audit requirement: \(required)"
+            )
+        }
     }
 
     @Test("SwiftPM graph keeps vmlx inference modules unshadowed")
