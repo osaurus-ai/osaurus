@@ -149,8 +149,8 @@ enum ModelProfileRegistry {
 /// three intentional modes:
 /// - instruct: closed `</think>` assistant tail, answer on content rail
 /// - reasoning: open `<think>` assistant tail, normal reasoning split
-/// - max: public API/UI compatibility selector; vmlx normalizes it to the
-///   stable high-thinking rail by default unless raw max is explicitly enabled
+/// - max: raw DSV4 max reasoning effort; Osaurus passes it through to vmlx
+///   unchanged so runtime issues are fixed at the engine layer, not hidden here
 struct DSV4ReasoningProfile: ModelProfile {
     static let displayName = "DSV4 Reasoning"
 

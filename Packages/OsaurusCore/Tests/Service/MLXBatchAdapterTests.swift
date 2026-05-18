@@ -476,8 +476,8 @@ struct MLXBatchAdapterTests {
         )
         #expect(maxReasoning["enable_thinking"] as? Bool == true)
         #expect(
-            maxReasoning["reasoning_effort"] as? String == "high",
-            "Osaurus UI Max stays on DSV4's stable high-thinking rail unless raw max diagnostics are explicitly enabled"
+            maxReasoning["reasoning_effort"] as? String == "max",
+            "DSV4 Max must reach vmlx-swift unchanged; Osaurus must not hide runtime issues behind an effort downgrade"
         )
 
         let legacyToggle = MLXBatchAdapter.additionalContext(

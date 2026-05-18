@@ -8,7 +8,7 @@ consolidated `vmlx-swift` package.
 OsaurusCore now has one direct inference dependency:
 
 - `https://github.com/osaurus-ai/vmlx-swift`
-- revision `ff172509e787712652f617818cedd608da889109`
+- revision `783f2c0c3a2215471a7ad5e80530132f77fbdc17`
 
 That package is expected to export the runtime modules Osaurus previously pulled
 from separate roots:
@@ -117,3 +117,9 @@ must not stringify assistant tool calls into prompt text or repair DSV4 output
 after the fact. The parser/template behavior belongs in `vmlx-swift`, while
 Osaurus preserves structured ids, arguments, and tool-result content across the
 bridge.
+
+DSV4 reasoning mode selection follows the same rule. `reasoningEffort=max`
+is passed through to `vmlx-swift` as `reasoning_effort: "max"` with thinking
+enabled. Osaurus must not downgrade it to `"high"` behind an environment flag;
+if max-mode output is incoherent, that is an engine/runtime issue to reproduce
+and fix in `vmlx-swift`.
