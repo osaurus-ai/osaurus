@@ -24,6 +24,18 @@ final class VisibleBlocksStore: ObservableObject {
     @Published var groupHeaderMap: [UUID: UUID] = [:]
 }
 
+/// Snapshot of a pending user message that was authored while the agent
+/// was still streaming. Captured at enqueue time so attachments and the
+/// active one-off skill travel with the right turn. The view shows a chip
+/// for this; `ChatSession` consumes it either via auto-flush on natural
+/// completion or via `sendNowInterrupting()` when the user explicitly
+/// interrupts.
+struct QueuedSend: Equatable {
+    var text: String
+    var attachments: [Attachment]
+    var oneOffSkillId: UUID?
+}
+
 /// Lifecycle of the generative greeting for a single chat session. Drives
 /// the empty-state UI: `.idle` and `.failed` render the static greeting +
 /// the agent's configured quick actions, `.loading` renders an animated
@@ -124,6 +136,14 @@ final class ChatSession: ObservableObject {
     /// Set when the user selects a skill from the slash command popup; cleared after send.
     @Published var pendingOneOffSkillId: UUID?
 
+    /// Single-slot queued send. Non-nil when the user has pressed Send while
+    /// `isStreaming` is true. The chip in `FloatingInputCard` shows a preview
+    /// and a × to cancel. Auto-flushed by `completeRunCleanup` when the run
+    /// ends naturally; explicitly flushed by `sendNowInterrupting()` which
+    /// stops the current run and dispatches the queued payload as a new
+    /// user turn.
+    @Published var queuedSend: QueuedSend?
+
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
     @Published var title: String = "New Chat"
@@ -223,6 +243,10 @@ final class ChatSession: ObservableObject {
     private var currentTask: Task<Void, Never>?
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
+    /// Set to true at the start of `stop()` so `completeRunCleanup` knows the
+    /// run was cancelled by the user (or by `sendNowInterrupting`) and must
+    /// not auto-flush a queued send. Reset to false at the top of `send(...)`.
+    private var stopRequested: Bool = false
     var chatEngineFactory: @MainActor () -> ChatEngineProtocol = {
         ChatEngine(source: .chatUI)
     }
@@ -751,6 +775,7 @@ final class ChatSession: ObservableObject {
     }
 
     func stop() {
+        stopRequested = true
         let task = currentTask
         task?.cancel()
         if let runId = activeRunId {
@@ -758,6 +783,52 @@ final class ChatSession: ObservableObject {
         } else {
             completeRunCleanup()
         }
+    }
+
+    // MARK: - Queued Send (Cursor-style interrupt UX)
+
+    /// Capture the current `input` + `pendingAttachments` + `pendingOneOffSkillId`
+    /// into a single-slot pending send and clear the input. No-op if the
+    /// payload is empty. Replacing semantics: a second call while a queue
+    /// is already pending overwrites it. The transcript is NOT touched —
+    /// the queued message only materializes as a `user` turn when the run
+    /// finishes (auto-flush) or when `sendNowInterrupting()` is invoked.
+    func enqueueSend(_ text: String, attachments: [Attachment]) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasContent = !trimmed.isEmpty || !attachments.isEmpty
+        guard hasContent else { return }
+        queuedSend = QueuedSend(
+            text: trimmed,
+            attachments: attachments,
+            oneOffSkillId: pendingOneOffSkillId
+        )
+        input = ""
+        pendingAttachments = []
+        pendingOneOffSkillId = nil
+    }
+
+    /// Drop the queued send without dispatching it.
+    func cancelQueuedSend() {
+        queuedSend = nil
+    }
+
+    /// Stop the currently streaming run and immediately dispatch the queued
+    /// send as a fresh user turn. No-op if nothing is queued. The active
+    /// run is finalized synchronously (`stop()` runs through
+    /// `finalizeRun → completeRunCleanup`, flipping `isStreaming` to false)
+    /// so the follow-up `send(...)` passes the `!isStreaming` guard. The
+    /// stored `oneOffSkillId` is re-applied to `pendingOneOffSkillId` so
+    /// the skill context attaches to the new turn.
+    func sendNowInterrupting() {
+        guard let pending = queuedSend else { return }
+        queuedSend = nil
+        if isStreaming || activeRunId != nil {
+            stop()
+        }
+        if let skillId = pending.oneOffSkillId {
+            pendingOneOffSkillId = skillId
+        }
+        send(pending.text, attachments: pending.attachments)
     }
 
     /// Appends a `user`-role turn carrying a plugin-supplied interrupt
@@ -778,6 +849,7 @@ final class ChatSession: ObservableObject {
         input = ""
         pendingAttachments = []
         pendingOneOffSkillId = nil
+        queuedSend = nil
         voiceInputState = .idle
         showVoiceOverlay = false
         // Clear session identity for new chat
@@ -1369,6 +1441,21 @@ final class ChatSession: ObservableObject {
         consolidateAssistantTurns()
         rebuildVisibleBlocks()
         save()
+        flushQueuedSendIfEligible()
+    }
+
+    /// Dispatch any queued send when the run ended naturally (no `stop()`
+    /// in-flight, no streaming error). Cancelled or errored runs leave the
+    /// queue in place so the user can re-decide via the chip or Send Now.
+    /// Called from `completeRunCleanup` after state has been finalized.
+    private func flushQueuedSendIfEligible() {
+        guard !stopRequested, lastStreamError == nil else { return }
+        guard let pending = queuedSend else { return }
+        queuedSend = nil
+        if let skillId = pending.oneOffSkillId {
+            pendingOneOffSkillId = skillId
+        }
+        send(pending.text, attachments: pending.attachments)
     }
 
     private func finalizeRun(runId: UUID?, persistConversationArtifacts: Bool) {
@@ -1722,6 +1809,11 @@ final class ChatSession: ObservableObject {
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
         guard activeRunId == nil, !isStreaming else { return }
+
+        // Fresh run: a previous stop() may have left the flag true. The
+        // auto-flush in completeRunCleanup keys off this, so clear it
+        // before the new run can finalize.
+        stopRequested = false
 
         // Any new user input clears a prior completion banner — we're
         // moving on to a follow-up. Clarify prompts (when active) live
@@ -2704,7 +2796,14 @@ struct ChatView: View {
                                     if let manualText = manualText {
                                         observedSession.input = manualText
                                     }
-                                    observedSession.sendCurrent()
+                                    if observedSession.isStreaming {
+                                        observedSession.enqueueSend(
+                                            observedSession.input,
+                                            attachments: observedSession.pendingAttachments
+                                        )
+                                    } else {
+                                        observedSession.sendCurrent()
+                                    }
                                 },
                                 onStop: { observedSession.stop() },
                                 focusTrigger: focusTrigger,
@@ -2716,7 +2815,10 @@ struct ChatView: View {
                                     observedSession.pendingOneOffSkillId = skillId
                                 },
                                 pendingSkillId: $observedSession.pendingOneOffSkillId,
-                                autoSpeakAssistant: $observedSession.autoSpeakAssistant
+                                autoSpeakAssistant: $observedSession.autoSpeakAssistant,
+                                queuedSend: $observedSession.queuedSend,
+                                onSendNow: { observedSession.sendNowInterrupting() },
+                                onCancelQueued: { observedSession.cancelQueuedSend() }
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)

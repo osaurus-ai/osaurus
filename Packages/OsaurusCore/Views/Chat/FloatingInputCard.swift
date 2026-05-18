@@ -46,6 +46,15 @@ struct FloatingInputCard: View {
     /// Binding to the session's auto-speak preference. When true, a chip is shown
     /// so the user can disable it without waiting to be re-prompted.
     @Binding var autoSpeakAssistant: Bool
+    /// Single-slot queued send that was authored while a run was streaming.
+    /// Non-nil renders a chip + flips the Send button into "Send Now"
+    /// (interrupt) mode. Nil → ordinary Send / Queue behavior.
+    @Binding var queuedSend: QueuedSend?
+    /// Cancel + immediately dispatch the queued send. Only invoked when
+    /// `queuedSend != nil` (the SendNow button is otherwise hidden).
+    var onSendNow: (() -> Void)?
+    /// Discard the queued send without sending it. Called by the chip's ×.
+    var onCancelQueued: (() -> Void)?
 
     init(
         text: Binding<String>,
@@ -69,7 +78,10 @@ struct FloatingInputCard: View {
         onClearChat: (() -> Void)? = nil,
         onSkillSelected: ((UUID) -> Void)? = nil,
         pendingSkillId: Binding<UUID?> = .constant(nil),
-        autoSpeakAssistant: Binding<Bool> = .constant(false)
+        autoSpeakAssistant: Binding<Bool> = .constant(false),
+        queuedSend: Binding<QueuedSend?> = .constant(nil),
+        onSendNow: (() -> Void)? = nil,
+        onCancelQueued: (() -> Void)? = nil
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -93,6 +105,9 @@ struct FloatingInputCard: View {
         self.onSkillSelected = onSkillSelected
         self._pendingSkillId = pendingSkillId
         self._autoSpeakAssistant = autoSpeakAssistant
+        self._queuedSend = queuedSend
+        self.onSendNow = onSendNow
+        self.onCancelQueued = onCancelQueued
     }
 
     // Observe managers for reactive updates
@@ -140,6 +155,10 @@ struct FloatingInputCard: View {
     @State private var localText: String = ""
     @State private var isFocused: Bool = false
     @State private var isComposing: Bool = false
+    /// Keeps focus in the input through the send/queue state cascade.
+    /// `syncAndSend` and `sendNowButton` arm `lockFocus(for:)` before
+    /// the mutations that would otherwise let AppKit blur the field.
+    @StateObject private var textViewFocusController = TextViewFocusController()
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
@@ -204,7 +223,10 @@ struct FloatingInputCard: View {
 
         let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasContent = hasText || !pendingAttachments.isEmpty
-        return hasContent && !isStreaming
+        // During streaming, "send" enqueues the payload (handled by the
+        // parent). The bar swaps Send for SendQueue/SendNow visually but
+        // the keyboard path still goes through onSend → enqueueSend.
+        return hasContent
     }
 
     private var showPlaceholder: Bool {
@@ -411,9 +433,11 @@ struct FloatingInputCard: View {
                 }
             }
             .onChange(of: isStreaming) { wasStreaming, nowStreaming in
-                // re-focus the input when streaming ends so the user can type immediately.
-                // focus is cleared on send to stop the NSTextView cursor-blink display link
-                // during streaming; restore it once the response is complete.
+                // Safety net: if focus was lost during streaming (e.g.
+                // the user clicked elsewhere or dismissed a dialog),
+                // re-claim it once the agent finishes so the user can
+                // type immediately. The normal send path keeps focus
+                // throughout via `TextViewFocusController.lockFocus`.
                 if wasStreaming && !nowStreaming {
                     isFocused = true
                 }
@@ -1066,11 +1090,13 @@ extension FloatingInputCard {
     private func syncAndSend() {
         guard canSend else { return }
         let message = localText
+        // Hold first responder through the binding-flush cascade
+        // (clearing local + bound text, parent reconcile, optional
+        // new run kickoff). 300 ms covers the longest observed
+        // cascade with margin. Covers both fresh sends and queueing.
+        textViewFocusController.lockFocus(for: 0.3)
         localText = ""
         text = ""
-        // resign first responder so the NSTextView cursor-blink display link stops driving
-        // the window compositor at 60fps through the streaming response
-        isFocused = false
         onSend(message)
     }
 
@@ -1126,6 +1152,65 @@ extension FloatingInputCard {
             )
         default:
             break
+        }
+    }
+
+    // MARK: - Queued Send Chip
+
+    /// Compact chip preview of the message that's queued to flush when the
+    /// active run finishes (or be dispatched immediately via Send Now).
+    /// Visible only when `queuedSend != nil`.
+    @ViewBuilder
+    private var queuedSendChipView: some View {
+        if let queued = queuedSend {
+            let preview: String = {
+                let trimmed = queued.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    return String(localized: "Queued attachment", bundle: .module)
+                }
+                if trimmed.count <= 80 { return trimmed }
+                return String(trimmed.prefix(80)) + "\u{2026}"
+            }()
+            HStack(spacing: 5) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+                Text("Queued:", bundle: .module)
+                    .font(theme.font(size: 11, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                Text(verbatim: preview)
+                    .font(theme.font(size: 11, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Button {
+                    withAnimation(theme.springAnimation()) {
+                        if let onCancelQueued {
+                            onCancelQueued()
+                        } else {
+                            queuedSend = nil
+                        }
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(3)
+                        .background(Circle().fill(theme.tertiaryBackground))
+                }
+                .buttonStyle(.plain)
+                .help("Cancel queued message")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.accentColor.opacity(0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 0.5)
+            )
         }
     }
 
@@ -2224,9 +2309,11 @@ extension FloatingInputCard {
     // MARK: - Input Card
 
     private var inputCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if !pendingAttachments.isEmpty || pendingSkillId != nil {
+        let hasChipRow = !pendingAttachments.isEmpty || pendingSkillId != nil || queuedSend != nil
+        return VStack(alignment: .leading, spacing: 0) {
+            if hasChipRow {
                 HStack(alignment: .center, spacing: 6) {
+                    queuedSendChipView
                     pendingSkillChipView
                     if !pendingAttachments.isEmpty {
                         inlinePendingAttachmentsPreview
@@ -2238,7 +2325,7 @@ extension FloatingInputCard {
 
             textInputArea
                 .padding(.horizontal, 12)
-                .padding(.top, (pendingAttachments.isEmpty && pendingSkillId == nil) ? 10 : 6)
+                .padding(.top, hasChipRow ? 6 : 10)
                 .padding(.bottom, 6)
 
             buttonBar
@@ -2596,6 +2683,7 @@ extension FloatingInputCard {
             isFocused: $isFocused,
             isComposing: $isComposing,
             maxHeight: maxHeight,
+            focusController: textViewFocusController,
             onCommit: {
                 if showSlashPopup {
                     let cmds = slashFilteredCommands
@@ -2677,8 +2765,14 @@ extension FloatingInputCard {
                 keyboardHint
                 if isStreaming {
                     stopButton
+                    if queuedSend != nil {
+                        sendNowButton
+                    } else {
+                        sendQueueButton
+                    }
+                } else {
+                    sendButton
                 }
-                sendButton
             }
         }
     }
@@ -2713,6 +2807,24 @@ extension FloatingInputCard {
 
     private var sendButton: some View {
         SendButton(canSend: canSend, action: syncAndSend)
+    }
+
+    /// Streaming + empty queue: pressing Send queues the message. Same
+    /// dispatcher as `sendButton` (`syncAndSend → onSend`); the parent
+    /// notices `isStreaming == true` and routes to `enqueueSend`.
+    private var sendQueueButton: some View {
+        SendQueueButton(canSend: canSend, action: syncAndSend)
+    }
+
+    /// Streaming + a queued message present: pressing this stops the
+    /// current run and dispatches the queued payload immediately.
+    private var sendNowButton: some View {
+        SendNowButton {
+            // Stop -> send cascade fans out across more runloop turns
+            // than syncAndSend, hence the longer lock.
+            textViewFocusController.lockFocus(for: 0.4)
+            onSendNow?()
+        }
     }
 
     // MARK: - Card Styling
@@ -3731,6 +3843,126 @@ private struct StopButton: View {
             )
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    }
+}
+
+// MARK: - Send Queue Button
+
+/// Used while a run is streaming and the queue is empty. Pressing it
+/// stores the current input as a single-slot pending send (handled by
+/// the parent). Shares the exact 32×32 circular footprint of
+/// `SendButton`; the only visual delta is a muted gray fill (instead of
+/// the accent gradient) plus a hover tooltip that explains the queue
+/// semantics. The icon stays `arrow.up` so users still read it as
+/// "send".
+private struct SendQueueButton: View {
+    let canSend: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(theme.tertiaryBackground.opacity(canSend ? 0.95 : 0.7))
+
+                if isHovered && canSend {
+                    Circle()
+                        .fill(theme.accentColor.opacity(0.12))
+                }
+
+                Image(systemName: "arrow.up")
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .frame(width: 32, height: 32)
+            .overlay(
+                Circle()
+                    .strokeBorder(theme.secondaryText.opacity(isHovered ? 0.35 : 0.2), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSend)
+        .opacity(canSend ? 1 : 0.5)
+        .help("Queue message · sent when current run finishes")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .animation(.easeOut(duration: 0.1), value: canSend)
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    }
+}
+
+// MARK: - Send Now Button
+
+/// Accent-tinted variant that stops the active run and dispatches the
+/// queued send immediately. Visible only when a queued message exists.
+/// Same 32×32 circular footprint as `SendButton`; differentiated by a
+/// `bolt.fill` icon (signals "urgent / now") and a hover tooltip.
+private struct SendNowButton: View {
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor,
+                                theme.accentColor.opacity(0.85),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                if isHovered {
+                    Circle()
+                        .fill(Color.white.opacity(0.15))
+                }
+
+                Image(systemName: "bolt.fill")
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 32, height: 32)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(isHovered ? 0.35 : 0.2),
+                                theme.accentColor.opacity(0.3),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.accentColor.opacity(isHovered ? 0.5 : 0.35),
+                radius: isHovered ? 10 : 6,
+                x: 0,
+                y: isHovered ? 4 : 2
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Send now · interrupts current run")
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
