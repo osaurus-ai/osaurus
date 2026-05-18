@@ -8,7 +8,7 @@ consolidated `vmlx-swift` package.
 OsaurusCore now has one direct inference dependency:
 
 - `https://github.com/osaurus-ai/vmlx-swift`
-- revision `cc00b21a261176d947faa6f1b31f718c10dc1185`
+- revision `c2400100c4f73ea1e414aa292a1177713a4a72f6`
 
 That package is expected to export the runtime modules Osaurus previously pulled
 from separate roots:
@@ -164,7 +164,10 @@ decode produced a valid DSML envelope with an abbreviated invoke close
 and zero `.toolCall` events. The pinned `vmlx-swift` revision now accepts that
 observed DSV4 variant in the DSML parser. Post-fix live output emitted one
 structured `get_weather({"location":"Tokyo"})` call, no raw DSML marker leakage
-in `.chunk`, and no reasoning leakage.
+in `.chunk`, and no reasoning leakage. The latest pinned package commit also
+includes the refresh artifact
+`docs/internal/live-gates/20260518T_dsv4_dsml_toolcall_refresh/dsv4_dsml_toolcall.log`
+with the same `BatchEngine.generate` proof.
 
 ## Fresh Engine Process Rows
 
