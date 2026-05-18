@@ -134,6 +134,10 @@ Each model folder must include:
   snapshots.
 - These process-memory snapshots are diagnostics; production memory gates still
   need RSS plus Activity Monitor physical footprint review.
+- `vlm-sequence/live_sequence_probe.json` from
+  `scripts/pr1147_live_sequence_probe.py` for Qwen, Gemma VLM, ZAYA-VL, and
+  Nemotron Omni media rows, including image+text, text-only, different-image,
+  repeat-image, video, and audio turns when supported.
 - `media_sequence.json` for every VLM/Omni row.
 - `tool_reasoning_parser.json` for every tool/reasoning row.
 - `carryover_inverse.json` for saved-setting and cache-key switches.

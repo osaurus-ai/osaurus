@@ -141,6 +141,11 @@ Run these in the chat app after a keychain-safe launch:
   for stream and non-stream rows and captures before/after `/health`,
   `/admin/cache-stats`, and process-memory snapshots unless `--no-snapshots`
   is explicitly used.
+- `scripts/pr1147_live_sequence_probe.py` is available for VLM/Omni multi-turn
+  rows. It can drive image+text, text-only, different-image, repeat-image,
+  video, and audio turns across Chat Completions and Responses, with per-turn
+  health/cache/memory snapshots and output-tail extraction. It is still not a
+  pass/fail oracle.
 - `docs/internal/live-gates/20260518T_pr1147_keychain_safe_launch.md` is
   mandatory before app/API live gates. Fake-`HOME` direct binary launches are
   invalid.

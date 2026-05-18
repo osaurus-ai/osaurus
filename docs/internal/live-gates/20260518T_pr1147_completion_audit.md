@@ -177,6 +177,26 @@ diagnosable for route status, terminal frames, cache counter movement, and RSS
 context, but it still needs human output-tail review before any model row can
 pass.
 
+VLM/Omni multi-turn rows should use:
+
+```sh
+python3 scripts/pr1147_live_sequence_probe.py \
+  --base-url http://127.0.0.1:4242 \
+  --model <served-model-name> \
+  --output-dir docs/internal/live-gates/pr1147/<model-slug>/vlm-sequence \
+  --image <image-a> \
+  --different-image <image-b> \
+  --video <optional-video> \
+  --audio <optional-audio>
+```
+
+That helper records image+text, text-only, different-image, repeat-image, video,
+and audio turns when the corresponding media inputs are supplied. It writes raw
+Chat Completions and Responses request/response bodies, per-turn snapshots, and
+output tails. It is still an artifact collector; the row needs explicit human
+review for grounding, parser leaks, stop reason, cache hit correctness, TTFT,
+tok/s, RSS, and physical footprint.
+
 Metadata route probe checkpoint:
 
 - pre-fix artifact:

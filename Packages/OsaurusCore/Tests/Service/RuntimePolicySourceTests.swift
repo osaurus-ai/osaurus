@@ -176,6 +176,10 @@ struct RuntimePolicySourceTests {
         )
         let censusHelper = try Self.source("../../scripts/pr1147_collect_bundle_census.py")
         let routeProbeHelper = try Self.source("../../scripts/pr1147_http_route_probe.py")
+        let liveSequenceProbe = try Self.source("../../scripts/pr1147_live_sequence_probe.py")
+        let liveSequenceProbeTests = try Self.source(
+            "../../scripts/tests/test_pr1147_live_sequence_probe.py"
+        )
         let keychainLaunchHelper = try Self.source(
             "../../scripts/pr1147_keychain_safe_app_launch.sh"
         )
@@ -314,6 +318,7 @@ struct RuntimePolicySourceTests {
             "docs/internal/live-gates/pr1147/bundle-census/bundle_census.json",
             "does not close live UI",
             "scripts/pr1147_http_route_probe.py",
+            "scripts/pr1147_live_sequence_probe.py",
             "Do not count a route-probe artifact as model proof",
             "20260518T_pr1147_keychain_safe_launch.md",
             "scripts/pr1147_keychain_safe_app_launch.sh",
@@ -366,6 +371,43 @@ struct RuntimePolicySourceTests {
             #expect(
                 routeProbeHelper.contains(required),
                 "missing HTTP route-probe helper requirement: \(required)"
+            )
+        }
+
+        for required in [
+            "build_vlm_turn_plan",
+            "chat_request_body",
+            "responses_request_body",
+            "t1_image_text",
+            "t2_text_only",
+            "t3_different_image",
+            "t4_repeat_image",
+            "t5_video",
+            "t6_audio",
+            "/v1/chat/completions",
+            "/v1/responses",
+            "/admin/cache-stats",
+            "memory_snapshot",
+            "live_sequence_probe.json",
+            "output_tail",
+            "not a pass/fail oracle",
+        ] {
+            #expect(
+                liveSequenceProbe.contains(required),
+                "missing live sequence probe requirement: \(required)"
+            )
+        }
+
+        for required in [
+            "test_vlm_turn_plan_preserves_media_boundaries",
+            "test_request_bodies_use_chat_and_responses_media_shapes",
+            "t2_text_only",
+            "input_image",
+            "image_url",
+        ] {
+            #expect(
+                liveSequenceProbeTests.contains(required),
+                "missing live sequence probe test requirement: \(required)"
             )
         }
 
@@ -466,6 +508,7 @@ struct RuntimePolicySourceTests {
             "Open Until Proven",
             "unique stream/non-stream filenames",
             "process-memory snapshots",
+            "vlm-sequence/live_sequence_probe.json",
             "ModelOptions.swift",
             "ModelMediaCapabilities.swift",
             "LocalGenerationDefaults.swift",
