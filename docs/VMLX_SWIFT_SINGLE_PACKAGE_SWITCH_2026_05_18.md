@@ -8,7 +8,7 @@ consolidated `vmlx-swift` package.
 OsaurusCore now has one direct inference dependency:
 
 - `https://github.com/osaurus-ai/vmlx-swift`
-- revision `85fdef633b00d90035741e66c285b6b35da2299a`
+- revision `982857e3c678cc9506bee09136cde3c35156614a`
 
 That package is expected to export the runtime modules Osaurus previously pulled
 from separate roots:
@@ -98,3 +98,20 @@ Any incoherent output, repeated EOS loop, missing reasoning close, or cache hit
 with the wrong architecture state is a runtime bug to root-cause in `vmlx-swift`.
 Do not compensate in Osaurus by forcing temperature, top-p, top-k, repetition
 penalty, close tokens, or parser repairs.
+
+## DSV4 Tool-Calling Boundary
+
+DSV4-Flash bundles without a `tokenizer_config.json` chat template route through
+the `vmlx-swift` DSV4 fallback. That fallback must render:
+
+- top-level OpenAI `tools[]` as DSV4 DSML schema instructions;
+- previous assistant `message.tool_calls` as `<｜DSML｜tool_calls>` history;
+- `role=tool` outputs as `<tool_result>...</tool_result>`; and
+- original OpenAI tool-call ids so the next tool result can correlate with the
+  correct assistant call.
+
+Osaurus only bridges OpenAI chat messages into `MLXLMCommon.Chat.Message`; it
+must not stringify assistant tool calls into prompt text or repair DSV4 output
+after the fact. The parser/template behavior belongs in `vmlx-swift`, while
+Osaurus preserves structured ids, arguments, and tool-result content across the
+bridge.

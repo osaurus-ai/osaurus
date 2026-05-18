@@ -1539,6 +1539,7 @@ public actor ModelRuntime {
                     from: argsData
                 )) ?? [:]
             return MLXLMCommon.ToolCall(
+                id: tc.id,
                 function: .init(name: tc.function.name, arguments: args)
             )
         }

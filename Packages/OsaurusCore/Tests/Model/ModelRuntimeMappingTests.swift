@@ -54,6 +54,7 @@ struct ModelRuntimeMappingTests {
         // Content no longer carries the XML; structured field does.
         #expect(asst.content == "")
         #expect(asst.toolCalls?.count == 1)
+        #expect(asst.toolCalls?.first?.id == "call_1")
         #expect(asst.toolCalls?.first?.function.name == "get_weather")
         if case .string(let city) = asst.toolCalls?.first?.function.arguments["city"] {
             #expect(city == "Tokyo")
