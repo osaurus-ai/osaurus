@@ -19,7 +19,7 @@ metadata routes can close only their own subchecks.
 | Keychain-safe app launch | PASS for metadata launch path | `20260518T_pr1147_keychain_safe_launch.md` | Reuse for model rows; do not use fake `HOME`. |
 | Metadata routes | PARTIAL | `http-route-probe-metadata-20260518Tpost-cache-stats/` | Generation routes with loaded models, stream tails, usage, and cache stats. |
 | `/admin/cache-stats` route existence | PASS cold route | `get_admin_cache-stats.body` shows empty `models` and zero counters | Loaded-model cache-hit, L2 write, SSM rederive, and media-cache rows. |
-| ZAYA-VL live sequence | FAIL / PARTIAL | `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/review.md` | Root-cause blue-image stale red answer, Responses generic media output, unsupported video exposure, and empty loaded-model/cache stats. |
+| ZAYA-VL live sequence | FAIL / PARTIAL | `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/review.md` | Root-cause blue-image stale red answer, Responses generic media output, unsupported video exposure, and rerun cache proof with non-immediate residency or stream-time snapshots. |
 | Model production readiness | NOT COMPLETE | Manifest and this matrix | Real visible multi-turn output, no loops/leaks, TTFT, tok/s, RSS, physical footprint, and per-topology cache proof. |
 
 ## Source-To-Artifact Wiring
@@ -66,6 +66,12 @@ For Qwen3.6 VL/MTP, Gemma VLM, ZAYA-VL, and Nemotron Omni:
 7. Repeat original media. Confirm media cache hit or explicit N-A with reason.
 8. Run `/v1/chat/completions` stream and non-stream and `/v1/responses` stream and non-stream with the same media shape.
 9. Run unsupported-media inverse on a text-only model and confirm clean 400/422-style error, not a hang or stack trace.
+
+Cache-proof VLM rows must record the app/server idle-residency mode. Immediate
+unload can remove the model from `ModelRuntime.cachedModelSummaries()` before a
+non-streaming after-snapshot runs, so empty `/health.loaded` and
+`/admin/cache-stats.models` are not cache-hit evidence. Use non-immediate
+residency or stream-time snapshots before the generation lease releases.
 
 ### Reasoning / Parser Sequence
 
@@ -165,7 +171,8 @@ The following remain open until concrete artifacts exist:
 - ZAYA-VL media and ZAYA text direct-mode root cause. Current
   `zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/` evidence is red because the
   blue-image turn still described red, Responses was not grounded, video
-  returned unsupported, and `/health` plus `/admin/cache-stats` remained empty.
+  returned unsupported, and cache proof was not collected under a residency
+  mode that can keep the model visible after the request.
 - Nemotron Omni audio/video/image rows through Osaurus, including Parakeet and
   RADIO evidence.
 - DSV4 UI settings visuals, DSML route proof, native cache stats, and long chat.

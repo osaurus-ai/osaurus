@@ -197,6 +197,13 @@ output tails. It is still an artifact collector; the row needs explicit human
 review for grounding, parser leaks, stop reason, cache hit correctness, TTFT,
 tok/s, RSS, and physical footprint.
 
+For model-cache proof, verify the app/server idle-residency setting first.
+Osaurus defaults to immediate unload after the final generation lease drops;
+with that policy, non-streaming post-request `/health` and `/admin/cache-stats`
+can correctly return empty `loaded` / `models` arrays even though generation
+just succeeded. Cache-hit rows must either set a non-immediate residency policy
+or capture snapshots during a streaming request before the lease is released.
+
 ZAYA-VL live sequence checkpoint:
 
 - pre-fix artifact:
@@ -218,8 +225,11 @@ ZAYA-VL live sequence checkpoint:
   follow-up, but the different blue image is answered as red, Responses returns
   generic "media" text instead of grounded image answers, ZAYA1-VL video returns
   HTTP 500 `ZAYA1-VL video input is not implemented`, and `/health` plus
-  `/admin/cache-stats` still report no loaded model/cache counters. This is a
-  real live gap, not a pass.
+  `/admin/cache-stats` still report no loaded model/cache counters. Source
+  trace shows the empty post-request snapshots are consistent with the default
+  `.immediately` idle-residency policy, so the next cache-proof rerun must set
+  non-immediate residency through the app/settings path or capture stream-time
+  snapshots while the lease is held. This is a real live gap, not a pass.
 
 Metadata route probe checkpoint:
 

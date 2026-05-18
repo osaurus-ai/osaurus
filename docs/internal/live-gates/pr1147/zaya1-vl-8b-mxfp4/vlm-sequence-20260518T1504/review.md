@@ -37,10 +37,19 @@ text-only follow-up, blue image, red image repeat, and video rows.
 - `/admin/cache-stats` still reported `models: []` and zero prefix, paged,
   block-L2, and SSM counters throughout the sequence.
 
+Source trace for the empty health/cache snapshots:
+`ServerConfiguration.default.modelIdleResidencyPolicy` is `.immediately`, and
+`ModelRuntime.generateEventStream` schedules idle unload when the generation
+lease is released. This can legitimately empty `ModelRuntime.modelCache`
+between non-streaming requests, so this artifact cannot prove cache reuse.
+The next cache-proof rerun must either set a non-immediate idle residency
+policy through the app/settings path or capture stream-time snapshots while
+the model lease is still held.
+
 ## Consequence
 
 This artifact is useful proof that the live app/API path is being exercised,
 but it is not production proof for ZAYA-VL. The row remains red until the media
 switch grounding, Responses media handling, unsupported-video capability, and
-loaded-model/cache-stats reporting paths are root-caused and fixed without
-sampler or prompt guards.
+loaded-model/cache-stats proof path are root-caused and fixed without sampler
+or prompt guards.
