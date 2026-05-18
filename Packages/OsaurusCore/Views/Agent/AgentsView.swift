@@ -3763,6 +3763,7 @@ struct AgentDetailView: View {
                             "Container-based execution requires macOS 26 or later. Native plugins continue to work normally on this device."
                     )
                 } else if !sandboxRunning {
+                    workspaceFolderRow
                     AgentSectionEmptyState(
                         icon: "shippingbox",
                         title: "Sandbox not running",
@@ -3771,10 +3772,68 @@ struct AgentDetailView: View {
                     )
                     secretsSubsection
                 } else {
+                    workspaceFolderRow
                     sandboxExecToggles(execConfig: execConfig)
                     secretsSubsection
                 }
             }
+        }
+    }
+
+    /// Row inside the agent's Sandbox section that reveals the agent's
+    /// host-side workspace folder in Finder. The folder is the same one
+    /// bind-mounted into the guest at `/workspace/agents/<linuxName>/`,
+    /// so any edit the user makes from Finder is visible to the agent
+    /// immediately. `OsaurusPaths.revealInFinder` lazily creates the
+    /// directory so agents that have never executed inside the
+    /// sandbox still get a usable folder.
+    private var workspaceFolderRow: some View {
+        let linuxName = SandboxAgentProvisioner.linuxName(for: agent.id.uuidString)
+        let workspaceURL = OsaurusPaths.containerAgentDir(linuxName)
+        let isProvisioned = SandboxManager.State.shared.status != .notProvisioned
+
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Workspace Folder", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    "Browse and edit files in this agent's /workspace/agents/… home.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            }
+            Spacer()
+            Button {
+                OsaurusPaths.revealInFinder(workspaceURL)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Open in Finder", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.accentColor.opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(!isProvisioned)
+            .opacity(isProvisioned ? 1 : 0.45)
+            .help(
+                isProvisioned
+                    ? "Reveal this agent's sandbox home folder in Finder."
+                    : "Set up the sandbox to enable the workspace."
+            )
         }
     }
 

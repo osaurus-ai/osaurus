@@ -110,6 +110,7 @@ private extension SandboxView {
                         SandboxLogConsoleCard()
                         diagnosticsCard
                     }
+                    workspaceCard
                     resourceConfigCard
                     dangerZoneCard
                 }
@@ -672,6 +673,35 @@ private extension SandboxView {
                         .stroke(theme.inputBorder, lineWidth: 1)
                 )
         )
+    }
+}
+
+// MARK: - Workspace Card
+
+private extension SandboxView {
+
+    /// Top-level shortcut into the container's `/workspace` directory,
+    /// which is a host bind mount at `~/.osaurus/container/workspace/`.
+    /// Lets users browse and edit sandbox files in Finder without
+    /// running anything inside the guest.
+    var workspaceCard: some View {
+        sectionCard(title: "Workspace", icon: "folder") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(
+                    "The container's /workspace directory is bind-mounted from ~/.osaurus/container/workspace/. Open it in Finder to browse or edit files directly on the host.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+
+                HStack {
+                    Spacer()
+                    accentButton("Open in Finder", icon: "folder") {
+                        OsaurusPaths.revealInFinder(OsaurusPaths.containerWorkspace())
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -6,6 +6,7 @@
 //  Provides consistent directory structure across all components.
 //
 
+import AppKit
 import Foundation
 
 /// Centralized path management for all Osaurus app data.
@@ -473,6 +474,17 @@ public enum OsaurusPaths {
     /// Ensures a directory exists (non-throwing version)
     public static func ensureExistsSilent(_ url: URL) {
         try? ensureExists(url)
+    }
+
+    /// Opens `url` in Finder, creating the directory first if needed.
+    /// Centralises the ensure-dir + `NSWorkspace.shared.open` pair so
+    /// "Open in Finder" affordances behave identically across the UI
+    /// (and don't fail silently when a lazily-provisioned folder
+    /// hasn't been created yet).
+    @MainActor
+    public static func revealInFinder(_ url: URL) {
+        ensureExistsSilent(url)
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - File Utilities
