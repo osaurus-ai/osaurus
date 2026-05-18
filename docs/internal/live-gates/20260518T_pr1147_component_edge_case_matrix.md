@@ -129,6 +129,11 @@ Each model folder must include:
 - `chat_ui_turns.json` with visible text, reasoning text, token counts, stop
   reason, TTFT, tok/s, and output tail.
 - `api_routes/` with raw route output for stream and non-stream APIs.
+- `api_routes/http_route_probe.json` with unique stream/non-stream filenames
+  plus before/after `/health`, `/admin/cache-stats`, and process-memory
+  snapshots.
+- These process-memory snapshots are diagnostics; production memory gates still
+  need RSS plus Activity Monitor physical footprint review.
 - `media_sequence.json` for every VLM/Omni row.
 - `tool_reasoning_parser.json` for every tool/reasoning row.
 - `carryover_inverse.json` for saved-setting and cache-key switches.

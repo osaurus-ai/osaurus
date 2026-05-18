@@ -170,6 +170,13 @@ Do not count a route-probe artifact as model proof unless the same folder also
 has cache stats, visible output review, parser/no-leak review, timing, and
 memory artifacts for the model row.
 
+In generation mode, the route helper now uses unique stream/non-stream output
+filenames and captures before/after `/health`, `/admin/cache-stats`, and
+process-memory snapshots. That makes the generated `api_routes/` artifact
+diagnosable for route status, terminal frames, cache counter movement, and RSS
+context, but it still needs human output-tail review before any model row can
+pass.
+
 Metadata route probe checkpoint:
 
 - pre-fix artifact:

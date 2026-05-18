@@ -137,7 +137,10 @@ Run these in the chat app after a keychain-safe launch:
   carryover, cache-key inverses, native `top_k`, MTP tuning, parser leaks,
   memory/TTFT/token/s, and old-library/zombie-code sweeps.
 - `scripts/pr1147_http_route_probe.py` is available for route capture but is
-  not model proof by itself.
+  not model proof by itself. In generation mode it writes distinct artifacts
+  for stream and non-stream rows and captures before/after `/health`,
+  `/admin/cache-stats`, and process-memory snapshots unless `--no-snapshots`
+  is explicitly used.
 - `docs/internal/live-gates/20260518T_pr1147_keychain_safe_launch.md` is
   mandatory before app/API live gates. Fake-`HOME` direct binary launches are
   invalid.

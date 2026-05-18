@@ -358,6 +358,10 @@ struct RuntimePolicySourceTests {
             "--run-generation requires --model",
             "http_route_probe.json",
             "body_excerpt",
+            "memory_snapshot",
+            "--no-snapshots",
+            "before_generation",
+            "after_generation",
         ] {
             #expect(
                 routeProbeHelper.contains(required),
@@ -460,6 +464,8 @@ struct RuntimePolicySourceTests {
             "Saved-Setting And Cache-Key Inverses",
             "Artifact Acceptance Rules",
             "Open Until Proven",
+            "unique stream/non-stream filenames",
+            "process-memory snapshots",
             "ModelOptions.swift",
             "ModelMediaCapabilities.swift",
             "LocalGenerationDefaults.swift",
