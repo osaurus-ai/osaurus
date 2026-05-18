@@ -184,6 +184,8 @@ struct RuntimePolicySourceTests {
             "Chat UI route",
             "Prompt-to-Artifact Checklist",
             "Function-Level Live Checklist",
+            "Per-Family UI/API Execution Matrix",
+            "Settings Carryover and Cache-Key Failure Modes",
             "source-wired",
             "osaurus-live",
             "production-clear",
@@ -243,6 +245,18 @@ struct RuntimePolicySourceTests {
             "name-only MTP",
             "standalone `Jinja`",
             "standalone `swift-transformers`",
+            "Image+text T1, text-only T2, different-image T3",
+            "video-frame row",
+            "chat_template_kwargs",
+            "native `top_k` from metadata",
+            "ZayaCCACache/path-dependent media state",
+            "Parakeet pre-encode facts",
+            "RADIO/vision facts",
+            "coding prompt with tool schema injection",
+            "Tool/coding context carryover",
+            "Generation defaults",
+            "Native `top_k` must apply when present",
+            "OFF must not silently alter sampler defaults",
         ] {
             #expect(matrix.contains(required), "missing live-matrix requirement: \(required)")
         }

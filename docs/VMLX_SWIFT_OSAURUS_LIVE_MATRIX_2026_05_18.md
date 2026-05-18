@@ -203,6 +203,50 @@ model legitimately cannot exercise that layer.
 | Hybrid SSM / linear attention | SSM companion cache and optional re-derive only when profitable for the workflow. | SSM hits/misses/stores, no KV-only unsafe hit, coherent multi-turn after prefix mismatch, re-derive status and TTFT captured. |
 | JANG/JANGTQ/TurboQuant | Loader derives real bit metadata from bundle sidecars; no name-only MTP/JANGTQ claims. | JANG/JANGTQ format, TurboQuant KV encode/decode status when enabled, no shape-inferred metadata hidden from logs, no permanent overlay unless explicit diagnostic. |
 
+## Per-Family UI/API Execution Matrix
+
+This matrix is the real-user checklist for the Osaurus chat app and HTTP
+routes. It exists so a future pass cannot say "VL works" or "reasoning works"
+without showing the same behavior through UI selection, saved settings,
+request construction, vmlx execution, cache stats, and visible output.
+
+| Family or path | UI defaults and visual controls | Required chat UI proof | Required API proof | Cache and memory proof | Parser/tool/reasoning proof |
+|---|---|---|---|---|---|
+| DSV4 Flash | Reasoning default is `instruct`; `max` is selectable and passed unchanged as `reasoning_effort=max`; generic q4/q8 KV, JIT, MLLM, speculative, and generic block-size controls are hidden/disabled; pool quant and native cache copy are visible. | Select DSV4, inspect Chat Settings and Server Settings, run cold T1, follow-up T2, Stop/Retry, switch away/back, confirm no stale non-DSV4 reasoning setting persists. | `/v1/chat/completions`, `/v1/responses`, `/v1/messages` when mapped, and Ollama routes with DSML tools on/off and no sampler fields. | `DeepseekV4Cache`, SWA+CSA+HSA status, fixed 256 display row, pool quant, growing-chat/prefix behavior, TTFT, tok/s, RSS/physical footprint, and L2 disk bytes when valid. | DSML tool calls structured, `role=tool` result preserved, no DSML/instruct marker leakage, no forced think close, no hidden repetition/temperature guard. |
+| Qwen VL / Qwen3.6 MTP VL | Qwen reasoning controls map to `enable_thinking`; no-thinking default applies where profile says so; VLM controls visible only when processor files exist; MTP visible only from real `mtp.*` tensors plus `vmlx_mtp_tuning.json`. | Image+text T1, text-only T2, different-image T3, video-frame row, MTP on/off selector/status where valid, save/relaunch and verify same-model settings only. | Chat completions and Responses stream/non-stream with media content parts, omitted sampler fields, explicit `chat_template_kwargs`, and native `top_k` from metadata. | Qwen3VLProcessor, MRoPE, media salt nil/absent on T2, different media miss, repeated media hit, prefix/paged/L2 stats, MTP depth/effective speed, tok/s and physical footprint. | `<think>` separated from visible content, Qwen tool XML parsed into structured `tool_calls`, tool result follow-up ordered correctly, no stale DSV4/Ling parser profile. |
+| Gemma4 / Gemma VLM | Gemma4 Harmony reasoning controls only for Harmony-capable models; Gemma VLM/image controls visible only after real media capability detection; Gemma3n must not show media controls from text-only evidence. | Gemma4 image+text, text-only follow-up, video/image switch, settings save/reload, and code/math prompt with enough tokens to catch looping. | Chat completions, Responses, Anthropic when mapped, and tool-call row for Gemma parser with stream/non-stream. | Sliding-window/heterogeneous cache topology visible; no app-forced global `maxKVSize`; prefix/paged/L2 counters and long-prompt non-crash proof; RSS and TTFT. | Harmony analysis/final split preserved, Gemma tool cards structured, no Harmony/Gemma marker leakage, Gemma3n UTF drift remains red until root-caused. |
+| ZAYA / ZAYA-VL | Default no-thinking unless explicitly enabled; ZAYA-VL media controls require real ZAYA VLM bundle; direct-mode red rows remain visible and are not hidden by sampler clamps. | ZAYA-VL image/video turns grounded, text-only resume, switch to text-only model and back, saved-thinking isolation, and visible speed/coherence row. | Chat completions and Responses stream/non-stream with media; tools only if parser capability is detected; no default tool parser guessed from marketing name. | ZayaCCACache/path-dependent media state, media salt/miss/hit, prefix/paged/L2 where topology allows, physical footprint, tok/s target watch, no cross-session CCA reuse. | No stale Qwen/DSV4 thinking setting, no CCA state attached to wrong media turn, no parser marker leakage, red incoherent row remains root-cause work. |
+| Nemotron Omni / Parakeet / RADIO | Default no-thinking for normal chat; explicit opt-in honored; audio/video/image controls visible only when omni capability files and runtime path are present; live-voice status is separate from text-only readiness. | Audio/pre-encode T1, text-only T2, image/video T3 where supported, repeated-video/media hit, live streaming voice chunk stability, sleep/wake and resume. | Chat completions and Responses with media; `/v1/messages` thinking/tool-use when mapped; clean unsupported-media API error; no audio/video data dropped by adapters. | Parakeet pre-encode facts, RADIO/vision facts, media salt, repeated-media alias, SSM/path-dependent companion stats if applicable, disk bytes, TTFT, tok/s, physical footprint. | Nemotron tool parser structured, no Nemotron XML marker leakage, no reasoning-only short-budget false pass, audio/video placeholders cannot poison text-only follow-ups. |
+| MiniMax | Reasoning UI visible for reasoning-capable MiniMax; MTP hidden unless real MTP tensors exist; no MTP claim from CRACK or name. | Multi-turn reasoning chat, tool-call card, save/relaunch, switch from DSV4/Qwen and verify no stale parser/reasoning field. | Chat completions/Responses tools on/off, second turn with tool result, streaming terminal usage. | Prefix/paged/L2/TurboQuant KV status when enabled, no permanent overlay, tok/s and footprint, cache-on/off inverse. | MiniMax reasoning channel kept out of visible text, MiniMax XML/JSON parser selected from base architecture, no forced close or repetition penalty. |
+| Ling / Hy3 / hybrid SSM | Ling/non-reasoning profiles hide or ignore Qwen thinking controls; Hy3/Hunyuan controls match their parser; SSM re-derive policy shown as Osaurus disabled for mutating-prefix chat unless explicitly testing inverse. | Long-prompt T1, prefix-overlap T2, prefix-mismatch T3, stale Qwen thinking setting ignored, stop/retry and cancel cleanup. | Chat completions/Responses with tools on/off where supported; route-specific sampler defaults and native `top_k` preserved. | SSM companion hits/misses/stores, no KV-only unsafe hit, paged/L2 stats, re-derive status, TTFT, physical footprint. | GLM/Hunyuan/Ling markers do not leak; tool result ordering preserved; no hidden non-thinking clamp beyond documented profile behavior. |
+| GLM / GPT-OSS / Mistral / other parser families | Reasoning selector and tool parser must come from base architecture, not display name; unsupported controls hidden; coding prompt with tool schema injection shown only for tool-capable rows. | One UI row per local family with saved-setting isolation and enough output tokens to catch leak/loop. | Chat completions, Responses, Messages/Ollama where applicable, tool-result follow-up, explicit and omitted sampler fields. | Dense/sliding/hybrid cache topology declared as active or N-A, cache stats before/after, TTFT/tok/s/RSS. | Harmony, bracket-think, GLM/Hunyuan, Mistral, JSON, and tool-result sentinels never leak into visible content. |
+
+## Settings Carryover and Cache-Key Failure Modes
+
+These are explicit inverse rows, not nice-to-have manual notes:
+
+1. Reasoning carryover: enable Qwen thinking, quit/reopen, switch to Ling or a
+   non-reasoning row, and prove no `enable_thinking`, `reasoning_effort`, or
+   stale reasoning parser enters the request or cache key.
+2. DSV4 carryover: set DSV4 `max`, switch to a Qwen/Gemma/ZAYA/Nemotron row,
+   then back to DSV4. Only DSV4 may retain `max`; other families must send
+   their own native field or no field.
+3. Media carryover: run VLM image+text, switch to a text-only model, then back.
+   Text-only requests must have media salt absent and must not reuse media or
+   path-dependent CCA/SSM state.
+4. Cache mode carryover: disable prefix/paged/L2 for an inverse row, switch
+   models, then re-enable. OFF must not silently alter sampler defaults; ON
+   must restore hit counters, disk bytes, and topology-specific cache status.
+5. Tool/coding context carryover: run a tool-capable coding prompt with tool
+   schema injection and a second-turn tool result, switch to a no-tools row,
+   and prove no tool schema, result marker, or tool parser profile leaks into
+   visible content or cache scope.
+6. Generation defaults: for every model row, compare UI defaults, HTTP omitted
+   sampler fields, and vmlx resolved kwargs against `generation_config.json`
+   and `jang_config.json`. Native `top_k` must apply when present, and absent
+   values must fall through to engine defaults without family-specific guard
+   floors.
+
 ## Model Matrix
 
 | Model path or family | Runtime class/topology | Current evidence | Required before production-clear |
