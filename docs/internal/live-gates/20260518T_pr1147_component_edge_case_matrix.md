@@ -119,6 +119,7 @@ For each representative attention/cache topology:
 | Cache OFF/ON | Disable prefix/paged/L2, run a turn, switch models, re-enable. Counters restore only on valid topology and do not reuse stale disabled-state cache. |
 | Tool/coding context | Enable coding prompt/tool schema injection, switch to no-tools model. No tool schema, tool result id, or coding context leaks into visible output or cache key. |
 | Sampler defaults | Omitted sampler fields resolve from bundle files; explicit request fields override exactly. OFF rows must not silently alter sampler defaults. |
+| Forced behavior audit | Search source, settings previews, prompt dumps, and live output for forced sampler defaults, forced repetition penalties, forced reasoning rail selection, forced `</think>` close tokens, token/logit shaping, or parser output repair. Any hit must record why it was built, prove whether it still fires, and be replaced by a real template/decode/tokenizer/cache/root-cause fix or left as a red row. |
 | MTP | Non-MTP bundles show disabled with `no mtp tensor evidence`; valid Qwen bundles use tuning file depth; blocked tuning stays off. |
 
 ## Artifact Acceptance Rules
@@ -158,6 +159,9 @@ Do not promote:
 - metadata route status only;
 - short output that ended at max tokens without visible answer;
 - hidden sampler, EOS, repetition, or forced reasoning-close repair;
+- forced sampler defaults, repetition penalties, reasoning rail rewrites,
+  `</think>` close tokens, token/logit shaping, or parser output repairs that
+  are not traced to bundle metadata or explicit user/API kwargs;
 - name-based MTP detection;
 - media path evidence that did not send real media;
 - cache proof without hit/miss counters and timing/memory context.

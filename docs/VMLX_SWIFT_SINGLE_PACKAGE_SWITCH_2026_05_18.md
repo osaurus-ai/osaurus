@@ -112,6 +112,14 @@ with the wrong architecture state is a runtime bug to root-cause in `vmlx-swift`
 Do not compensate in Osaurus by forcing temperature, top-p, top-k, repetition
 penalty, close tokens, or parser repairs.
 
+Forced behavior cleanup is part of the switch, not a follow-up. Search for any
+forced sampler default, repetition penalty, reasoning rail rewrite, forced `</think>` close,
+token/logit shaping, or parser output repair. For every hit, record why it was
+originally added, prove whether it still affects live output, and replace it
+with the real template, decode, tokenizer, cache, or model-family fix. If the
+real fix is not known yet, leave the row red; do not promote the guard as
+production behavior.
+
 ## DSV4 Tool-Calling Boundary
 
 DSV4-Flash bundles without a `tokenizer_config.json` chat template route through

@@ -163,6 +163,9 @@ struct RuntimePolicySourceTests {
 
         #expect(switchDoc.contains("fake sampler clamps"))
         #expect(switchDoc.contains("forced repetition penalties"))
+        #expect(switchDoc.contains("Forced behavior cleanup is part of the switch"))
+        #expect(switchDoc.contains("forced `</think>` close"))
+        #expect(switchDoc.contains("token/logit shaping"))
         #expect(switchDoc.contains("generic cache"))
     }
 
@@ -259,6 +262,7 @@ struct RuntimePolicySourceTests {
             "F9 | Parser and channel separation",
             "F10 | Old-library and zombie-code sweep",
             "F11 | No fake runtime guards",
+            "F12 | Forced behavior audit",
             "Qwen3VLProcessor and MRoPE",
             "Parakeet/RADIO",
             "media-salt nil/absent",
@@ -279,6 +283,11 @@ struct RuntimePolicySourceTests {
             "Generation defaults",
             "Native `top_k` must apply when present",
             "OFF must not silently alter sampler defaults",
+            "forced sampler defaults",
+            "forced `</think>` close tokens",
+            "token/logit biasing",
+            "explicit user/API kwargs",
+            "real template/decode/tokenizer/cache/root-cause fix",
         ] {
             #expect(matrix.contains(required), "missing live-matrix requirement: \(required)")
         }
@@ -301,6 +310,8 @@ struct RuntimePolicySourceTests {
             "MiniMax reasoning/tools",
             "Ling / Hy3 / hybrid SSM",
             "Generation defaults and top-k",
+            "Forced behavior audit",
+            "forced output-shaping behavior",
             "Settings carryover and cache-key isolation",
             "Old-library and zombie-code removal",
             "Qwen3.6 27B MXFP4 MTP tuning selects best depth 2",
@@ -546,6 +557,9 @@ struct RuntimePolicySourceTests {
             "name-based MTP detection",
             "hidden sampler, EOS, repetition",
             "forced reasoning-close repair",
+            "reasoning rail rewrites",
+            "token/logit shaping",
+            "explicit user/API kwargs",
             "Final old-library and zombie-code sweep",
         ] {
             #expect(

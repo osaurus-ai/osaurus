@@ -28,6 +28,10 @@ HTTP APIs, that consolidated `vmlx-swift` handles each local model family with:
   valid;
 - multi-turn visible coherency, no loops, no parser/tag leakage, and no
   hidden sampler or reasoning guard;
+- no forced output-shaping behavior: sampler defaults, repetition penalties,
+  reasoning rail selection, `</think>` close tokens, token/logit shaping, and
+  parser repairs must come only from bundle metadata or explicit user/API
+  kwargs, otherwise the row stays red until the real root cause is fixed;
 - TTFT, tok/s, RSS, Activity Monitor physical footprint, cache stats, and L2
   bytes for each live row;
 - old standalone inference libraries removed from active Osaurus inference
@@ -46,6 +50,7 @@ HTTP APIs, that consolidated `vmlx-swift` handles each local model family with:
 | Ling / Hy3 / hybrid SSM | Live matrix requires stale Qwen thinking ignored, hybrid cache topology, SSM companion hits/misses/stores, and no KV-only unsafe hit. | Osaurus long-prompt, prefix-overlap, prefix-mismatch, API tool rows, re-derive status, cache stats, and TTFT/footprint artifacts. |
 | GLM / GPT-OSS / Mistral / parser families | Live matrix requires parser from base architecture, no marker leakage, and tools only where supported. | Live local model rows when models are present; no production claim without artifacts. |
 | Generation defaults and top-k | Live matrix requires UI defaults and omitted HTTP sampler fields to resolve from `generation_config.json` / `jang_config.json`, including native `top_k`. Local census confirms generation config files across target families. | Per-model resolved-kwargs logs from Osaurus UI and every API route; explicit sampler override proof; no hidden temperature/top-p/top-k/repetition floors. |
+| Forced behavior audit | Live matrix now requires source/live search for forced sampler defaults, repetition penalties, reasoning rail rewrites, forced `</think>` close tokens, token/logit shaping, and parser output repair. | For every hit, artifact why it was originally added, whether it still fires, and the real template/decode/tokenizer/cache fix or a red-row status. Do not promote app-shaped output as model coherency. |
 | Settings carryover and cache-key isolation | Live matrix names reasoning carryover, DSV4 `max` carryover, media carryover, cache OFF/ON restoration, tool/coding context carryover, and generation defaults. | App relaunch and cross-family switch artifacts proving stale reasoning/cache/media/tool settings do not enter another model's request or cache key. |
 | Old-library and zombie-code removal | Source-policy tests assert consolidated `vmlx-swift` package pins and VMLX-prefixed imports for tokenizers/Jinja, plus no active old inference package names in current runtime source/docs. | Full final PR audit after all live rows to ensure no new old-library import or CLI path was introduced. |
 

@@ -112,6 +112,7 @@ unsupported cache, or old-library path is still active.
 | F9 | Parser and channel separation | Reasoning parser, tool parser, and visible content are checked separately for each family. No `<think>`, DSML, Harmony, Gemma4, Qwen XML, MiniMax XML, GLM/Hunyuan, Nemotron, JSON tool schema, or tool result marker may leak into visible `.chunk` content. Tool-call turns must produce structured `tool_calls`; second-turn `tool_result` must preserve ordering and cache scope. |
 | F10 | Old-library and zombie-code sweep | Package pins, source imports, comments, CLI previews, and runtime logs prove Osaurus is using consolidated `vmlx-swift` modules for MLX, MLXLLM, MLXVLM, MLXLMCommon, VMLXTokenizers, and VMLXJinja. No active local inference path may import or pin old `vmlx-swift-lm`, standalone `mlx-swift`, standalone `swift-transformers`, or standalone `Jinja`. |
 | F11 | No fake runtime guards | Failures must stay red until root-caused. Rows may not pass because of forced repetition penalties, hidden temperature/top-p/top-k floors, forced reasoning close tags, parser repairs, fake cache fallback, name-only MTP, permanent overlays, or length-cap-only success. |
+| F12 | Forced behavior audit | Source and live rows must search for output-shaping patches: forced sampler defaults, forced repetition penalties, forced reasoning rail selection, forced `</think>` close tokens, token/logit biasing, and parser output repair. If any exist, the artifact must state why it was originally added, prove whether it still fires, and replace it with a real template/decode/tokenizer/cache/root-cause fix or leave the model row red. The only allowed generation defaults are bundle metadata (`generation_config.json` / `jang_config.json`) or explicit user/API kwargs. |
 
 ## Route-Specific Live Gate
 
@@ -252,6 +253,12 @@ These are explicit inverse rows, not nice-to-have manual notes:
    and `jang_config.json`. Native `top_k` must apply when present, and absent
    values must fall through to engine defaults without family-specific guard
    floors.
+7. Forced behavior audit: search source, settings previews, prompt dumps, and
+   live output for forced sampler defaults, repetition penalties, reasoning rail
+   rewrites, forced `</think>` close tokens, token/logit biasing, and parser
+   output repair. Any hit must include a root-cause note explaining why it was
+   built, an artifact proving whether it still affects the row, and a real fix
+   path. Do not count a row green because the app reshaped the model output.
 
 ## Model Matrix
 
