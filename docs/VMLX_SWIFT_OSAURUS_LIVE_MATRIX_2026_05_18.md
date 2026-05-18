@@ -86,6 +86,27 @@ single model load, a single API route, or a unit test does not cover the row.
 | Settings renderer | Server settings and CLI preview show only topology-valid controls and omit invalid flags. | DSV4 checklist locked; other families still need final UI pass. |
 | Tool integration | Tool schema injection, tool-call parsing, and second turn with tool result work for each parser family without cache-breaking prompt drift. | DSV4 live vmlx row passed; remaining families need live API rows. |
 
+## Function-Level Live Checklist
+
+These rows are the minimum subitems every model-family row must account for.
+They are deliberately written at the function and wiring level so the final
+gate cannot pass by showing one coherent answer while a hidden setting,
+unsupported cache, or old-library path is still active.
+
+| ID | Function or wiring surface | Required live/user-path proof |
+|---|---|---|
+| F1 | Model detection and metadata | Exact bundle path, family, parser, VLM/audio/video support, JANG/JANGTQ sidecars, MTP tensor count, `vmlx_mtp_tuning.json`, `generation_config.json`, `top_k`, and `jang_config.json` are captured before load. MTP is enabled only from real `mtp.*` weights plus tuning, never from the model name. |
+| F2 | UI defaults and saved settings | Chat settings and server settings screenshots/logs prove DSV4 `instruct` default, DSV4 `max` pass-through, no-thinking defaults for Qwen/ZAYA/Nemotron/Ling where applicable, Gemma Harmony controls, tool/reasoning parser selection, cache controls, and saved-setting reload. Switching families must not carry stale reasoning, cache, media, or parser settings into the new request or cache key. |
+| F3 | Request construction | Chat UI, `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/api/chat`, and `/api/generate` all show omitted sampler fields resolving from model metadata, explicit sampler fields preserved, native `top_k` applied, tools injected only in tool-capable turns, and media/content parts preserved through adapters. |
+| F4 | VL/video/audio preprocessing | Qwen-VL/Qwen3.6 MTP-VL uses Qwen3VLProcessor and MRoPE; Gemma VLM uses the Gemma media path; ZAYA-VL preserves CCA/path-dependent media state; Nemotron Omni uses Parakeet/RADIO. Artifacts include image size, video frame count, audio/pre-encode facts, media token count, media salt, repeated-media cache alias, and clean unsupported-media error. |
+| F5 | Media cache boundaries | Multi-turn media rows prove image+text T1, text-only T2 with media-salt nil/absent, different-image T3 cache miss, repeated-media hit, restart/unload restore, and no cross-model or cross-session media-state reuse. |
+| F6 | Cache stack and memory | Prefix, paged, block L2, SSM companion, DSV4 native cache, ZAYA CCA, media cache, and TurboQuant KV status are each recorded as active or N-A. Rows include cache stats before/after turns, L2 max-GB enforcement, TTFT delta, tok/s, RSS, Activity Monitor physical footprint, and disk bytes written. |
+| F7 | Cache inverses | Prefix, paged, block L2, SSM companion, media cache, TurboQuant KV, reasoning, tools, streaming, VLM force-off, sleep/wake, and JIT/diagnostic flags each have ON/OFF rows where valid. OFF must not crash or silently change sampler defaults; ON must restore counters/kernel/cache topology. |
+| F8 | Scheduler and process lifecycle | Single-user UI chat uses the local-chat default batch shape; same-model concurrent API calls exercise continuous batching; different-model sessions remain isolated; cancel/stop drains in-flight stats; sleep/wake restores a usable model; no zombie Swift engine, stale listener, or orphaned Metal context remains. |
+| F9 | Parser and channel separation | Reasoning parser, tool parser, and visible content are checked separately for each family. No `<think>`, DSML, Harmony, Gemma4, Qwen XML, MiniMax XML, GLM/Hunyuan, Nemotron, JSON tool schema, or tool result marker may leak into visible `.chunk` content. Tool-call turns must produce structured `tool_calls`; second-turn `tool_result` must preserve ordering and cache scope. |
+| F10 | Old-library and zombie-code sweep | Package pins, source imports, comments, CLI previews, and runtime logs prove Osaurus is using consolidated `vmlx-swift` modules for MLX, MLXLLM, MLXVLM, MLXLMCommon, VMLXTokenizers, and VMLXJinja. No active local inference path may import or pin old `vmlx-swift-lm`, standalone `mlx-swift`, standalone `swift-transformers`, or standalone `Jinja`. |
+| F11 | No fake runtime guards | Failures must stay red until root-caused. Rows may not pass because of forced repetition penalties, hidden temperature/top-p/top-k floors, forced reasoning close tags, parser repairs, fake cache fallback, name-only MTP, permanent overlays, or length-cap-only success. |
+
 ## Route-Specific Live Gate
 
 Each route below must be tested with the same default cache stack that a normal
