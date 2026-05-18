@@ -147,6 +147,29 @@ Executed for this checkpoint:
 This closes the file-level census artifact only. It does not close live UI,
 HTTP, cache-hit, coherency, media, parser, or memory proof.
 
+The HTTP/API artifact skeleton can be collected from a running Osaurus server
+with:
+
+```sh
+python3 scripts/pr1147_http_route_probe.py \
+  --base-url http://127.0.0.1:1337 \
+  --output-dir docs/internal/live-gates/pr1147/http-route-probe
+```
+
+Generation route rows require an explicit model and opt-in:
+
+```sh
+python3 scripts/pr1147_http_route_probe.py \
+  --base-url http://127.0.0.1:1337 \
+  --output-dir docs/internal/live-gates/pr1147/<model-slug>/http-routes \
+  --model <served-model-name> \
+  --run-generation
+```
+
+Do not count a route-probe artifact as model proof unless the same folder also
+has cache stats, visible output review, parser/no-leak review, timing, and
+memory artifacts for the model row.
+
 ## Current Audit Outcome
 
 Not complete.

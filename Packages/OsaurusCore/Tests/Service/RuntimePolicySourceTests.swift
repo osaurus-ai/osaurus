@@ -175,6 +175,7 @@ struct RuntimePolicySourceTests {
             "../../docs/internal/live-gates/20260518T_pr1147_completion_audit.md"
         )
         let censusHelper = try Self.source("../../scripts/pr1147_collect_bundle_census.py")
+        let routeProbeHelper = try Self.source("../../scripts/pr1147_http_route_probe.py")
 
         #expect(switchDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
         #expect(runtimeDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
@@ -300,6 +301,8 @@ struct RuntimePolicySourceTests {
             "tensor evidence",
             "docs/internal/live-gates/pr1147/bundle-census/bundle_census.json",
             "does not close live UI",
+            "scripts/pr1147_http_route_probe.py",
+            "Do not count a route-probe artifact as model proof",
         ] {
             #expect(
                 completionAudit.contains(required),
@@ -319,6 +322,26 @@ struct RuntimePolicySourceTests {
             #expect(
                 censusHelper.contains(required),
                 "missing bundle-census helper requirement: \(required)"
+            )
+        }
+
+        for required in [
+            "DEFAULT_GETS",
+            "/health",
+            "/v1/models",
+            "/admin/cache-stats",
+            "/v1/chat/completions",
+            "/v1/responses",
+            "/v1/messages",
+            "/api/chat",
+            "/api/generate",
+            "--run-generation requires --model",
+            "http_route_probe.json",
+            "body_excerpt",
+        ] {
+            #expect(
+                routeProbeHelper.contains(required),
+                "missing HTTP route-probe helper requirement: \(required)"
             )
         }
     }
