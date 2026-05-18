@@ -8,7 +8,7 @@ consolidated `vmlx-swift` package.
 OsaurusCore now has one direct inference dependency:
 
 - `https://github.com/osaurus-ai/vmlx-swift`
-- revision `0d564ec9e1cdfb8fa9ad3370d0494a10a4836382`
+- revision `1992a512d8a5e9aaa4c4f5de3faf8bae80d5626c`
 
 That package is expected to export the runtime modules Osaurus previously pulled
 from separate roots:
@@ -123,6 +123,32 @@ is passed through to `vmlx-swift` as `reasoning_effort: "max"` with thinking
 enabled. Osaurus must not downgrade it to `"high"` behind an environment flag;
 if max-mode output is incoherent, that is an engine/runtime issue to reproduce
 and fix in `vmlx-swift`.
+
+## DSV4 Settings Renderer Gate
+
+The Osaurus server settings panel and CLI preview must treat DSV4 as a
+dedicated cache/runtime topology. Before this PR can be treated as production
+ready, the final renderer needs a row proving all of:
+
+- native DSV4 cache copy is present and displayed as the active
+  SWA+CSA+HSA / `DeepseekV4Cache` topology;
+- paged block-size control is fixed/disabled for DSV4, including the expected
+  256 display row when active runtime metadata reports that value, and no
+  generic paged block-size override is passed back to vmlx for DSV4;
+- generic KV q4/q8 controls are disabled for DSV4 unless an operator
+  deliberately selects the diagnostic `DSV4_KV_MODE=tq` path;
+- DSV4 pool quant state is visible in settings/capabilities instead of hidden
+  behind an implicit launch env;
+- JIT is disabled for DSV4 in the production renderer;
+- generation defaults shown in the UI come from model metadata
+  (`generation_config.json` / `jang_config.json`) before explicit user
+  overrides; and
+- CLI preview omits topology-invalid flags: `--kv-cache-quantization`,
+  `--enable-jit`, `--is-mllm`, and `--speculative-model`.
+
+These checks are renderer/settings contract checks. They must not be converted
+into fake sampler clamps, forced repetition penalties, or generic cache
+fallbacks.
 
 Live DSV4 tool-call proof on 2026-05-18 used
 `DeepSeek-V4-Flash-JANGTQ-K` through `BENCH_BATCH_TOOLCALL=1`. Pre-fix raw

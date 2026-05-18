@@ -65,7 +65,7 @@ struct RuntimePolicySourceTests {
         // collisions with the app graph while keeping yyjson as one shared C
         // dependency. Osaurus must not carry SwiftPM moduleAliases for that
         // collision.
-        let currentVmlxRevision = "0d564ec9e1cdfb8fa9ad3370d0494a10a4836382"
+        let currentVmlxRevision = "1992a512d8a5e9aaa4c4f5de3faf8bae80d5626c"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
@@ -80,6 +80,40 @@ struct RuntimePolicySourceTests {
         #expect(manifest.contains(".product(name: \"MLXLMCommon\", package: \"vmlx-swift\")"))
         #expect(manifest.contains(".product(name: \"VMLXTokenizers\", package: \"vmlx-swift\")"))
         #expect(manifest.contains(".product(name: \"VMLXJinja\", package: \"vmlx-swift\")"))
+    }
+
+    @Test("DSV4 renderer checklist keeps invalid generic flags out of CLI preview")
+    func dsv4RendererChecklistTracksInvalidGenericFlags() throws {
+        let switchDoc = try Self.source("../../docs/VMLX_SWIFT_SINGLE_PACKAGE_SWITCH_2026_05_18.md")
+        let runtimeDoc = try Self.source("../../docs/INFERENCE_RUNTIME.md")
+
+        for required in [
+            "native DSV4 cache copy",
+            "SWA+CSA+HSA",
+            "DeepseekV4Cache",
+            "paged block-size control is fixed/disabled",
+            "256 display row",
+            "generic KV q4/q8 controls are disabled",
+            "pool quant state is visible",
+            "JIT is disabled",
+            "generation defaults shown in the UI come from model metadata",
+        ] {
+            #expect(switchDoc.contains(required), "missing DSV4 renderer requirement: \(required)")
+        }
+
+        for invalidFlag in [
+            "--kv-cache-quantization",
+            "--enable-jit",
+            "--is-mllm",
+            "--speculative-model",
+        ] {
+            #expect(switchDoc.contains(invalidFlag))
+            #expect(runtimeDoc.contains(invalidFlag))
+        }
+
+        #expect(switchDoc.contains("fake sampler clamps"))
+        #expect(switchDoc.contains("forced repetition penalties"))
+        #expect(switchDoc.contains("generic cache"))
     }
 
     @Test("SwiftPM graph keeps vmlx inference modules unshadowed")

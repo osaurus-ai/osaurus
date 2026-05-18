@@ -63,6 +63,14 @@ not set `DSV4_KV_MODE`; unset means the production SWA+CSA+HSA
 `DeepseekV4Cache` path. Operator-provided `DSV4_KV_MODE=full` or `tq`
 is treated as a diagnostic override and disables the hybrid pool.
 
+The final DSV4 server settings renderer must also prove the visible settings
+match that topology: native DSV4 cache copy present, paged block size
+fixed/disabled for DSV4 with the expected 256 display row when active metadata
+reports it, generic q4/q8 KV controls disabled, pool quant state visible, JIT
+disabled, and sampling defaults shown from bundle metadata. The CLI preview for
+DSV4 must omit invalid generic flags: `--kv-cache-quantization`, `--enable-jit`,
+`--is-mllm`, and `--speculative-model`.
+
 osaurus deliberately does not pass `GenerateParameters.maxKVSize` -- a
 global rotating cache window forced from the app layer conflicted with
 sliding-window attention layers (e.g. Gemma-4 with a fixed per-layer
