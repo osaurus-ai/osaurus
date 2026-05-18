@@ -182,13 +182,25 @@ struct ModelDownloadView: View {
             .environment(\.theme, themeManager.currentTheme)
         }
         .themedAlert(
-            "Not enough disk space to download this model",
+            modelManager.downloadAlert?.title ?? "Model download failed",
             isPresented: Binding(
                 get: { modelManager.downloadAlert != nil },
                 set: { if !$0 { modelManager.downloadAlert = nil } }
             ),
-            message: modelManager.downloadAlert,
-            primaryButton: .primary("OK") { modelManager.downloadAlert = nil }
+            message: modelManager.downloadAlert.map { info in
+                "\(info.message)\n\nDetails (tap Copy to share):\n\(info.details)"
+            },
+            buttons: [
+                .cancel("Copy details") {
+                    if let details = modelManager.downloadAlert?.details {
+                        let pb = NSPasteboard.general
+                        pb.clearContents()
+                        pb.setString(details, forType: .string)
+                    }
+                    modelManager.downloadAlert = nil
+                },
+                .primary("OK") { modelManager.downloadAlert = nil },
+            ]
         )
     }
 

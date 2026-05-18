@@ -507,7 +507,7 @@ final class ModelManager: NSObject, ObservableObject {
     var totalDownloadedSize: Int64 { downloadService.totalDownloadedSize }
     var totalDownloadedSizeString: String { downloadService.totalDownloadedSizeString }
     var activeDownloadsCount: Int { downloadService.activeDownloadsCount }
-    var downloadAlert: String? {
+    var downloadAlert: ModelDownloadService.DownloadAlertInfo? {
         get { downloadService.downloadAlert }
         set { downloadService.downloadAlert = newValue }
     }
