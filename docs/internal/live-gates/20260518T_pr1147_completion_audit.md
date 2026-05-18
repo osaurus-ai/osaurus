@@ -37,6 +37,79 @@ HTTP APIs, that consolidated `vmlx-swift` handles each local model family with:
 - old standalone inference libraries removed from active Osaurus inference
   paths.
 
+## No-Fake-Guard Release Contract
+
+All model families and artifact formats in scope - VL, MTP, JANG, JANGTQ, MXFP,
+MLX, dense, MoE, hybrid SSM, sliding-window, DSV4-native cache, ZAYA CCA, and
+omni/media paths - must be coherent through the real runtime path. A model row
+cannot be marked production-clear because Osaurus or vmlx hid the symptom with a
+family clamp, parser repair, forced stop token, or output rewrite.
+
+For every model row and every fix made after a red run, the artifact folder must
+contain a before/after live proof pair:
+
+- pre-fix failure artifact: the raw incoherent, looping, leaking, cache-wrong,
+  or wrong-media output plus the request payload, resolved sampler defaults,
+  cache stats, TTFT, tok/s, RSS, and physical-footprint context;
+- root-cause note: whether the real issue was template routing, tokenizer/BOS or
+  EOS handling, native `top_k` or generation metadata resolution, attention
+  architecture selection, cache restore, SSM rederive, media preprocessing,
+  MTP verification/commit state, tool/reasoning parser selection, or scheduler
+  lifecycle;
+- post-fix passing artifact: the same live row rerun with visible coherent text,
+  no loop, no hidden reasoning-only fake pass, no marker leak, normal stop
+  reason, and the expected cache/memory/timing counters.
+
+The following are release blockers unless they are explicitly user/API kwargs
+or values read from `jang_config.json`, `generation_config.json`, or a validated
+engine tuning file:
+
+- forced temperature, top-p, top-k, min-p, repetition, frequency, presence, EOS,
+  or length defaults used to make a broken family look coherent;
+- forced `</think>` close tokens, reasoning rail rewrites, or conversion of
+  reasoning deltas into visible content to manufacture a clean answer;
+- parser output repair that turns raw XML, DSML, Harmony, Gemma, Mistral, GLM,
+  Qwen, MiniMax, or tool sentinel leakage into an apparent structured response;
+- name-based MTP, VLM, or cache enablement. MTP requires real `mtp.*` tensor
+  evidence plus an unblocked `vmlx_mtp_tuning.json`; CRACK or display-name-only
+  rows must stay MTP-disabled with a recorded reason;
+- generic cache fallback that ignores the owning topology, such as KV-only hits
+  on hybrid SSM without companion state, media cache reuse across different
+  images/videos, DSV4 through invalid generic paged/KV controls, or ZAYA CCA
+  attached to the wrong media/session.
+
+Reasoning ON/OFF must be tested by family, not assumed from one parser:
+
+- Qwen/QwQ/MiniMax-style `enable_thinking` rows must prove OFF emits no
+  reasoning leak and ON keeps reasoning in the reasoning channel;
+- DSV4 must prove `instruct`, high, and `reasoning_effort=max` pass through
+  unchanged;
+- Hy3 must use its native `reasoning_effort` contract rather than generic
+  `enable_thinking`;
+- Ling defaults off but must preserve explicit opt-in and keep reasoning deltas
+  separate from visible text;
+- unsupported families must hide or ignore reasoning controls without adding
+  stale request fields or cache-key components.
+
+VLM and omni rows must send real media. Image/video/audio controls are valid
+only when capability detection, processor files, and runtime support agree.
+Every VLM row needs image+text, text-only follow-up, different-media, repeated
+media, unsupported-media inverse, and cache-salt proof. Text-only T2 must show
+media salt nil/absent; repeated media must show a topology-valid hit or an
+explicit N-A; different media must not reuse the prior visual state.
+
+Cache and batching rows must prove both single-batch and, where feasible,
+multi-batch behavior. Prefix, paged, block-L2 disk, TurboQuant KV encode/decode,
+SSM companion, DSV4 native cache/pool, ZAYA CCA, media cache, sleep/wake, and
+configured L2 max-GB enforcement require ON/OFF or topology-N-A evidence. A
+coherent one-turn response without cache counters, hit/miss movement, memory
+context, and token/s is not enough.
+
+The production readiness wording is therefore deliberately strict: all rows are
+red or partial until live Osaurus app/API artifacts show coherent multi-turn
+answers under real bundle defaults and explicit kwargs, with no fake guard and
+with the correct cache/scheduler/parser/media path for that model.
+
 ## Prompt-to-Artifact Completion Map
 
 | Requirement | Current evidence | Missing before production-clear |
