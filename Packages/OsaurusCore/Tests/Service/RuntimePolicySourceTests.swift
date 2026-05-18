@@ -86,6 +86,7 @@ struct RuntimePolicySourceTests {
     func dsv4RendererChecklistTracksInvalidGenericFlags() throws {
         let switchDoc = try Self.source("../../docs/VMLX_SWIFT_SINGLE_PACKAGE_SWITCH_2026_05_18.md")
         let runtimeDoc = try Self.source("../../docs/INFERENCE_RUNTIME.md")
+        let liveMatrix = try Self.source("../../docs/VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md")
 
         for required in [
             "native DSV4 cache copy",
@@ -100,6 +101,17 @@ struct RuntimePolicySourceTests {
             #expect(switchDoc.contains(required), "missing DSV4 renderer requirement: \(required)")
         }
 
+        for required in [
+            "native DSV4 cache copy present",
+            "block size fixed/disabled at 256",
+            "generic KV q4/q8 disabled",
+            "pool quant visible",
+            "JIT disabled",
+            "generation defaults shown from `generation_config.json` / `jang_config.json` metadata",
+        ] {
+            #expect(liveMatrix.contains(required), "missing live matrix DSV4 renderer requirement: \(required)")
+        }
+
         for invalidFlag in [
             "--kv-cache-quantization",
             "--enable-jit",
@@ -108,6 +120,7 @@ struct RuntimePolicySourceTests {
         ] {
             #expect(switchDoc.contains(invalidFlag))
             #expect(runtimeDoc.contains(invalidFlag))
+            #expect(liveMatrix.contains(invalidFlag))
         }
 
         #expect(switchDoc.contains("fake sampler clamps"))
