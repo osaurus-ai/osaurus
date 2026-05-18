@@ -65,7 +65,7 @@ struct RuntimePolicySourceTests {
         // collisions with the app graph while keeping yyjson as one shared C
         // dependency. Osaurus must not carry SwiftPM moduleAliases for that
         // collision.
-        let currentVmlxRevision = "1992a512d8a5e9aaa4c4f5de3faf8bae80d5626c"
+        let currentVmlxRevision = "176da37fef9ef2ad4e5a8e1e51076fdac1e16624"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
@@ -114,6 +114,48 @@ struct RuntimePolicySourceTests {
         #expect(switchDoc.contains("fake sampler clamps"))
         #expect(switchDoc.contains("forced repetition penalties"))
         #expect(switchDoc.contains("generic cache"))
+    }
+
+    @Test("vmlx switch tracks full Osaurus live UI/API matrix")
+    func vmlxSwitchTracksFullOsaurusLiveMatrix() throws {
+        let switchDoc = try Self.source("../../docs/VMLX_SWIFT_SINGLE_PACKAGE_SWITCH_2026_05_18.md")
+        let runtimeDoc = try Self.source("../../docs/INFERENCE_RUNTIME.md")
+        let matrix = try Self.source("../../docs/VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md")
+
+        #expect(switchDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
+        #expect(runtimeDoc.contains("VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md"))
+
+        for required in [
+            "/v1/chat/completions",
+            "/v1/responses",
+            "/v1/messages",
+            "/api/chat",
+            "/api/generate",
+            "Qwen-VL",
+            "Gemma VLM",
+            "ZAYA-VL",
+            "Nemotron Omni",
+            "DSV4",
+            "MiniMax",
+            "Ling",
+            "Hy3",
+            "media salt",
+            "prefix",
+            "paged",
+            "block L2",
+            "SSM companion",
+            "vmlx_mtp_tuning.json",
+            "generation_config.json",
+            "reasoning_effort=max",
+            "saved settings",
+            "no leaked",
+            "tool markers",
+        ] {
+            #expect(matrix.contains(required), "missing live-matrix requirement: \(required)")
+        }
+
+        #expect(matrix.contains("Do not turn red rows into hidden sampler defaults"))
+        #expect(matrix.contains("Kimi is intentionally excluded"))
     }
 
     @Test("SwiftPM graph keeps vmlx inference modules unshadowed")

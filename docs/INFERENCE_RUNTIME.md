@@ -71,6 +71,12 @@ disabled, and sampling defaults shown from bundle metadata. The CLI preview for
 DSV4 must omit invalid generic flags: `--kv-cache-quantization`, `--enable-jit`,
 `--is-mllm`, and `--speculative-model`.
 
+The broader switch gate is
+[`VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md`](VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md).
+It requires real Osaurus chat-app and HTTP rows for VLM/omni media, reasoning
+settings, saved-setting isolation, generation defaults, parser leak checks, and
+cache stats before the consolidated package can be called production-clear.
+
 osaurus deliberately does not pass `GenerateParameters.maxKVSize` -- a
 global rotating cache window forced from the app layer conflicted with
 sliding-window attention layers (e.g. Gemma-4 with a fixed per-layer

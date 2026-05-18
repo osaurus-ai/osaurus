@@ -8,7 +8,7 @@ consolidated `vmlx-swift` package.
 OsaurusCore now has one direct inference dependency:
 
 - `https://github.com/osaurus-ai/vmlx-swift`
-- revision `1992a512d8a5e9aaa4c4f5de3faf8bae80d5626c`
+- revision `176da37fef9ef2ad4e5a8e1e51076fdac1e16624`
 
 That package is expected to export the runtime modules Osaurus previously pulled
 from separate roots:
@@ -93,6 +93,13 @@ local models and record artifacts for:
 - Qwen MTP bundles with `vmlx_mtp_tuning.json`, including MTP on/off speed and
   coherence comparisons; and
 - API surfaces used by Osaurus and OpenAI-compatible clients.
+
+The full Osaurus-facing UI/API/cache/media checklist is tracked in
+[`VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md`](VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md).
+That matrix is the merge gate for user-facing confidence: it requires real chat
+app and API rows for Qwen-VL, Gemma VLM/Gemma3n, ZAYA-VL, Nemotron Omni,
+DSV4, MiniMax, Ling, Hy3, saved reasoning settings, media salt, prefix/paged/L2
+cache stats, top-k/generation defaults, and parser leak checks.
 
 Any incoherent output, repeated EOS loop, missing reasoning close, or cache hit
 with the wrong architecture state is a runtime bug to root-cause in `vmlx-swift`.
