@@ -1,0 +1,1095 @@
+{
+  "base_url": "http://127.0.0.1:4242",
+  "max_tokens": 96,
+  "model": "zaya1-vl-8b-mxfp4",
+  "results": [
+    {
+      "body_bytes": 346,
+      "body_excerpt": "{\"object\":\"chat.completion\",\"choices\":[{\"message\":{\"content\":\"Red square dominates the image.\",\"role\":\"assistant\"},\"index\":0,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":18,\"completion_tokens\":7,\"total_tokens\":25},\"model\":\"zaya1-vl-8b-mxfp4\",\"prefix_hash\":\"6e340b9cffb37a989ca544e6bb780a2c\",\"created\":1779146968,\"id\":\"chatcmpl-E034C2D9EDBB\"}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/01_t1_image_text_chat.body",
+      "content_type": "application/json",
+      "elapsed_ms": 4280.558,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "346",
+        "Content-Type": "application/json"
+      },
+      "label": "01_t1_image_text_chat",
+      "ok": true,
+      "output_tail": "Red square dominates the image.",
+      "path": "/v1/chat/completions",
+      "reason": "OK",
+      "route_name": "chat",
+      "status": 200,
+      "turn": {
+        "label": "t1_image_text",
+        "media": [
+          {
+            "format": "png",
+            "kind": "image",
+            "mime_type": "image/png",
+            "path": "/private/tmp/osaurus-pr1147-media/red.png"
+          }
+        ],
+        "prompt": "Describe the dominant color and shape in this image in one short sentence."
+      },
+      "url": "http://127.0.0.1:4242/v1/chat/completions"
+    },
+    {
+      "body_bytes": 441,
+      "body_excerpt": "{\"object\":\"response\",\"status\":\"completed\",\"created_at\":1779146972,\"usage\":{\"total_tokens\":41,\"output_tokens\":23,\"input_tokens\":18},\"model\":\"zaya1-vl-8b-mxfp4\",\"id\":\"resp_47B524AFF90A4E69B24655DC\",\"output\":[{\"role\":\"assistant\",\"content\":[{\"text\":\"The image features a striking red circle at the center, set against a stark white background.\",\"type\":\"output_text\"}],\"type\":\"message\",\"id\":\"item_9873519033494DD99301B3B5\",\"status\":\"completed\"}]}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/01_t1_image_text_responses.body",
+      "content_type": "application/json",
+      "elapsed_ms": 2632.709,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "441",
+        "Content-Type": "application/json"
+      },
+      "label": "01_t1_image_text_responses",
+      "ok": true,
+      "output_tail": "The image features a striking red circle at the center, set against a stark white background.",
+      "path": "/v1/responses",
+      "reason": "OK",
+      "route_name": "responses",
+      "status": 200,
+      "turn": {
+        "label": "t1_image_text",
+        "media": [
+          {
+            "format": "png",
+            "kind": "image",
+            "mime_type": "image/png",
+            "path": "/private/tmp/osaurus-pr1147-media/red.png"
+          }
+        ],
+        "prompt": "Describe the dominant color and shape in this image in one short sentence."
+      },
+      "url": "http://127.0.0.1:4242/v1/responses"
+    },
+    {
+      "body_bytes": 408,
+      "body_excerpt": "{\"id\":\"chatcmpl-5C9EE2A18655\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"The red square stands out against the background of the image, creating a striking contrast.\"},\"finish_reason\":\"stop\",\"index\":0}],\"prefix_hash\":\"6e340b9cffb37a989ca544e6bb780a2c\",\"object\":\"chat.completion\",\"created\":1779146975,\"model\":\"zaya1-vl-8b-mxfp4\",\"usage\":{\"total_tokens\":62,\"completion_tokens\":23,\"prompt_tokens\":39}}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/02_t2_text_only_chat.body",
+      "content_type": "application/json",
+      "elapsed_ms": 2624.318,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "408",
+        "Content-Type": "application/json"
+      },
+      "label": "02_t2_text_only_chat",
+      "ok": true,
+      "output_tail": "The red square stands out against the background of the image, creating a striking contrast.",
+      "path": "/v1/chat/completions",
+      "reason": "OK",
+      "route_name": "chat",
+      "status": 200,
+      "turn": {
+        "label": "t2_text_only",
+        "media": [],
+        "prompt": "Follow up in one sentence without using any new image."
+      },
+      "url": "http://127.0.0.1:4242/v1/chat/completions"
+    },
+    {
+      "body_bytes": 599,
+      "body_excerpt": "{\"object\":\"response\",\"status\":\"completed\",\"created_at\":1779146977,\"usage\":{\"output_tokens\":62,\"input_tokens\":55,\"total_tokens\":117},\"model\":\"zaya1-vl-8b-mxfp4\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"text\":\"The red circle appears to be partially obscured by a shadow or possibly an overlay of some kind of overlay, which might be obscuring it or adding depth to the image. This red circle stands out against the white background, creating a strong contrast.\",\"type\":\"output_text\"}],\"id\":\"item_68CE5A198768498990C5D20A\"}],\"id\":\"resp_F4E325C69EC34FA0805CF789\"}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/02_t2_text_only_responses.body",
+      "content_type": "application/json",
+      "elapsed_ms": 6736.004,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "599",
+        "Content-Type": "application/json"
+      },
+      "label": "02_t2_text_only_responses",
+      "ok": true,
+      "output_tail": "The red circle appears to be partially obscured by a shadow or possibly an overlay of some kind of overlay, which might be obscuring it or adding depth to the image. This red circle stands out against the white background, creating a strong contrast.",
+      "path": "/v1/responses",
+      "reason": "OK",
+      "route_name": "responses",
+      "status": 200,
+      "turn": {
+        "label": "t2_text_only",
+        "media": [],
+        "prompt": "Follow up in one sentence without using any new image."
+      },
+      "url": "http://127.0.0.1:4242/v1/responses"
+    },
+    {
+      "body_bytes": 376,
+      "body_excerpt": "{\"object\":\"chat.completion\",\"usage\":{\"prompt_tokens\":81,\"completion_tokens\":15,\"total_tokens\":96},\"choices\":[{\"index\":0,\"message\":{\"content\":\"The red square is the dominant color and shape in the image.\",\"role\":\"assistant\"},\"finish_reason\":\"stop\"}],\"created\":1779146984,\"model\":\"zaya1-vl-8b-mxfp4\",\"id\":\"chatcmpl-59EC2BDEE8BE\",\"prefix_hash\":\"6e340b9cffb37a989ca544e6bb780a2c\"}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/03_t3_different_image_chat.body",
+      "content_type": "application/json",
+      "elapsed_ms": 2354.465,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "376",
+        "Content-Type": "application/json"
+      },
+      "label": "03_t3_different_image_chat",
+      "ok": true,
+      "output_tail": "The red square is the dominant color and shape in the image.",
+      "path": "/v1/chat/completions",
+      "reason": "OK",
+      "route_name": "chat",
+      "status": 200,
+      "turn": {
+        "label": "t3_different_image",
+        "media": [
+          {
+            "format": "png",
+            "kind": "image",
+            "mime_type": "image/png",
+            "path": "/private/tmp/osaurus-pr1147-media/blue.png"
+          }
+        ],
+        "prompt": "Describe the dominant color and shape in this image in one short sentence."
+      },
+      "url": "http://127.0.0.1:4242/v1/chat/completions"
+    },
+    {
+      "body_bytes": 434,
+      "body_excerpt": "{\"object\":\"response\",\"status\":\"completed\",\"created_at\":1779146987,\"usage\":{\"input_tokens\":136,\"output_tokens\":21,\"total_tokens\":157},\"model\":\"zaya1-vl-8b-mxfp4\",\"id\":\"resp_4BE158F1DDB24DCC803C7912\",\"output\":[{\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"id\":\"item_8E0F471721D241B684252791\",\"content\":[{\"type\":\"output_text\",\"text\":\"The image features a red circle at the center, set against a stark white background.\"}]}]}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/03_t3_different_image_responses.body",
+      "content_type": "application/json",
+      "elapsed_ms": 3032.475,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "434",
+        "Content-Type": "application/json"
+      },
+      "label": "03_t3_different_image_responses",
+      "ok": true,
+      "output_tail": "The image features a red circle at the center, set against a stark white background.",
+      "path": "/v1/responses",
+      "reason": "OK",
+      "route_name": "responses",
+      "status": 200,
+      "turn": {
+        "label": "t3_different_image",
+        "media": [
+          {
+            "format": "png",
+            "kind": "image",
+            "mime_type": "image/png",
+            "path": "/private/tmp/osaurus-pr1147-media/blue.png"
+          }
+        ],
+        "prompt": "Describe the dominant color and shape in this image in one short sentence."
+      },
+      "url": "http://127.0.0.1:4242/v1/responses"
+    },
+    {
+      "body_bytes": 364,
+      "body_excerpt": "{\"id\":\"chatcmpl-3473063930DB\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"A red square is the only element in the image.\"},\"finish_reason\":\"stop\"}],\"prefix_hash\":\"6e340b9cffb37a989ca544e6bb780a2c\",\"object\":\"chat.completion\",\"created\":1779146990,\"model\":\"zaya1-vl-8b-mxfp4\",\"usage\":{\"prompt_tokens\":110,\"completion_tokens\":11,\"total_tokens\":121}}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/04_t4_repeat_image_chat.body",
+      "content_type": "application/json",
+      "elapsed_ms": 2306.292,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "364",
+        "Content-Type": "application/json"
+      },
+      "label": "04_t4_repeat_image_chat",
+      "ok": true,
+      "output_tail": "A red square is the only element in the image.",
+      "path": "/v1/chat/completions",
+      "reason": "OK",
+      "route_name": "chat",
+      "status": 200,
+      "turn": {
+        "label": "t4_repeat_image",
+        "media": [
+          {
+            "format": "png",
+            "kind": "image",
+            "mime_type": "image/png",
+            "path": "/private/tmp/osaurus-pr1147-media/red.png"
+          }
+        ],
+        "prompt": "Describe this repeated image again in one short sentence."
+      },
+      "url": "http://127.0.0.1:4242/v1/chat/completions"
+    },
+    {
+      "body_bytes": 413,
+      "body_excerpt": "{\"object\":\"response\",\"status\":\"completed\",\"usage\":{\"output_tokens\":15,\"input_tokens\":171,\"total_tokens\":186},\"output\":[{\"status\":\"completed\",\"role\":\"assistant\",\"type\":\"message\",\"id\":\"item_D392FBD4ECDE41EE9432B2CF\",\"content\":[{\"type\":\"output_text\",\"text\":\"A red circle on a white background, with a blue bar at the top.\"}]}],\"model\":\"zaya1-vl-8b-mxfp4\",\"id\":\"resp_29537DE49FFF498A95396D57\",\"created_at\":1779146992}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/04_t4_repeat_image_responses.body",
+      "content_type": "application/json",
+      "elapsed_ms": 3742.661,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "413",
+        "Content-Type": "application/json"
+      },
+      "label": "04_t4_repeat_image_responses",
+      "ok": true,
+      "output_tail": "A red circle on a white background, with a blue bar at the top.",
+      "path": "/v1/responses",
+      "reason": "OK",
+      "route_name": "responses",
+      "status": 200,
+      "turn": {
+        "label": "t4_repeat_image",
+        "media": [
+          {
+            "format": "png",
+            "kind": "image",
+            "mime_type": "image/png",
+            "path": "/private/tmp/osaurus-pr1147-media/red.png"
+          }
+        ],
+        "prompt": "Describe this repeated image again in one short sentence."
+      },
+      "url": "http://127.0.0.1:4242/v1/responses"
+    }
+  ],
+  "snapshots": [
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"models\":[],\"timestamp\":\"2026-05-18T23:29:28Z\",\"aggregate\":{\"paged_hits\":0,\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_hits\":0,\"ssm_companion_misses\":0,\"disk_l2_hits\":0,\"ssm_companion_rederives\":0,\"prefix_hits\":0},\"status\":\"ok\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_sequence/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.699,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[],\"timestamp\":\"2026-05-18T23:29:28Z\",\"aggregate\":{\"paged_hits\":0,\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_hits\":0,\"ssm_companion_misses\":0,\"disk_l2_hits\":0,\"ssm_companion_rederives\":0,\"prefix_hits\":0},\"status\":\"ok\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"current_model\":null,\"inflight\":{},\"resident_models\":[],\"loaded\":[],\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:28Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_sequence/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 7.269,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"current_model\":null,\"inflight\":{},\"resident_models\":[],\"loaded\":[],\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:28Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_sequence",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_sequence/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"models\":[],\"timestamp\":\"2026-05-18T23:29:28Z\",\"aggregate\":{\"paged_hits\":0,\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_hits\":0,\"ssm_companion_misses\":0,\"disk_l2_hits\":0,\"ssm_companion_rederives\":0,\"prefix_hits\":0},\"status\":\"ok\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_01_t1_image_text_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.223,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[],\"timestamp\":\"2026-05-18T23:29:28Z\",\"aggregate\":{\"paged_hits\":0,\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_hits\":0,\"ssm_companion_misses\":0,\"disk_l2_hits\":0,\"ssm_companion_rederives\":0,\"prefix_hits\":0},\"status\":\"ok\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"current_model\":null,\"inflight\":{},\"resident_models\":[],\"loaded\":[],\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:28Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_01_t1_image_text_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.534,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"current_model\":null,\"inflight\":{},\"resident_models\":[],\"loaded\":[],\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:28Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_01_t1_image_text_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_01_t1_image_text_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 691,
+        "body_excerpt": "{\"models\":[{\"is_current\":true,\"ssm_companion_cache\":{\"misses\":0,\"rederives\":0,\"hits\":0},\"paged_cache\":{\"evictions\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"misses\":0,\"total_blocks\":1000,\"hits\":0,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"weights_bytes\":7613866168,\"is_hybrid\":true,\"block_disk_store\":{\"hits\":0,\"max_size_bytes\":10737418240,\"enabled\":true,\"misses\":2,\"stores\":2}}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:32Z\",\"aggregate\":{\"ssm_companion_rederives\":0,\"prefix_hits\":0,\"paged_misses\":0,\"paged_hits\":0,\"disk_l2_stores\":2,\"ssm_companion_hits\":0,\"disk_l2_hits\":0,\"ssm_companion_misses\":0,\"disk_l2_misses\":2,\"prefix_misses\":2}}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_01_t1_image_text_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.957,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "691",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[{\"is_current\":true,\"ssm_companion_cache\":{\"misses\":0,\"rederives\":0,\"hits\":0},\"paged_cache\":{\"evictions\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"misses\":0,\"total_blocks\":1000,\"hits\":0,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"weights_bytes\":7613866168,\"is_hybrid\":true,\"block_disk_store\":{\"hits\":0,\"max_size_bytes\":10737418240,\"enabled\":true,\"misses\":2,\"stores\":2}}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:32Z\",\"aggregate\":{\"ssm_companion_rederives\":0,\"prefix_hits\":0,\"paged_misses\":0,\"paged_hits\":0,\"disk_l2_stores\":2,\"ssm_companion_hits\":0,\"disk_l2_hits\":0,\"ssm_companion_misses\":0,\"disk_l2_misses\":2,\"prefix_misses\":2}}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"inflight\":{},\"resident_models\":[{\"inflight\":0,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_seconds_remaining\":300,\"is_current\":true,\"idle_unload_at\":\"2026-05-18T23:34:32Z\"}],\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:32Z\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"]}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_01_t1_image_text_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.259,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"inflight\":{},\"resident_models\":[{\"inflight\":0,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_seconds_remaining\":300,\"is_current\":true,\"idle_unload_at\":\"2026-05-18T23:34:32Z\"}],\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:32Z\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"]}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_01_t1_image_text_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_01_t1_image_text_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 691,
+        "body_excerpt": "{\"models\":[{\"is_current\":true,\"ssm_companion_cache\":{\"misses\":0,\"rederives\":0,\"hits\":0},\"paged_cache\":{\"evictions\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"misses\":0,\"total_blocks\":1000,\"hits\":0,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"weights_bytes\":7613866168,\"is_hybrid\":true,\"block_disk_store\":{\"hits\":0,\"max_size_bytes\":10737418240,\"enabled\":true,\"misses\":2,\"stores\":2}}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:32Z\",\"aggregate\":{\"ssm_companion_rederives\":0,\"prefix_hits\":0,\"paged_misses\":0,\"paged_hits\":0,\"disk_l2_stores\":2,\"ssm_companion_hits\":0,\"disk_l2_hits\":0,\"ssm_companion_misses\":0,\"disk_l2_misses\":2,\"prefix_misses\":2}}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_01_t1_image_text_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.671,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "691",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[{\"is_current\":true,\"ssm_companion_cache\":{\"misses\":0,\"rederives\":0,\"hits\":0},\"paged_cache\":{\"evictions\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"misses\":0,\"total_blocks\":1000,\"hits\":0,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"weights_bytes\":7613866168,\"is_hybrid\":true,\"block_disk_store\":{\"hits\":0,\"max_size_bytes\":10737418240,\"enabled\":true,\"misses\":2,\"stores\":2}}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:32Z\",\"aggregate\":{\"ssm_companion_rederives\":0,\"prefix_hits\":0,\"paged_misses\":0,\"paged_hits\":0,\"disk_l2_stores\":2,\"ssm_companion_hits\":0,\"disk_l2_hits\":0,\"ssm_companion_misses\":0,\"disk_l2_misses\":2,\"prefix_misses\":2}}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"inflight\":{},\"resident_models\":[{\"inflight\":0,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_seconds_remaining\":300,\"is_current\":true,\"idle_unload_at\":\"2026-05-18T23:34:32Z\"}],\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:32Z\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"]}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_01_t1_image_text_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.081,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"inflight\":{},\"resident_models\":[{\"inflight\":0,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_seconds_remaining\":300,\"is_current\":true,\"idle_unload_at\":\"2026-05-18T23:34:32Z\"}],\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:32Z\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"]}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_01_t1_image_text_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_01_t1_image_text_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 691,
+        "body_excerpt": "{\"aggregate\":{\"disk_l2_stores\":4,\"disk_l2_hits\":1,\"ssm_companion_hits\":1,\"paged_misses\":0,\"prefix_misses\":2,\"ssm_companion_rederives\":0,\"prefix_hits\":1,\"paged_hits\":0,\"disk_l2_misses\":2,\"ssm_companion_misses\":0},\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:35Z\",\"models\":[{\"paged_cache\":{\"evictions\":0,\"free_blocks\":999,\"misses\":0,\"allocated_blocks\":0,\"total_blocks\":1000,\"hits\":0,\"enabled\":true},\"block_disk_store\":{\"hits\":1,\"enabled\":true,\"misses\":2,\"stores\":4,\"max_size_bytes\":10737418240},\"ssm_companion_cache\":{\"rederives\":0,\"hits\":1,\"misses\":0},\"weights_bytes\":7613866168,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_paged_incompatible\":true,\"is_current\":true,\"is_hybrid\":true,\"cache_enabled\":true}]}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_01_t1_image_text_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.959,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "691",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"aggregate\":{\"disk_l2_stores\":4,\"disk_l2_hits\":1,\"ssm_companion_hits\":1,\"paged_misses\":0,\"prefix_misses\":2,\"ssm_companion_rederives\":0,\"prefix_hits\":1,\"paged_hits\":0,\"disk_l2_misses\":2,\"ssm_companion_misses\":0},\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:35Z\",\"models\":[{\"paged_cache\":{\"evictions\":0,\"free_blocks\":999,\"misses\":0,\"allocated_blocks\":0,\"total_blocks\":1000,\"hits\":0,\"enabled\":true},\"block_disk_store\":{\"hits\":1,\"enabled\":true,\"misses\":2,\"stores\":4,\"max_size_bytes\":10737418240},\"ssm_companion_cache\":{\"rederives\":0,\"hits\":1,\"misses\":0},\"weights_bytes\":7613866168,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_paged_incompatible\":true,\"is_current\":true,\"is_hybrid\":true,\"cache_enabled\":true}]}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:35Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:35Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_01_t1_image_text_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.525,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:35Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:35Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_01_t1_image_text_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_01_t1_image_text_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 691,
+        "body_excerpt": "{\"aggregate\":{\"disk_l2_stores\":4,\"disk_l2_hits\":1,\"ssm_companion_hits\":1,\"paged_misses\":0,\"prefix_misses\":2,\"ssm_companion_rederives\":0,\"prefix_hits\":1,\"paged_hits\":0,\"disk_l2_misses\":2,\"ssm_companion_misses\":0},\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:35Z\",\"models\":[{\"is_current\":true,\"is_paged_incompatible\":true,\"block_disk_store\":{\"hits\":1,\"enabled\":true,\"misses\":2,\"stores\":4,\"max_size_bytes\":10737418240},\"weights_bytes\":7613866168,\"cache_enabled\":true,\"ssm_companion_cache\":{\"rederives\":0,\"hits\":1,\"misses\":0},\"name\":\"zaya1-vl-8b-mxfp4\",\"paged_cache\":{\"hits\":0,\"free_blocks\":999,\"misses\":0,\"allocated_blocks\":0,\"enabled\":true,\"evictions\":0,\"total_blocks\":1000},\"is_hybrid\":true}]}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_02_t2_text_only_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.723,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "691",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"aggregate\":{\"disk_l2_stores\":4,\"disk_l2_hits\":1,\"ssm_companion_hits\":1,\"paged_misses\":0,\"prefix_misses\":2,\"ssm_companion_rederives\":0,\"prefix_hits\":1,\"paged_hits\":0,\"disk_l2_misses\":2,\"ssm_companion_misses\":0},\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:35Z\",\"models\":[{\"is_current\":true,\"is_paged_incompatible\":true,\"block_disk_store\":{\"hits\":1,\"enabled\":true,\"misses\":2,\"stores\":4,\"max_size_bytes\":10737418240},\"weights_bytes\":7613866168,\"cache_enabled\":true,\"ssm_companion_cache\":{\"rederives\":0,\"hits\":1,\"misses\":0},\"name\":\"zaya1-vl-8b-mxfp4\",\"paged_cache\":{\"hits\":0,\"free_blocks\":999,\"misses\":0,\"allocated_blocks\":0,\"enabled\":true,\"evictions\":0,\"total_blocks\":1000},\"is_hybrid\":true}]}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:35Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:35Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_02_t2_text_only_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.139,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:35Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:35Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_02_t2_text_only_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_02_t2_text_only_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 691,
+        "body_excerpt": "{\"models\":[{\"paged_cache\":{\"misses\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"evictions\":0,\"hits\":0,\"total_blocks\":1000,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"is_hybrid\":true,\"is_current\":true,\"ssm_companion_cache\":{\"rederives\":0,\"hits\":2,\"misses\":0},\"weights_bytes\":7613866168,\"block_disk_store\":{\"hits\":2,\"enabled\":true,\"misses\":5,\"stores\":6,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":6,\"disk_l2_hits\":2,\"ssm_companion_hits\":2,\"paged_misses\":0,\"prefix_misses\":5,\"ssm_companion_rederives\":0,\"prefix_hits\":2,\"paged_hits\":0,\"disk_l2_misses\":5,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:37Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_02_t2_text_only_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.977,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "691",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[{\"paged_cache\":{\"misses\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"evictions\":0,\"hits\":0,\"total_blocks\":1000,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"is_hybrid\":true,\"is_current\":true,\"ssm_companion_cache\":{\"rederives\":0,\"hits\":2,\"misses\":0},\"weights_bytes\":7613866168,\"block_disk_store\":{\"hits\":2,\"enabled\":true,\"misses\":5,\"stores\":6,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":6,\"disk_l2_hits\":2,\"ssm_companion_hits\":2,\"paged_misses\":0,\"prefix_misses\":5,\"ssm_companion_rederives\":0,\"prefix_hits\":2,\"paged_hits\":0,\"disk_l2_misses\":5,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:37Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:37Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:37Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_02_t2_text_only_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.353,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:37Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:37Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_02_t2_text_only_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_02_t2_text_only_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 691,
+        "body_excerpt": "{\"models\":[{\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_paged_incompatible\":true,\"weights_bytes\":7613866168,\"cache_enabled\":true,\"paged_cache\":{\"hits\":0,\"free_blocks\":999,\"enabled\":true,\"allocated_blocks\":0,\"evictions\":0,\"total_blocks\":1000,\"misses\":0},\"ssm_companion_cache\":{\"rederives\":0,\"hits\":2,\"misses\":0},\"is_hybrid\":true,\"block_disk_store\":{\"hits\":2,\"enabled\":true,\"misses\":5,\"stores\":6,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":6,\"disk_l2_hits\":2,\"ssm_companion_hits\":2,\"paged_misses\":0,\"prefix_misses\":5,\"ssm_companion_rederives\":0,\"prefix_hits\":2,\"paged_hits\":0,\"disk_l2_misses\":5,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:37Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_02_t2_text_only_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.615,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "691",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[{\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_paged_incompatible\":true,\"weights_bytes\":7613866168,\"cache_enabled\":true,\"paged_cache\":{\"hits\":0,\"free_blocks\":999,\"enabled\":true,\"allocated_blocks\":0,\"evictions\":0,\"total_blocks\":1000,\"misses\":0},\"ssm_companion_cache\":{\"rederives\":0,\"hits\":2,\"misses\":0},\"is_hybrid\":true,\"block_disk_store\":{\"hits\":2,\"enabled\":true,\"misses\":5,\"stores\":6,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":6,\"disk_l2_hits\":2,\"ssm_companion_hits\":2,\"paged_misses\":0,\"prefix_misses\":5,\"ssm_companion_rederives\":0,\"prefix_hits\":2,\"paged_hits\":0,\"disk_l2_misses\":5,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:37Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:37Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:37Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_02_t2_text_only_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.017,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:37Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:37Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_02_t2_text_only_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_02_t2_text_only_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 691,
+        "body_excerpt": "{\"models\":[{\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_paged_incompatible\":true,\"weights_bytes\":7613866168,\"cache_enabled\":true,\"paged_cache\":{\"hits\":0,\"free_blocks\":999,\"enabled\":true,\"allocated_blocks\":0,\"evictions\":0,\"total_blocks\":1000,\"misses\":0},\"ssm_companion_cache\":{\"hits\":3,\"misses\":0,\"rederives\":0},\"is_hybrid\":true,\"block_disk_store\":{\"hits\":3,\"enabled\":true,\"misses\":8,\"stores\":8,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":8,\"disk_l2_hits\":3,\"ssm_companion_hits\":3,\"paged_misses\":0,\"prefix_misses\":8,\"ssm_companion_rederives\":0,\"prefix_hits\":3,\"paged_hits\":0,\"disk_l2_misses\":8,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:44Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_02_t2_text_only_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.962,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "691",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[{\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_paged_incompatible\":true,\"weights_bytes\":7613866168,\"cache_enabled\":true,\"paged_cache\":{\"hits\":0,\"free_blocks\":999,\"enabled\":true,\"allocated_blocks\":0,\"evictions\":0,\"total_blocks\":1000,\"misses\":0},\"ssm_companion_cache\":{\"hits\":3,\"misses\":0,\"rederives\":0},\"is_hybrid\":true,\"block_disk_store\":{\"hits\":3,\"enabled\":true,\"misses\":8,\"stores\":8,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":8,\"disk_l2_hits\":3,\"ssm_companion_hits\":3,\"paged_misses\":0,\"prefix_misses\":8,\"ssm_companion_rederives\":0,\"prefix_hits\":3,\"paged_hits\":0,\"disk_l2_misses\":8,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:44Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:44Z\",\"idle_seconds_remaining\":300,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_current\":true}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:44Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_02_t2_text_only_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.259,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:44Z\",\"idle_seconds_remaining\":300,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_current\":true}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:44Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_02_t2_text_only_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_02_t2_text_only_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 691,
+        "body_excerpt": "{\"models\":[{\"paged_cache\":{\"misses\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"evictions\":0,\"hits\":0,\"total_blocks\":1000,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"is_hybrid\":true,\"is_current\":true,\"ssm_companion_cache\":{\"hits\":3,\"misses\":0,\"rederives\":0},\"weights_bytes\":7613866168,\"block_disk_store\":{\"hits\":3,\"enabled\":true,\"misses\":8,\"stores\":8,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":8,\"disk_l2_hits\":3,\"ssm_companion_hits\":3,\"paged_misses\":0,\"prefix_misses\":8,\"ssm_companion_rederives\":0,\"prefix_hits\":3,\"paged_hits\":0,\"disk_l2_misses\":8,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:44Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_03_t3_different_image_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.713,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "691",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[{\"paged_cache\":{\"misses\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"evictions\":0,\"hits\":0,\"total_blocks\":1000,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"is_hybrid\":true,\"is_current\":true,\"ssm_companion_cache\":{\"hits\":3,\"misses\":0,\"rederives\":0},\"weights_bytes\":7613866168,\"block_disk_store\":{\"hits\":3,\"enabled\":true,\"misses\":8,\"stores\":8,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":8,\"disk_l2_hits\":3,\"ssm_companion_hits\":3,\"paged_misses\":0,\"prefix_misses\":8,\"ssm_companion_rederives\":0,\"prefix_hits\":3,\"paged_hits\":0,\"disk_l2_misses\":8,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:44Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:44Z\",\"idle_seconds_remaining\":300,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_current\":true}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:44Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_03_t3_different_image_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.142,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:44Z\",\"idle_seconds_remaining\":300,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_current\":true}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:44Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_03_t3_different_image_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_03_t3_different_image_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 696,
+        "body_excerpt": "{\"models\":[{\"paged_cache\":{\"misses\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"evictions\":0,\"hits\":0,\"total_blocks\":1000,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"is_hybrid\":true,\"is_current\":true,\"ssm_companion_cache\":{\"hits\":3,\"misses\":0,\"rederives\":0},\"weights_bytes\":7613866168,\"block_disk_store\":{\"hits\":3,\"enabled\":true,\"misses\":16,\"stores\":10,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":10,\"disk_l2_hits\":3,\"ssm_companion_hits\":3,\"paged_misses\":0,\"prefix_misses\":16,\"ssm_companion_rederives\":0,\"prefix_hits\":3,\"paged_hits\":0,\"disk_l2_misses\":16,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:47Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_03_t3_different_image_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.815,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "696",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[{\"paged_cache\":{\"misses\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"evictions\":0,\"hits\":0,\"total_blocks\":1000,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"is_hybrid\":true,\"is_current\":true,\"ssm_companion_cache\":{\"hits\":3,\"misses\":0,\"rederives\":0},\"weights_bytes\":7613866168,\"block_disk_store\":{\"hits\":3,\"enabled\":true,\"misses\":16,\"stores\":10,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":10,\"disk_l2_hits\":3,\"ssm_companion_hits\":3,\"paged_misses\":0,\"prefix_misses\":16,\"ssm_companion_rederives\":0,\"prefix_hits\":3,\"paged_hits\":0,\"disk_l2_misses\":16,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:47Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:47Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:47Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_03_t3_different_image_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.992,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:47Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:47Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_03_t3_different_image_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_03_t3_different_image_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 696,
+        "body_excerpt": "{\"models\":[{\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_paged_incompatible\":true,\"weights_bytes\":7613866168,\"cache_enabled\":true,\"paged_cache\":{\"hits\":0,\"free_blocks\":999,\"enabled\":true,\"allocated_blocks\":0,\"evictions\":0,\"total_blocks\":1000,\"misses\":0},\"ssm_companion_cache\":{\"hits\":3,\"misses\":0,\"rederives\":0},\"is_hybrid\":true,\"block_disk_store\":{\"hits\":3,\"enabled\":true,\"misses\":16,\"stores\":10,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":10,\"disk_l2_hits\":3,\"ssm_companion_hits\":3,\"paged_misses\":0,\"prefix_misses\":16,\"ssm_companion_rederives\":0,\"prefix_hits\":3,\"paged_hits\":0,\"disk_l2_misses\":16,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:47Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_03_t3_different_image_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.607,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "696",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[{\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"is_paged_incompatible\":true,\"weights_bytes\":7613866168,\"cache_enabled\":true,\"paged_cache\":{\"hits\":0,\"free_blocks\":999,\"enabled\":true,\"allocated_blocks\":0,\"evictions\":0,\"total_blocks\":1000,\"misses\":0},\"ssm_companion_cache\":{\"hits\":3,\"misses\":0,\"rederives\":0},\"is_hybrid\":true,\"block_disk_store\":{\"hits\":3,\"enabled\":true,\"misses\":16,\"stores\":10,\"max_size_bytes\":10737418240}}],\"status\":\"ok\",\"aggregate\":{\"disk_l2_stores\":10,\"disk_l2_hits\":3,\"ssm_companion_hits\":3,\"paged_misses\":0,\"prefix_misses\":16,\"ssm_companion_rederives\":0,\"prefix_hits\":3,\"paged_hits\":0,\"disk_l2_misses\":16,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-18T23:29:47Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:47Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:47Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_03_t3_different_image_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.006,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"resident_models\":[{\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:47Z\",\"idle_seconds_remaining\":300,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\"}],\"inflight\":{},\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"timestamp\":\"2026-05-18T23:29:47Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_03_t3_different_image_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_03_t3_different_image_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 696,
+        "body_excerpt": "{\"aggregate\":{\"paged_hits\":0,\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":3,\"ssm_companion_rederives\":0,\"disk_l2_stores\":12,\"prefix_misses\":26,\"disk_l2_misses\":26},\"models\":[{\"is_current\":true,\"is_paged_incompatible\":true,\"cache_enabled\":true,\"weights_bytes\":7613866168,\"name\":\"zaya1-vl-8b-mxfp4\",\"paged_cache\":{\"hits\":0,\"free_blocks\":999,\"enabled\":true,\"allocated_blocks\":0,\"evictions\":0,\"total_blocks\":1000,\"misses\":0},\"ssm_companion_cache\":{\"rederives\":0,\"hits\":3,\"misses\":0},\"is_hybrid\":true,\"block_disk_store\":{\"stores\":12,\"enabled\":true,\"misses\":26,\"max_size_bytes\":10737418240,\"hits\":3}}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:50Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_03_t3_different_image_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.912,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "696",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"aggregate\":{\"paged_hits\":0,\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":3,\"ssm_companion_rederives\":0,\"disk_l2_stores\":12,\"prefix_misses\":26,\"disk_l2_misses\":26},\"models\":[{\"is_current\":true,\"is_paged_incompatible\":true,\"cache_enabled\":true,\"weights_bytes\":7613866168,\"name\":\"zaya1-vl-8b-mxfp4\",\"paged_cache\":{\"hits\":0,\"free_blocks\":999,\"enabled\":true,\"allocated_blocks\":0,\"evictions\":0,\"total_blocks\":1000,\"misses\":0},\"ssm_companion_cache\":{\"rederives\":0,\"hits\":3,\"misses\":0},\"is_hybrid\":true,\"block_disk_store\":{\"stores\":12,\"enabled\":true,\"misses\":26,\"max_size_bytes\":10737418240,\"hits\":3}}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:50Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"current_model\":\"zaya1-vl-8b-mxfp4\",\"resident_models\":[{\"is_current\":true,\"inflight\":0,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_unload_at\":\"2026-05-18T23:34:50Z\",\"idle_seconds_remaining\":300}],\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"inflight\":{},\"timestamp\":\"2026-05-18T23:29:50Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_03_t3_different_image_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.117,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"current_model\":\"zaya1-vl-8b-mxfp4\",\"resident_models\":[{\"is_current\":true,\"inflight\":0,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_unload_at\":\"2026-05-18T23:34:50Z\",\"idle_seconds_remaining\":300}],\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"inflight\":{},\"timestamp\":\"2026-05-18T23:29:50Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_03_t3_different_image_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_03_t3_different_image_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 696,
+        "body_excerpt": "{\"aggregate\":{\"paged_hits\":0,\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":3,\"ssm_companion_rederives\":0,\"disk_l2_stores\":12,\"prefix_misses\":26,\"disk_l2_misses\":26},\"models\":[{\"paged_cache\":{\"misses\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"evictions\":0,\"hits\":0,\"total_blocks\":1000,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"is_hybrid\":true,\"is_current\":true,\"ssm_companion_cache\":{\"rederives\":0,\"hits\":3,\"misses\":0},\"weights_bytes\":7613866168,\"block_disk_store\":{\"stores\":12,\"enabled\":true,\"misses\":26,\"max_size_bytes\":10737418240,\"hits\":3}}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:50Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_04_t4_repeat_image_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.589,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "696",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"aggregate\":{\"paged_hits\":0,\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":3,\"ssm_companion_rederives\":0,\"disk_l2_stores\":12,\"prefix_misses\":26,\"disk_l2_misses\":26},\"models\":[{\"paged_cache\":{\"misses\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"evictions\":0,\"hits\":0,\"total_blocks\":1000,\"enabled\":true},\"is_paged_incompatible\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"cache_enabled\":true,\"is_hybrid\":true,\"is_current\":true,\"ssm_companion_cache\":{\"rederives\":0,\"hits\":3,\"misses\":0},\"weights_bytes\":7613866168,\"block_disk_store\":{\"stores\":12,\"enabled\":true,\"misses\":26,\"max_size_bytes\":10737418240,\"hits\":3}}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:50Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"current_model\":\"zaya1-vl-8b-mxfp4\",\"resident_models\":[{\"is_current\":true,\"inflight\":0,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_unload_at\":\"2026-05-18T23:34:50Z\",\"idle_seconds_remaining\":300}],\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"inflight\":{},\"timestamp\":\"2026-05-18T23:29:50Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_04_t4_repeat_image_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.968,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"current_model\":\"zaya1-vl-8b-mxfp4\",\"resident_models\":[{\"is_current\":true,\"inflight\":0,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_unload_at\":\"2026-05-18T23:34:50Z\",\"idle_seconds_remaining\":300}],\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"inflight\":{},\"timestamp\":\"2026-05-18T23:29:50Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_04_t4_repeat_image_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_04_t4_repeat_image_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 696,
+        "body_excerpt": "{\"aggregate\":{\"paged_hits\":0,\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":3,\"ssm_companion_rederives\":0,\"disk_l2_stores\":14,\"prefix_misses\":36,\"disk_l2_misses\":36},\"models\":[{\"block_disk_store\":{\"stores\":14,\"enabled\":true,\"misses\":36,\"max_size_bytes\":10737418240,\"hits\":3},\"is_paged_incompatible\":true,\"is_hybrid\":true,\"paged_cache\":{\"misses\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"evictions\":0,\"hits\":0,\"total_blocks\":1000,\"enabled\":true},\"cache_enabled\":true,\"ssm_companion_cache\":{\"misses\":0,\"hits\":3,\"rederives\":0},\"name\":\"zaya1-vl-8b-mxfp4\",\"weights_bytes\":7613866168,\"is_current\":true}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:52Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_04_t4_repeat_image_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.383,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "696",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"aggregate\":{\"paged_hits\":0,\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":3,\"ssm_companion_rederives\":0,\"disk_l2_stores\":14,\"prefix_misses\":36,\"disk_l2_misses\":36},\"models\":[{\"block_disk_store\":{\"stores\":14,\"enabled\":true,\"misses\":36,\"max_size_bytes\":10737418240,\"hits\":3},\"is_paged_incompatible\":true,\"is_hybrid\":true,\"paged_cache\":{\"misses\":0,\"free_blocks\":999,\"allocated_blocks\":0,\"evictions\":0,\"hits\":0,\"total_blocks\":1000,\"enabled\":true},\"cache_enabled\":true,\"ssm_companion_cache\":{\"misses\":0,\"hits\":3,\"rederives\":0},\"name\":\"zaya1-vl-8b-mxfp4\",\"weights_bytes\":7613866168,\"is_current\":true}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:52Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"current_model\":\"zaya1-vl-8b-mxfp4\",\"resident_models\":[{\"inflight\":0,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_unload_at\":\"2026-05-18T23:34:52Z\",\"idle_seconds_remaining\":300}],\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"inflight\":{},\"timestamp\":\"2026-05-18T23:29:52Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_04_t4_repeat_image_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.567,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"current_model\":\"zaya1-vl-8b-mxfp4\",\"resident_models\":[{\"inflight\":0,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_unload_at\":\"2026-05-18T23:34:52Z\",\"idle_seconds_remaining\":300}],\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"inflight\":{},\"timestamp\":\"2026-05-18T23:29:52Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_04_t4_repeat_image_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_04_t4_repeat_image_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 696,
+        "body_excerpt": "{\"aggregate\":{\"paged_hits\":0,\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":3,\"ssm_companion_rederives\":0,\"disk_l2_stores\":14,\"prefix_misses\":36,\"disk_l2_misses\":36},\"models\":[{\"is_current\":true,\"is_paged_incompatible\":true,\"cache_enabled\":true,\"weights_bytes\":7613866168,\"name\":\"zaya1-vl-8b-mxfp4\",\"paged_cache\":{\"hits\":0,\"enabled\":true,\"allocated_blocks\":0,\"misses\":0,\"free_blocks\":999,\"evictions\":0,\"total_blocks\":1000},\"ssm_companion_cache\":{\"hits\":3,\"rederives\":0,\"misses\":0},\"is_hybrid\":true,\"block_disk_store\":{\"stores\":14,\"enabled\":true,\"misses\":36,\"max_size_bytes\":10737418240,\"hits\":3}}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:52Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_04_t4_repeat_image_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.995,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "696",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"aggregate\":{\"paged_hits\":0,\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":3,\"ssm_companion_rederives\":0,\"disk_l2_stores\":14,\"prefix_misses\":36,\"disk_l2_misses\":36},\"models\":[{\"is_current\":true,\"is_paged_incompatible\":true,\"cache_enabled\":true,\"weights_bytes\":7613866168,\"name\":\"zaya1-vl-8b-mxfp4\",\"paged_cache\":{\"hits\":0,\"enabled\":true,\"allocated_blocks\":0,\"misses\":0,\"free_blocks\":999,\"evictions\":0,\"total_blocks\":1000},\"ssm_companion_cache\":{\"hits\":3,\"rederives\":0,\"misses\":0},\"is_hybrid\":true,\"block_disk_store\":{\"stores\":14,\"enabled\":true,\"misses\":36,\"max_size_bytes\":10737418240,\"hits\":3}}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:52Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"current_model\":\"zaya1-vl-8b-mxfp4\",\"resident_models\":[{\"inflight\":0,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_unload_at\":\"2026-05-18T23:34:52Z\",\"idle_seconds_remaining\":300}],\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"inflight\":{},\"timestamp\":\"2026-05-18T23:29:52Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_04_t4_repeat_image_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.362,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"current_model\":\"zaya1-vl-8b-mxfp4\",\"resident_models\":[{\"inflight\":0,\"is_current\":true,\"name\":\"zaya1-vl-8b-mxfp4\",\"idle_unload_at\":\"2026-05-18T23:34:52Z\",\"idle_seconds_remaining\":300}],\"status\":\"healthy\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"],\"inflight\":{},\"timestamp\":\"2026-05-18T23:29:52Z\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_04_t4_repeat_image_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/before_04_t4_repeat_image_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 696,
+        "body_excerpt": "{\"models\":[{\"cache_enabled\":true,\"ssm_companion_cache\":{\"misses\":0,\"hits\":3,\"rederives\":0},\"name\":\"zaya1-vl-8b-mxfp4\",\"is_hybrid\":true,\"block_disk_store\":{\"hits\":3,\"max_size_bytes\":10737418240,\"enabled\":true,\"misses\":50,\"stores\":16},\"is_paged_incompatible\":true,\"paged_cache\":{\"hits\":0,\"enabled\":true,\"allocated_blocks\":0,\"misses\":0,\"free_blocks\":999,\"evictions\":0,\"total_blocks\":1000},\"is_current\":true,\"weights_bytes\":7613866168}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:56Z\",\"aggregate\":{\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"paged_hits\":0,\"ssm_companion_rederives\":0,\"disk_l2_misses\":50,\"ssm_companion_hits\":3,\"disk_l2_stores\":16,\"prefix_misses\":50}}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_04_t4_repeat_image_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.052,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "696",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[{\"cache_enabled\":true,\"ssm_companion_cache\":{\"misses\":0,\"hits\":3,\"rederives\":0},\"name\":\"zaya1-vl-8b-mxfp4\",\"is_hybrid\":true,\"block_disk_store\":{\"hits\":3,\"max_size_bytes\":10737418240,\"enabled\":true,\"misses\":50,\"stores\":16},\"is_paged_incompatible\":true,\"paged_cache\":{\"hits\":0,\"enabled\":true,\"allocated_blocks\":0,\"misses\":0,\"free_blocks\":999,\"evictions\":0,\"total_blocks\":1000},\"is_current\":true,\"weights_bytes\":7613866168}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:56Z\",\"aggregate\":{\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"paged_hits\":0,\"ssm_companion_rederives\":0,\"disk_l2_misses\":50,\"ssm_companion_hits\":3,\"disk_l2_stores\":16,\"prefix_misses\":50}}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"inflight\":{},\"resident_models\":[{\"idle_seconds_remaining\":300,\"is_current\":true,\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:56Z\",\"name\":\"zaya1-vl-8b-mxfp4\"}],\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:56Z\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"]}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_04_t4_repeat_image_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.498,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"inflight\":{},\"resident_models\":[{\"idle_seconds_remaining\":300,\"is_current\":true,\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:56Z\",\"name\":\"zaya1-vl-8b-mxfp4\"}],\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:56Z\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"]}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_04_t4_repeat_image_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_04_t4_repeat_image_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 696,
+        "body_excerpt": "{\"models\":[{\"block_disk_store\":{\"hits\":3,\"max_size_bytes\":10737418240,\"enabled\":true,\"misses\":50,\"stores\":16},\"is_paged_incompatible\":true,\"is_hybrid\":true,\"paged_cache\":{\"enabled\":true,\"allocated_blocks\":0,\"hits\":0,\"free_blocks\":999,\"total_blocks\":1000,\"evictions\":0,\"misses\":0},\"cache_enabled\":true,\"ssm_companion_cache\":{\"misses\":0,\"hits\":3,\"rederives\":0},\"name\":\"zaya1-vl-8b-mxfp4\",\"weights_bytes\":7613866168,\"is_current\":true}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:56Z\",\"aggregate\":{\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"paged_hits\":0,\"ssm_companion_rederives\":0,\"disk_l2_misses\":50,\"ssm_companion_hits\":3,\"disk_l2_stores\":16,\"prefix_misses\":50}}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_sequence/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.831,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "696",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[{\"block_disk_store\":{\"hits\":3,\"max_size_bytes\":10737418240,\"enabled\":true,\"misses\":50,\"stores\":16},\"is_paged_incompatible\":true,\"is_hybrid\":true,\"paged_cache\":{\"enabled\":true,\"allocated_blocks\":0,\"hits\":0,\"free_blocks\":999,\"total_blocks\":1000,\"evictions\":0,\"misses\":0},\"cache_enabled\":true,\"ssm_companion_cache\":{\"misses\":0,\"hits\":3,\"rederives\":0},\"name\":\"zaya1-vl-8b-mxfp4\",\"weights_bytes\":7613866168,\"is_current\":true}],\"status\":\"ok\",\"timestamp\":\"2026-05-18T23:29:56Z\",\"aggregate\":{\"prefix_hits\":3,\"disk_l2_hits\":3,\"paged_misses\":0,\"ssm_companion_misses\":0,\"paged_hits\":0,\"ssm_companion_rederives\":0,\"disk_l2_misses\":50,\"ssm_companion_hits\":3,\"disk_l2_stores\":16,\"prefix_misses\":50}}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 285,
+        "body_excerpt": "{\"inflight\":{},\"resident_models\":[{\"idle_seconds_remaining\":300,\"is_current\":true,\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:56Z\",\"name\":\"zaya1-vl-8b-mxfp4\"}],\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:56Z\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"]}",
+        "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_sequence/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.289,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "285",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"inflight\":{},\"resident_models\":[{\"idle_seconds_remaining\":300,\"is_current\":true,\"inflight\":0,\"idle_unload_at\":\"2026-05-18T23:34:56Z\",\"name\":\"zaya1-vl-8b-mxfp4\"}],\"current_model\":\"zaya1-vl-8b-mxfp4\",\"status\":\"healthy\",\"timestamp\":\"2026-05-18T23:29:56Z\",\"loaded\":[\"zaya1-vl-8b-mxfp4\"]}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_sequence",
+      "memory_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/snapshots/after_sequence/memory.json"
+    }
+  ],
+  "stream": false,
+  "turns": [
+    {
+      "label": "t1_image_text",
+      "media": [
+        {
+          "format": "png",
+          "kind": "image",
+          "mime_type": "image/png",
+          "path": "/private/tmp/osaurus-pr1147-media/red.png"
+        }
+      ],
+      "prompt": "Describe the dominant color and shape in this image in one short sentence."
+    },
+    {
+      "label": "t2_text_only",
+      "media": [],
+      "prompt": "Follow up in one sentence without using any new image."
+    },
+    {
+      "label": "t3_different_image",
+      "media": [
+        {
+          "format": "png",
+          "kind": "image",
+          "mime_type": "image/png",
+          "path": "/private/tmp/osaurus-pr1147-media/blue.png"
+        }
+      ],
+      "prompt": "Describe the dominant color and shape in this image in one short sentence."
+    },
+    {
+      "label": "t4_repeat_image",
+      "media": [
+        {
+          "format": "png",
+          "kind": "image",
+          "mime_type": "image/png",
+          "path": "/private/tmp/osaurus-pr1147-media/red.png"
+        }
+      ],
+      "prompt": "Describe this repeated image again in one short sentence."
+    }
+  ]
+}

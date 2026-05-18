@@ -1,0 +1,2 @@
+{"object":"chat.completion","created":1779147636,"usage":{"completion_tokens":8,"total_tokens":116,"prompt_tokens":108},"id":"chatcmpl-2461DE539E3A","model":"zaya1-vl-8b-mxfp4","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","choices":[{"index":0,"message":{"role":"assistant","content":"Blue square dominates the image."},"finish_reason":"stop"}]}
+HTTP_STATUS:200

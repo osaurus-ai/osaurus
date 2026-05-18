@@ -55,6 +55,27 @@ class LiveSequenceProbeTests(unittest.TestCase):
             self.assertEqual(turns[3]["media"][0]["path"], str(image_a.resolve()))
             self.assertEqual(turns[4]["media"][0]["kind"], "video")
 
+    def test_different_image_prompt_can_be_latest_media_specific(self) -> None:
+        probe = load_probe_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            image_a = root / "a.png"
+            image_b = root / "b.png"
+            image_a.write_bytes(b"\x89PNG\r\n\x1a\nimage-a")
+            image_b.write_bytes(b"\x89PNG\r\n\x1a\nimage-b")
+
+            turns = probe.build_vlm_turn_plan(
+                image=image_a,
+                different_image=image_b,
+                prompt="describe this image",
+                different_image_prompt="describe only the latest attached image",
+            )
+
+            self.assertEqual(turns[0]["prompt"], "describe this image")
+            self.assertEqual(turns[2]["label"], "t3_different_image")
+            self.assertEqual(turns[2]["prompt"], "describe only the latest attached image")
+            self.assertEqual(turns[2]["media"][0]["path"], str(image_b.resolve()))
+
     def test_request_bodies_use_chat_and_responses_media_shapes(self) -> None:
         probe = load_probe_module()
         with tempfile.TemporaryDirectory() as tmp:

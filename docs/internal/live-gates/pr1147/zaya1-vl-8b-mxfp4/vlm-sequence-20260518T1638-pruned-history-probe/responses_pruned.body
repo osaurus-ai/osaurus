@@ -1,0 +1,2 @@
+{"output":[{"id":"item_16CE3039A6BF46A48B35DCB9","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The image features a striking red circle at the center, set against a stark white background."}]}],"status":"completed","created_at":1779147525,"model":"zaya1-vl-8b-mxfp4","id":"resp_C60270AD873A4E5992CEDC3B","object":"response","usage":{"input_tokens":136,"output_tokens":23,"total_tokens":159}}
+HTTP_STATUS:200

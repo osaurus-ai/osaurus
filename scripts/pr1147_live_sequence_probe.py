@@ -100,6 +100,7 @@ def build_vlm_turn_plan(
     video: Path | None = None,
     audio: Path | None = None,
     prompt: str = "Describe the media in one short sentence.",
+    different_image_prompt: str | None = None,
 ) -> list[dict[str, Any]]:
     turns: list[dict[str, Any]] = []
     if image is not None:
@@ -121,7 +122,7 @@ def build_vlm_turn_plan(
             turns.append(
                 {
                     "label": "t3_different_image",
-                    "prompt": prompt,
+                    "prompt": different_image_prompt or prompt,
                     "media": [media_descriptor(different_image)],
                 }
             )
@@ -393,6 +394,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video", type=Path)
     parser.add_argument("--audio", type=Path)
     parser.add_argument("--prompt", default="Describe the media in one short sentence.")
+    parser.add_argument(
+        "--different-image-prompt",
+        help=(
+            "Prompt for the different-image turn. Defaults to --prompt. Use an "
+            "explicit latest-image prompt when the row needs to disambiguate "
+            "new media from prior assistant descriptions."
+        ),
+    )
     parser.add_argument("--max-tokens", type=int, default=128)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--routes", default="chat,responses", help="Comma-separated: chat,responses")
@@ -411,6 +420,7 @@ def main() -> int:
         video=args.video,
         audio=args.audio,
         prompt=args.prompt,
+        different_image_prompt=args.different_image_prompt,
     )
     routes = {route.strip() for route in args.routes.split(",") if route.strip()}
     route_specs: list[tuple[str, str]] = []

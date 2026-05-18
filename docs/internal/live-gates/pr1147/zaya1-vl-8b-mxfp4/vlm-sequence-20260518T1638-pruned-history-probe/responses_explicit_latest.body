@@ -1,0 +1,2 @@
+{"created_at":1779147650,"model":"zaya1-vl-8b-mxfp4","id":"resp_A4393F8BED514F358FD8CCAE","object":"response","output":[{"status":"completed","content":[{"type":"output_text","text":"A blue square is the dominant shape, set against a contrasting white background."}],"role":"assistant","type":"message","id":"item_6AD4F0D63BCD404EB6C867E2"}],"status":"completed","usage":{"total_tokens":183,"input_tokens":163,"output_tokens":20}}
+HTTP_STATUS:200

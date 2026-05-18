@@ -1,0 +1,2 @@
+{"id":"chatcmpl-1E508AA7BE82","choices":[{"index":0,"message":{"role":"assistant","content":"Red square"},"finish_reason":"stop"}],"object":"chat.completion","usage":{"total_tokens":83,"completion_tokens":2,"prompt_tokens":81},"model":"zaya1-vl-8b-mxfp4","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","created":1779147513}
+HTTP_STATUS:200

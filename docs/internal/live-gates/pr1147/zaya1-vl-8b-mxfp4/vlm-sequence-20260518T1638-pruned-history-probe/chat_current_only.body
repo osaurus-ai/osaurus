@@ -1,0 +1,2 @@
+{"object":"chat.completion","created":1779147627,"id":"chatcmpl-7BA1C7F48DD1","usage":{"prompt_tokens":18,"total_tokens":27,"completion_tokens":9},"model":"zaya1-vl-8b-mxfp4","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","choices":[{"message":{"content":"A blue rectangle dominates the image.","role":"assistant"},"finish_reason":"stop","index":0}]}
+HTTP_STATUS:200

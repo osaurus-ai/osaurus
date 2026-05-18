@@ -1,0 +1,31 @@
+{
+  "input": [
+    {
+      "content": [
+        {
+          "text": "Describe the dominant color and shape in this image in one short sentence.",
+          "type": "input_text"
+        },
+        {
+          "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAeUlEQVR4nO3PQQkAMAzAwIqof2UTMxF7HINABFzm7H7dcEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFj12qxUDxeFqrFAAAAABJRU5ErkJggg==",
+          "type": "input_image"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "content": "The image features a striking red circle at the center, set against a stark white background.",
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "content": "Follow up in one sentence without using any new image.",
+      "role": "user",
+      "type": "message"
+    }
+  ],
+  "max_output_tokens": 96,
+  "model": "zaya1-vl-8b-mxfp4",
+  "stream": false
+}

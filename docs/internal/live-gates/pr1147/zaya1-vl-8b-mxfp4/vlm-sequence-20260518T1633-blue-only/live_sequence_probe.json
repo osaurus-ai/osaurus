@@ -1,0 +1,224 @@
+{
+  "base_url": "http://127.0.0.1:4242",
+  "max_tokens": 64,
+  "model": "zaya1-vl-8b-mxfp4",
+  "results": [
+    {
+      "body_bytes": 369,
+      "body_excerpt": "{\"object\":\"chat.completion\",\"model\":\"zaya1-vl-8b-mxfp4\",\"created\":1779147197,\"usage\":{\"completion_tokens\":13,\"total_tokens\":31,\"prompt_tokens\":18},\"prefix_hash\":\"6e340b9cffb37a989ca544e6bb780a2c\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"The image features a blue square with a black shadow.\"},\"index\":0,\"finish_reason\":\"stop\"}],\"id\":\"chatcmpl-BFF8AAF11C3A\"}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1633-blue-only/01_t1_image_text_chat.body",
+      "content_type": "application/json",
+      "elapsed_ms": 4624.868,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "369",
+        "Content-Type": "application/json"
+      },
+      "label": "01_t1_image_text_chat",
+      "ok": true,
+      "output_tail": "The image features a blue square with a black shadow.",
+      "path": "/v1/chat/completions",
+      "reason": "OK",
+      "route_name": "chat",
+      "status": 200,
+      "turn": {
+        "label": "t1_image_text",
+        "media": [
+          {
+            "format": "png",
+            "kind": "image",
+            "mime_type": "image/png",
+            "path": "/private/tmp/osaurus-pr1147-media/blue.png"
+          }
+        ],
+        "prompt": "Describe the dominant color and shape in this image in one short sentence."
+      },
+      "url": "http://127.0.0.1:4242/v1/chat/completions"
+    },
+    {
+      "body_bytes": 421,
+      "body_excerpt": "{\"output\":[{\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"The image predominantly features blue, with no additional colors present.\"}],\"role\":\"assistant\",\"type\":\"message\",\"id\":\"item_5A4700EEF41845F2BF3C4B15\"}],\"usage\":{\"output_tokens\":18,\"input_tokens\":18,\"total_tokens\":36},\"created_at\":1779147202,\"id\":\"resp_AF1445975E94491C95C85925\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"zaya1-vl-8b-mxfp4\"}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1633-blue-only/01_t1_image_text_responses.body",
+      "content_type": "application/json",
+      "elapsed_ms": 4893.733,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "421",
+        "Content-Type": "application/json"
+      },
+      "label": "01_t1_image_text_responses",
+      "ok": true,
+      "output_tail": "The image predominantly features blue, with no additional colors present.",
+      "path": "/v1/responses",
+      "reason": "OK",
+      "route_name": "responses",
+      "status": 200,
+      "turn": {
+        "label": "t1_image_text",
+        "media": [
+          {
+            "format": "png",
+            "kind": "image",
+            "mime_type": "image/png",
+            "path": "/private/tmp/osaurus-pr1147-media/blue.png"
+          }
+        ],
+        "prompt": "Describe the dominant color and shape in this image in one short sentence."
+      },
+      "url": "http://127.0.0.1:4242/v1/responses"
+    },
+    {
+      "body_bytes": 414,
+      "body_excerpt": "{\"usage\":{\"prompt_tokens\":45,\"completion_tokens\":24,\"total_tokens\":69},\"prefix_hash\":\"6e340b9cffb37a989ca544e6bb780a2c\",\"id\":\"chatcmpl-25B3F68428EB\",\"choices\":[{\"index\":0,\"message\":{\"content\":\"The blue square, contrasting against the black shadow, is the most dominant element in this image.\",\"role\":\"assistant\"},\"finish_reason\":\"stop\"}],\"created\":1779147207,\"object\":\"chat.completion\",\"model\":\"zaya1-vl-8b-mxfp4\"}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1633-blue-only/02_t2_text_only_chat.body",
+      "content_type": "application/json",
+      "elapsed_ms": 5932.277,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "414",
+        "Content-Type": "application/json"
+      },
+      "label": "02_t2_text_only_chat",
+      "ok": true,
+      "output_tail": "The blue square, contrasting against the black shadow, is the most dominant element in this image.",
+      "path": "/v1/chat/completions",
+      "reason": "OK",
+      "route_name": "chat",
+      "status": 200,
+      "turn": {
+        "label": "t2_text_only",
+        "media": [],
+        "prompt": "Follow up in one sentence without using any new image."
+      },
+      "url": "http://127.0.0.1:4242/v1/chat/completions"
+    },
+    {
+      "body_bytes": 490,
+      "body_excerpt": "{\"output\":[{\"status\":\"completed\",\"role\":\"assistant\",\"id\":\"item_B58A057E165C47C79AB657BB\",\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"The image appears to be a plain blue background with no visible objects or text, suggesting it might be a placeholder or an ungenerated image.\"}]}],\"usage\":{\"output_tokens\":35,\"total_tokens\":85,\"input_tokens\":50},\"created_at\":1779147213,\"id\":\"resp_8B76396308B049458F7E1482\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"zaya1-vl-8b-mxfp4\"}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1633-blue-only/02_t2_text_only_responses.body",
+      "content_type": "application/json",
+      "elapsed_ms": 6813.098,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "490",
+        "Content-Type": "application/json"
+      },
+      "label": "02_t2_text_only_responses",
+      "ok": true,
+      "output_tail": "The image appears to be a plain blue background with no visible objects or text, suggesting it might be a placeholder or an ungenerated image.",
+      "path": "/v1/responses",
+      "reason": "OK",
+      "route_name": "responses",
+      "status": 200,
+      "turn": {
+        "label": "t2_text_only",
+        "media": [],
+        "prompt": "Follow up in one sentence without using any new image."
+      },
+      "url": "http://127.0.0.1:4242/v1/responses"
+    },
+    {
+      "body_bytes": 393,
+      "body_excerpt": "{\"object\":\"chat.completion\",\"model\":\"zaya1-vl-8b-mxfp4\",\"created\":1779147220,\"usage\":{\"prompt_tokens\":84,\"completion_tokens\":19,\"total_tokens\":103},\"prefix_hash\":\"6e340b9cffb37a989ca544e6bb780a2c\",\"choices\":[{\"index\":0,\"message\":{\"content\":\"A blue square with a black shadow is the main and only element in the image.\",\"role\":\"assistant\"},\"finish_reason\":\"stop\"}],\"id\":\"chatcmpl-E640CFD2F845\"}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1633-blue-only/03_t4_repeat_image_chat.body",
+      "content_type": "application/json",
+      "elapsed_ms": 5507.367,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "393",
+        "Content-Type": "application/json"
+      },
+      "label": "03_t4_repeat_image_chat",
+      "ok": true,
+      "output_tail": "A blue square with a black shadow is the main and only element in the image.",
+      "path": "/v1/chat/completions",
+      "reason": "OK",
+      "route_name": "chat",
+      "status": 200,
+      "turn": {
+        "label": "t4_repeat_image",
+        "media": [
+          {
+            "format": "png",
+            "kind": "image",
+            "mime_type": "image/png",
+            "path": "/private/tmp/osaurus-pr1147-media/blue.png"
+          }
+        ],
+        "prompt": "Describe this repeated image again in one short sentence."
+      },
+      "url": "http://127.0.0.1:4242/v1/chat/completions"
+    },
+    {
+      "body_bytes": 428,
+      "body_excerpt": "{\"output\":[{\"status\":\"completed\",\"role\":\"assistant\",\"id\":\"item_4C65664624D6482989C8E48B\",\"type\":\"message\",\"content\":[{\"text\":\"The image is a blue rectangle without any distinguishable features or content.\",\"type\":\"output_text\"}]}],\"model\":\"zaya1-vl-8b-mxfp4\",\"object\":\"response\",\"status\":\"completed\",\"usage\":{\"output_tokens\":19,\"total_tokens\":119,\"input_tokens\":100},\"id\":\"resp_77939B4407F44E3D94B6FBA0\",\"created_at\":1779147225}",
+      "body_path": "docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1633-blue-only/03_t4_repeat_image_responses.body",
+      "content_type": "application/json",
+      "elapsed_ms": 5121.46,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "428",
+        "Content-Type": "application/json"
+      },
+      "label": "03_t4_repeat_image_responses",
+      "ok": true,
+      "output_tail": "The image is a blue rectangle without any distinguishable features or content.",
+      "path": "/v1/responses",
+      "reason": "OK",
+      "route_name": "responses",
+      "status": 200,
+      "turn": {
+        "label": "t4_repeat_image",
+        "media": [
+          {
+            "format": "png",
+            "kind": "image",
+            "mime_type": "image/png",
+            "path": "/private/tmp/osaurus-pr1147-media/blue.png"
+          }
+        ],
+        "prompt": "Describe this repeated image again in one short sentence."
+      },
+      "url": "http://127.0.0.1:4242/v1/responses"
+    }
+  ],
+  "snapshots": [],
+  "stream": false,
+  "turns": [
+    {
+      "label": "t1_image_text",
+      "media": [
+        {
+          "format": "png",
+          "kind": "image",
+          "mime_type": "image/png",
+          "path": "/private/tmp/osaurus-pr1147-media/blue.png"
+        }
+      ],
+      "prompt": "Describe the dominant color and shape in this image in one short sentence."
+    },
+    {
+      "label": "t2_text_only",
+      "media": [],
+      "prompt": "Follow up in one sentence without using any new image."
+    },
+    {
+      "label": "t4_repeat_image",
+      "media": [
+        {
+          "format": "png",
+          "kind": "image",
+          "mime_type": "image/png",
+          "path": "/private/tmp/osaurus-pr1147-media/blue.png"
+        }
+      ],
+      "prompt": "Describe this repeated image again in one short sentence."
+    }
+  ]
+}

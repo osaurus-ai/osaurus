@@ -1,0 +1,2 @@
+{"created_at":1779147521,"model":"zaya1-vl-8b-mxfp4","id":"resp_A247403DC69841D7926FEA87","object":"response","output":[{"type":"message","status":"completed","id":"item_977B604E46094D7B92D200AD","role":"assistant","content":[{"type":"output_text","text":"A red circle on a white background."}]}],"status":"completed","usage":{"output_tokens":8,"total_tokens":144,"input_tokens":136}}
+HTTP_STATUS:200

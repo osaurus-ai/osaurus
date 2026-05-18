@@ -1,0 +1,2 @@
+{"created_at":1779147640,"model":"zaya1-vl-8b-mxfp4","id":"resp_5E75BD808F58467B93A5E847","object":"response","output":[{"type":"message","id":"item_F29EF81C7EAB47178F8C9FD8","status":"completed","role":"assistant","content":[{"text":"Purple rectangle dominates the image.","type":"output_text"}]}],"status":"completed","usage":{"total_tokens":27,"output_tokens":9,"input_tokens":18}}
+HTTP_STATUS:200

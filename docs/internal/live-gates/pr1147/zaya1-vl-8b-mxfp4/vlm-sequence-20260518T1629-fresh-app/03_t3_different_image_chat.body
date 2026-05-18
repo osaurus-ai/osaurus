@@ -1,0 +1,1 @@
+{"object":"chat.completion","usage":{"prompt_tokens":81,"completion_tokens":15,"total_tokens":96},"choices":[{"index":0,"message":{"content":"The red square is the dominant color and shape in the image.","role":"assistant"},"finish_reason":"stop"}],"created":1779146984,"model":"zaya1-vl-8b-mxfp4","id":"chatcmpl-59EC2BDEE8BE","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c"}

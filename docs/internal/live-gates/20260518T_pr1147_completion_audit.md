@@ -116,7 +116,7 @@ with the correct cache/scheduler/parser/media path for that model.
 |---|---|---|
 | Qwen VL / Qwen3.6 MTP VL through UI and APIs | Live matrix names Qwen3VLProcessor, MRoPE, media salt, video frame rows, native `top_k`, `chat_template_kwargs`, and `vmlx_mtp_tuning.json`. Local model census confirms Qwen3.6 MTP/VL bundles and processor files exist. | Osaurus chat-app image+text T1, text-only T2, different-image T3, repeated-media hit, video row, `/v1/chat/completions`, `/v1/responses`, saved settings, cache stats, TTFT/tok/s/RSS/footprint artifacts. |
 | Gemma VL / Gemma reasoning | Live matrix separates Gemma4 VLM/Harmony from Gemma3n text-only partial evidence and requires media controls only after real detection. | Osaurus Gemma4 image/video/text rows, Harmony no-leak route rows, Gemma tool cards, cache stats, and a root cause for Gemma3n UTF drift before any production-clear text claim. |
-| ZAYA / ZAYA-VL | Live matrix requires ZayaCCACache/path-dependent media state, no stale thinking carryover, no sampler clamp, and separate ZAYA-VL media rows. Local census confirms ZAYA text and VL variants plus ZAYA VL processor files. | Osaurus ZAYA-VL image/video/text-only resume rows, CCA cache proof, speed target watch, no cross-session media state reuse, and root-cause closure for current red ZAYA direct-mode rows. |
+| ZAYA / ZAYA-VL | Live matrix requires ZayaCCACache/path-dependent media state, no stale thinking carryover, no sampler clamp, and separate ZAYA-VL media rows. Local census confirms ZAYA text and VL variants plus ZAYA VL processor files. Fresh Osaurus diagnostics prove blue-image grounding works in isolation and with explicit latest-image wording; the original red-to-blue plain prompt still follows prior assistant red context. | Osaurus ZAYA-VL image/video/text-only resume rows, CCA cache proof, speed target watch, no cross-session media state reuse, and root-cause closure for current red ZAYA direct-mode rows. The VLM turn contract must be unambiguous without adding sampler, parser, or output guards. |
 | Nemotron Omni / Parakeet / RADIO | Live matrix names Parakeet pre-encode, RADIO/vision facts, live voice chunk stability, repeated-video alias, and no reasoning-only short-budget false pass. Local census confirms Nemotron Omni variants and processor files. | Osaurus app/API audio/video/image/text-only resume rows, live voice resident pre-encode, cache stats, TTFT/tok/s/RSS/footprint, and unsupported-media error proof. |
 | DSV4 Flash renderer and runtime | Source-policy tests pin native DSV4 cache copy, SWA+CSA+HSA, fixed/disabled block size 256, generic q4/q8 disabled, pool quant visible, JIT disabled, model metadata defaults, and invalid CLI flags omitted. | Final Osaurus UI screenshot/log and API artifacts proving those exact rendered settings, DSML tool rows, `reasoning_effort=max` pass-through, native cache stats, long/growing-chat behavior, TTFT/tok/s/footprint. |
 | MiniMax reasoning/tools | Live matrix requires reasoning channel separation, MiniMax tool parser, no MTP from CRACK/name, cache stats, and no forced close or repetition penalty. | Osaurus UI/API multi-turn reasoning and tool-result artifacts with stream terminal usage and cache proof. |
@@ -264,6 +264,7 @@ python3 scripts/pr1147_live_sequence_probe.py \
   --output-dir docs/internal/live-gates/pr1147/<model-slug>/vlm-sequence \
   --image <image-a> \
   --different-image <image-b> \
+  --different-image-prompt "Describe only the latest attached image in one short sentence." \
   --video <optional-video> \
   --audio <optional-audio>
 ```
@@ -274,6 +275,11 @@ Chat Completions and Responses request/response bodies, per-turn snapshots, and
 output tails. It is still an artifact collector; the row needs explicit human
 review for grounding, parser leaks, stop reason, cache hit correctness, TTFT,
 tok/s, RSS, and physical footprint.
+
+The `--different-image-prompt` option is a test-harness disambiguator, not an
+engine guard. It should be used when prior assistant history already contains a
+description of earlier media, so the row can test whether the newest attached
+media is processed without relying on ambiguous wording such as "this image."
 
 For model-cache proof, verify the app/server idle-residency setting first.
 Osaurus defaults to immediate unload after the final generation lease drops;
@@ -326,6 +332,44 @@ ZAYA-VL live sequence checkpoint:
   video/audio are rejected for ZAYA1-VL. This prevents the UI from advertising
   a fake video path; it does not make the red different-image grounding row or
   live cache proof pass.
+- fresh rebuilt-app rerun:
+  `docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/`
+  used a freshly rebuilt debug app, keychain-safe LaunchServices startup, and a
+  temporary 5-minute idle-residency setting that was restored after the run.
+  This rerun proves the Responses source fix reaches the VLM path instead of
+  returning generic "media" text, and it proves resident-model cache snapshots:
+  `/health` shows `zaya1-vl-8b-mxfp4` loaded, while `/admin/cache-stats` ends
+  with `prefix_hits=3`, `disk_l2_hits=3`, `disk_l2_stores=16`,
+  `ssm_companion_hits=3`, `is_hybrid=true`, `is_paged_incompatible=true`, and
+  block-L2 `max_size_bytes=10737418240`.
+- fresh rerun status:
+  the ZAYA-VL row remains FAIL/PARTIAL. The verified blue PNG turn still
+  answered red on both Chat Completions and Responses. Responses now reaches
+  image processing, but grounding is still wrong for the original plain
+  red-to-blue request, and physical-footprint review is still missing. Do not
+  mark ZAYA-VL production-clear until the different-image turn is rerun with an
+  unambiguous VLM turn contract and the same cache/timing/memory proof, without
+  sampler, parser, output rewrite, or forced reasoning repair.
+- blue-only and pruned-history diagnostics:
+  `docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1633-blue-only/`
+  proves the rebuilt app routes can ground the blue PNG in isolation on both
+  Chat Completions and Responses. The history/media probe at
+  `docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1638-pruned-history-probe/`
+  proves the original Turn 3 request contains a current blue attachment; after
+  pruning the prior red image, retaining the prior assistant red text still
+  answers red. Current-blue-only, no-assistant-history, and explicit
+  latest-image variants all ground blue. That narrows the issue to multi-turn
+  history/turn semantics, not a PNG decode, VLM tensor, sampler, parser, or
+  cache-stat workaround.
+- explicit latest-image rerun:
+  `docs/internal/live-gates/pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1645-explicit-latest/`
+  uses the new `--different-image-prompt` helper option and keeps temporary
+  5-minute residency for snapshots. Turn 3 grounds the latest blue attachment
+  on both Chat and Responses, and after-sequence cache stats again show
+  `prefix_hits=3`, `disk_l2_hits=3`, `disk_l2_stores=16`,
+  `ssm_companion_hits=3`, and block-L2 max size 10 GiB. The row is still only
+  PARTIAL because shape grounding is weak, Responses hallucinates more than
+  Chat, and Activity Monitor physical footprint is still absent.
 
 Metadata route probe checkpoint:
 

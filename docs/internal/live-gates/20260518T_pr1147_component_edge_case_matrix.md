@@ -19,7 +19,7 @@ metadata routes can close only their own subchecks.
 | Keychain-safe app launch | PASS for metadata launch path | `20260518T_pr1147_keychain_safe_launch.md` | Reuse for model rows; do not use fake `HOME`. |
 | Metadata routes | PARTIAL | `http-route-probe-metadata-20260518Tpost-cache-stats/` | Generation routes with loaded models, stream tails, usage, and cache stats. |
 | `/admin/cache-stats` route existence | PASS cold route | `get_admin_cache-stats.body` shows empty `models` and zero counters | Loaded-model cache-hit, L2 write, SSM rederive, and media-cache rows. |
-| ZAYA-VL live sequence | FAIL / PARTIAL | `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/review.md` plus `ChatEngineTests.openResponsesRequest_preservesInputImageIntoChatRequest` | Root-cause blue-image stale red answer, rerun source-fixed Responses image grounding live, fix or hide unsupported video exposure, and rerun cache proof with non-immediate residency or stream-time snapshots. |
+| ZAYA-VL live sequence | FAIL / PARTIAL | `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/review.md`, `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/review.md`, `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1633-blue-only/review.md`, `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1638-pruned-history-probe/review.md`, `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1645-explicit-latest/review.md`, plus `ChatEngineTests.openResponsesRequest_preservesInputImageIntoChatRequest` | The fresh rebuilt-app rerun proves non-empty resident cache stats under 5-minute residency and proves Responses reaches image processing. Blue-only and explicit-latest diagnostics ground blue, so the original stale red answer is narrowed to multi-turn history/turn semantics. Physical-footprint review is still missing, shape grounding remains weak, and the original plain red-to-blue row is not production-clear. |
 | Model production readiness | NOT COMPLETE | Manifest and this matrix | Real visible multi-turn output, no loops/leaks, TTFT, tok/s, RSS, physical footprint, and per-topology cache proof. |
 
 ## Source-To-Artifact Wiring
@@ -162,6 +162,10 @@ Each model folder must include:
   `scripts/pr1147_live_sequence_probe.py` for Qwen, Gemma VLM, ZAYA-VL, and
   Nemotron Omni media rows, including image+text, text-only, different-image,
   repeat-image, video, and audio turns when supported.
+- Use `--different-image-prompt` for rows where prior assistant text describes
+  earlier media and the contract being tested is newest-media grounding. This
+  is a test prompt disambiguator only; it must not become an engine-side prompt
+  rewrite or sampler/parser guard.
 - `media_sequence.json` for every VLM/Omni row.
 - `tool_reasoning_parser.json` for every tool/reasoning row.
 - `carryover_inverse.json` for saved-setting and cache-key switches.
@@ -188,15 +192,31 @@ The following remain open until concrete artifacts exist:
 
 - Qwen3.6 VL/MTP UI and API media rows with cache stats and MTP tuning proof.
 - Gemma4 VLM and Gemma3n text rows, including the known Gemma3n UTF red row.
-- ZAYA-VL media and ZAYA text direct-mode root cause. Current
-  `zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/` evidence is red because the
-  blue-image turn still described red and cache proof was not collected under a
-  residency mode that can keep the model visible after the request. The
-  Responses generic-media source bug was traced to dropped `input_image` parts
-  and fixed with a unit test, but live Responses grounding still needs a fresh
-  keychain-safe rerun. ZAYA1-VL video remains intentionally unsupported until a
-  real engine video processor exists; Osaurus now gates ZAYA1-VL as image-only
-  so the UI/composer does not advertise a fake video path.
+- ZAYA-VL media and ZAYA text direct-mode root cause. The earlier
+  `zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/` evidence stayed red because
+  the blue-image turn described red and cache proof was empty under immediate
+  idle unload. The fresh rebuilt-app rerun at
+  `zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/` proves Responses
+  now reaches image processing and proves resident cache stats under temporary
+  5-minute residency (`prefix_hits=3`, `disk_l2_hits=3`, `disk_l2_stores=16`,
+  `ssm_companion_hits=3`, block-L2 max size 10 GiB), but the blue-image turn
+  still describes red on both Chat Completions and Responses. The blue-only
+  diagnostic at `zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1633-blue-only/`
+  grounds the same blue fixture in isolation on both routes. The history/media
+  probe at
+  `zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1638-pruned-history-probe/` proves
+  the Turn 3 current attachment bytes are blue; current-blue-only,
+  no-assistant-history, and explicit-latest-image variants ground blue. The
+  rerun at
+  `zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1645-explicit-latest/` uses the
+  helper's `--different-image-prompt` option and grounds the latest blue image
+  with live snapshots, but shape grounding remains weak and physical-footprint
+  proof is still absent. The remaining red result is a multi-turn
+  history/turn-semantics problem and must not be hidden with sampler floors,
+  parser repairs, or output rewrites.
+  ZAYA1-VL video remains intentionally unsupported until a real engine video
+  processor exists; Osaurus now gates ZAYA1-VL as image-only so the UI/composer
+  does not advertise a fake video path.
 - Nemotron Omni audio/video/image rows through Osaurus, including Parakeet and
   RADIO evidence.
 - DSV4 UI settings visuals, DSML route proof, native cache stats, and long chat.
