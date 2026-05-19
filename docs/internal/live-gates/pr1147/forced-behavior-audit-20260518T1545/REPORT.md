@@ -38,6 +38,7 @@ model-family routing issue instead of hiding it in the app.
 | FBA-008 | `ModelOptions.swift`, lines 147-188, 228-328, 333-378, 381-459, and 630-665 | Family defaults expose no-thinking or native reasoning controls for DSV4, Qwen, Nemotron, Laguna, Hy3, Ling, ZAYA, AutoThinking, and Venice. | Mirrors family template defaults or product-scoped UI controls. | Conditional. UI defaults are allowed only when they reflect the bundle/template contract and explicit opt-in works. | Live UI/API rows must prove default/off/on/max as applicable, no stale carryover across families, and no hidden forced reasoning rail when the user opts in. |
 | FBA-009 | `MLXBatchAdapter.effectiveGenerationSettings`, lines 63-90 | Uses metadata defaults, then runtime fallback values such as temperature `0.7`, `topK=0`, and `minP=0`. | Provides an engine value when request and bundle metadata are absent. | Conditional. This is not a family-specific guard if metadata lookup is proven first. | Omitted-sampler artifacts must log `jang_config.json` / `generation_config.json` values first, then fallback only when absent. No family may get a hidden temperature, top-k, min-p, or repetition floor. |
 | FBA-010 | `LocalReasoningCapability`, lines 70-88 and 91-126 | Detects reasoning support from templates or JANG config; DSV4 uses JANG config when no Jinja template is present. | Prevents reasoning deltas from being coerced to content when a bundle advertises reasoning outside a standard template. | Allowed as capability detection, not output repair, if it is file-backed and reflected in UI/API settings. | Bundle census plus prompt-dump proof must show the detected source. A missing capability must remain unsupported rather than guessed from model name. |
+| FBA-011 | Pre-fix: `ThinkTagScrubber` and `ModelRuntime.streamWithTools` scrubbed orphan `<think>` / `</think>` markers from `.chunk`. Current source: scrubber file/tests removed; `ModelRuntime` forwards `.tokens` and `.reasoning` events directly. | The scrubber existed to hide visible tag leakage from older low-bit MoE/parser rows. | Fixed in source. Osaurus no longer repairs parser output into a clean-looking pass; reasoning boundaries must come from vmlx `Generation.reasoning` / `Generation.chunk` events. | `RuntimePolicySourceTests.modelRuntimeDoesNotRepairReasoningParserOutput` asserts no scrubber path remains. Live model rows still must prove no marker leak under real decode. |
 
 ## Release Gate Consequence
 
@@ -69,3 +70,10 @@ Hy3 thinking control: the prompt tail remains `reasoning_effort:no_think`.
 Native `reasoning_effort=low/high` rows route reasoning deltas cleanly and stop
 normally. Osaurus must keep Hy3 on the native effort bridge, and the app/API row
 still needs route, cache, memory, tools, and saved-setting proof.
+
+FBA-011 is closed at the Osaurus source level after the 17:30 PDT follow-up
+sweep: the `ThinkTagScrubber` post-filter was removed, and
+`ModelRuntime.streamWithTools` now forwards visible token chunks and reasoning
+events exactly as vmlx emits them. This is still not live model proof; any
+future raw marker leak must be fixed in the vmlx parser/template path or left
+as a red row until root-caused.

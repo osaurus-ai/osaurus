@@ -76,7 +76,7 @@ Status words:
 | Video | Qwen/Nemotron/Gemma only where runtime supports it; unsupported ZAYA video hidden/rejected cleanly. | ZAYA image-only gate documented; other video rows missing. | OPEN |
 | Audio / Parakeet | Nemotron Omni real WAV through Chat/UI, streaming, repeated-audio cache, live voice pre-encode, RADIO/vision split. | Nemotron WAV Chat smoke recovers `blue`; no stream/repeat/UI/RADIO proof. | PARTIAL |
 | MTP | MXFP Qwen 27B/35B ON/OFF speed, acceptance, cache, VL, and coherency from `vmlx_mtp_tuning.json`. | Bundle census and vmlx evidence; Osaurus UI/API MTP rows missing. | PARTIAL |
-| Reasoning parser | OFF/ON/max/native effort per family; no visible leakage; no forced close. | Source policy and limited vmlx evidence. | PARTIAL |
+| Reasoning parser | OFF/ON/max/native effort per family; no visible leakage; no forced close or app-side parser repair. | Source policy, `ThinkTagScrubber` removal, and limited vmlx evidence. | PARTIAL |
 | Tool parser | Parser selected from base architecture, not display name; tools omitted/off/on/result-turn all work. | DSV4 vmlx tool proof; Osaurus broad rows missing. | PARTIAL |
 | Coding/tool context | Coding prompt/tool schema injection does not leak after model/session switch and is included in cache keys only when valid. | Manifest only. | OPEN |
 | Single-batch | Default B=1 path coherent with full cache stack and no unnecessary scheduler contention. | Limited live rows. | PARTIAL |

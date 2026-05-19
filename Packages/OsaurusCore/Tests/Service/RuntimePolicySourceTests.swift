@@ -707,7 +707,12 @@ struct RuntimePolicySourceTests {
             "No family may get a hidden temperature",
             "FBA-010",
             "Detects reasoning support from templates or JANG config",
+            "FBA-011",
+            "ThinkTagScrubber",
+            "scrubber file/tests removed",
+            "forwards `.tokens` and `.reasoning` events directly",
             "The first Ling fake-merge source hit is now closed",
+            "Osaurus no longer repairs parser output",
             "no `</think>` close token is forced",
             "no parser output is repaired into a pass",
             "no token/logit bias",
@@ -1132,6 +1137,21 @@ struct RuntimePolicySourceTests {
             ),
             "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.default, including load-time memory caps, mmap safetensors, and JANGTQ prestack/alignment"
         )
+    }
+
+    @Test("ModelRuntime does not repair reasoning parser output")
+    func modelRuntimeDoesNotRepairReasoningParserOutput() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let scrubberPath = Self.packageRoot()
+            .appendingPathComponent("Services/ModelRuntime/ThinkTagScrubber.swift")
+            .path
+
+        #expect(!FileManager.default.fileExists(atPath: scrubberPath))
+        #expect(!runtime.contains("ThinkTagScrubber"))
+        #expect(!runtime.contains(".scrub("))
+        #expect(!runtime.contains("scrubber.flush"))
+        #expect(runtime.contains("case .reasoning(let s):"))
+        #expect(runtime.contains("StreamingReasoningHint.encode(s)"))
     }
 
     @Test("ModelRuntime wires idle residency around model leases")

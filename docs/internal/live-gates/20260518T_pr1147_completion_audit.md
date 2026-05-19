@@ -497,11 +497,13 @@ The forced-behavior source audit is:
 It currently marks source hits for background `no_think`, explicit
 `frequency_penalty` mapping, family reasoning-template bridges, MiniMax template
 fallback, the now-fixed Ling force-off/reasoning-merge path, and
-metadata/fallback sampler resolution. This audit is a triage artifact only. It
-must be paired with live model rows before release. The Ling fake-merge source
-hit has a fresh vmlx no-guard proof plus Osaurus focused tests, but the family
-still needs app/API long-output, cache, SSM, memory, and saved-setting carryover
-artifacts before production-clear.
+metadata/fallback sampler resolution. The 17:30 PDT follow-up also removed the
+Osaurus `ThinkTagScrubber` post-filter, so parser marker cleanup must now come
+from vmlx reasoning events rather than an app-side output repair. This audit is
+a triage artifact only. It must be paired with live model rows before release.
+The Ling fake-merge source hit has a fresh vmlx no-guard proof plus Osaurus
+focused tests, but the family still needs app/API long-output, cache, SSM,
+memory, and saved-setting carryover artifacts before production-clear.
 
 The active old-library sweep is:
 `docs/internal/live-gates/pr1147/old-library-sweep-20260518T1728/REPORT.md`.
