@@ -218,7 +218,7 @@ public struct NextRunPanelView: View {
     @ViewBuilder
     private var resumeButton: some View {
         Button(action: resume) {
-            Label("Resume", systemImage: "play.fill")
+            Label(localized: "Resume", systemImage: "play.fill")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
         }
@@ -313,7 +313,7 @@ public struct NextRunPanelView: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help("Mode: \(Self.modeLabel(mode)) — click to change in Configure")
+        .localizedHelp("Mode: \(Self.modeLabel(mode)) — click to change in Configure")
     }
 
     private static func modeLabel(_ mode: AgentScheduleMode) -> String {
@@ -331,13 +331,13 @@ public struct NextRunPanelView: View {
     @ViewBuilder
     private var pauseMenu: some View {
         Menu {
-            Button("1 hour") { pauseFor(hours: 1) }
-            Button("4 hours") { pauseFor(hours: 4) }
-            Button("Until tomorrow") { pauseUntilTomorrow() }
-            Button("Custom…") { presentCustomPause() }
-            Button("Indefinitely") { applyPause(until: .distantFuture) }
+            Button(localized: "1 hour") { pauseFor(hours: 1) }
+            Button(localized: "4 hours") { pauseFor(hours: 4) }
+            Button(localized: "Until tomorrow") { pauseUntilTomorrow() }
+            Button(localized: "Custom…") { presentCustomPause() }
+            Button(localized: "Indefinitely") { applyPause(until: .distantFuture) }
         } label: {
-            Label("Pause", systemImage: "pause.fill")
+            Label(localized: "Pause", systemImage: "pause.fill")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
         }

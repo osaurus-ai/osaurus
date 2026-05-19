@@ -608,7 +608,7 @@ struct ConfigureAIBody: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(Text("Back", bundle: .module))
+        .localizedHelp("Back")
     }
 
     // MARK: - Apple confirm

@@ -378,7 +378,7 @@ private struct PackageRow: View {
                     .foregroundColor(isHovering ? theme.accentColor : theme.tertiaryText)
             }
             .buttonStyle(.plain)
-            .help(Text("Open repository", bundle: .module))
+            .localizedHelp("Open repository")
         }
         .padding(12)
         .background(

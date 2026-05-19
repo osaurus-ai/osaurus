@@ -226,7 +226,7 @@ struct SidebarBorder: View {
 /// Themed search field for sidebar filtering.
 struct SidebarSearchField: View {
     @Binding var text: String
-    let placeholder: String
+    let placeholder: LocalizedStringKey
     var isFocused: FocusState<Bool>.Binding
 
     @Environment(\.theme) private var theme
@@ -254,7 +254,7 @@ struct SidebarSearchField: View {
     private var searchTextField: some View {
         ZStack(alignment: .leading) {
             if text.isEmpty {
-                Text(placeholder)
+                Text(localized: placeholder)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText.opacity(0.7))
             }

@@ -26,17 +26,17 @@ public enum PairingDeepLinkRouter {
             try invite.verifySignature()
             guard !invite.isExpired else {
                 ToastManager.shared.error(
-                    "Invite expired",
-                    message: "This invite expired \(invite.expirationDate.formatted())."
+                    L("Invite expired"),
+                    message: L("This invite expired \(invite.expirationDate.formatted()).")
                 )
                 return true
             }
             IncomingPairCoordinator.shared.pendingInvite = invite
         } catch let error as AgentInviteError {
-            ToastManager.shared.error("Invalid invite", message: error.errorDescription)
+            ToastManager.shared.error(L("Invalid invite"), message: error.errorDescription)
         } catch {
             ToastManager.shared.error(
-                "Invalid invite",
+                L("Invalid invite"),
                 message: error.localizedDescription
             )
         }

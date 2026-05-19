@@ -154,7 +154,7 @@ private struct TopStatusHeader: View {
                 .onTapGesture {
                     AppDelegate.shared?.showManagementWindow(initialTab: .server)
                 }
-                .help(Text("Open Server Management", bundle: .module))
+                .localizedHelp("Open Server Management")
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
@@ -171,11 +171,11 @@ private struct TopStatusHeader: View {
                     // Show status indicator
                     if case .error = server.serverHealth {
                         RetryButton(action: onRetry)
-                            .help(Text("Retry starting the server", bundle: .module))
+                            .localizedHelp("Retry starting the server")
                     } else if case .running = server.serverHealth {
                         // Simple green dot for running state
                         StatusDot(color: badgeColor, isAnimating: false)
-                            .help(Text("Server is running", bundle: .module))
+                            .localizedHelp("Server is running")
                     } else {
                         // Show full badge for transitional states
                         StatusBadge(status: badgeText, color: badgeColor, isAnimating: badgeAnimating)
@@ -195,7 +195,7 @@ private struct TopStatusHeader: View {
                                 .foregroundColor(theme.tertiaryText)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help(Text("Copy URL", bundle: .module))
+                        .localizedHelp("Copy URL")
                     }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
@@ -603,7 +603,7 @@ private struct AskAIButton: View {
             },
             perform: {}
         )
-        .help(Text("Open AI Chat", bundle: .module))
+        .localizedHelp("Open AI Chat")
     }
 }
 

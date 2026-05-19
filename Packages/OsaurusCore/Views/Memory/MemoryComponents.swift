@@ -493,7 +493,7 @@ struct MemoryAgentRow: View {
                     )
             }
             .buttonStyle(PlainButtonStyle())
-            .help(Text("Preview context for this agent", bundle: .module))
+            .localizedHelp("Preview context for this agent")
 
             Button(action: onSelect) {
                 Image(systemName: "chevron.right")

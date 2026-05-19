@@ -531,7 +531,7 @@ private struct MessageCard: View {
                     .foregroundColor(theme.tertiaryText)
             }
             .buttonStyle(PlainButtonStyle())
-            .help(Text("Copy", bundle: .module))
+            .localizedHelp("Copy")
 
             Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() } }) {
                 Image(systemName: "chevron.right")

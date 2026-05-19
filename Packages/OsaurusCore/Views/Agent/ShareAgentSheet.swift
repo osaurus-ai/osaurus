@@ -426,16 +426,22 @@ struct ShareAgentSheet: View {
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
                 HStack(spacing: 6) {
-                    Text("Issued \(record.issuedAt.formatted(date: .abbreviated, time: .shortened))")
+                    Text(localized: "Issued \(record.issuedAt.formatted(date: .abbreviated, time: .shortened))")
                     if let used = record.usedAt {
                         Text("·")
-                        Text("Accepted \(used.formatted(date: .abbreviated, time: .shortened))")
+                        Text(localized: "Accepted \(used.formatted(date: .abbreviated, time: .shortened))")
                     } else if record.displayStatus == .expired {
                         Text("·")
-                        Text("Expired \(record.expirationDate.formatted(date: .abbreviated, time: .shortened))")
+                        Text(
+                            localized:
+                                "Expired \(record.expirationDate.formatted(date: .abbreviated, time: .shortened))"
+                        )
                     } else {
                         Text("·")
-                        Text("Expires \(record.expirationDate.formatted(date: .abbreviated, time: .shortened))")
+                        Text(
+                            localized:
+                                "Expires \(record.expirationDate.formatted(date: .abbreviated, time: .shortened))"
+                        )
                     }
                 }
                 .font(.system(size: 9))
@@ -459,7 +465,7 @@ struct ShareAgentSheet: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(Text("Revoke this invite", bundle: .module))
+                .localizedHelp("Revoke this invite")
             }
         }
         .padding(.horizontal, 8)

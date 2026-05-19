@@ -448,7 +448,7 @@ struct PluginConfigView: View {
                             .foregroundColor(theme.tertiaryText)
                     }
                     .buttonStyle(.plain)
-                    .help(Text("Copy to clipboard", bundle: .module))
+                    .localizedHelp("Copy to clipboard")
                 }
             }
             .padding(.horizontal, 12)

@@ -90,7 +90,7 @@ public struct TranscriptionOverlayView: View {
             .onHover { hovering in
                 isCloseHovered = hovering
             }
-            .help(Text("Done (Esc)", bundle: .module))
+            .localizedHelp("Done (Esc)")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

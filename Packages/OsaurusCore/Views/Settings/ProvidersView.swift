@@ -51,7 +51,7 @@ struct ProvidersView: View {
                                         // card is scrolled off-screen.
                                         await MainActor.run {
                                             ToastManager.shared.error(
-                                                "OAuth sign-in failed",
+                                                L("OAuth sign-in failed"),
                                                 message: error.localizedDescription
                                             )
                                         }
@@ -72,7 +72,7 @@ struct ProvidersView: View {
                                     } catch {
                                         await MainActor.run {
                                             ToastManager.shared.error(
-                                                "Couldn't connect with new token",
+                                                L("Couldn't connect with new token"),
                                                 message: error.localizedDescription
                                             )
                                         }

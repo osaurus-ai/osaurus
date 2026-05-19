@@ -160,7 +160,7 @@ private struct ServerStatusCard: View {
                                 )
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help(Text("Copy URL", bundle: .module))
+                        .localizedHelp("Copy URL")
                     }
                 }
 
@@ -679,7 +679,7 @@ private struct RelaysSectionView: View {
                                 .foregroundColor(copiedRelayURL == agent.id ? theme.successColor : theme.tertiaryText)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help(Text("Copy relay URL", bundle: .module))
+                        .localizedHelp("Copy relay URL")
                     }
                 }
 
@@ -718,7 +718,7 @@ private struct RelaysSectionView: View {
                         .foregroundColor(theme.accentColor)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help(Text("Set up this agent's identity in the Identity tab", bundle: .module))
+                .localizedHelp("Set up this agent's identity in the Identity tab")
             }
         }
         .padding(.horizontal, 12)
@@ -1669,7 +1669,7 @@ private struct ResponsePanel: View {
                             .foregroundColor(theme.tertiaryText)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help(Text("Copy response", bundle: .module))
+                    .localizedHelp("Copy response")
 
                     Button(action: onClearResponse) {
                         Image(systemName: "xmark")
@@ -1677,7 +1677,7 @@ private struct ResponsePanel: View {
                             .foregroundColor(theme.tertiaryText)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help(Text("Clear response", bundle: .module))
+                    .localizedHelp("Clear response")
                 }
             }
 
@@ -2076,7 +2076,7 @@ private struct TranscriptionTestRow: View {
                             .foregroundColor(theme.tertiaryText)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help(Text("Remove file", bundle: .module))
+                    .localizedHelp("Remove file")
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -2127,8 +2127,8 @@ private struct TranscriptionTestRow: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.audio, .wav, .mp3, .mpeg4Audio]
-        panel.message = "Select an audio file to transcribe"
-        panel.prompt = "Select"
+        panel.message = L("Select an audio file to transcribe")
+        panel.prompt = L("Select")
 
         if panel.runModal() == .OK, let url = panel.url {
             loadFile(from: url)

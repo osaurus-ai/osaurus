@@ -622,7 +622,7 @@ struct GroupHeaderCell: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(allEnabled ? "Disable all" : "Enable all")
+            .help(allEnabled ? Text(localized: "Disable all") : Text(localized: "Enable all"))
 
             Image(systemName: icon)
                 .font(.system(size: 11))
@@ -809,7 +809,7 @@ struct SkillRowCell: View {
             Spacer()
 
             TokenBadge(count: estimatedTokens)
-                .help(Text("~\(estimatedTokens) tokens", bundle: .module))
+                .localizedHelp("~\(estimatedTokens) tokens")
         }
         .padding(.leading, 32)
         .padding(.trailing, 12)

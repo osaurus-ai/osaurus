@@ -83,10 +83,10 @@ public struct StorageSettingsView: View {
         }
         .alert("Rotate the storage key?", isPresented: $showRotateConfirm) {
             if !hasExportedBackupThisSession {
-                Button("Back up first…") { runExport(reason: .beforeRotate) }
+                Button(localized: "Back up first…") { runExport(reason: .beforeRotate) }
             }
-            Button("Cancel", role: .cancel) {}
-            Button("Rotate", role: .destructive) { rotateKey() }
+            Button(localized: "Cancel", role: .cancel) {}
+            Button(localized: "Rotate", role: .destructive) { rotateKey() }
         } message: {
             Text(rotateAlertMessage)
         }
@@ -94,8 +94,8 @@ public struct StorageSettingsView: View {
             "Remove orphaned plugin data?",
             isPresented: $showCleanupConfirm
         ) {
-            Button("Cancel", role: .cancel) {}
-            Button("Remove", role: .destructive) { cleanupOrphans() }
+            Button(localized: "Cancel", role: .cancel) {}
+            Button(localized: "Remove", role: .destructive) { cleanupOrphans() }
         } message: {
             Text(
                 "\(pluginMismatchTargets.count) plugin database(s) can't be opened with the current encryption key. They're almost always left over from uninstalled plugins or development test runs. Removing them deletes the corresponding folders under ~/.osaurus/Tools/. Real plugin data won't be touched."
@@ -686,12 +686,14 @@ public struct StorageSettingsView: View {
         panel.allowsMultipleSelection = false
         switch reason {
         case .userInitiated:
-            panel.title = "Choose backup destination"
-            panel.message = "Pick an empty folder; the plaintext export will be written here."
+            panel.title = L("Choose backup destination")
+            panel.message = L("Pick an empty folder; the plaintext export will be written here.")
         case .beforeRotate:
-            panel.title = "Back up before rotating"
+            panel.title = L("Back up before rotating")
             panel.message =
-                "Pick a folder to write the plaintext backup to. We'll re-prompt for rotation after the backup completes."
+                L(
+                    "Pick a folder to write the plaintext backup to. We'll re-prompt for rotation after the backup completes."
+                )
         }
         guard panel.runModal() == .OK, let dest = panel.url else { return }
 

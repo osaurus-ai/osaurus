@@ -151,7 +151,7 @@ struct MasterMnemonicCard: View {
 
     private func saveAsTextFile() {
         let panel = NSSavePanel()
-        panel.title = "Save Recovery Phrase"
+        panel.title = L("Save Recovery Phrase")
         panel.nameFieldStringValue = "osaurus-recovery-phrase.txt"
         panel.allowedContentTypes = [.plainText]
         panel.canCreateDirectories = true

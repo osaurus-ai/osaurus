@@ -155,7 +155,7 @@ public struct VoiceInputOverlay: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .help(Text("Cancel voice input", bundle: .module))
+                    .localizedHelp("Cancel voice input")
                 }
 
                 // live transcription area is hidden during .sending since the

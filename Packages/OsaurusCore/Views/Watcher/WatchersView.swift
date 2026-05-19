@@ -747,8 +747,8 @@ struct WatcherEditorSheet: View {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = false
         panel.allowsMultipleSelection = false
-        panel.title = "Select Folder to Watch"
-        panel.prompt = "Select"
+        panel.title = L("Select Folder to Watch")
+        panel.prompt = L("Select")
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 

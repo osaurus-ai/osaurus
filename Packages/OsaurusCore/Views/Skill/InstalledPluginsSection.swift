@@ -402,7 +402,7 @@ struct InstalledPluginsSection: View {
         .animation(Metrics.hoverAnimation, value: isHeaderHovered)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(Text("Installed Plugins, \(aggregator.plugins.count)"))
+        .accessibilityLabel(Text(localized: "Installed Plugins, \(aggregator.plugins.count)"))
         .accessibilityHint(Text(isExpanded ? "Collapse list" : "Expand list"))
     }
 
@@ -577,7 +577,7 @@ private struct PluginRow: View {
         .onHover { hovering in isHovered = hovering }
         .contextMenu {
             Button(role: .destructive, action: onUninstall) {
-                Label("Uninstall", systemImage: "trash")
+                Label(localized: "Uninstall", systemImage: "trash")
             }
         }
     }
@@ -659,7 +659,7 @@ private struct PluginRow: View {
             .animation(Metrics.hoverAnimation, value: isHovered)
         }
         .buttonStyle(PlainButtonStyle())
-        .help("Uninstall \(plugin.displayName)")
+        .localizedHelp("Uninstall \(plugin.displayName)")
     }
 }
 
@@ -743,7 +743,7 @@ private struct StdioMCPRow: View {
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(isRestarting)
-        .help("Restart the stdio MCP subprocess")
+        .localizedHelp("Restart the stdio MCP subprocess")
     }
 
     private func restart() {

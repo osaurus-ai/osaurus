@@ -191,7 +191,7 @@ private struct RefreshButton: View {
                 isHovered = hovering
             }
         }
-        .help(Text("Refresh", bundle: .module))
+        .localizedHelp("Refresh")
     }
 }
 

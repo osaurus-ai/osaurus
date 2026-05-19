@@ -177,7 +177,7 @@ struct ThemesView: View {
         let success = themeManager.deleteTheme(id: theme.metadata.id)
         if success {
             print("[Osaurus] Successfully deleted theme: \(themeName)")
-            showToast("Deleted \"\(themeName)\"")
+            showToast(L("Deleted \"\(themeName)\""))
         } else {
             print("[Osaurus] Failed to delete theme: \(themeName)")
         }
@@ -354,7 +354,7 @@ struct ThemesView: View {
 
                 Button(action: {
                     themeManager.clearCustomTheme()
-                    showToast("Reset to default theme")
+                    showToast(L("Reset to default theme"))
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.uturn.backward")
@@ -420,7 +420,7 @@ struct ThemesView: View {
                         isActive: isActive,
                         onApply: {
                             themeManager.applyCustomTheme(themeItem)
-                            showToast("Applied \"\(themeItem.metadata.name)\"")
+                            showToast(L("Applied \"\(themeItem.metadata.name)\""))
                         },
                         onEdit: { openEditor(for: themeItem) },
                         onExport: { exportTheme(themeItem) },
@@ -578,7 +578,7 @@ struct ThemesView: View {
 
         let duplicated = ThemeConfigurationStore.duplicateTheme(themeItem, newName: newName)
         themeManager.refreshInstalledThemes()
-        showToast("Duplicated as \"\(newName)\"")
+        showToast(L("Duplicated as \"\(newName)\""))
         openEditor(for: duplicated)
     }
 
@@ -599,14 +599,14 @@ struct ThemesView: View {
             do {
                 let imported = try ThemeConfigurationStore.importTheme(from: url)
                 themeManager.refreshInstalledThemes()
-                showToast("Imported \"\(imported.metadata.name)\"")
+                showToast(L("Imported \"\(imported.metadata.name)\""))
             } catch {
                 print("[Osaurus] Failed to import theme: \(error)")
-                showToast("Import failed: \(error.localizedDescription)", type: .error)
+                showToast(L("Import failed: \(error.localizedDescription)"), type: .error)
             }
         case .failure(let error):
             print("[Osaurus] Import failed: \(error)")
-            showToast("Import failed: \(error.localizedDescription)", type: .error)
+            showToast(L("Import failed: \(error.localizedDescription)"), type: .error)
         }
     }
 
@@ -614,7 +614,7 @@ struct ThemesView: View {
         switch result {
         case .success:
             if let exported = themeToExport {
-                showToast("Exported \"\(exported.metadata.name)\"")
+                showToast(L("Exported \"\(exported.metadata.name)\""))
             }
             themeToExport = nil
         case .failure(let error):

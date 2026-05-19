@@ -56,9 +56,9 @@ struct PastedContentSheet: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Spacer()
-            Button("Cancel", action: onDismiss)
+            Button(localized: "Cancel", action: onDismiss)
                 .keyboardShortcut(.cancelAction)
-            Button("Save") {
+            Button(localized: "Save") {
                 onSave?(draft)
             }
             .keyboardShortcut(.defaultAction)

@@ -168,7 +168,7 @@ struct SlashCommandsView: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .help(Text("Edit command", bundle: .module))
+                    .localizedHelp("Edit command")
 
                     Button {
                         registry.delete(id: cmd.id)
@@ -183,7 +183,7 @@ struct SlashCommandsView: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .help(Text("Delete command", bundle: .module))
+                    .localizedHelp("Delete command")
                 }
             }
         }

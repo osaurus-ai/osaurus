@@ -6,7 +6,7 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-ALLOW_EMPTY_KEYS = frozenset({"NSHumanReadableCopyright"})
+ALLOW_EMPTY_KEYS = frozenset()
 
 
 def load_catalog(path: Path) -> dict:
@@ -55,6 +55,7 @@ def locale_issues(entry: dict, locale: str, *, key: str) -> list[str]:
             and locale == "zh-Hans"
             and key not in ALLOW_EMPTY_KEYS
             and value == key
+            and state == "translated"
             and "%" not in key
             and len(key) > 8
             and key.isascii()
@@ -71,6 +72,18 @@ def is_maintained_entry(key: str, entry: dict, required_locales: list[str]) -> b
     if not locs:
         return False
     return bool(set(locs) & set(required_locales))
+
+
+def is_stale_entry(entry: dict) -> bool:
+    return entry.get("extractionState") == "stale"
+
+
+def stale_keys(catalog: dict) -> list[str]:
+    return sorted(
+        key
+        for key, entry in catalog.get("strings", {}).items()
+        if is_stale_entry(entry)
+    )
 
 
 def check_catalog(catalog: dict, required_locales: list[str]) -> list[str]:

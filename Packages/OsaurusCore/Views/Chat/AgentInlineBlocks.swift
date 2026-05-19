@@ -202,7 +202,7 @@ struct InlineTodoBlock: View {
         .padding(.vertical, isExpanded ? Layout.expandedPaddingV : Layout.pillPaddingV)
         .contentShape(Rectangle())
         .onTapGesture(perform: togglePin)
-        .help(isPinned ? "Unpin" : "Click to keep open")
+        .help(isPinned ? Text(localized: "Unpin") : Text(localized: "Click to keep open"))
     }
 
     private var stateIcon: some View {
@@ -352,6 +352,6 @@ private struct DismissButton: View {
                 isHovered = hovering
             }
         }
-        .help("Dismiss")
+        .localizedHelp("Dismiss")
     }
 }

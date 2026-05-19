@@ -118,7 +118,7 @@ struct AgentKeyManagementRow: View {
                     )
             }
             .buttonStyle(PlainButtonStyle())
-            .help(Text(isExpanded ? "Collapse" : "Manage agent key"))
+            .help(isExpanded ? Text(localized: "Collapse") : Text(localized: "Manage agent key"))
         }
     }
 

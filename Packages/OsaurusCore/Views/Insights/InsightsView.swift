@@ -528,7 +528,7 @@ private struct ToolsBadge: View {
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
             }
         }
-        .help(Text("\(count) tool(s) sent", bundle: .module))
+        .localizedHelp("\(count) tool(s) sent")
     }
 }
 

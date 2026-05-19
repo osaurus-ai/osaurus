@@ -445,7 +445,7 @@ struct ImageFullScreenView: View {
                                 .shadow(radius: 4)
                         }
                         .buttonStyle(.plain)
-                        .help(Text("Save Image", bundle: .module))
+                        .localizedHelp("Save Image")
                     }
                     Button(action: { close() }) {
                         Image(systemName: "xmark.circle.fill")

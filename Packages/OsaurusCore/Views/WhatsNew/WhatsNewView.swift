@@ -82,7 +82,7 @@ public struct WhatsNewModal: View {
 
     private var headerOverlay: some View {
         HStack {
-            Text("What's New in v\(release.version)")
+            Text(localized: "What's New in v\(release.version)")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.white.opacity(0.85))
                 .shadow(color: .black.opacity(0.25), radius: 4, y: 1)
@@ -95,7 +95,7 @@ public struct WhatsNewModal: View {
                     .background(.ultraThinMaterial, in: Circle())
             }
             .buttonStyle(.plain)
-            .help("Close")
+            .localizedHelp("Close")
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)

@@ -591,7 +591,7 @@ struct AgentCapabilityManagerView: View {
                         .foregroundColor(theme.tertiaryText)
                 }
                 .buttonStyle(.plain)
-                .help(Text("Clear search", bundle: .module))
+                .localizedHelp("Clear search")
             }
         }
         .padding(.horizontal, 12)

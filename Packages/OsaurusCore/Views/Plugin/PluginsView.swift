@@ -1066,7 +1066,7 @@ private struct PluginDetailView: View {
                             .background(Circle().fill(theme.errorColor.opacity(0.1)))
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help(Text("Uninstall", bundle: .module))
+                    .localizedHelp("Uninstall")
                 }
             }
         }

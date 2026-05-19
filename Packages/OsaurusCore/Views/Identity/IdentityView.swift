@@ -72,8 +72,8 @@ struct IdentityView: View {
             Text("Repair Identity?", bundle: .module),
             isPresented: $showRepairConfirm,
             actions: {
-                Button("Repair", role: .destructive) { repair() }
-                Button("Cancel", role: .cancel) {}
+                Button(localized: "Repair", role: .destructive) { repair() }
+                Button(localized: "Cancel", role: .cancel) {}
             },
             message: { Text(repairConfirmMessage, bundle: .module) }
         )
@@ -81,8 +81,8 @@ struct IdentityView: View {
             Text("Reset Identity?", bundle: .module),
             isPresented: $showResetConfirm,
             actions: {
-                Button("Reset", role: .destructive) { resetIdentity() }
-                Button("Cancel", role: .cancel) {}
+                Button(localized: "Reset", role: .destructive) { resetIdentity() }
+                Button(localized: "Cancel", role: .cancel) {}
             },
             message: {
                 Text(
