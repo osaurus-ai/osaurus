@@ -21,7 +21,7 @@ struct SwiftTransformersTokenizerLoader: TokenizerLoader, @unchecked Sendable {
 /// `MLXLMCommon.Tokenizer` protocol. Keep the chat-template fallback logic in
 /// sync with vmlx's HuggingFace tokenizer bridge: Osaurus uses this loader in
 /// production instead of the macro bridge.
-private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
+private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenizer, @unchecked Sendable {
     let upstream: any VMLXTokenizers.Tokenizer
 
     private static let dsv4Bos =
@@ -65,6 +65,20 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
         tools: [[String: any Sendable]]?,
         additionalContext: [String: any Sendable]?
     ) throws -> [Int] {
+        try applyChatTemplate(
+            messages: messages,
+            tools: tools,
+            additionalContext: additionalContext,
+            addGenerationPrompt: true
+        )
+    }
+
+    func applyChatTemplate(
+        messages: [[String: any Sendable]],
+        tools: [[String: any Sendable]]?,
+        additionalContext: [String: any Sendable]?,
+        addGenerationPrompt: Bool
+    ) throws -> [Int] {
         let env = ProcessInfo.processInfo.environment
         if let path = env["VMLX_CHAT_TEMPLATE_OVERRIDE"], !path.isEmpty,
             let src = try? String(contentsOfFile: path, encoding: .utf8)
@@ -73,7 +87,7 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                 return try upstream.applyChatTemplate(
                     messages: messages,
                     chatTemplate: VMLXTokenizers.ChatTemplateArgument.literal(src),
-                    addGenerationPrompt: true,
+                    addGenerationPrompt: addGenerationPrompt,
                     truncation: false,
                     maxLength: nil,
                     tools: tools,
@@ -116,7 +130,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                 template: MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal,
                 messages: messages,
                 tools: tools,
-                additionalContext: additionalContext
+                additionalContext: additionalContext,
+                addGenerationPrompt: addGenerationPrompt
             )
         }
 
@@ -132,7 +147,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     template: MLXLMCommon.ChatTemplateFallbacks.minimaxM2Minimal,
                     messages: messages,
                     tools: tools,
-                    additionalContext: additionalContext
+                    additionalContext: additionalContext,
+                    addGenerationPrompt: addGenerationPrompt
                 )
             } catch {
                 // Fall through to native template if the corrected template
@@ -150,7 +166,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                 template: MLXLMCommon.ChatTemplateFallbacks.zayaVLVisionToolMinimal,
                 messages: messages,
                 tools: tools,
-                additionalContext: adjustedContext
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
             )
         }
         if adjustedContext?["reasoning_effort"] == nil,
@@ -172,13 +189,18 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
             return try applyDeepseekV4NativeTemplate(
                 messages: messages,
                 tools: tools,
-                additionalContext: adjustedContext
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
             )
         }
 
         do {
             return try upstream.applyChatTemplate(
                 messages: messages,
+                chatTemplate: nil,
+                addGenerationPrompt: addGenerationPrompt,
+                truncation: false,
+                maxLength: nil,
                 tools: tools,
                 additionalContext: adjustedContext
             )
@@ -192,7 +214,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     template: MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal,
                     messages: messages,
                     tools: tools,
-                    additionalContext: adjustedContext
+                    additionalContext: adjustedContext,
+                    addGenerationPrompt: addGenerationPrompt
                 )
             }
             if upstream.bosToken == "]~!b[",
@@ -203,7 +226,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     template: MLXLMCommon.ChatTemplateFallbacks.minimaxM2Minimal,
                     messages: messages,
                     tools: tools,
-                    additionalContext: additionalContext
+                    additionalContext: additionalContext,
+                    addGenerationPrompt: addGenerationPrompt
                 )
             }
             if hasZayaVLVisionSentinel, Self.messagesContainImageContent(messages) {
@@ -212,7 +236,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     template: MLXLMCommon.ChatTemplateFallbacks.zayaVLVisionToolMinimal,
                     messages: messages,
                     tools: tools,
-                    additionalContext: adjustedContext
+                    additionalContext: adjustedContext,
+                    addGenerationPrompt: addGenerationPrompt
                 )
             }
             if upstream.bosToken == "<bos>" {
@@ -225,7 +250,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     template: template,
                     messages: messages,
                     tools: tools,
-                    additionalContext: additionalContext
+                    additionalContext: additionalContext,
+                    addGenerationPrompt: addGenerationPrompt
                 )
             }
             if upstream.bosToken == "<s>",
@@ -236,7 +262,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     template: MLXLMCommon.ChatTemplateFallbacks.nemotronMinimal,
                     messages: messages,
                     tools: tools,
-                    additionalContext: additionalContext
+                    additionalContext: additionalContext,
+                    addGenerationPrompt: addGenerationPrompt
                 )
             }
             throw MLXLMCommon.TokenizerError.missingChatTemplate
@@ -279,7 +306,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                         template: candidate.template,
                         messages: messages,
                         tools: tools,
-                        additionalContext: adjustedContext
+                        additionalContext: adjustedContext,
+                        addGenerationPrompt: addGenerationPrompt
                     )
                 } catch {
                     continue
@@ -429,7 +457,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
     private func applyDeepseekV4NativeTemplate(
         messages: [[String: any Sendable]],
         tools: [[String: any Sendable]]?,
-        additionalContext: [String: any Sendable]?
+        additionalContext: [String: any Sendable]?,
+        addGenerationPrompt: Bool
     ) throws -> [Int] {
         var dsv4Messages = try messages.map { raw -> MLXLMCommon.DeepseekV4ChatEncoder.Message in
             let role = try Self.deepseekV4Role(
@@ -495,12 +524,25 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
             effort = nil
         }
 
-        let prompt = MLXLMCommon.DeepseekV4ChatEncoder().encode(
+        var prompt = MLXLMCommon.DeepseekV4ChatEncoder().encode(
             messages: dsv4Messages,
             thinkingMode: thinkingMode,
             reasoningEffort: effort,
             dropEarlierReasoning: true
         )
+        if !addGenerationPrompt,
+            let lastRole = dsv4Messages.last?.role,
+            lastRole == .user || lastRole == .developer
+        {
+            let tail =
+                MLXLMCommon.DeepseekV4Tokens.assistant
+                + (thinkingMode == .thinking
+                    ? MLXLMCommon.DeepseekV4Tokens.thinkStart
+                    : MLXLMCommon.DeepseekV4Tokens.thinkEnd)
+            if prompt.hasSuffix(tail) {
+                prompt.removeLast(tail.count)
+            }
+        }
         return upstream.encode(text: prompt, addSpecialTokens: false)
     }
 
@@ -509,7 +551,8 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
         template: String,
         messages: [[String: any Sendable]],
         tools: [[String: any Sendable]]?,
-        additionalContext: [String: any Sendable]?
+        additionalContext: [String: any Sendable]?,
+        addGenerationPrompt: Bool
     ) throws -> [Int] {
         if (ProcessInfo.processInfo.environment["VMLX_CHAT_TEMPLATE_FALLBACK_LOG"] ?? "0") == "1" {
             FileHandle.standardError.write(
@@ -520,7 +563,7 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
         return try upstream.applyChatTemplate(
             messages: messages,
             chatTemplate: VMLXTokenizers.ChatTemplateArgument.literal(template),
-            addGenerationPrompt: true,
+            addGenerationPrompt: addGenerationPrompt,
             truncation: false,
             maxLength: nil,
             tools: tools,

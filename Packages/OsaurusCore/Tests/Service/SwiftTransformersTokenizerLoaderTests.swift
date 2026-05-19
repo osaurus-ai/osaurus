@@ -4,12 +4,58 @@
 //
 
 import Foundation
+import MLXLMCommon
 import Testing
 
 @testable import OsaurusCore
 
 @Suite(.serialized)
 struct SwiftTransformersTokenizerLoaderTests {
+    @Test func qwen35LocalTokenizerExposesNoGenerationPromptPrefixForCacheBoundary() async throws {
+        let defaultPath = "/Users/eric/models/Qwen3.5-35B-A3B-4bit"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_QWEN35_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            ),
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("chat_template.jinja").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        guard let controllable = tokenizer as? any GenerationPromptControllableTokenizer else {
+            Issue.record("SwiftTransformersTokenizerLoader must expose no-generation chat-template rendering")
+            return
+        }
+
+        let messages: [[String: any Sendable]] = [
+            ["role": "user", "content": "Remember graphite-cache."],
+            ["role": "assistant", "content": "Stored."],
+            ["role": "user", "content": "What did I ask you to remember?"],
+        ]
+        let context: [String: any Sendable] = ["enable_thinking": false]
+        let promptTokens = try controllable.applyChatTemplate(
+            messages: messages,
+            tools: nil,
+            additionalContext: context,
+            addGenerationPrompt: true
+        )
+        let historyTokens = try controllable.applyChatTemplate(
+            messages: messages,
+            tools: nil,
+            additionalContext: context,
+            addGenerationPrompt: false
+        )
+
+        #expect(!historyTokens.isEmpty)
+        #expect(historyTokens.count < promptTokens.count)
+        #expect(promptTokens.prefix(historyTokens.count).elementsEqual(historyTokens))
+    }
+
     @Test func zayaVLLocalTokenizerRendersImagePlaceholderFromOsaurusFallback() async throws {
         let defaultPath = "/Users/eric/models/Osaurus/ZAYA1-VL-8B-MXFP4"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_ZAYA_VL_TEST_MODEL"] ?? defaultPath
