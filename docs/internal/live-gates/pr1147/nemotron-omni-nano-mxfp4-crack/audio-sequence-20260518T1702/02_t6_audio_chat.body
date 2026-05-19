@@ -1,0 +1,1 @@
+{"usage":{"completion_tokens":9,"total_tokens":30,"prompt_tokens":21},"object":"chat.completion","choices":[{"finish_reason":"stop","index":0,"message":{"role":"assistant","content":"Hello Asaurus the test word is blue."}}],"model":"nemotron-omni-nano-mxfp4-crack","created":1779148976,"id":"chatcmpl-7E69C1FB90C1","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c"}

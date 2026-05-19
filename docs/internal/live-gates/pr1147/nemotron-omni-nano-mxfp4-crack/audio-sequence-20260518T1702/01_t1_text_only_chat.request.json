@@ -1,0 +1,11 @@
+{
+  "max_tokens": 128,
+  "messages": [
+    {
+      "content": "Say ready in one word.",
+      "role": "user"
+    }
+  ],
+  "model": "nemotron-omni-nano-mxfp4-crack",
+  "stream": false
+}

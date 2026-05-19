@@ -22,6 +22,7 @@ metadata routes can close only their own subchecks.
 | ZAYA-VL live sequence | FAIL / PARTIAL | `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1504/review.md`, `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1629-fresh-app/review.md`, `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1633-blue-only/review.md`, `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1638-pruned-history-probe/review.md`, `pr1147/zaya1-vl-8b-mxfp4/vlm-sequence-20260518T1645-explicit-latest/review.md`, plus `ChatEngineTests.openResponsesRequest_preservesInputImageIntoChatRequest` | The fresh rebuilt-app rerun proves non-empty resident cache stats under 5-minute residency and proves Responses reaches image processing. Blue-only and explicit-latest diagnostics ground blue, so the original stale red answer is narrowed to multi-turn history/turn semantics. Physical-footprint review is still missing, shape grounding remains weak, and the original plain red-to-blue row is not production-clear. |
 | Gemma3n text live sequence | PARTIAL / RED | `pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1652/review.md` | Live Chat and Responses rows returned coherent math and moved prefix/block-L2 counters, but exact-output instructions were ignored, Chat used odd word-puzzle framing, Responses dropped `東京` in the UTF row, and the artifact has RSS only rather than Activity Monitor physical footprint. |
 | Nemotron Omni MXFP4 text sequence | TEXT PASS / FAMILY PARTIAL | `pr1147/nemotron-omni-nano-mxfp4-crack/text-sequence-20260518T1658/review.md` | Text-only Chat and Responses rows answered math/follow-up/UTF cleanly and moved prefix, block-L2, and SSM companion counters. This is not Parakeet/audio, image/video/RADIO, stream, tok/s, or physical-footprint proof. |
+| Nemotron Omni MXFP4 audio sequence | AUDIO SMOKE PASS / FAMILY PARTIAL | `pr1147/nemotron-omni-nano-mxfp4-crack/audio-sequence-20260518T1702/review.md` | Chat Completions accepted a real 16 kHz WAV and returned a coherent transcription-like answer preserving the probe word `blue`. It is non-streaming only, not word-perfect ASR, and still lacks repeated-audio cache, tok/s, media/RADIO, and physical-footprint proof. |
 | Model production readiness | NOT COMPLETE | Manifest and this matrix | Real visible multi-turn output, no loops/leaks, TTFT, tok/s, RSS, physical footprint, and per-topology cache proof. |
 
 ## Source-To-Artifact Wiring
@@ -230,7 +231,11 @@ The following remain open until concrete artifacts exist:
   `nemotron-omni-nano-mxfp4-crack/text-sequence-20260518T1658/` is clean for
   short text Chat and Responses and shows `prefix_hits=5`, `disk_l2_hits=5`,
   `disk_l2_stores=12`, and `ssm_companion_hits=5`, but it does not close any
-  media, streaming, tok/s, or physical-footprint gate.
+  media, streaming, tok/s, or physical-footprint gate. The audio smoke row at
+  `nemotron-omni-nano-mxfp4-crack/audio-sequence-20260518T1702/` proves Chat
+  Completions can route a WAV payload into the Omni model and recover the probe
+  word `blue`, but it is non-streaming only and still lacks repeated-audio
+  cache behavior, image/video/RADIO, tok/s, and physical-footprint proof.
 - DSV4 UI settings visuals, DSML route proof, native cache stats, and long chat.
 - MiniMax reasoning/tool route proof with no forced close or sampler guard.
 - Ling/Hy3 hybrid SSM rederive, reasoning on/off/default app/API rows, and no

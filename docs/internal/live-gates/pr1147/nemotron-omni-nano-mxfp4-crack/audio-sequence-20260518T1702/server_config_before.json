@@ -1,0 +1,19 @@
+{
+  "allowedOrigins" : [
+
+  ],
+  "appearanceMode" : "system",
+  "backlog" : 256,
+  "exposeToNetwork" : false,
+  "genTopP" : 1,
+  "hideDockIcon" : false,
+  "maxPairingBodyBytes" : 65536,
+  "maxRequestBodyBytes" : 33554432,
+  "modelEvictionPolicy" : "Strict (One Model)",
+  "modelIdleResidencyPolicy" : {
+    "mode" : "immediately"
+  },
+  "numberOfThreads" : 18,
+  "port" : 4242,
+  "startAtLogin" : false
+}
