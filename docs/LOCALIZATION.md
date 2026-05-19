@@ -91,7 +91,7 @@ The hook is idempotent — it's a no-op when nothing needs pruning. The pruner a
 | Script | Purpose |
 | ------ | ------- |
 | `scripts/i18n/check.sh` | Validate core + InfoPlist catalogs, lint risky Swift literals, and dry-run pruning. On failure, prints a remediation hint pointing at `format.sh`. |
-| `scripts/i18n/format.sh` | One-command write-mode prune of the core catalog. Run this if `check.sh` fails locally, or rely on the pre-commit hook / Debug build phase to invoke it automatically. |
+| `scripts/i18n/format.sh` | One-command write-mode prune of the core catalog. Run this if `check.sh` fails locally, or rely on the pre-commit hook to invoke it automatically. |
 | `scripts/i18n/check-swift-catalog-keys.py` | Ensure Swift localization references exist in the core catalog |
 | `scripts/i18n/lint-swift-literals.py` | Flag Swift literals that bypass package-bundle localization |
 | `scripts/i18n/merge-locale.py` | Copy one locale from another catalog (existing keys only) |
@@ -107,3 +107,12 @@ bash scripts/i18n/format.sh
 ```
 
 On PRs from this repo (not forks), the `i18n autofix` workflow runs the same formatter and pushes a fixup commit if the catalog drifted, so contributors without the hook installed are still covered. Fork PRs see the actionable error from `scripts/i18n/check.sh` in the main CI job and need to run `format.sh` locally.
+
+## Xcode build-setting contract
+
+The `osaurus` app target sets `SWIFT_EMIT_LOC_STRINGS = NO` in **both Debug and Release**. Do **not** flip this back to `YES`. With `LOCALIZATION_PREFERS_STRING_CATALOGS = YES` at the project level, every build (and every indexer pass that runs the Swift compiler) would otherwise emit `.stringsdata` and merge auto-extracted stubs back into `Localizable.xcstrings`. Symptoms:
+
+- The catalog file gets mutated on disk during every build, fighting the pre-commit hook and the `i18n-autofix` workflow.
+- Xcode's String Catalog editor re-renders the full 1000+ row × 3-locale grid on every change, retaining the previous view state. Memory grows unboundedly (we saw 228 GB resident on a single Xcode session before the system OOM-killed it).
+
+Source of truth is the explicit `L("…")` / `Text(localized: "…")` markers — `scripts/i18n/check-swift-catalog-keys.py` enforces that every Swift reference exists in the catalog, so auto-extraction would be redundant even if it were safe.
