@@ -155,11 +155,12 @@ struct RuntimePolicySourceTests {
 
         // This revision keeps the consolidated vmlx-swift pin for Osaurus
         // with vendored Jinja/Hub/Tokenizers/Transformers exposed through
-        // VMLX-prefixed products. That avoids Xcode PIF duplicate-product
-        // collisions with the app graph while keeping yyjson as one shared C
-        // dependency. Osaurus must not carry SwiftPM moduleAliases for that
-        // collision.
-        let currentVmlxRevision = "968bc868ef7b31d6cbaed3d12720310e923d2627"
+        // VMLX-prefixed products, plus the Qwen3.6 MXFP affine metadata and
+        // MoE router-gate load hardening. That avoids Xcode PIF
+        // duplicate-product collisions with the app graph while keeping yyjson
+        // as one shared C dependency. Osaurus must not carry SwiftPM
+        // moduleAliases for that collision.
+        let currentVmlxRevision = "8534b64686571f64f8609878b58533e00b60c911"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
