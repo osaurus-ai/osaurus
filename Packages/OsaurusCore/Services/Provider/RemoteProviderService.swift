@@ -2740,19 +2740,117 @@ struct RemoteChatRequest: Encodable {
         parameters.map(geminiCompatibleSchema)
     }
 
+    /// JSON Schema keywords Gemini's OpenAPI 3.0 validator either rejects (HTTP
+    /// 400) or silently ignores. Stripped before send so MCP tool schemas don't
+    /// poison the request.
+    ///
+    /// Allowlist (kept, for reference): `type`, `description`, `enum`, `format`,
+    /// `items`, `properties`, `required`, `propertyOrdering`, `nullable`,
+    /// `anyOf`, `minimum`, `maximum`, `minItems`, `maxItems`.
+    private static let geminiUnsupportedSchemaKeys: Set<String> = [
+        // Rejected outright
+        "additionalProperties",
+        "$ref", "$defs", "$schema", "$id", "definitions",
+        "const", "oneOf", "allOf", "not", "if", "then", "else",
+        "patternProperties", "propertyNames",
+        "contentEncoding", "contentMediaType",
+        // Silently ignored — drop to keep payload small and intent clear
+        "default", "examples", "title", "readOnly", "writeOnly",
+        "pattern", "multipleOf", "uniqueItems",
+        "exclusiveMinimum", "exclusiveMaximum",
+        "minLength", "maxLength",
+    ]
+
+    /// Single funnel for everything Gemini needs done to OpenAI/MCP tool schemas
+    /// before they go out on the wire. Recurses children bottom-up, then applies
+    /// node-level fixups in a fixed order: union normalization runs before object
+    /// inference (so the type check sees a scalar), inference runs before
+    /// non-object stripping, and required-filtering runs last on whatever type
+    /// survived.
     private static func geminiCompatibleSchema(_ value: JSONValue) -> JSONValue {
         switch value {
         case .object(let object):
             var sanitized: [String: JSONValue] = [:]
-            for (key, child) in object where key != "additionalProperties" {
+            for (key, child) in object where !geminiUnsupportedSchemaKeys.contains(key) {
                 sanitized[key] = geminiCompatibleSchema(child)
             }
+
+            normalizeNullableTypeUnion(&sanitized)
+            inferObjectTypeIfPropertiesPresent(&sanitized)
+            stripObjectShapeFromNonObjectTypes(&sanitized)
+            filterRequiredAgainstProperties(&sanitized)
+
             return .object(sanitized)
         case .array(let array):
             return .array(array.map(geminiCompatibleSchema))
         case .string, .number, .bool, .null:
             return value
         }
+    }
+
+    /// `type: ["string", "null"]` → `type: "string"` + `nullable: true`. Gemini
+    /// rejects array-typed unions but accepts the OpenAPI 3.0 `nullable` boolean.
+    /// Bails on multi-type unions (`["string","number","null"]`) — no lossless
+    /// translation exists.
+    private static func normalizeNullableTypeUnion(_ object: inout [String: JSONValue]) {
+        guard case .array(let entries) = object["type"] else { return }
+
+        var hasNull = false
+        var scalar: String?
+        for entry in entries {
+            guard case .string(let s) = entry else { return }
+            if s == "null" {
+                hasNull = true
+            } else if scalar == nil {
+                scalar = s
+            } else {
+                return
+            }
+        }
+
+        guard hasNull, let scalar else { return }
+        object["type"] = .string(scalar)
+        object["nullable"] = .bool(true)
+    }
+
+    /// Notion-style MCP nested schemas carry `properties`/`required` without an
+    /// explicit `type`. Gemini then complains the keys are "only allowed for
+    /// OBJECT type". See opencode PR #13150.
+    private static func inferObjectTypeIfPropertiesPresent(_ object: inout [String: JSONValue]) {
+        guard object["type"] == nil else { return }
+        if object["properties"] != nil || object["required"] != nil {
+            object["type"] = .string("object")
+        }
+    }
+
+    /// `properties` and `required` are only valid on object types — Gemini
+    /// rejects them on `string`, `array`, etc. See opencode PR #11888.
+    private static func stripObjectShapeFromNonObjectTypes(_ object: inout [String: JSONValue]) {
+        guard case .string(let typeString) = object["type"], typeString.lowercased() != "object" else {
+            return
+        }
+        object["properties"] = nil
+        object["required"] = nil
+    }
+
+    /// Direct fix for `required[i]: property is not defined` (opencode #3140):
+    /// drop entries that don't reference a declared property. Empty result drops
+    /// the key entirely so we don't emit a redundant empty array.
+    private static func filterRequiredAgainstProperties(_ object: inout [String: JSONValue]) {
+        guard case .array(let required) = object["required"] else { return }
+
+        let declared: Set<String> = {
+            guard case .object(let properties) = object["properties"] else { return [] }
+            return Set(properties.keys)
+        }()
+
+        let filtered = required.filter { entry in
+            guard case .string(let name) = entry else { return false }
+            return declared.contains(name)
+        }
+
+        guard filtered.count < required.count else { return }
+        object["required"] = filtered.isEmpty ? nil : .array(filtered)
     }
 
     /// Convert to Open Responses API request format
