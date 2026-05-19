@@ -36,6 +36,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// AppKit gets one or more frames where a stale/auto-presented window
     /// can flash before our real window is up.
     public func applicationWillFinishLaunching(_ notification: Notification) {
+        UncaughtExceptionLogger.install()
+
         AppDelegate.shared = self
 
         // Pin the process against macOS automatic termination. We're an
@@ -378,6 +380,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // on Sequoia (observers never installed)
             if #available(macOS 26.0, *) {
                 sweepSwiftUISettingsPlaceholder()
+            }
+
+            if #unavailable(macOS 26.0) {
+                await Task.yield()
+                try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
             }
 
             if presentOnboarding {
