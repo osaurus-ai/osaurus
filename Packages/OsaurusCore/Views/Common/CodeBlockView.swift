@@ -317,6 +317,15 @@ final class CodeNSTextView: NSTextView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Suppress NSTextView's default scroll-rect-to-visible.
+    /// See `SelectableNSTextView.scrollToVisible(_:)` for the rationale —
+    /// this view is read-only and any `scrollRectToVisible` originating
+    /// from layout / focus is purely an unwanted side effect that yanks
+    /// the chat scroll view's `clip.y` to this row's origin.
+    override func scrollToVisible(_ rect: NSRect) -> Bool {
+        return false
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         if NSPointInRect(point, bounds) { return self }
         return nil

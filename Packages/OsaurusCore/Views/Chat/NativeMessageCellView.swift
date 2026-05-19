@@ -1931,6 +1931,16 @@ final class NativeMessageCellView: NSTableCellView {
             ])
             nativeChartView = cv
         }
+        // Chart cells host an AAChartView (WKWebView). The web layer renders
+        // through its own CALayer and does not respect AppKit's default
+        // bounds clipping; if the row height under-estimates the chart's
+        // intrinsic height even by a frame, the chart can leak into adjacent
+        // rows. The cell defaults to clipsToBounds = false (so user/assistant
+        // bubble shadows aren't cut off); reset that for chart cells only and
+        // restore the default in `removeAllContentViews`.
+        clipsToBounds = true
+        wantsLayer = true
+        layer?.masksToBounds = true
         let blockId = block.id
         nativeChartView?.configure(spec: spec, theme: context.theme)
         DispatchQueue.main.async { [weak self] in
@@ -1995,21 +2005,41 @@ final class NativeMessageCellView: NSTableCellView {
         self.layer?.cornerRadius = 0
         lastBubbleBackgroundCGColor = nil
         lastBubbleCornerRadius = 0
+        // Restore the cell-wide default. configureAsChart opts back into
+        // clipping for WKWebView-backed chart content; bubble cells rely on
+        // unclipped bounds so shadows / halo affordances aren't cut off.
+        clipsToBounds = false
+        layer?.masksToBounds = false
         spacerView?.removeFromSuperview(); spacerView = nil
         nativeHeaderView?.removeFromSuperview(); nativeHeaderView = nil
+        nativeHeaderHeightConstraint = nil
         nativeMarkdownView?.removeFromSuperview(); nativeMarkdownView = nil
         nativeThinkingView?.removeFromSuperview(); nativeThinkingView = nil
         nativeToolCallGroupView?.removeFromSuperview(); nativeToolCallGroupView = nil
         nativePendingView?.removeFromSuperview(); nativePendingView = nil
         nativeTypingView?.removeFromSuperview(); nativeTypingView = nil
         nativeArtifactView?.removeFromSuperview(); nativeArtifactView = nil
+        // CRITICAL: NativeChartView wraps an AAChartView (WKWebView) which
+        // composites its content through a process-isolated IOSurface that
+        // ignores both `clipsToBounds` and `isHidden` on the AppKit parent.
+        // If we leave the chart view parented after the cell is recycled
+        // (e.g. chart row dequeued, reused as a paragraph row), the old
+        // chart keeps rendering at its previous frame underneath the new
+        // content — visible as charts bleeding through unrelated rows once
+        // the user starts scrolling and recycling kicks in.
+        nativeChartView?.removeFromSuperview(); nativeChartView = nil
         nativePreflightView?.removeFromSuperview(); nativePreflightView = nil
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
         userMessageContainer?.removeFromSuperview(); userMessageContainer = nil
         userTextView = nil
         userInlineEditView = nil
-        userImageStack = nil
+        // Image / document stacks are added directly to the cell (not to
+        // userMessageContainer) because they sit above the bubble; nil'ing
+        // the property without removeFromSuperview leaks them as orphaned
+        // subviews on the next reuse.
+        userImageStack?.removeFromSuperview(); userImageStack = nil
+        userDocumentStack?.removeFromSuperview(); userDocumentStack = nil
         userBubbleWidthConstraint = nil
         userAttachmentsHeight = 0
         userMessageInlineEditActive = false
@@ -2333,13 +2363,22 @@ enum NativeCellHeightEstimator {
             return h + 12 + 24
 
         case let .chart(spec):
-            // top pad + chart + cell insets
-            var h: CGFloat = NativeChartView.cardPadding + NativeChartView.chartHeight + 12
-            h += (spec.title ?? "").isEmpty ? 0 : (20 + 4)  // title + gap
+            // Layout: cell.top(6) + cardPadding + picker(24) + chartHeight
+            //          + (note ? 6 + 16 + cardPadding : cardPadding) + cell.bottom(6)
+            //
+            // Title shares the picker row (centerYAnchor) so it never adds
+            // height. The previous estimator added 24pt only when a title
+            // was present, double-counting with title and dropping to zero
+            // for no-title charts — leaving a 24pt gap that let the
+            // WKWebView-backed chart layer leak into the next row. Always
+            // account for the picker, never the title.
+            let p = NativeChartView.cardPadding
+            let pickerH: CGFloat = 24  // picker height + 4pt gap
+            var h: CGFloat = 12 + p + pickerH + NativeChartView.chartHeight
             h +=
                 (spec.note ?? "").isEmpty
-                ? NativeChartView.cardPadding  // bottom padding only
-                : (6 + 16 + NativeChartView.cardPadding)  // note + bottom padding
+                ? p
+                : (6 + 16 + p)
             return h
         }
     }

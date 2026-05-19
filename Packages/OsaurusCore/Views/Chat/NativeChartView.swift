@@ -26,6 +26,12 @@ final class NativeChartView: NSView {
     /// Cached theme so the picker action can trigger a redraw with the same theme.
     private var lastTheme: (any ThemeProtocol)?
 
+    /// Active when the note is visible — pins card.bottom to noteLabel.bottom + p.
+    private var cardBottomToNoteConstraint: NSLayoutConstraint?
+    /// Active when the note is hidden — pins card.bottom to chartView.bottom + p so the
+    /// hidden-but-still-laid-out noteLabel doesn't add phantom height.
+    private var cardBottomToChartConstraint: NSLayoutConstraint?
+
     // Chart height gives Highcharts enough vertical room for the plot + legend.
     static let chartHeight: CGFloat = 320
     static let cardPadding: CGFloat = 12
@@ -110,6 +116,25 @@ final class NativeChartView: NSView {
         card.addSubview(noteLabel)
 
         let p = Self.cardPadding
+        // Toggle one of these two based on noteLabel visibility (in `configure`).
+        // Without an explicit content-anchored bottom, the card's bottom was
+        // driven only by `card.bottom == NativeChartView.bottom`, which is
+        // pinned to the cell with a low-priority constraint (priority 250 in
+        // `NativeMessageCellView.configureAsChart`). When the row's measured
+        // height under-estimates content (e.g. picker not accounted for),
+        // NativeChartView gets squeezed and the WKWebView-backed chart layer
+        // renders past the cell bounds and bleeds into adjacent rows.
+        let bottomToNote = card.bottomAnchor.constraint(
+            greaterThanOrEqualTo: noteLabel.bottomAnchor,
+            constant: p
+        )
+        let bottomToChart = card.bottomAnchor.constraint(
+            greaterThanOrEqualTo: chartView.bottomAnchor,
+            constant: p
+        )
+        cardBottomToNoteConstraint = bottomToNote
+        cardBottomToChartConstraint = bottomToChart
+
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: p),
             titleLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: p),
@@ -127,6 +152,8 @@ final class NativeChartView: NSView {
             noteLabel.topAnchor.constraint(equalTo: chartView.bottomAnchor, constant: 6),
             noteLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: p),
             noteLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -p),
+
+            bottomToChart,  // initially active; toggled in `configure`
         ])
     }
 
@@ -151,6 +178,14 @@ final class NativeChartView: NSView {
         } else {
             noteLabel.isHidden = true
         }
+
+        // Pin card.bottom to whichever piece of content actually trails so the
+        // card stops at its content rather than at NativeChartView's bounds.
+        // Hidden NSTextField still participates in Auto Layout, so when the
+        // note is hidden we explicitly anchor to chartView.bottom to avoid
+        // phantom space.
+        cardBottomToNoteConstraint?.isActive = !noteLabel.isHidden
+        cardBottomToChartConstraint?.isActive = noteLabel.isHidden
 
         lastTheme = theme
 

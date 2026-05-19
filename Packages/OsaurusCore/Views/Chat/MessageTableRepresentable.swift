@@ -535,11 +535,46 @@ extension MessageTableRepresentable {
             noteRowHeightsChanged(rows)
         }
 
-        /// Re-measure specific rows without animation.
+        /// Re-measure specific rows without animation, keeping the visible top
+        /// glued to the same content across the height update.
+        ///
+        /// Uses an **absolute** anchor restore — capture (topRow, offset)
+        /// before `noteHeightOfRows`, snap to (newRowOrigin + offset) after.
+        /// This formulation survives every height-change pattern:
+        ///
+        /// - Row above topRow grows/shrinks: topRow's origin shifts → anchor
+        ///   follows, user stays glued.
+        /// - Row at topRow grows/shrinks: topRow's origin is unchanged → no shift.
+        /// - Row below topRow changes: topRow unaffected → no shift.
+        ///
+        /// Capture and apply are synchronous; `noteHeightOfRows` doesn't yield
+        /// to the runloop, so the user can't scroll between them.
+        ///
+        /// Skipped when pinned to bottom — callers handle that case via
+        /// `scrollToBottomCoalesced()`. Also skipped while the user is
+        /// actively scrolling (`isUserScrollingRecently`): inside a scroll
+        /// burst AppKit dequeues a swarm of off-screen rows whose
+        /// estimator-vs-actual deltas would otherwise drag the anchor
+        /// against the user's gesture. Letting the gesture be authoritative
+        /// during the burst feels smoother; the grace window also covers
+        /// async cell measurements (chart / artifact `DispatchQueue.main.async`
+        /// callbacks) that catch up shortly after a gesture ends, plus
+        /// discrete mouse-wheel ticks that don't fire
+        /// `willStartLiveScrollNotification` at all.
+        ///
+        /// Stateless: uses `captureAnchor` / `applyAnchor` directly so the
+        /// outer Path 3 `saveAnchor` / `restoreAnchor` bracket is undisturbed.
         private func noteRowHeightsChanged(_ rows: IndexSet) {
             guard let tableView else { return }
             ChatPerfTrace.shared.count("noteHeightOfRows")
             ChatPerfTrace.shared.count("noteHeightOfRows.rows", rows.count)
+
+            let preserveAnchor =
+                !scrollAnchor.isPinnedToBottom
+                && !scrollAnchor.isUserScrollingRecently
+            let anchor: ScrollAnchorManager.Anchor? =
+                preserveAnchor ? scrollAnchor.captureAnchor() : nil
+
             for row in rows where row < blockIds.count {
                 let bid = blockIds[row]
                 if let h = heightCache[bid] { lastNotedHeight[bid] = h }
@@ -548,6 +583,17 @@ extension MessageTableRepresentable {
             NSAnimationContext.current.duration = 0
             tableView.noteHeightOfRows(withIndexesChanged: rows)
             NSAnimationContext.endGrouping()
+
+            // Refresh again post-update for callers that wipe `heightCache`
+            // and rely on the height delegate to repopulate it during
+            // `noteHeightOfRows` (e.g. width-change reconfigure). For
+            // `reportMeasuredHeight` callers the cache was already correct.
+            for row in rows where row < blockIds.count {
+                let bid = blockIds[row]
+                if let h = heightCache[bid] { lastNotedHeight[bid] = h }
+            }
+
+            if let anchor { scrollAnchor.applyAnchor(anchor) }
         }
 
         // MARK: - Apply Blocks (Main Entry Point)
@@ -842,27 +888,36 @@ extension MessageTableRepresentable {
             }
         }
 
-        /// Post-snapshot scroll: new turn with header → scroll to header;
-        /// pinned to bottom → stay at bottom; otherwise → restore anchor.
+        /// Post-snapshot scroll routing:
+        ///   - new assistant turn AND user was pinned to bottom → animate to
+        ///     the new header (so the next reply lands at the visible top).
+        ///   - pinned to bottom → stay at bottom.
+        ///   - otherwise → restore the saved anchor (preserves reading
+        ///     position; never yanks the user to a new turn while they're
+        ///     scrolled up reading earlier content).
+        ///
         /// `wasPinnedToBottom` must be captured before `apply()` since the
-        /// snapshot may shift bounds first.
+        /// snapshot may shift bounds first. The new-turn id is recorded
+        /// regardless of pinned state so we don't re-scroll on subsequent
+        /// snapshots within the same turn.
         private func handlePostSnapshotScroll(
             lastAssistantTurnId: UUID?,
             autoScrollEnabled: Bool,
             wasPinnedToBottom: Bool
         ) {
-            if autoScrollEnabled,
-                let turnId = lastAssistantTurnId,
-                turnId != lastScrolledToTurnId
-            {
-                lastScrolledToTurnId = turnId
+            let isNewTurn =
+                autoScrollEnabled
+                && lastAssistantTurnId != nil
+                && lastAssistantTurnId != lastScrolledToTurnId
+
+            if isNewTurn { lastScrolledToTurnId = lastAssistantTurnId }
+
+            if isNewTurn, wasPinnedToBottom, let turnId = lastAssistantTurnId {
                 let headerId = "header-\(turnId.uuidString)"
                 if let row = blockIds.firstIndex(of: headerId) {
                     scrollAnchor.scrollToRow(row, animated: true)
-                } else if wasPinnedToBottom {
-                    scrollAnchor.scrollToBottom()
                 } else {
-                    scrollAnchor.restoreAnchor()
+                    scrollAnchor.scrollToBottom()
                 }
             } else if wasPinnedToBottom {
                 scrollAnchor.scrollToBottom()
@@ -1103,19 +1158,25 @@ extension MessageTableRepresentable {
             return h
         }
 
-        /// Called by a cell after it has been laid out to update the height cache.
-        /// Triggers a height invalidation if the actual height differs from the estimate.
+        /// Called by a cell after it has laid out, to update the height cache
+        /// and invalidate the row's height in AppKit when needed.
+        ///
+        /// Delta is computed against `lastNotedHeight` (what AppKit currently
+        /// has laid out) rather than `heightCache`. Cache entries get wiped
+        /// by frame-width changes (line ~468) and `toggleExpand` even when
+        /// AppKit's laid-out height is still correct; using the cache as the
+        /// baseline produced spurious `noteHeightOfRows` calls — each one
+        /// shifts visible content. Routing through `noteRowHeightsChanged`
+        /// picks up the anchor preservation so the visible top doesn't jump.
+        ///
+        /// 0.5pt threshold (was 2pt): short rows like the user bubble corner
+        /// stroke clipped before the next scroll at the coarser threshold.
         func reportMeasuredHeight(_ height: CGFloat, forBlockId blockId: String, row: Int) {
             guard let tv = tableView, row < tv.numberOfRows else { return }
-            let existing = heightCache[blockId]
-            let delta = abs((existing ?? 0) - height)
+            let laidOut = lastNotedHeight[blockId] ?? heightCache[blockId] ?? 0
             heightCache[blockId] = height
-            // 2pt was too coarse — short rows (user bubble + corner stroke) looked clipped before the next scroll
-            if delta > 0.5 {
-                NSAnimationContext.beginGrouping()
-                NSAnimationContext.current.duration = 0
-                tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
-                NSAnimationContext.endGrouping()
+            if abs(laidOut - height) > 0.5 {
+                noteRowHeightsChanged(IndexSet(integer: row))
             }
         }
 
@@ -1203,7 +1264,7 @@ extension MessageTableRepresentable {
         ///      to the new assistant header while the model is still streaming.
         /// we neutralize both before kicking off our animation.
         func scrollToTurn(_ turnId: UUID) {
-            guard let tableView, let scrollView else { return }
+            guard let tableView else { return }
 
             // Prefer the user-message block; fall back to the turn's header.
             let userBlockId = "usermsg-\(turnId.uuidString)"
@@ -1225,14 +1286,11 @@ extension MessageTableRepresentable {
             // Leave a little breathing room above the target.
             let targetY = max(0, rowRect.origin.y - 12)
 
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.22
-                ctx.allowsImplicitAnimation = true
-                scrollView.contentView.setBoundsOrigin(
-                    NSPoint(x: scrollView.contentView.bounds.origin.x, y: targetY)
-                )
-                scrollView.reflectScrolledClipView(scrollView.contentView)
-            }
+            // Route through ScrollAnchorManager so the bounds mutation is
+            // bracketed by `isMutatingScrollOrigin` and not misread as a
+            // user scroll (which would extend the live-scroll grace
+            // window and suppress legitimate post-jump anchor restores).
+            scrollAnchor.scrollToY(targetY, animated: true)
 
             // Schedule an active-marker refresh after the animation settles so
             // the minimap highlights the newly visible turn.

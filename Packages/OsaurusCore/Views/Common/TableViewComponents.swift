@@ -46,6 +46,37 @@ final class HoverTrackingTableView: NSTableView {
         if responder is NSButton { return true }
         return super.validateProposedFirstResponder(responder, for: event)
     }
+
+    /// True when our own code is performing an explicit scroll. Lets us
+    /// distinguish intentional scrolls (`ScrollAnchorManager.scrollToRow`)
+    /// from subview-initiated auto-scrolls (`NSTextView` showing its
+    /// caret as it lays out during measurement, link-related text view
+    /// movements, focus-driven `scrollRectToVisible`).
+    nonisolated(unsafe) static var allowProgrammaticScroll: Bool = false
+
+    /// Block subview-initiated auto-scrolls.
+    ///
+    /// NSTextView (used by `SelectableNSTextView`, `CodeNSTextView`,
+    /// `CustomNSTextView` inside cells) calls `scrollRangeToVisible` to
+    /// keep its caret/selection in view. During cell dequeue +
+    /// measurement that walks up to our chat scroll view and yanks
+    /// `clip.y` to the text view's y position — visible as a multi-row
+    /// "snap to message top" mid-gesture (verified via NSLog instrumentation:
+    /// −616pt single-frame jumps with no preceding `noteHeightOfRows` or
+    /// self-mutation).
+    ///
+    /// Our chat scroll position is managed exclusively by
+    /// `ScrollAnchorManager` (gestures + `scrollToBottom` / `scrollToY` /
+    /// `scrollToRow`). Any other call to `scrollRectToVisible` originating
+    /// from a subview is, by definition, unwanted, so we drop it.
+    /// Programmatic callers gate the call with
+    /// `allowProgrammaticScroll = true`.
+    override func scrollToVisible(_ rect: NSRect) -> Bool {
+        if Self.allowProgrammaticScroll {
+            return super.scrollToVisible(rect)
+        }
+        return false
+    }
 }
 
 // MARK: - Table Hosting Cell View (AnyView - Legacy)

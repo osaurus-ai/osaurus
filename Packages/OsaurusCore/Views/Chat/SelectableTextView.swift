@@ -1046,6 +1046,25 @@ final class SelectableNSTextView: NSTextView {
         return result
     }
 
+    /// Suppress NSTextView's default scroll-rect-to-visible.
+    ///
+    /// NSTextView calls `scrollRectToVisible` to keep its caret/selection in
+    /// view as the text container lays out (in particular, while a row is
+    /// dequeued and configured during the chat scroll-up — the layout pass
+    /// happens before the cell's superview hierarchy is in its final
+    /// position). The walk to `enclosingScrollView` then yanks the chat's
+    /// `clip.y` to this view's origin, which the user perceives as a
+    /// multi-row "snap to message top" mid-gesture (verified via NSLog
+    /// instrumentation: −616pt single-frame jumps with no preceding
+    /// `noteHeightOfRows` or self-mutation, landing exactly at the row's y).
+    ///
+    /// This view is read-only — the user cannot move the caret with
+    /// arrow keys or text input — so the auto-scroll has no UX value here.
+    /// Suppressing it eliminates the snap.
+    override func scrollToVisible(_ rect: NSRect) -> Bool {
+        return false
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         // if point is not in bounds, not us
         guard NSPointInRect(point, bounds) else { return nil }
