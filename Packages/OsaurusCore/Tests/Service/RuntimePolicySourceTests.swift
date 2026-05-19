@@ -160,7 +160,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "8534b64686571f64f8609878b58533e00b60c911"
+        let currentVmlxRevision = "fa30191436221e6ed297775729c5f5cb6b17e110"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
@@ -655,13 +655,33 @@ struct RuntimePolicySourceTests {
     func modelRuntimeUsesTypedVMLXLoadConfiguration() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        #expect(runtime.contains("loadConfiguration: .default"))
+        #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
+        #expect(runtime.contains("resolvedLoadConfiguration("))
         #expect(
             !runtime.contains(
                 "loadModelContainer(\n                from: localURL,\n                using: tokenizerLoader\n            )"
             ),
             "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.default, including load-time memory caps, mmap safetensors, and JANGTQ prestack/alignment"
         )
+    }
+
+    @Test("MTP bundles auto-resolve vmlx tuning into load and generation")
+    func mtpBundlesAutoResolveVMLXTuningIntoLoadAndGeneration() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+
+        #expect(runtime.contains("MTPBundleInspector.inspect("))
+        #expect(runtime.contains("VMLXServerRuntimeSettings()"))
+        #expect(runtime.contains("settings.mtp.mode = .auto"))
+        #expect(runtime.contains("resolvedMTPLaunch("))
+        #expect(runtime.contains("resolvedLoadConfiguration("))
+        #expect(runtime.contains("resolvedMTPDraftStrategy("))
+        #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
+        #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
+        #expect(runtime.contains("draftStrategy: holder.draftStrategy"))
+        #expect(runtime.contains("params.draftStrategy = draftStrategy"))
+        #expect(adapter.contains("draftStrategy: MLXLMCommon.DraftStrategy?"))
+        #expect(adapter.contains("draftStrategy: draftStrategy"))
     }
 
     @Test("ModelRuntime does not repair reasoning parser output")
