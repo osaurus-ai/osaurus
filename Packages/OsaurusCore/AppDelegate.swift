@@ -51,30 +51,40 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             "Osaurus local LLM HTTP server (long-running)"
         )
 
-        // Finalise the activation policy before AppKit paints its first
-        // frame. `LSUIElement=YES` in Info.plist means we launch as
-        // `.accessory`; if the user wants a Dock icon we have to flip to
-        // `.regular` *before* SwiftUI / AppKit can auto-present any window
-        // (e.g. the `Settings { EmptyView() }` placeholder), or that flip
-        // surfaces as a one-frame flash of an unrelated window.
-        let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
-        NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
+        // Tahoe only early launch hygiene. Sequoia reported launch
+        // failures with this block active, so it falls back to the
+        // sequencing in `applicationDidFinishLaunching`
+        if #available(macOS 26.0, *) {
+            // Finalise the activation policy before AppKit paints its first
+            // frame. `LSUIElement=YES` in Info.plist means we launch as
+            // `.accessory`. if the user wants a Dock icon we have to flip to
+            // `.regular` *before* SwiftUI / AppKit can auto-present any window
+            // (e.g. the `Settings { EmptyView() }` placeholder) or that flip
+            // surfaces as a one-frame flash of an unrelated window.
+            let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
+            NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
 
-        // Close (and watch for re-presents of) the SwiftUI-managed
-        // `Settings { EmptyView() }` placeholder window. Our real settings
-        // surface is `ManagementView` opened via `showManagementWindow`;
-        // the placeholder only exists to anchor `.commands`.
-        suppressSwiftUISettingsPlaceholder()
+            // close (and watch for re-presents of) the SwiftUI managed
+            // `Settings { EmptyView() }` placeholder window. our real settings
+            // surface is `ManagementView` opened via `showManagementWindow`;
+            // the placeholder only exists to anchor `.commands`
+            suppressSwiftUISettingsPlaceholder()
 
-        // Opt out of AppKit snapshot state restoration. Window *positions*
-        // still autosave via `setFrameAutosaveName`; what we're killing is
-        // the launch-time blit of the previous run's window snapshots.
-        disableAppKitStateRestoration()
+            // opt out of AppKit snapshot state restoration. window positions
+            // still autosave via `setFrameAutosaveName`. what we're killing is
+            // the launch time blit of the previous run's window snapshots
+            disableAppKitStateRestoration()
+        }
     }
 
     public func applicationSupportsSecureRestorableState(
         _ app: NSApplication
-    ) -> Bool { true }
+    ) -> Bool {
+        // Paired with `disableAppKitStateRestoration()`. Sequoia keeps
+        // AppKit's default restore behavior
+        if #available(macOS 26.0, *) { return true }
+        return false
+    }
 
     private func disableAppKitStateRestoration() {
         UserDefaults.standard.register(defaults: [
@@ -129,6 +139,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        // sequoia fallback. Tahoe already ran this in
+        // `applicationWillFinishLaunching`.
+        if #unavailable(macOS 26.0) {
+            let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
+            NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
+        }
+
         // Make MLX C++ errors recoverable instead of process-fatal. Must run
         // before any model load can call into MLX so the first forward pass
         // is already protected. See `MLXErrorRecovery` for the rationale and
@@ -357,9 +374,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
 
-            // Final sweep: catches any Settings placeholder that SwiftUI
-            // created after `applicationWillFinishLaunching` ran.
-            sweepSwiftUISettingsPlaceholder()
+            // final sweep for the Tahoe placeholder suppression. no op
+            // on Sequoia (observers never installed)
+            if #available(macOS 26.0, *) {
+                sweepSwiftUISettingsPlaceholder()
+            }
 
             if presentOnboarding {
                 showOnboardingWindow()
@@ -370,12 +389,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             ToastWindowController.shared.setup()
             NotchWindowController.shared.setup()
 
-            for name in Self.swiftUISettingsPlaceholderNotifications {
-                NotificationCenter.default.removeObserver(
-                    self,
-                    name: name,
-                    object: nil
-                )
+            // tear down the Tahoe placeholder observers
+            if #available(macOS 26.0, *) {
+                for name in Self.swiftUISettingsPlaceholderNotifications {
+                    NotificationCenter.default.removeObserver(
+                        self,
+                        name: name,
+                        object: nil
+                    )
+                }
             }
 
             // Once the initial window has had a beat to settle, prewarm
