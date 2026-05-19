@@ -1,0 +1,55 @@
+name: i18n autofix
+
+# On same-repo PRs that touch the catalog or OsaurusCore Swift, run the same
+# pruner that scripts/i18n/format.sh runs locally and push a fixup commit if
+# the catalog drifted. Fork PRs are skipped (we can't push back) and instead
+# rely on the actionable error from scripts/i18n/check.sh in the main CI job.
+on:
+  pull_request:
+    paths:
+      - "**/*.xcstrings"
+      - "Packages/OsaurusCore/**/*.swift"
+      - "scripts/i18n/**"
+
+# Keyed on PR number rather than head ref so a malicious branch name can't
+# influence the concurrency group identifier.
+concurrency:
+  group: i18n-autofix-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  autofix:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: true
+
+      - name: Run pruner
+        run: bash scripts/i18n/format.sh
+
+      - name: Push fixup commit if catalog changed
+        # Route the PR head ref through env (actionlint script-injection rule),
+        # even though the job-level `if:` already restricts to same-repo PRs.
+        env:
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Packages/OsaurusCore/Resources/Localizable.xcstrings; then
+            echo "No catalog changes — nothing to push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Packages/OsaurusCore/Resources/Localizable.xcstrings
+          git commit -m "chore(i18n): auto-prune Localizable.xcstrings"
+          git push origin "HEAD:${PR_HEAD_REF}"

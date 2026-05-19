@@ -1,270 +1,282 @@
 {
-  "sourceLanguage": "en",
-  "strings": {
-    "CFBundleDisplayName": {
-      "comment": "Bundle display name",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus"
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Bundle display name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus"
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Osaurus"
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus"
           }
         }
       }
     },
-    "CFBundleName": {
-      "comment": "Bundle name",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "osaurus"
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus"
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "osaurus"
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "osaurus"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "osaurus"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus"
           }
         }
       }
     },
-    "NSAppleEventsUsageDescription": {
-      "comment": "Privacy - AppleEvents Sending Usage Description",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus-Plugins können Automatisierung nutzen, um andere Anwendungen in deinem Auftrag zu steuern."
+    "NSAppleEventsUsageDescription" : {
+      "comment" : "Privacy - AppleEvents Sending Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können Automatisierung nutzen, um andere Anwendungen in deinem Auftrag zu steuern."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Osaurus plugins may use automation to control other applications on your behalf."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus plugins may use automation to control other applications on your behalf."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 插件可能会使用自动化代表你控制其他应用。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能会使用自动化代表你控制其他应用。"
           }
         }
       }
     },
-    "NSCalendarsFullAccessUsageDescription": {
-      "comment": "Privacy - Calendars Full Access Usage Description",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus-Plugins können auf deinen Kalender zugreifen, um Termine zu lesen und zu erstellen."
+    "NSCalendarsFullAccessUsageDescription" : {
+      "comment" : "Privacy - Calendars Full Access Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deinen Kalender zugreifen, um Termine zu lesen und zu erstellen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Osaurus plugins may access your calendar to read and create events."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus plugins may access your calendar to read and create events."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 插件可能会访问你的日历，以读取和创建日程。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能会访问你的日历，以读取和创建日程。"
           }
         }
       }
     },
-    "NSCalendarsUsageDescription": {
-      "comment": "Privacy - Calendars Usage Description",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus-Plugins können auf deinen Kalender zugreifen, um Termine zu lesen und zu erstellen."
+    "NSCalendarsUsageDescription" : {
+      "comment" : "Privacy - Calendars Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deinen Kalender zugreifen, um Termine zu lesen und zu erstellen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Osaurus plugins may access your calendar to read and create events."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus plugins may access your calendar to read and create events."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 插件可能会访问你的日历，以读取和创建日程。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能会访问你的日历，以读取和创建日程。"
           }
         }
       }
     },
-    "NSContactsUsageDescription": {
-      "comment": "Privacy - Contacts Usage Description",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus-Plugins können auf deine Kontakte zugreifen, um Kontaktinformationen zu suchen und zu lesen."
+    "NSContactsUsageDescription" : {
+      "comment" : "Privacy - Contacts Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deine Kontakte zugreifen, um Kontaktinformationen zu suchen und zu lesen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Osaurus plugins may access your contacts to search and read contact information."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus plugins may access your contacts to search and read contact information."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 插件可能会访问你的联系人，以搜索和读取联系人信息。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能会访问你的联系人，以搜索和读取联系人信息。"
           }
         }
       }
     },
-    "NSLocalNetworkUsageDescription": {
-      "comment": "Privacy - Local Network Usage Description",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus nutzt das lokale Netzwerk, um Agenten auf anderen Geräten zu finden und zu verbinden."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Osaurus uses the local network to discover and connect to agents running on other devices."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 使用本地网络来发现并连接运行在其他设备上的智能体。"
+    "NSHumanReadableCopyright" : {
+      "comment" : "Copyright (human-readable)",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : ""
           }
         }
       }
     },
-    "NSLocationUsageDescription": {
-      "comment": "Privacy - Location Usage Description",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus-Plugins können auf deinen Standort zugreifen, um standortbasierte Dienste bereitzustellen."
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "Privacy - Local Network Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus nutzt das lokale Netzwerk, um Agenten auf anderen Geräten zu finden und zu verbinden."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Osaurus plugins may access your location to provide location-based services."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus uses the local network to discover and connect to agents running on other devices."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 插件可能会访问你的位置，以提供基于位置的服务。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 使用本地网络来发现并连接运行在其他设备上的智能体。"
           }
         }
       }
     },
-    "NSLocationWhenInUseUsageDescription": {
-      "comment": "Privacy - Location When In Use Usage Description",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus-Plugins können auf deinen Standort zugreifen, um standortbasierte Dienste bereitzustellen."
+    "NSLocationUsageDescription" : {
+      "comment" : "Privacy - Location Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deinen Standort zugreifen, um standortbasierte Dienste bereitzustellen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Osaurus plugins may access your location to provide location-based services."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus plugins may access your location to provide location-based services."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 插件可能会访问你的位置，以提供基于位置的服务。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能会访问你的位置，以提供基于位置的服务。"
           }
         }
       }
     },
-    "NSMicrophoneUsageDescription": {
-      "comment": "Privacy - Microphone Usage Description",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus verwendet das Mikrofon für die Spracherkennung auf dem Gerät mit FluidAudio."
+    "NSLocationWhenInUseUsageDescription" : {
+      "comment" : "Privacy - Location When In Use Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deinen Standort zugreifen, um standortbasierte Dienste bereitzustellen."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Osaurus uses the microphone for on-device voice transcription with FluidAudio."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus plugins may access your location to provide location-based services."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 使用麦克风通过 FluidAudio 进行设备端语音转写。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能会访问你的位置，以提供基于位置的服务。"
           }
         }
       }
     },
-    "NSRemindersUsageDescription": {
-      "comment": "Privacy - Reminders Usage Description",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus-Plugins können auf deine Erinnerungen zugreifen, um Aufgaben zu lesen und zu erstellen."
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Privacy - Microphone Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus verwendet das Mikrofon für die Spracherkennung auf dem Gerät mit FluidAudio."
           }
         },
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Osaurus plugins may access your reminders to read and create tasks."
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus uses the microphone for on-device voice transcription with FluidAudio."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Osaurus 插件可能会访问你的提醒事项，以读取和创建任务。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 使用麦克风通过 FluidAudio 进行设备端语音转写。"
+          }
+        }
+      }
+    },
+    "NSRemindersUsageDescription" : {
+      "comment" : "Privacy - Reminders Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deine Erinnerungen zugreifen, um Aufgaben zu lesen und zu erstellen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus plugins may access your reminders to read and create tasks."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能会访问你的提醒事项，以读取和创建任务。"
           }
         }
       }
     }
   },
-  "version": "1.0"
+  "version" : "1.0"
 }
