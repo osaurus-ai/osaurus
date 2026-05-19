@@ -33,9 +33,8 @@ KNOWN_LICENSES: Dict[str, tuple] = {
     "swift-transformers": ("Apache 2.0", "https://github.com/huggingface/swift-transformers/blob/main/LICENSE", "https://github.com/huggingface/swift-transformers"),
     "swift-jinja": ("Apache 2.0", "https://github.com/huggingface/swift-jinja/blob/main/LICENSE", "https://github.com/huggingface/swift-jinja"),
     
-    # MLX packages (MIT)
-    "mlx-swift": ("MIT", "https://github.com/ml-explore/mlx-swift/blob/main/LICENSE", "https://github.com/ml-explore/mlx-swift"),
-    "mlx-swift-lm": ("MIT", "https://github.com/ml-explore/mlx-swift-lm/blob/main/LICENSE", "https://github.com/ml-explore/mlx-swift-lm"),
+    # Consolidated vMLX package (MIT)
+    "vmlx-swift": ("MIT", "https://github.com/osaurus-ai/vmlx-swift/blob/main/LICENSE", "https://github.com/osaurus-ai/vmlx-swift"),
     
     # Other packages
     "sparkle": ("MIT", "https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE", "https://github.com/sparkle-project/Sparkle"),
@@ -56,8 +55,7 @@ PACKAGE_NAMES: Dict[str, str] = {
     "swift-argument-parser": "Swift Argument Parser",
     "swift-transformers": "Swift Transformers",
     "swift-jinja": "Swift Jinja",
-    "mlx-swift": "MLX Swift",
-    "mlx-swift-lm": "MLX Swift LM",
+    "vmlx-swift": "vMLX Swift",
     "sparkle": "Sparkle",
     "fluidaudio": "FluidAudio",
     "swift-sdk": "MCP Swift SDK",
@@ -125,9 +123,9 @@ def generate_acknowledgements(dependencies: Dict[str, Dict]) -> List[Dict]:
 
 
 def main():
-    # Find project root (where this script is in scripts/)
+    # Find project root from scripts/release/.
     script_dir = Path(__file__).parent.resolve()
-    project_root = script_dir.parent
+    project_root = script_dir.parent.parent
     
     print(f"Project root: {project_root}")
     
@@ -148,6 +146,7 @@ def main():
     output_path = project_root / "App" / "osaurus" / "Acknowledgements.json"
     with open(output_path, 'w') as f:
         json.dump(output, f, indent=2)
+        f.write("\n")
     
     print(f"Generated {output_path}")
     print(f"Total acknowledgements: {len(acknowledgements)}")
@@ -159,4 +158,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

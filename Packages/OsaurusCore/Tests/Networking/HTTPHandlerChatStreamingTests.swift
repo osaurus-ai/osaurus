@@ -96,6 +96,97 @@ struct HTTPHandlerChatStreamingTests {
         #expect(body.contains("\"done\":true") || body.contains("\"done\": true"))
     }
 
+    @Test func ollama_generate_streaming_writes_response_chunks_and_done() async throws {
+        let server = try await startTestServer(
+            with: MockChatEngine(deltas: ["x", "y"], completeText: "", model: "fake")
+        )
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/api/generate")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = """
+            {"model":"fake","prompt":"hi","stream":true,"options":{"num_predict":8}}
+            """.data(using: .utf8)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(body.contains("\"response\":\"x\""))
+        #expect(body.contains("\"response\":\"y\""))
+        #expect(body.contains("\"done\":true") || body.contains("\"done\": true"))
+        #expect(!body.contains("\"message\""))
+    }
+
+    @Test func ollama_generate_non_streaming_returns_single_response_object() async throws {
+        let server = try await startTestServer(
+            with: MockChatEngine(deltas: [], completeText: "hello", model: "fake")
+        )
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/api/generate")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = """
+            {"model":"fake","prompt":"hi","stream":false,"options":{"num_predict":8}}
+            """.data(using: .utf8)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let http = resp as? HTTPURLResponse
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(http?.statusCode == 200)
+        #expect(http?.value(forHTTPHeaderField: "Content-Type")?.contains("application/json") == true)
+        #expect(body.contains("\"response\":\"hello\""))
+        #expect(body.contains("\"done\":true") || body.contains("\"done\": true"))
+        #expect(body.split(separator: "\n").count <= 1)
+    }
+
+    @Test func ollama_chat_drops_reasoning_sentinel_from_plaintext_ndjson() async throws {
+        let server = try await startTestServer(
+            with: MockChatEngine(
+                deltas: [StreamingReasoningHint.encode("private reasoning"), "visible"],
+                completeText: "",
+                model: "fake"
+            )
+        )
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/api/chat")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        let reqBody = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.2,
+            max_tokens: 8,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+        request.httpBody = try JSONEncoder().encode(reqBody)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(body.contains("visible"))
+        #expect(!body.contains("private reasoning"))
+        #expect(!body.contains("\u{FFFE}"))
+    }
+
     @Test func ndjson_api_chat_emits_ollama_tool_calls() async throws {
         struct ToolCallEngine: ChatEngineProtocol {
             func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {

@@ -45,6 +45,60 @@ struct ChatEngineTests {
         #expect(chat.model == "JANGQ-AI/Hy3-preview-JANGTQ")
     }
 
+    @Test func openResponsesRequest_preservesInputImageIntoChatRequest() throws {
+        let image = "data:image/png;base64,AAAA"
+        let data = Data(
+            """
+            {
+              "model": "zaya1-vl-8b-mxfp4",
+              "input": [
+                {
+                  "type": "message",
+                  "role": "user",
+                  "content": [
+                    {"type": "input_text", "text": "Describe this image."},
+                    {"type": "input_image", "image_url": "\(image)", "detail": "low"}
+                  ]
+                }
+              ]
+            }
+            """.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        let chat = request.toChatCompletionRequest()
+
+        #expect(chat.messages.count == 1)
+        #expect(chat.messages[0].content == "Describe this image.")
+        #expect(chat.messages[0].imageUrls == [image])
+    }
+
+    @Test func openResponsesRequest_preservesLiteralUTF8TextIntoChatRequest() throws {
+        let data = Data(
+            """
+            {
+              "model": "zaya1-8b-mxfp4",
+              "input": [
+                {
+                  "type": "message",
+                  "role": "user",
+                  "content": "Write exactly this UTF-8 string and nothing else: café 東京 🚀"
+                }
+              ]
+            }
+            """.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        let chat = request.toChatCompletionRequest()
+
+        #expect(chat.messages.count == 1)
+        #expect(
+            chat.messages[0].content
+                == "Write exactly this UTF-8 string and nothing else: café 東京 🚀"
+        )
+    }
+
     @Test func streamChat_yields_deltas_success() async throws {
         let svc = FakeModelService(deltas: ["a", "b", "c"])
         let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
@@ -93,6 +147,101 @@ struct ChatEngineTests {
         #expect(resp.choices.count == 1)
         #expect(resp.choices.first?.finish_reason == "stop")
         #expect(resp.choices.first?.message.content == "hello")
+    }
+
+    @Test func completeChat_omittedMaxTokensPreservesModelDefaultContract() async throws {
+        actor Capture {
+            var params: GenerationParameters?
+            func set(_ params: GenerationParameters) { self.params = params }
+        }
+        struct CaptureService: ModelService {
+            let capture: Capture
+            var id: String { "fake" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { requestedModel == "fake" }
+            func generateOneShot(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?
+            ) async throws -> String {
+                await capture.set(parameters)
+                return "ok"
+            }
+            func streamDeltas(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?,
+                stopSequences: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                await capture.set(parameters)
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("ok")
+                    continuation.finish()
+                }
+            }
+        }
+
+        let capture = Capture()
+        let engine = ChatEngine(services: [CaptureService(capture: capture)], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: nil,
+            max_tokens: nil,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        _ = try await engine.completeChat(request: req)
+        let params = await capture.params
+        #expect(params?.maxTokens == 16_384)
+        #expect(params?.maxTokensExplicit == false)
+    }
+
+    @Test func completeChat_routesLocalModelWithoutFetchingRemoteServices() async throws {
+        actor RemoteProbe {
+            private(set) var called = false
+
+            func services() -> [ModelService] {
+                called = true
+                return []
+            }
+        }
+
+        let probe = RemoteProbe()
+        let svc = FakeModelService()
+        let engine = ChatEngine(
+            services: [svc],
+            installedModelsProvider: { [] },
+            remoteServicesProvider: { await probe.services() }
+        )
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 32,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        let resp = try await engine.completeChat(request: req)
+
+        #expect(resp.choices.first?.message.content == "hello")
+        #expect(await probe.called == false)
     }
 
     @Test func completeChat_threadsOpenAIReasoningFieldsIntoModelOptions() async throws {
@@ -153,6 +302,75 @@ struct ChatEngineTests {
         #expect(
             params?.modelOptions["disableThinking"] == nil,
             "Hy3 uses reasoningEffort; the generic disableThinking bool must not survive and create a second, contradictory cache-scope signal"
+        )
+    }
+
+    @Test func completeChat_appliesModelProfileDefaultsForBareAPIRequests() async throws {
+        actor Capture {
+            var params: GenerationParameters?
+            func set(_ params: GenerationParameters) { self.params = params }
+        }
+        struct CaptureService: ModelService {
+            let capture: Capture
+            var id: String { "qwen" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool {
+                requestedModel == "qwen3.6-27b-mxfp4-mtp"
+            }
+            func generateOneShot(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?
+            ) async throws -> String {
+                await capture.set(parameters)
+                return "ok"
+            }
+            func streamDeltas(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?,
+                stopSequences: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                await capture.set(parameters)
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("ok")
+                    continuation.finish()
+                }
+            }
+        }
+
+        let capture = Capture()
+        let engine = ChatEngine(services: [CaptureService(capture: capture)], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "qwen3.6-27b-mxfp4-mtp",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: nil,
+            max_tokens: 32,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        _ = try await engine.completeChat(request: req)
+        let params = await capture.params
+        #expect(
+            params?.modelOptions["disableThinking"]?.boolValue == true,
+            "Bare HTTP/API Qwen requests must receive the same profile default as Chat UI; otherwise omitted enable_thinking falls through to generic thinking-on and short non-streaming responses can return empty visible content."
+        )
+
+        var explicitThinking = req
+        explicitThinking.enable_thinking = true
+        _ = try await engine.completeChat(request: explicitThinking)
+        let explicitParams = await capture.params
+        #expect(
+            explicitParams?.modelOptions["disableThinking"]?.boolValue == false,
+            "Explicit API enable_thinking=true must override the profile default; the default is not a hidden thinking clamp."
         )
     }
 

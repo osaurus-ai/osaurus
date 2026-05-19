@@ -76,10 +76,15 @@ public actor RemoteProviderService: ToolCapableService {
         sessionInvalidatedFlag.withLock { $0 }
     }
 
-    public init(provider: RemoteProvider, models: [String], resolvedHeaders: [String: String]) {
+    public init(
+        provider: RemoteProvider,
+        models: [String],
+        resolvedHeaders: [String: String],
+        cachedOAuthTokens: RemoteProviderOAuthTokens? = nil
+    ) {
         self.provider = provider
         self.cachedHeaders = resolvedHeaders
-        self.cachedOAuthTokens = provider.getOAuthTokens()
+        self.cachedOAuthTokens = cachedOAuthTokens
         self.availableModels = models
         // Create a unique prefix for model names (lowercase, sanitized)
         self.providerPrefix = provider.name
@@ -1736,7 +1741,7 @@ public actor RemoteProviderService: ToolCapableService {
             // Reasoning models (o1, gpt-5) forbid temperature/top_p when reasoning is active as inferred from
             // https://community.openai.com/t/gpt-5-nano-accepted-parameters/1355086/2
             temperature: isReasoningModel ? nil : parameters.temperature,
-            max_completion_tokens: parameters.maxTokens,
+            max_completion_tokens: parameters.maxTokensExplicit ? parameters.maxTokens : nil,
             stream: stream,
             top_p: isReasoningModel ? nil : parameters.topPOverride,
             // Forward the raw OpenAI penalties — most upstream OpenAI-
@@ -1786,7 +1791,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
         cachedOAuthTokens = refreshed
-        RemoteProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
+        await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: provider.id)
     }
 
     private func codexOAuthHeaders() throws -> [String: String] {
@@ -2906,12 +2911,12 @@ extension RemoteProviderService {
     /// Fetch models from a remote provider and create a service instance
     public static func fetchModels(from provider: RemoteProvider) async throws -> [String] {
         if provider.providerType == .openAICodex {
-            guard var tokens = provider.getOAuthTokens() else {
+            guard var tokens = await provider.getOAuthTokensOffMainActor() else {
                 throw RemoteProviderServiceError.requestFailed("Missing ChatGPT/Codex sign-in tokens")
             }
             if tokens.isExpired {
                 let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
-                _ = RemoteProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
+                _ = await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: provider.id)
                 tokens = refreshed
             }
             return await OpenAICodexOAuthService.availableModels(for: tokens)
@@ -2923,7 +2928,7 @@ extension RemoteProviderService {
             }
             return try await fetchAnthropicModels(
                 baseURL: baseURL,
-                headers: provider.resolvedHeaders(),
+                headers: await provider.resolvedHeadersOffMainActor(),
                 timeout: min(provider.timeout, 30)
             )
         }
@@ -2948,7 +2953,7 @@ extension RemoteProviderService {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         // Add provider headers
-        for (key, value) in provider.resolvedHeaders() {
+        for (key, value) in await provider.resolvedHeadersOffMainActor() {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
@@ -3029,13 +3034,15 @@ extension RemoteProviderService {
     /// Tries the server's /models endpoint first (returns all available models so the user can
     /// select one in the picker). Falls back to GET /agents/{id} when /models is unavailable.
     private static func fetchOsaurusModels(from provider: RemoteProvider) async throws -> [String] {
+        let headers = await provider.resolvedHeadersOffMainActor()
+
         // Try /models first
         if let url = provider.url(for: "/models") {
             var req = URLRequest(url: url)
             req.httpMethod = "GET"
             req.setValue("application/json", forHTTPHeaderField: "Accept")
             req.timeoutInterval = min(provider.timeout, 10)
-            for (key, value) in provider.resolvedHeaders() { req.setValue(value, forHTTPHeaderField: key) }
+            for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
             if let (data, response) = try? await URLSession.shared.data(for: req),
                 let http = response as? HTTPURLResponse, http.statusCode < 400,
                 let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
@@ -3055,7 +3062,7 @@ extension RemoteProviderService {
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.timeoutInterval = min(provider.timeout, 10)
-        for (key, value) in provider.resolvedHeaders() { req.setValue(value, forHTTPHeaderField: key) }
+        for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
         guard let (data, response) = try? await URLSession.shared.data(for: req),
             let http = response as? HTTPURLResponse, http.statusCode < 400
         else {
@@ -3077,7 +3084,7 @@ extension RemoteProviderService {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         // Add provider headers (includes x-goog-api-key)
-        for (key, value) in provider.resolvedHeaders() {
+        for (key, value) in await provider.resolvedHeadersOffMainActor() {
             request.setValue(value, forHTTPHeaderField: key)
         }
 

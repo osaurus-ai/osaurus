@@ -505,7 +505,7 @@ struct ConfigurationView: View {
                                     }
 
                                     // KV cache sizing is owned end-to-end by
-                                    // vmlx-swift-lm's `CacheCoordinator` —
+                                    // vmlx-swift's `CacheCoordinator` —
                                     // surfacing a per-user override here would
                                     // conflict with the library's per-model
                                     // cache geometry (see the comment in
@@ -1011,7 +1011,7 @@ struct ConfigurationView: View {
         }
 
         // `genMaxKVSize` is no longer applied at runtime (KV cache sizing is
-        // owned by vmlx-swift-lm's `CacheCoordinator`). The field stays on
+        // owned by vmlx-swift's `CacheCoordinator`). The field stays on
         // `ServerConfiguration` for backward-compatible decoding of existing
         // configs but is not surfaced in the UI any more.
 

@@ -642,7 +642,7 @@ extension ModelManager {
         // MARK: Qwen 3.6
         //
         // Qwen 3.6 keeps the `qwen3_5_moe` / `qwen3_5` model_type identifier,
-        // so vmlx-swift-lm's existing Qwen35Model / Qwen35MoEModel classes
+        // so vmlx-swift's existing Qwen35Model / Qwen35MoEModel classes
         // handle it. JANGTQ variants use the same model_type but are routed
         // to Qwen35JANGTQModel at load time based on jang_config.weight_format
         // (`"mxtq"`) — no osaurus-side branching required.
@@ -842,7 +842,7 @@ extension ModelManager {
         // with per-tensor scales; vision tower / projector / lm_head stay
         // in bf16/fp16.
         //
-        // vmlx-swift-lm's `mistral3` factory branches on
+        // vmlx-swift's `mistral3` factory branches on
         // `text_config.model_type == "mistral4"` and falls through to
         // `Mistral3VLM` otherwise. `Mistral3VLM.LanguageModel`
         // (Libraries/MLXVLM/Models/Mistral3.swift:516) is explicitly

@@ -2,7 +2,7 @@
 //  GenerationEventMapper.swift
 //  osaurus
 //
-//  Bridge from vmlx-swift-lm `Generation` events to osaurus's typed
+//  Bridge from vmlx-swift `Generation` events to osaurus's typed
 //  `ModelRuntimeEvent`. Reasoning stripping, tool-call extraction, AND
 //  text-level stop-sequence matching all live inside `BatchEngine.generate`,
 //  so this layer is purely a translation step:
@@ -28,33 +28,19 @@ private let mapperLog = Logger(subsystem: "ai.osaurus", category: "Generation")
 
 enum GenerationEventMapper {
 
-    /// True when `.reasoning` deltas are the user-visible answer, not a hidden
-    /// chain-of-thought side channel.
-    ///
-    /// Ling is configured as a non-reasoning family in osaurus; if it leaks
-    /// `<think>`, the stripped inner text is still visible answer text.
-    /// MiniMax M2/M2.7 must stay on the reasoning rail when Thinking is on.
-    /// The vmlx parser starts inside the prompt-side `<think>` block and
-    /// transitions to content when the model emits `</think>`; promoting that
-    /// rail to content hides the Thinking panel and breaks the UI contract.
-    static func treatReasoningAsContent(modelName: String) -> Bool {
-        ModelFamilyNames.isLingFamily(modelName)
-    }
-
     /// Map a `Generation` stream into the typed `ModelRuntimeEvent` stream
     /// callers (HTTP handlers, ChatView, plugin runners) consume.
     ///
-    /// - Parameter modelName: The resolved model id; used solely to decide
-    ///   the reasoning-merge policy (see `treatReasoningAsContent`). Empty
-    ///   string is safe — the family matchers default to `false` and the
-    ///   stream behaves identically to the historical pass-through.
+    /// - Parameter modelName: The resolved model id; used for telemetry only.
+    ///   Family-specific reasoning repair belongs in the vmlx parser/template
+    ///   path, not in this translation layer. If a no-thinking request still
+    ///   emits `.reasoning`, Osaurus keeps that signal visible for root-cause
+    ///   debugging instead of merging or suppressing it.
     static func map(
         events: AsyncStream<Generation>,
         modelName: String = "",
         trace: TTFTTrace? = nil
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
-        let mergeReasoning = treatReasoningAsContent(modelName: modelName)
-        let suppressUnclosedReasoning = ModelFamilyNames.isLingFamily(modelName)
         return AsyncThrowingStream<ModelRuntimeEvent, Error> { continuation in
             let task = Task {
                 let interval = mapperSignposter.beginInterval(
@@ -86,9 +72,7 @@ enum GenerationEventMapper {
                             .completionInfo(
                                 tokenCount: info.generationTokenCount,
                                 tokensPerSecond: info.tokensPerSecond,
-                                unclosedReasoning: suppressUnclosedReasoning
-                                    ? false
-                                    : info.unclosedReasoning,
+                                unclosedReasoning: info.unclosedReasoning,
                                 stopReason: Self.openAIStopReason(from: info.stopReason)
                             )
                         )
@@ -124,14 +108,7 @@ enum GenerationEventMapper {
                             firstChunk = false
                             InferenceProgressManager.shared.prefillDidFinishAsync()
                         }
-                        if mergeReasoning {
-                            // vmlx already stripped the family-specific
-                            // reasoning markers; for merge families the inner
-                            // text is plain visible content.
-                            continuation.yield(.tokens(text))
-                        } else {
-                            continuation.yield(.reasoning(text))
-                        }
+                        continuation.yield(.reasoning(text))
 
                     case .toolCall(let call):
                         markFirstModelOutput()
@@ -162,7 +139,7 @@ enum GenerationEventMapper {
                         .completionInfo(
                             tokenCount: estimatedTextTokens,
                             tokensPerSecond: 0,
-                            unclosedReasoning: sawReasoning && !suppressUnclosedReasoning,
+                            unclosedReasoning: sawReasoning,
                             stopReason: nil
                         )
                     )

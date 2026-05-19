@@ -476,8 +476,8 @@ struct MLXBatchAdapterTests {
         )
         #expect(maxReasoning["enable_thinking"] as? Bool == true)
         #expect(
-            maxReasoning["reasoning_effort"] as? String == "high",
-            "Osaurus UI Max stays on DSV4's stable high-thinking rail unless raw max diagnostics are explicitly enabled"
+            maxReasoning["reasoning_effort"] as? String == "max",
+            "DSV4 Max must reach vmlx-swift unchanged; Osaurus must not hide runtime issues behind an effort downgrade"
         )
 
         let legacyToggle = MLXBatchAdapter.additionalContext(
@@ -492,7 +492,7 @@ struct MLXBatchAdapterTests {
         #expect(legacyToggle["reasoning_effort"] as? String == "high")
     }
 
-    @Test func additionalContext_forcesLingThinkingOff() {
+    @Test func additionalContext_defaultsLingThinkingOffButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -516,6 +516,16 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: userEnabled,
                     modelName: modelName
+                )["enable_thinking"] as? Bool == true
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: GenerationParameters(
+                        temperature: nil,
+                        maxTokens: 16,
+                        modelOptions: ["reasoningEffort": .string("no_think")]
+                    ),
+                    modelName: modelName
                 )["enable_thinking"] as? Bool == false
             )
             #expect(
@@ -526,8 +536,8 @@ struct MLXBatchAdapterTests {
                         modelOptions: ["reasoningEffort": .string("high")]
                     ),
                     modelName: modelName
-                )["reasoning_effort"] == nil,
-                "Ling is a non-reasoning Osaurus profile; stale effort values must not fragment cache or reach the Bailing directive bridge"
+                )["enable_thinking"] as? Bool == true,
+                "Ling/Bailing uses enable_thinking to select detailed-thinking directives; explicit opt-in must reach vmlx"
             )
         }
 

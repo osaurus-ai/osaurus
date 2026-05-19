@@ -49,7 +49,95 @@ struct RuntimePolicySourceTests {
         #expect(source.contains("SWA+CSA+HSA"))
     }
 
-    @Test("vmlx pin includes Ling, ZAYA, and DSV4 hardening commits")
+    @Test("AppDelegate starts storage-heavy embedding init off the main actor")
+    func appDelegateDoesNotBlockServerStartupOnEmbeddingStorageInit() throws {
+        let source = try Self.source("AppDelegate.swift")
+
+        #expect(source.contains("let embeddingInitTask = Task.detached(priority: .utility)"))
+        #expect(source.contains("await serverController.startServer()"))
+        #expect(
+            source.range(of: "let embeddingInitTask = Task {") == nil,
+            "startup memory/vector initialization must not inherit MainActor and block server startup"
+        )
+    }
+
+    @Test("AppDelegate binds HTTP server before Parakeet/CoreML startup")
+    func appDelegateStartsServerBeforeSpeechAutoload() throws {
+        let source = try Self.source("AppDelegate.swift")
+        let serverTask = try #require(source.range(of: "let serverStartupTask = Task { @MainActor in"))
+        let serverStart = try #require(source.range(of: "await serverController.startServer()"))
+        let providerConnect = try #require(source.range(of: "await MCPProviderManager.shared.connectEnabledProviders()"))
+        let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
+        let speechAutoload = try #require(source.range(of: "await SpeechService.shared.autoLoadIfNeeded()"))
+
+        #expect(serverTask.lowerBound < providerConnect.lowerBound)
+        #expect(serverStart.lowerBound < schedulerStart.lowerBound)
+        #expect(serverStart.lowerBound < speechAutoload.lowerBound)
+        #expect(source.contains("await serverStartupTask.value"))
+    }
+
+    @Test("AppDelegate prewarms the storage key before database opens")
+    func appDelegatePrewarmsStorageKeyBeforeDatabaseOpen() throws {
+        let source = try Self.source("AppDelegate.swift")
+        let prewarmTask = try #require(source.range(of: "let storageKeyPrewarmTask = Task.detached"))
+        let prewarmCall = try #require(source.range(of: "try StorageKeyManager.shared.prewarmCurrentKey()"))
+        let awaitPrewarm = try #require(source.range(of: "await storageKeyPrewarmTask.value"))
+        let firstDatabaseOpen = try #require(source.range(of: "try MemoryDatabase.shared.open()"))
+
+        #expect(prewarmTask.lowerBound < firstDatabaseOpen.lowerBound)
+        #expect(prewarmCall.lowerBound < firstDatabaseOpen.lowerBound)
+        #expect(awaitPrewarm.lowerBound < firstDatabaseOpen.lowerBound)
+    }
+
+    @Test("remote provider autoconnect keeps Keychain reads off MainActor")
+    func remoteProviderAutoconnectKeepsKeychainReadsOffMainActor() throws {
+        let manager = try Self.source("Managers/RemoteProviderManager.swift")
+        let connectStart = try #require(manager.range(of: "public func connect(providerId: UUID) async throws"))
+        let disconnectStart = try #require(manager.range(of: "public func disconnect(providerId: UUID)"))
+        let connectBody = String(manager[connectStart.lowerBound..<disconnectStart.lowerBound])
+
+        #expect(!connectBody.contains("provider.getOAuthTokens()"))
+        #expect(!connectBody.contains("provider.resolvedHeaders()"))
+        #expect(connectBody.contains("await provider.getOAuthTokensOffMainActor()"))
+        #expect(connectBody.contains("await provider.resolvedHeadersOffMainActor()"))
+
+        let service = try Self.source("Services/Provider/RemoteProviderService.swift")
+        let fetchStart = try #require(service.range(of: "public static func fetchModels(from provider: RemoteProvider) async throws"))
+        let decodeStart = try #require(service.range(of: "static func decodeOpenAICompatibleModelsResponse"))
+        let fetchBody = String(service[fetchStart.lowerBound..<decodeStart.lowerBound])
+
+        #expect(!fetchBody.contains("provider.getOAuthTokens()"))
+        #expect(!fetchBody.contains("provider.resolvedHeaders()"))
+        #expect(fetchBody.contains("await provider.getOAuthTokensOffMainActor()"))
+        #expect(fetchBody.contains("await provider.resolvedHeadersOffMainActor()"))
+    }
+
+    @Test("remote model snapshot timeout does not await a cancelled MainActor child")
+    func remoteModelSnapshotTimeoutIsUnstructured() throws {
+        let source = try Self.source("Networking/HTTPHandler.swift")
+        let snapshot = try #require(source.range(of: "remoteOpenAIModelsSnapshot"))
+        let show = try #require(source.range(of: "private func handleShowEndpoint"))
+        let body = String(source[snapshot.lowerBound..<show.lowerBound])
+
+        #expect(
+            !body.contains("withTaskGroup"),
+            "`withTaskGroup` waits for cancelled children at scope exit, so it cannot timeout a MainActor task stuck in Keychain"
+        )
+        #expect(body.contains("CheckedContinuation"))
+    }
+
+    @Test("ServerController relies on NIO bind instead of a startup port probe")
+    func serverControllerDoesNotPreflightPortWithNetworkConnection() throws {
+        let source = try Self.source("Networking/ServerController.swift")
+
+        #expect(!source.contains("import Network"))
+        #expect(!source.contains("NWConnection"))
+        #expect(!source.contains("isAnyListenerActive"))
+        #expect(source.contains("try await server.start("))
+        #expect(source.contains("\"Port \\(configuration.port) is already in use. Choose a different port in Settings.\""))
+    }
+
+    @Test("vmlx pin uses consolidated package with runtime hardening")
     func vmlxPinIncludesRuntimeHardening() throws {
         let manifest = try Self.source("Package.swift")
         let workspaceResolved = try Self.source(
@@ -59,88 +147,103 @@ struct RuntimePolicySourceTests {
             "../../App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
         )
 
-        // Bumped 2026-05-10 from b9da180 to ac60b5d. This keeps the
-        // 2026-05-07 Bailing/ZAYA/Gemma4/Ling hardening and adds the
-        // Osaurus readiness wave: Hy3 native runtime, native ZAYA1-VL
-        // image/text generation with disk-backed CCA cache restore,
-        // reasoning/media cache-scope salt, generation_config defaults,
-        // JANGTQ top-k override plumbing, B>1 admission coalescing, and
-        // the MiniMax B=1 BatchEngine speed restoration. It also keeps bare
-        // `zaya` out of the VLM registry so text bundles stay on MLXLLM, closes
-        // the solo lifecycle completion race, indexes pre-stacked streaming
-        // experts, advances Qwen3.5-VL gated-delta cache offsets, and routes
-        // MiniMax tool-call wrappers correctly through reasoning streams. It
-        // also synthesizes terminal `.info` on early token-stream close so
-        // reasoning-only completions preserve final stats and `unclosedReasoning`.
-        // `fee2583` reverts a later MiniMax blank-content watchdog, keeping this
-        // pin free of heuristic generation cutoffs. `bf4087f` then keeps
-        // MiniMax tool-call parsing lossless so invalid tag-looking reasoning
-        // text cannot freeze behind a missing closing wrapper. `ac60b5d` also
-        // widens defensive EOS token coverage for Laguna / wide-pipe
-        // DeepSeek-style bundles in both generation paths. `d8c2bb2` keeps
-        // TokenIterator's B=1 disk-cache restore materialization aligned with
-        // BatchEngine. `541b380` hardens MiniMax close-token detection and
-        // removes Hy3's per-token fp32 dequantized lm_head hot path. `78cf6ac`
-        // adds Gemma4 PLE-off config tolerance, process-wide safetensors disk
-        // cache IO serialization, MiniMax compile denial / forced-close removal,
-        // B=1 full-cache-hit trimming, `reasoning_content` plumbing, ZAYA
-        // reasoning stamps, and JangPress overlay load hygiene. `b350af6`
-        // preserves DSV4 JANGTQ-K routed expert layer bit plans, skips routed
-        // bit-plan metadata in generic quantization decoding, and wires DSV4
-        // routed MoE top-k into the lower-only runtime override path.
-        // `6de602c` makes DSV4's fallback chat template byte-match the
-        // canonical multi-turn encoder so UI-generated cache boundaries can
-        // be reused on growing chat prompts. `ad1d231` synchronizes before and
-        // after safetensors disk writes against the GPU stream after generation.
-        // `c0f8b3b` adds Nemotron Omni live-voice handoff support and preserves
-        // pre-encoded Parakeet/audio embeddings. `e497f61` adds the reusable
-        // retained live PCM buffer plus a streaming cursor for VAD/call-mode
-        // polling without losing the final full-turn waveform. `638024b`
-        // adds a tracked OmniAudioLatencyBench for raw PCM vs pre-encoded
-        // Parakeet call-mode measurements. `fb8fb39` makes Omni media cache
-        // restore token-aware and records prompt/media topology in the bench
-        // output. `b57fe98` refreshes the Parakeet/RADIO integration docs
-        // consumed by Osaurus live-voice work. `81c8ef7` adds the
-        // OmniAudioChunkStabilityBench proof that current Parakeet embeddings
-        // cannot be concatenated safely across independently encoded chunks.
-        // `f728718` fixes DSV4 Flash long-prompt HSA selection by masking
-        // future compressed-pool chunks before indexer top-k. `6561a72`
-        // preserves DSV4's ratio-4 overlap-compressor state across decode
-        // calls, preventing the previous complete pool window from being
-        // zeroed after a single-token generation boundary. `e1280c3` is a
-        // build-time fix that breaks up a nested ternary + four-level `??`
-        // chain in LLMModelFactory.swift that the Swift type checker could
-        // not solve within its time budget; runtime behavior is unchanged.
-        let currentVmlxRevision = "e1280c3978d68e9204006923e922e62cb2ea5628"
+        // This revision keeps the consolidated vmlx-swift pin for Osaurus
+        // with vendored Jinja/Hub/Tokenizers/Transformers exposed through
+        // VMLX-prefixed products. That avoids Xcode PIF duplicate-product
+        // collisions with the app graph while keeping yyjson as one shared C
+        // dependency. Osaurus must not carry SwiftPM moduleAliases for that
+        // collision.
+        let currentVmlxRevision = "968bc868ef7b31d6cbaed3d12720310e923d2627"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
-        #expect(!workspaceResolved.contains("b57fe98845bd1f678bd8f722dc50dba56f11d029"))
-        #expect(!appResolved.contains("b57fe98845bd1f678bd8f722dc50dba56f11d029"))
-        #expect(!appResolved.contains("fb8fb3959ac97598c6b4ddeba0516f01d84ddf0e"))
-        #expect(!workspaceResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
-        #expect(!appResolved.contains("638024bae655b93b1da92385ce9fb4935584fb64"))
-        #expect(!workspaceResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
-        #expect(!appResolved.contains("e497f61c3a68c6d70334d8a14a7ad0a58864af9b"))
-        #expect(!workspaceResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
-        #expect(!appResolved.contains("c0f8b3b1e87f92983bb82f8ace2ec6fd3779c471"))
-        #expect(!workspaceResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
-        #expect(!appResolved.contains("ad1d23199b056ed502124717e6ca8877f2fb303a"))
-        #expect(!workspaceResolved.contains("6de602c6d18daf2c1a07cef16b79b507a25feafd"))
-        #expect(!appResolved.contains("6de602c6d18daf2c1a07cef16b79b507a25feafd"))
-        #expect(!workspaceResolved.contains("b350af6daad0d25c39335356f56de2ae8d70226c"))
-        #expect(!appResolved.contains("b350af6daad0d25c39335356f56de2ae8d70226c"))
-        #expect(!workspaceResolved.contains("541b380784f812eef9098f370eebaea2ae4948c9"))
-        #expect(!appResolved.contains("541b380784f812eef9098f370eebaea2ae4948c9"))
-        #expect(!workspaceResolved.contains("f07214428be2a6ab742a992075c844f2c78dabaf"))
-        #expect(!appResolved.contains("f07214428be2a6ab742a992075c844f2c78dabaf"))
-        #expect(manifest.contains("d8c2bb2"))
-        #expect(manifest.contains("DeepseekV4Cache"))
-        #expect(manifest.contains("Laguna include-only bundles"))
+        #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
+        #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
+        #expect(!manifest.contains("https://github.com/osaurus-ai/mlx-swift"))
+        #expect(!manifest.contains("https://github.com/osaurus-ai/swift-transformers"))
+        #expect(!manifest.contains("https://github.com/osaurus-ai/Jinja.git"))
+        #expect(manifest.contains(".product(name: \"MLX\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"MLXLLM\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"MLXVLM\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"MLXLMCommon\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"VMLXTokenizers\", package: \"vmlx-swift\")"))
+        #expect(manifest.contains(".product(name: \"VMLXJinja\", package: \"vmlx-swift\")"))
     }
 
-    @Test("SwiftPM graph stays on Osaurus transformers/Jinja chain")
-    func swiftPMGraphUsesOsaurusTransformerForks() throws {
+    @Test("DSV4 renderer checklist keeps invalid generic flags out of CLI preview")
+    func dsv4RendererChecklistTracksInvalidGenericFlags() throws {
+        let switchDoc = try Self.source("../../docs/VMLX_SWIFT_SINGLE_PACKAGE_SWITCH_2026_05_18.md")
+        let runtimeDoc = try Self.source("../../docs/INFERENCE_RUNTIME.md")
+        let liveMatrix = try Self.source("../../docs/VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md")
+
+        for required in [
+            "native DSV4 cache copy",
+            "SWA+CSA+HSA",
+            "DeepseekV4Cache",
+            "block-size control is fixed/disabled at 256",
+            "generic KV q4/q8 controls are disabled",
+            "pool quant state is visible",
+            "JIT is disabled",
+            "generation defaults shown in the UI come from model metadata",
+        ] {
+            #expect(switchDoc.contains(required), "missing DSV4 renderer requirement: \(required)")
+        }
+
+        for required in [
+            "native DSV4 cache copy present",
+            "block size fixed/disabled at 256",
+            "generic KV q4/q8 disabled",
+            "pool quant visible",
+            "JIT disabled",
+            "generation defaults shown from `generation_config.json` / `jang_config.json` metadata",
+        ] {
+            #expect(liveMatrix.contains(required), "missing live matrix DSV4 renderer requirement: \(required)")
+        }
+
+        for invalidFlag in [
+            "--kv-cache-quantization",
+            "--enable-jit",
+            "--is-mllm",
+            "--speculative-model",
+        ] {
+            #expect(switchDoc.contains(invalidFlag))
+            #expect(runtimeDoc.contains(invalidFlag))
+            #expect(liveMatrix.contains(invalidFlag))
+        }
+
+        #expect(switchDoc.contains("fake sampler clamps"))
+        #expect(switchDoc.contains("forced repetition penalties"))
+        #expect(switchDoc.contains("Forced behavior cleanup is part of the switch"))
+        #expect(switchDoc.contains("forced `</think>` close"))
+        #expect(switchDoc.contains("token/logit shaping"))
+        #expect(switchDoc.contains("generic cache"))
+    }
+
+    @Test("vmlx switch does not commit PR1147 live-gate artifacts")
+    func vmlxSwitchDoesNotCommitPR1147LiveGateArtifacts() throws {
+        let repoRoot = Self.packageRoot()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let bannedRelativePaths = [
+            "docs/internal/live-gates",
+            "scripts/pr1147_collect_bundle_census.py",
+            "scripts/pr1147_http_route_probe.py",
+            "scripts/pr1147_keychain_safe_app_launch.sh",
+            "scripts/pr1147_live_sequence_probe.py",
+            "scripts/tests/test_pr1147_live_sequence_probe.py",
+        ]
+
+        for relativePath in bannedRelativePaths {
+            let url = repoRoot.appendingPathComponent(relativePath)
+            #expect(
+                !FileManager.default.fileExists(atPath: url.path),
+                "\(relativePath) is a private PR1147 live-gate artifact and must not be committed"
+            )
+        }
+    }
+
+    @Test("SwiftPM graph keeps vmlx inference modules unshadowed")
+    func swiftPMGraphUsesConsolidatedVMLXRuntime() throws {
         let manifest = try Self.source("Package.swift")
         let workspaceMirrors = try Self.source(
             "../../osaurus.xcworkspace/xcshareddata/swiftpm/configuration/mirrors.json"
@@ -150,13 +253,25 @@ struct RuntimePolicySourceTests {
         )
         let contributing = try Self.source("../../docs/CONTRIBUTING.md")
 
-        #expect(manifest.contains("https://github.com/osaurus-ai/swift-transformers"))
-        #expect(manifest.contains("087a66b17e482220b94909c5cf98688383ae481a"))
-        #expect(manifest.contains("https://github.com/osaurus-ai/Jinja.git"))
-        #expect(manifest.contains("58d21aa5b69fdd9eb7e23ce2c3730f47db8e0c9d"))
-        #expect(manifest.contains(".product(name: \"Jinja\", package: \"jinja\")"))
-        #expect(!manifest.contains("https://github.com/huggingface/swift-transformers\","))
-        #expect(!manifest.contains("https://github.com/osaurus-ai/swift-jinja"))
+        let tokenizerLoader = try Self.source(
+            "Services/ModelRuntime/SwiftTransformersTokenizerLoader.swift"
+        )
+        let jinjaTests = try Self.source("Tests/Service/JinjaTemplateCompatibilityTests.swift")
+        let acknowledgements = try Self.source("../../App/osaurus/Acknowledgements.json")
+        let acknowledgementFallback = try Self.source("Views/Management/AcknowledgementsView.swift")
+        let acknowledgementGenerator = try Self.source("../../scripts/release/generate_acknowledgements.py")
+
+        #expect(!manifest.contains("vmlxRuntimeModuleAliases"))
+        #expect(!manifest.contains("moduleAliases:"))
+        #expect(manifest.contains("https://github.com/mattt/eventsource.git"))
+        #expect(manifest.contains("traits: [.trait(name: \"AsyncHTTPClient\")]"))
+        #expect(!manifest.contains("https://github.com/ibireme/yyjson.git"))
+        #expect(manifest.contains(".product(name: \"MCP\", package: \"swift-sdk\")"))
+        #expect(manifest.contains(".product(name: \"VecturaKit\", package: \"VecturaKit\")"))
+        #expect(tokenizerLoader.contains("import VMLXTokenizers"))
+        #expect(!tokenizerLoader.contains("import Tokenizers"))
+        #expect(jinjaTests.contains("import VMLXJinja"))
+        #expect(!jinjaTests.contains("import Jinja"))
 
         for mirrors in [workspaceMirrors, appProjectMirrors] {
             #expect(mirrors.contains("\"original\" : \"https://github.com/huggingface/swift-transformers\""))
@@ -167,9 +282,90 @@ struct RuntimePolicySourceTests {
             #expect(mirrors.contains("\"mirror\" : \"https://github.com/osaurus-ai/Jinja.git\""))
         }
 
-        #expect(contributing.contains("Osaurus-owned `swift-transformers` / `Jinja` chain"))
-        #expect(contributing.contains("Jinja parser fix at `58d21aa`"))
+        #expect(contributing.contains("single consolidated `vmlx-swift` pin"))
+        #expect(contributing.contains("prefixed inside `vmlx-swift`"))
         #expect(contributing.contains("Keep the two mirror files in sync"))
+
+        for generatedText in [acknowledgements, acknowledgementFallback, acknowledgementGenerator] {
+            #expect(generatedText.contains("vmlx-swift"))
+            #expect(!generatedText.contains("mlx-swift-lm"))
+            #expect(!generatedText.contains("\"identity\": \"mlx-swift\""))
+        }
+        #expect(acknowledgementGenerator.contains("script_dir.parent.parent"))
+    }
+
+    @Test("Current runtime docs name consolidated vmlx-swift package")
+    func currentRuntimeDocsDoNotTeachOldPackageGraph() throws {
+        for docPath in [
+            "../../docs/OpenAI_API_GUIDE.md",
+            "../../docs/FEATURES.md",
+            "../../docs/DEVELOPER_TOOLS.md",
+            "../../docs/MODEL_COMPATIBILITY_RESEARCH.md",
+            "../../docs/MODEL_IDLE_RESIDENCY_SPEC.md",
+            "../../docs/INFERENCE_RUNTIME.md",
+        ] {
+            let doc = try Self.source(docPath)
+            #expect(!doc.contains("vmlx-swift-lm"), "\(docPath) still names the retired direct inference package")
+        }
+    }
+
+    @Test("Current runtime source comments name consolidated vmlx-swift package")
+    func currentRuntimeSourcesDoNotTeachOldPackageGraph() throws {
+        for relativePath in [
+            "Package.swift",
+            "AppDelegate.swift",
+        ] {
+            let source = try Self.source(relativePath)
+            #expect(
+                !source.contains("vmlx-swift-lm"),
+                "\(relativePath) still names the retired direct inference package"
+            )
+            #expect(
+                !source.contains("mlx-swift-lm"),
+                "\(relativePath) still names the retired direct inference package"
+            )
+        }
+
+        for relativePath in [
+            "Models",
+            "Services",
+            "Utils",
+            "Views",
+            "Managers",
+        ] {
+            for url in try Self.swiftFiles(under: relativePath) where !url.path.contains("/.build/") {
+                let source = try String(contentsOf: url, encoding: .utf8)
+                #expect(
+                    !source.contains("vmlx-swift-lm"),
+                    "\(url.path) still names the retired direct inference package"
+                )
+                #expect(
+                    !source.contains("mlx-swift-lm"),
+                    "\(url.path) still names the retired direct inference package"
+                )
+            }
+        }
+    }
+
+    @Test("Osaurus source does not import unvendored tokenizer or template modules")
+    func osaurusSourceUsesVMLXPrefixedTokenizerAndTemplateModules() throws {
+        let disallowedImports = [
+            "import Tokenizers",
+            "import Jinja",
+            "import Hub",
+            "import Transformers",
+        ]
+
+        for url in try Self.swiftFiles(under: ".") where !url.path.contains("/.build/") {
+            let source = try String(contentsOf: url, encoding: .utf8)
+            for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                #expect(
+                    !disallowedImports.contains(trimmed),
+                    "\(url.path) imports \(trimmed); use the VMLX-prefixed products from vmlx-swift"
+                )
+            }
+        }
     }
 
     /// Lock the post-generation SSM re-derive opt-out. vmlx defaults
@@ -371,8 +567,8 @@ struct RuntimePolicySourceTests {
         let segments = handler.components(separatedBy: "StreamingToolHint.isSentinel(delta)")
 
         #expect(
-            segments.count == 6,
-            "HTTPHandler should have five generic StreamingToolHint sentinel filters; update this guard when adding another HTTP stream writer"
+            segments.count == 7,
+            "HTTPHandler should have six generic StreamingToolHint sentinel filters; update this guard when adding another HTTP stream writer"
         )
 
         for segment in segments.dropLast() {
@@ -459,6 +655,21 @@ struct RuntimePolicySourceTests {
             ),
             "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.default, including load-time memory caps, mmap safetensors, and JANGTQ prestack/alignment"
         )
+    }
+
+    @Test("ModelRuntime does not repair reasoning parser output")
+    func modelRuntimeDoesNotRepairReasoningParserOutput() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let scrubberPath = Self.packageRoot()
+            .appendingPathComponent("Services/ModelRuntime/ThinkTagScrubber.swift")
+            .path
+
+        #expect(!FileManager.default.fileExists(atPath: scrubberPath))
+        #expect(!runtime.contains("ThinkTagScrubber"))
+        #expect(!runtime.contains(".scrub("))
+        #expect(!runtime.contains("scrubber.flush"))
+        #expect(runtime.contains("case .reasoning(let s):"))
+        #expect(runtime.contains("StreamingReasoningHint.encode(s)"))
     }
 
     @Test("ModelRuntime wires idle residency around model leases")

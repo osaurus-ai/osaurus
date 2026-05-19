@@ -243,6 +243,34 @@ public struct OpenResponsesInputImagePart: Codable, Sendable {
     }
 }
 
+extension OpenResponsesMessageContent {
+    fileprivate var chatPlainText: String? {
+        let text = plainText
+        return text.isEmpty ? nil : text
+    }
+
+    fileprivate var chatContentParts: [MessageContentPart]? {
+        guard case .parts(let parts) = self else { return nil }
+        var converted: [MessageContentPart] = []
+        var hasMedia = false
+
+        for part in parts {
+            switch part {
+            case .inputText(let textPart):
+                converted.append(.text(textPart.text))
+            case .inputImage(let imagePart):
+                guard let imageURL = imagePart.image_url, !imageURL.isEmpty else {
+                    continue
+                }
+                converted.append(.imageUrl(url: imageURL, detail: imagePart.detail))
+                hasMedia = true
+            }
+        }
+
+        return hasMedia ? converted : nil
+    }
+}
+
 /// Function call output item (tool result)
 public struct OpenResponsesFunctionCallOutputItem: Codable, Sendable {
     public let type: String
@@ -811,7 +839,13 @@ extension OpenResponsesRequest {
             for item in items {
                 switch item {
                 case .message(let messageItem):
-                    messages.append(ChatMessage(role: messageItem.role, content: messageItem.content.plainText))
+                    messages.append(
+                        ChatMessage(
+                            role: messageItem.role,
+                            content: messageItem.content.chatPlainText,
+                            contentParts: messageItem.content.chatContentParts
+                        )
+                    )
                 case .functionCall(let callItem):
                     // A prior model-issued function call echoed back as input for multi-turn history.
                     // Convert to an assistant message with tool_calls so the downstream Chat

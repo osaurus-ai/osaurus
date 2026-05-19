@@ -86,6 +86,8 @@ struct CapabilityFromModelIdTests {
         "LiquidAI/LFM2-VL-1.6B",
         "google/gemma-3-12b-it",
         "google/gemma-4-it-mxfp4",
+        "Zyphra/ZAYA1-VL-8B-MXFP4",
+        "zaya1-vl-8b-mxfp4",  // flat-layout picker form
     ])
     func imageOnlyBundles(_ id: String) {
         let cap = ModelMediaCapabilities.from(modelId: id)
@@ -209,6 +211,7 @@ struct CapabilityFromDirectoryTests {
         "pixtral", "mistral3", "mistral3_text",
         "lfm2_vl", "glm_ocr",
         "gemma3", "gemma4",
+        "zaya1_vl",
     ])
     func visionConfigImageOnlyFamilies(_ modelType: String) throws {
         let dir = try makeBundle(modelType: modelType, hasVisionConfig: true, hasOmniSidecar: false)
@@ -323,6 +326,14 @@ struct DragDropAcceptMatrixTests {
         #expect(!cap.supportsAudio)
     }
 
+    /// ZAYA1-VL is image-only until the vmlx engine has native video support.
+    @Test func zayaVLAcceptsImageRejectsVideoAudio() {
+        let cap = ModelMediaCapabilities.from(modelId: "Zyphra/ZAYA1-VL-8B-MXFP4")
+        #expect(cap.supportsImage)
+        #expect(!cap.supportsVideo)
+        #expect(!cap.supportsAudio)
+    }
+
     /// VL model with video (Qwen 3 VL) → image + video OK, audio rejected.
     @Test func imageVideoAcceptsAudioRejected() {
         let cap = ModelMediaCapabilities.from(modelId: "Qwen/Qwen3-VL-8B")
@@ -393,6 +404,18 @@ struct DragDropAcceptMatrixTests {
                 attempted: "audio",
                 shouldAccept: false
             ),
+            // Turn 8: ZAYA1-VL image-only + image → accept
+            .init(
+                modelId: "Zyphra/ZAYA1-VL-8B-MXFP4",
+                attempted: "image",
+                shouldAccept: true
+            ),
+            // Turn 9: ZAYA1-VL video → REJECT until native video support exists
+            .init(
+                modelId: "Zyphra/ZAYA1-VL-8B-MXFP4",
+                attempted: "video",
+                shouldAccept: false
+            ),
         ]
         for (i, t) in turns.enumerated() {
             let cap = ModelMediaCapabilities.from(modelId: t.modelId)
@@ -445,6 +468,9 @@ struct EndToEndComposerAcceptSetTests {
         ("OsaurusAI/Holo3-35B-A3B-mxfp4", "image", true),  // Holo3 has vision_config
         ("OsaurusAI/Holo3-35B-A3B-mxfp4", "video", true),
         ("OsaurusAI/Holo3-35B-A3B-mxfp4", "audio", false),  // image+video, no audio
+        ("Zyphra/ZAYA1-VL-8B-MXFP4", "image", true),
+        ("Zyphra/ZAYA1-VL-8B-MXFP4", "video", false),
+        ("Zyphra/ZAYA1-VL-8B-MXFP4", "audio", false),
         ("JANGQ-AI/Laguna-XS.2-JANGTQ", "image", false),
         ("JANGQ-AI/Laguna-XS.2-JANGTQ", "video", false),
         ("JANGQ-AI/MiniMax-M2.7-Small-JANGTQ", "audio", false),

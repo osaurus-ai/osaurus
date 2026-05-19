@@ -20,6 +20,23 @@ private final class SendableBool: @unchecked Sendable {
     }
 }
 
+private final class OneShotContinuation<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+
+    func resume(_ continuation: CheckedContinuation<Value, Never>, returning value: Value) -> Bool {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return false
+        }
+        didResume = true
+        lock.unlock()
+        continuation.resume(returning: value)
+        return true
+    }
+}
+
 private final class HTTPTraceRecorder: @unchecked Sendable {
     private let trace: TTFTTrace?
     private let lock = NSLock()
@@ -344,6 +361,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     method: method,
                     path: path
                 )
+            } else if head.method == .GET, path == "/admin/cache-stats" {
+                handleCacheStatsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path
+                )
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
@@ -352,6 +378,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleShowEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
                 handleChatCompletions(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/generate" {
+                handleOllamaGenerate(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat" {
                 handleChatNDJSON(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/mcp/health" {
@@ -480,6 +508,133 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             stateRef.value.requestHead = nil
             stateRef.value.requestBodyBuffer = nil
+        }
+    }
+
+    /// `/admin/cache-stats` exposes the current vmlx `CacheCoordinator`
+    /// counters for loaded models. It is intentionally read-only and does not
+    /// load a model by itself; an empty `models` array is the correct cold
+    /// startup state.
+    private func handleCacheStatsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+
+        Task(priority: .userInitiated) {
+            let cached = await ModelRuntime.shared.cachedModelSummaries()
+            var aggregate: [String: Int] = [
+                "prefix_hits": 0,
+                "prefix_misses": 0,
+                "paged_hits": 0,
+                "paged_misses": 0,
+                "disk_l2_hits": 0,
+                "disk_l2_misses": 0,
+                "disk_l2_stores": 0,
+                "ssm_companion_hits": 0,
+                "ssm_companion_misses": 0,
+                "ssm_companion_rederives": 0,
+            ]
+
+            let models: [[String: Any]] = cached.map { summary in
+                var row: [String: Any] = [
+                    "name": summary.name,
+                    "is_current": summary.isCurrent,
+                    "weights_bytes": summary.bytes,
+                ]
+                guard let stats = summary.cacheStats else {
+                    row["cache_enabled"] = false
+                    return row
+                }
+
+                row["cache_enabled"] = true
+                row["is_hybrid"] = stats.isHybrid
+                row["is_paged_incompatible"] = stats.isPagedIncompatible
+
+                var paged: [String: Any] = ["enabled": stats.pagedEnabled]
+                if let pagedStats = stats.pagedStats {
+                    paged["total_blocks"] = pagedStats.totalBlocks
+                    paged["allocated_blocks"] = pagedStats.allocatedBlocks
+                    paged["free_blocks"] = pagedStats.freeBlocks
+                    paged["hits"] = pagedStats.cacheHits
+                    paged["misses"] = pagedStats.cacheMisses
+                    paged["evictions"] = pagedStats.evictions
+                    aggregate["paged_hits", default: 0] += pagedStats.cacheHits
+                    aggregate["paged_misses", default: 0] += pagedStats.cacheMisses
+                    aggregate["prefix_hits", default: 0] += pagedStats.cacheHits
+                    aggregate["prefix_misses", default: 0] += pagedStats.cacheMisses
+                }
+                row["paged_cache"] = paged
+
+                var disk: [String: Any] = ["enabled": stats.diskEnabled]
+                if let diskStats = stats.diskStats {
+                    disk["hits"] = diskStats.hits
+                    disk["misses"] = diskStats.misses
+                    disk["stores"] = diskStats.stores
+                    disk["max_size_bytes"] = diskStats.maxSizeBytes
+                    aggregate["disk_l2_hits", default: 0] += diskStats.hits
+                    aggregate["disk_l2_misses", default: 0] += diskStats.misses
+                    aggregate["disk_l2_stores", default: 0] += diskStats.stores
+                    aggregate["prefix_hits", default: 0] += diskStats.hits
+                    aggregate["prefix_misses", default: 0] += diskStats.misses
+                }
+                row["block_disk_store"] = disk
+
+                let ssm = stats.ssmStats
+                row["ssm_companion_cache"] = [
+                    "hits": ssm.hits,
+                    "misses": ssm.misses,
+                    "rederives": ssm.reDerives,
+                ]
+                aggregate["ssm_companion_hits", default: 0] += ssm.hits
+                aggregate["ssm_companion_misses", default: 0] += ssm.misses
+                aggregate["ssm_companion_rederives", default: 0] += ssm.reDerives
+                return row
+            }
+
+            let obj: [String: Any] = [
+                "status": "ok",
+                "timestamp": Date().ISO8601Format(),
+                "models": models,
+                "aggregate": aggregate,
+            ]
+            let data = try? JSONSerialization.data(withJSONObject: obj)
+            let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")]
+                + cors
+
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: .ok,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
         }
     }
 
@@ -3938,6 +4093,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // assistant content. Add a `thinking` field on the
                     // NDJSON response shape (and decode reasoning here
                     // first) when an upstream client requests it.
+                    if StreamingReasoningHint.decode(delta) != nil { continue }
                     if StreamingStatsHint.decode(delta) != nil { continue }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     hop {
@@ -4033,6 +4189,282 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             }
         }
+    }
+
+    private struct OllamaGenerateOptions: Decodable, Sendable {
+        let num_predict: Int?
+        let temperature: Float?
+        let top_p: Float?
+        let stop: FlexibleStringArray?
+    }
+
+    private struct OllamaGenerateRequest: Decodable, Sendable {
+        let model: String
+        let prompt: String
+        let system: String?
+        let stream: Bool?
+        let options: OllamaGenerateOptions?
+    }
+
+    private struct FlexibleStringArray: Decodable, Sendable {
+        let values: [String]
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let value = try? container.decode(String.self) {
+                values = [value]
+            } else {
+                values = (try? container.decode([String].self)) ?? []
+            }
+        }
+    }
+
+    private func handleOllamaGenerate(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        guard let ollama = try? JSONDecoder().decode(OllamaGenerateRequest.self, from: data) else {
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "text/plain; charset=utf-8")],
+                body: "Invalid request format"
+            )
+            logRequest(
+                method: "POST",
+                path: "/generate",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request format"
+            )
+            return
+        }
+
+        let maxTokens = ollama.options?.num_predict.flatMap { $0 > 0 ? $0 : nil }
+        var messages: [ChatMessage] = []
+        if let system = ollama.system?.trimmingCharacters(in: .whitespacesAndNewlines), !system.isEmpty {
+            messages.append(ChatMessage(role: "system", content: system))
+        }
+        messages.append(ChatMessage(role: "user", content: ollama.prompt))
+        let chatRequest = ChatCompletionRequest(
+            model: ollama.model,
+            messages: messages,
+            temperature: ollama.options?.temperature,
+            max_tokens: maxTokens,
+            stream: ollama.stream,
+            top_p: ollama.options?.top_p,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: ollama.options?.stop?.values,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        let shouldStream = ollama.stream ?? true
+        if !shouldStream {
+            handleOllamaGenerateNonStreaming(
+                head: head,
+                context: context,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBodyString: requestBodyString,
+                request: chatRequest
+            )
+            return
+        }
+
+        let writer = OllamaGenerateNDJSONResponseWriter()
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let writerBound = NIOLoopBound(writer, eventLoop: loop)
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        hop {
+            writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
+        }
+
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+        let logModel = chatRequest.model
+        let logTemperature = chatRequest.temperature ?? 0.7
+        let logMaxTokens = chatRequest.max_tokens ?? 1024
+        let logSelf = self
+        Task(priority: .userInitiated) {
+            do {
+                let stream = try await self.chatEngine.streamChat(request: chatRequest)
+                for try await delta in stream {
+                    if StreamingReasoningHint.decode(delta) != nil { continue }
+                    if StreamingStatsHint.decode(delta) != nil { continue }
+                    if StreamingToolHint.isSentinel(delta) { continue }
+                    hop {
+                        writerBound.value.writeContent(
+                            delta,
+                            model: chatRequest.model,
+                            created: Int(Date().timeIntervalSince1970),
+                            context: ctx.value
+                        )
+                    }
+                }
+                hop {
+                    writerBound.value.writeFinish(
+                        chatRequest.model,
+                        created: Int(Date().timeIntervalSince1970),
+                        context: ctx.value
+                    )
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/generate",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    temperature: logTemperature,
+                    maxTokens: logMaxTokens,
+                    finishReason: .stop
+                )
+            } catch {
+                hop {
+                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/generate",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    temperature: logTemperature,
+                    maxTokens: logMaxTokens,
+                    finishReason: .error,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func handleOllamaGenerateNonStreaming(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        requestBodyString: String?,
+        request: ChatCompletionRequest
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        Task(priority: .userInitiated) {
+            do {
+                let response = try await self.chatEngine.completeChat(request: request)
+                let content = response.choices.first?.message.content ?? ""
+                let body = Self.ollamaGenerateJSON(
+                    model: request.model,
+                    response: content,
+                    done: true
+                )
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/generate",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: request.model,
+                    tokensInput: response.usage.prompt_tokens,
+                    tokensOutput: response.usage.completion_tokens,
+                    temperature: request.temperature ?? 0.7,
+                    maxTokens: request.max_tokens ?? 1024,
+                    finishReason: .stop
+                )
+            } catch {
+                let body = Self.ollamaGenerateErrorJSON(error.localizedDescription)
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .internalServerError,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/generate",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseStatus: 500,
+                    startTime: startTime,
+                    model: request.model,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private static func ollamaGenerateJSON(model: String, response: String, done: Bool) -> String {
+        let object: [String: Any] = [
+            "model": model,
+            "created_at": Date().ISO8601Format(),
+            "response": response,
+            "done": done,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return #"{"done":true}"#
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func ollamaGenerateErrorJSON(_ message: String) -> String {
+        let object: [String: Any] = [
+            "error": [
+                "message": message,
+                "type": "internal_error",
+            ],
+            "done": true,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return #"{"error":{"message":"internal error","type":"internal_error"},"done":true}"#
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
     // MARK: - SSE keepalive
@@ -4269,10 +4701,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 models.insert(OpenAIModel(modelName: "foundation"), at: 0)
             }
 
-            // Get remote provider models
-            let remoteModels = await MainActor.run {
-                RemoteProviderManager.shared.getOpenAIModels()
-            }
+            // Remote provider startup may be blocked on Keychain auth. Keep
+            // local model listing responsive and append remote models only
+            // when the MainActor snapshot is immediately available.
+            let remoteModels = await Self.remoteOpenAIModelsSnapshot()
             models.append(contentsOf: remoteModels)
 
             let response = ModelsResponse(data: models)
@@ -4355,10 +4787,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 models.insert(fm, at: 0)
             }
 
-            // Get remote provider models
-            let remoteModels = await MainActor.run {
-                RemoteProviderManager.shared.getOpenAIModels()
-            }
+            // Keep Ollama tags usable for local models even if remote
+            // provider auth is blocked during app startup.
+            let remoteModels = await Self.remoteOpenAIModelsSnapshot()
             for var remoteModel in remoteModels {
                 remoteModel.modified_at = now
                 remoteModel.size = 0
@@ -4399,6 +4830,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 responseStatus: 200,
                 startTime: logStartTime
             )
+        }
+    }
+
+    private static func remoteOpenAIModelsSnapshot(timeoutNanoseconds: UInt64 = 250_000_000) async
+        -> [OpenAIModel]
+    {
+        await withCheckedContinuation { continuation in
+            let once = OneShotContinuation<[OpenAIModel]>()
+            let modelsTask = Task {
+                let models = await MainActor.run {
+                    RemoteProviderManager.shared.getOpenAIModels()
+                }
+                _ = once.resume(continuation, returning: models)
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                if once.resume(continuation, returning: []) {
+                    modelsTask.cancel()
+                }
+            }
         }
     }
 

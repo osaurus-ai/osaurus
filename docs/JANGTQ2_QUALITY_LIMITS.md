@@ -41,20 +41,17 @@ documented quality floor:
   default `2` because Swift checked the wrong fallback). Resolved
   upstream in vmlx + HF bundle metadata; ZAYA configs are flat (no
   `text_config` wrapper) so the bug doesn't apply.
-* The osaurus-side wiring in this PR is topology- and family-specific:
-  Ling keeps the `enable_thinking=false` clamp plus reasoning-merge
-  fallback because it is served as a non-reasoning chat family; ZAYA keeps
-  the family matcher only for hybrid cache topology and default-off prompt
-  context, while explicit `disableThinking=false` is preserved as a real
-  reasoning opt-in. The shared pieces are eager `setHybrid(true)` and
-  SSM re-derive disable. This is correct on metadata reading and stream
-  routing — proven by the full hybrid-family unit-test suite + direct API
-  smokes at clean prompts (Ling 3-turn recall + math, ZAYA 3-turn recall
-  + math).
-* The Ling reasoning-merge fix doesn't *cause* degeneration; it *surfaces*
-  it. Pre-fix, the same loop streamed silently to the hidden `.reasoning`
-  channel and showed up as the "30 s freeze before stream end" symptom.
-  ZAYA reasoning-capable output remains on the reasoning channel.
+* The osaurus-side wiring in PR #1147 is topology- and family-specific:
+  Ling defaults `disableThinking=true` to emit the upstream Bailing
+  "detailed thinking off" directive, but explicit `disableThinking=false`
+  and positive reasoning requests are preserved as real opt-ins. Osaurus no
+  longer merges Ling `.reasoning` into visible content or suppresses
+  unclosed-reasoning flags; if a no-thinking row emits reasoning, that row
+  stays red for template/parser/runtime root cause. ZAYA keeps the family
+  matcher only for hybrid cache topology and default-off prompt context,
+  while explicit `disableThinking=false` is preserved as a real reasoning
+  opt-in. The shared pieces are eager `setHybrid(true)` and SSM re-derive
+  disable.
 
 ## Cross-family JANGTQ2 status (osaurus catalog as of 2026-05-07)
 
@@ -91,13 +88,12 @@ documented quality floor:
 * No osaurus-side `max_tokens` cap for JANGTQ2 — leaving the knob to
   user / API caller, with the doc above as the rationale for picking
   a sensible value.
-* The reasoning-merge stays in for Ling only: Ling is served as a
-  non-reasoning chat family in osaurus, so runaway `<think>` text is
-  promoted to the visible token stream instead of freezing the UI on a
-  hidden reasoning channel. ZAYA is reasoning-capable; osaurus must trust
-  its bundle stamps, default `enable_thinking=false` for short chat UX, and
-  preserve explicit opt-in requests (`disableThinking=false`) as real
-  reasoning-channel output.
+* No Ling reasoning-merge remains in Osaurus: Ling defaults to
+  `enable_thinking=false` through profile policy, explicit opt-in reaches
+  vmlx, and any reasoning stream remains on the reasoning channel. ZAYA is
+  reasoning-capable; osaurus must trust its bundle stamps, default
+  `enable_thinking=false` for short chat UX, and preserve explicit opt-in
+  requests (`disableThinking=false`) as real reasoning-channel output.
 
 ## Pointers to follow-up surface
 

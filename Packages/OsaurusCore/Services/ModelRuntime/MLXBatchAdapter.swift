@@ -478,7 +478,7 @@ struct MLXBatchAdapter {
             switch effort {
             case "max":
                 context["enable_thinking"] = true
-                context["reasoning_effort"] = Self.dsv4RawMaxEnabled ? "max" : "high"
+                context["reasoning_effort"] = "max"
             case "high":
                 context["enable_thinking"] = true
                 context["reasoning_effort"] = "high"
@@ -500,7 +500,11 @@ struct MLXBatchAdapter {
         }
 
         if ModelFamilyNames.isLingFamily(modelName) {
-            context["enable_thinking"] = false
+            if let disableThinking {
+                context["enable_thinking"] = !disableThinking
+            } else {
+                context["enable_thinking"] = hasPositiveReasoningEffort
+            }
             return context
         }
 
@@ -539,21 +543,6 @@ struct MLXBatchAdapter {
         }
         context["enable_thinking"] = true
         return context
-    }
-
-    /// DSV4's raw `max` effort prepends an extreme "absolute maximum" thinking
-    /// preface. Keep the UI's Max segment on the stable high-thinking rail by
-    /// default; enable raw max only for explicit diagnostic runs.
-    private static var dsv4RawMaxEnabled: Bool {
-        switch ProcessInfo.processInfo.environment["OSAURUS_DSV4_RAW_MAX"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        {
-        case "1", "true", "yes", "on":
-            return true
-        default:
-            return false
-        }
     }
 
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {

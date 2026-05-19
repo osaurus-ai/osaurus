@@ -6,7 +6,7 @@
 //  single conceptual gate. Exists so we have one place to add MLX-vs-CoreML
 //  serialization back if a future MLX caller needs exclusive Metal access.
 //
-//  Today MLX inference is fully delegated to vmlx-swift-lm's `BatchEngine`,
+//  Today MLX inference is fully delegated to vmlx-swift's `BatchEngine`,
 //  which serializes Metal access from inside the library — the gate's
 //  generation surface was retired together with the osaurus-side scheduler.
 //  Only `MetalSafeEmbedder` calls into this gate; the counter is therefore

@@ -127,7 +127,7 @@ public enum OsaurusPaths {
         root().appendingPathComponent("cache", isDirectory: true)
     }
 
-    /// Disk KV cache directory used by vmlx-swift-lm's `DiskCache` (L2 tier).
+    /// Disk KV cache directory used by vmlx-swift's `DiskCache` (L2 tier).
     /// Stores SQLite index + safetensors blocks keyed by model + token hash.
     public static func diskKVCache() -> URL {
         cache().appendingPathComponent("kv_v2", isDirectory: true)

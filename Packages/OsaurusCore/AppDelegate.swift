@@ -179,7 +179,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await StorageMaintenance.shared.start()
         }
 
-        // DSV4 cache topology is owned by vmlx-swift-lm. Leave
+        // DSV4 cache topology is owned by vmlx-swift. Leave
         // `DSV4_KV_MODE` unset here so the library default uses its
         // production SWA+CSA+HSA hybrid cache; explicit operator env vars
         // remain honored by vmlx for diagnostics.
@@ -253,6 +253,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         _ = SpeechConfigurationStore.load()
         ModelPickerItemCache.shared.prewarm()
 
+        // Bind the local HTTP server before heavier optional startup work such
+        // as provider connection, scheduler DB polling, sandbox registration,
+        // or Parakeet/CoreML auto-load can occupy the main actor or accelerator.
+        let serverStartupTask = Task { @MainActor in
+            await serverController.startServer()
+        }
+
+        let storageKeyPrewarmTask = Task.detached(priority: .utility) {
+            do {
+                try StorageKeyManager.shared.prewarmCurrentKey()
+            } catch {
+                NSLog("[Osaurus] Storage key prewarm failed: \(error)")
+            }
+        }
+
         // Auto-connect to enabled providers, then update model cache with remote models
         Task { @MainActor in
             await MCPProviderManager.shared.connectEnabledProviders()
@@ -271,7 +286,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // `*Database.shared.open()` also calls the gate
         // defensively (no-op fast path) for the plugin/HTTP entry
         // points that don't go through this Task.
-        let embeddingInitTask = Task {
+        let embeddingInitTask = Task.detached(priority: .utility) {
+            await storageKeyPrewarmTask.value
             var memoryDBOpened = false
             for attempt in 1 ... 3 {
                 do {
@@ -314,16 +330,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
-        // Auto-start server on app launch
-        Task { @MainActor in
-            await serverController.startServer()
-        }
-
         // Setup global hotkey for Chat overlay (configured)
         applyChatHotkey()
 
         // Auto-load speech model if voice features are enabled
         Task { @MainActor in
+            await serverStartupTask.value
             await SpeechService.shared.autoLoadIfNeeded()
         }
 

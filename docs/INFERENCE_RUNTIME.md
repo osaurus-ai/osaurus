@@ -1,6 +1,6 @@
 # Inference runtime
 
-osaurus's MLX inference path is a thin shell around vmlx-swift-lm's
+osaurus's MLX inference path is a thin shell around `vmlx-swift`'s
 `BatchEngine`. Tool-call parsing, reasoning extraction, KV cache
 management, and per-model scheduling all live inside the library. This
 document describes the small slice osaurus owns.
@@ -62,6 +62,20 @@ DSV4 is intentionally left to vmlx's default cache topology. Osaurus does
 not set `DSV4_KV_MODE`; unset means the production SWA+CSA+HSA
 `DeepseekV4Cache` path. Operator-provided `DSV4_KV_MODE=full` or `tq`
 is treated as a diagnostic override and disables the hybrid pool.
+
+The final DSV4 server settings renderer must also prove the visible settings
+match that topology: native DSV4 cache copy present, paged block size
+fixed/disabled for DSV4 with the expected 256 display row when active metadata
+reports it, generic q4/q8 KV controls disabled, pool quant state visible, JIT
+disabled, and sampling defaults shown from bundle metadata. The CLI preview for
+DSV4 must omit invalid generic flags: `--kv-cache-quantization`, `--enable-jit`,
+`--is-mllm`, and `--speculative-model`.
+
+The broader switch gate is
+[`VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md`](VMLX_SWIFT_OSAURUS_LIVE_MATRIX_2026_05_18.md).
+It requires real Osaurus chat-app and HTTP rows for VLM/omni media, reasoning
+settings, saved-setting isolation, generation defaults, parser leak checks, and
+cache stats before the consolidated package can be called production-clear.
 
 osaurus deliberately does not pass `GenerateParameters.maxKVSize` -- a
 global rotating cache window forced from the app layer conflicted with
@@ -133,7 +147,7 @@ requested batch size. Other errors (e.g. caller-side
 ## Upstream runtime boundaries
 
 These are deliberately not papered over in osaurus because they belong in
-vmlx-swift-lm or mlx-swift, but the app has explicit policy around each one:
+`vmlx-swift`, but the app has explicit policy around each one:
 
 - Ling JANGTQ2 long prompts (`BailingLinearAttention.recurrentGLA`):
   pre-`b9da180`, vmlx dispatched the recurrent loop as `L * layers` small
@@ -141,10 +155,11 @@ vmlx-swift-lm or mlx-swift, but the app has explicit policy around each one:
   bug at ~2 k tokens, surfacing as `EXC_BAD_ACCESS` on Ling JANGTQ2 long
   prompts. `b9da180` ports the recurrent GLA to a fused Metal kernel
   (`bailing_recurrent_gla` via a singleton kernel manager) so the loop
-  runs in one command, eliminating the lifetime bug. Osaurus still
-  forces Ling into a non-reasoning profile (`enable_thinking=false`) and
-  recommends MXFP4/JANGTQ4 for long preambles for the orthogonal
-  JANGTQ2 quality-ceiling reason. See
+  runs in one command, eliminating the lifetime bug. Osaurus now defaults
+  Ling thinking off through the model profile, but preserves explicit
+  user/API opt-in and keeps any `.reasoning` output on the reasoning rail
+  for root-cause visibility. MXFP4/JANGTQ4 remain recommended for long
+  preambles for the orthogonal JANGTQ2 quality-ceiling reason. See
   `LING_JANGTQ2_LONG_PROMPT_CRASH.md`.
 - vmlx pin `b9da180` reorders the SSM re-derive pass to run AFTER the
   generation yields completion `.info`, so the SSE stream no longer
@@ -203,7 +218,7 @@ reasoning gets dropped together with the other sentinels.
 
 | File | Coverage |
 |---|---|
-| `MLXBatchAdapterTests` | Max-batch-size flag clamping; Ling forced thinking-off context; ZAYA default-off but explicit thinking opt-in context; registry-shutdown safety. |
+| `MLXBatchAdapterTests` | Max-batch-size flag clamping; Ling default-off plus explicit thinking opt-in context; ZAYA default-off but explicit thinking opt-in context; registry-shutdown safety. |
 | `ModelResidencyManagerTests` | Timer scheduling, cancellation on new use, never policy, and active-lease protection. |
 | `TaskCoalescerTests` | Single-flight engine-creation discipline and teardown-during-creation races. |
 | `RuntimePolicySourceTests` | Source-level guardrails for DSV4 cache ownership, vmlx pin, SSM re-derive opt-out, idle residency wiring, and max-batch docs. |

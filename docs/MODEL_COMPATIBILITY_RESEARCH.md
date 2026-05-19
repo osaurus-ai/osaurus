@@ -24,7 +24,7 @@ Osaurus owns model discovery, download state, user-visible catalog entries,
 storage paths, model residency policy, request mapping, and health reporting.
 The local generation path delegates model loading, family factories,
 architecture-specific cache geometry, tool-call parsing, reasoning parsing,
-and same-model batching to `vmlx-swift-lm` through `BatchEngine`. That means a
+and same-model batching to `vmlx-swift` through `BatchEngine`. That means a
 new architecture should not be papered over in the host app by renaming
 `model_type`, forcing a prompt template, or bypassing the upstream factory
 registry. Host changes should make unsupported states legible, route verified

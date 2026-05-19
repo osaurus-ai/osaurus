@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Single source of truth for Vision Language Model detection.
-//  Delegates to VLMTypeRegistry from mlx-swift-lm for architecture-based
+//  Delegates to VLMTypeRegistry from vmlx-swift for architecture-based
 //  detection, and checks vision_config in config.json for downloaded models.
 //
 
