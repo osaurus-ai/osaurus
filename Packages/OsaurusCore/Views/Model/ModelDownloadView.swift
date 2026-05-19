@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 
@@ -93,6 +94,25 @@ struct ModelDownloadView: View {
     /// Import-from-Hugging-Face sheet state
     @State private var showImportSheet = false
 
+    /// Cached output of `gridLists`. We used to recompute four filter +
+    /// sort passes from a body computed property, which would re-run on
+    /// every `modelManager.objectWillChange` publish (one per download
+    /// progress chunk). The snapshot is now refreshed only when the
+    /// inputs it actually depends on change (filter state, sort option,
+    /// selected tab, debounced search text, or a throttled
+    /// `modelManager` publish).
+    @State private var gridListsSnapshot = GridLists(
+        suggested: [],
+        others: [],
+        downloaded: [],
+        displayed: []
+    )
+
+    /// Coalesces bursts of `modelManager.objectWillChange` publishes
+    /// (e.g. download progress) so we recompute `gridLists` at most once
+    /// per ~150 ms instead of per chunk.
+    @State private var gridListsRefreshTask: Task<Void, Never>?
+
     // MARK: - Deep Link Support
 
     /// Optional model ID for deep linking (e.g., from URL schemes)
@@ -102,9 +122,13 @@ struct ModelDownloadView: View {
     var deeplinkFile: String? = nil
 
     var body: some View {
-        // compute the grid lists once per body pass and thread them down
-        // so derived properties don't re-run multiple times during animation frames
-        let lists = gridLists
+        // Render from the cached snapshot rather than recomputing the
+        // filter+sort pipeline per body pass. The snapshot is refreshed
+        // by `.onAppear`, by `.onChange` of each user-driven input
+        // (filter / sort / tab / debounced search), and by a throttled
+        // `.onReceive(modelManager)` to absorb the high-frequency
+        // download-progress publishes.
+        let lists = gridListsSnapshot
         return VStack(spacing: 0) {
             headerView(lists: lists)
                 .opacity(hasAppeared ? 1 : 0)
@@ -143,6 +167,22 @@ struct ModelDownloadView: View {
                 try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms delay
                 modelManager.fetchRemoteMLXModels(searchText: searchText)
             }
+
+            refreshGridLists()
+        }
+        .onDisappear {
+            gridListsRefreshTask?.cancel()
+            gridListsRefreshTask = nil
+        }
+        .onChange(of: selectedTab) { _, _ in refreshGridLists() }
+        .onChange(of: sortOption) { _, _ in refreshGridLists() }
+        .onChange(of: filterState) { _, _ in refreshGridLists() }
+        .onChange(of: debouncedSearchText) { _, _ in refreshGridLists() }
+        .onReceive(
+            modelManager.objectWillChange
+                .throttle(for: .milliseconds(200), scheduler: DispatchQueue.main, latest: true)
+        ) { _ in
+            scheduleGridListsRefresh()
         }
         .onChange(of: searchText) { _, newValue in
             // If input looks like a Hugging Face repo, switch to All so it's visible
@@ -1041,7 +1081,7 @@ struct ModelDownloadView: View {
     }
 
     /// Consolidates all list computations. Each input pipeline runs once.
-    private var gridLists: GridLists {
+    private func computeGridLists() -> GridLists {
         let mem = systemMonitor.totalMemoryGB
 
         let availSearched = SearchService.filterModels(modelManager.availableModels, with: debouncedSearchText)
@@ -1064,6 +1104,30 @@ struct ModelDownloadView: View {
         }
 
         return GridLists(suggested: suggested, others: others, downloaded: downloaded, displayed: displayed)
+    }
+
+    /// Eager refresh of the cached snapshot. Called from `.onAppear` and
+    /// from every `.onChange` of a user-driven input — these flips
+    /// should feel immediate.
+    private func refreshGridLists() {
+        gridListsRefreshTask?.cancel()
+        gridListsRefreshTask = nil
+        gridListsSnapshot = computeGridLists()
+    }
+
+    /// Debounced refresh for `modelManager.objectWillChange` bursts so
+    /// the grid doesn't re-filter+sort on every download progress chunk.
+    /// `.throttle` on the publisher already caps to ~5 Hz; the extra
+    /// 50 ms sleep here coalesces any same-tick publishes.
+    private func scheduleGridListsRefresh() {
+        guard gridListsRefreshTask == nil else { return }
+        gridListsRefreshTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            if !Task.isCancelled {
+                gridListsSnapshot = computeGridLists()
+            }
+            gridListsRefreshTask = nil
+        }
     }
 
     private func sortedSuggested(_ filtered: [MLXModel]) -> [MLXModel] {

@@ -640,6 +640,21 @@ final class ToolRegistry: ObservableObject {
     }
 
     // MARK: - Policy / Grants
+
+    /// Returns the explicitly configured policy for a tool, or nil if the
+    /// user has not overridden the default. Reads from the in-memory
+    /// `configuration` snapshot — never hits disk — so SwiftUI rows can
+    /// rely on `objectWillChange` for live updates without re-parsing
+    /// `tools.json` on every body evaluation.
+    ///
+    /// Unlike `policyInfo(for:)`, this works even for tool names that are
+    /// not currently registered (e.g. when the Work tool permission row
+    /// in `ConfigurationView` lists `file_write` before the registry has
+    /// been populated).
+    func configuredPolicy(for name: String) -> ToolPermissionPolicy? {
+        configuration.policy[name]
+    }
+
     func setPolicy(_ policy: ToolPermissionPolicy, for name: String) {
         configuration.setPolicy(policy, for: name)
 

@@ -455,11 +455,11 @@ private struct AgentCard: View {
     private var agentColor: Color { agentColorFor(agent.name) }
 
     private var scheduleCount: Int {
-        scheduleManager.schedules.filter { $0.agentId == agent.id }.count
+        scheduleManager.scheduleCount(forAgentId: agent.id)
     }
 
     private var watcherCount: Int {
-        watcherManager.watchers.filter { $0.agentId == agent.id }.count
+        watcherManager.watcherCount(forAgentId: agent.id)
     }
 
     private var automationCount: Int { scheduleCount + watcherCount }
@@ -860,9 +860,13 @@ private struct TabBarViewportWidthKey: PreferenceKey {
 struct AgentDetailView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
-    private var scheduleManager = ScheduleManager.shared
-    private var watcherManager = WatcherManager.shared
-    @ObservedObject private var relayManager = RelayTunnelManager.shared
+    private let scheduleManager = ScheduleManager.shared
+    private let watcherManager = WatcherManager.shared
+    /// Reference held for the "Enable Relay" alert callback only.
+    /// Tunnel-status observation lives in `AgentDetailRelaySection` /
+    /// `AgentRelayBaseURLProvider` so this view doesn't re-render on
+    /// every relay heartbeat.
+    private let relayManager = RelayTunnelManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -955,7 +959,6 @@ struct AgentDetailView: View {
     @State private var bundleSuccessMessage: String? = nil
     @State private var autoSpeak: Bool = false
     @State private var ttsVoice: String = ""
-    @ObservedObject private var ttsService = TTSService.shared
     @State private var avatar: String? = nil
     /// Drives the title-bar agent picker popover. Tapping the avatar / name in the
     /// header bar reveals the list of other custom agents so the user can jump
@@ -1024,6 +1027,15 @@ struct AgentDetailView: View {
     /// this the tab strip can stay empty if the user opened this view before
     /// plugins finished loading.
     @State private var loadedPluginsRefreshNonce: UInt = 0
+
+    /// Per-agent slices of the cross-manager data this detail screen
+    /// renders. Refreshed by `refreshDetailCaches()` so the body
+    /// doesn't have to re-filter the source arrays on every publish.
+    @State private var linkedSchedules: [Schedule] = []
+    @State private var linkedWatchers: [Watcher] = []
+    @State private var chatSessions: [ChatSessionData] = []
+    @State private var agentPlugins: [PluginManager.LoadedPlugin] = []
+    @State private var agentFailedPlugins: [PluginManager.FailedPlugin] = []
     private var tabsOverflowRight: Bool {
         // 1pt fudge so pixel-aligned end-of-scroll positions don't leave a
         // phantom indicator on screen.
@@ -1037,25 +1049,20 @@ struct AgentDetailView: View {
         agentManager.agent(for: agent.id) ?? agent
     }
 
-    private var linkedSchedules: [Schedule] {
-        scheduleManager.schedules.filter { $0.agentId == agent.id }
-    }
-
-    private var linkedWatchers: [Watcher] {
-        watcherManager.watchers.filter { $0.agentId == agent.id }
-    }
-
-    private var chatSessions: [ChatSessionData] {
-        ChatSessionsManager.shared.sessions(for: agent.id)
-    }
-
     private var agentColor: Color { agentColorFor(name) }
 
-    /// Plugins that expose any per-agent surface (config, instructions,
-    /// routes, Keychain-backed manifest secrets, or tunnel-mounted web UI).
-    private var agentPlugins: [PluginManager.LoadedPlugin] {
-        _ = loadedPluginsRefreshNonce
-        return PluginManager.shared.plugins.filter(pluginAppearsInAgentDetailTabs)
+    /// Recompute the per-agent caches consumed by the tab strip and
+    /// sub-sections. Called from `.onAppear`, `.onChange(of: agent.id)`,
+    /// `loadedPluginsRefreshNonce` flips, and the `.schedulesChanged` /
+    /// `.watchersChanged` notifications.
+    private func refreshDetailCaches() {
+        linkedSchedules = scheduleManager.schedules.filter { $0.agentId == agent.id }
+        linkedWatchers = watcherManager.watchers.filter { $0.agentId == agent.id }
+        chatSessions = ChatSessionsManager.shared.sessions(for: agent.id)
+        agentPlugins = PluginManager.shared.plugins.filter(pluginAppearsInAgentDetailTabs)
+        agentFailedPlugins = PluginManager.shared.failedPlugins.values
+            .filter(failedPluginAppearsInAgentDetailTabs)
+            .sorted { $0.pluginId < $1.pluginId }
     }
 
     /// Whether this loaded plugin should get its own tab on this agent's detail
@@ -1091,17 +1098,6 @@ struct AgentDetailView: View {
             || currentAgent.pluginInstructions?[pluginId] != nil
         let hasSecrets = !(manifest.secrets ?? []).isEmpty
         return hasConfig || hasInstructions || hasSecrets
-    }
-
-    /// Failed plugins to surface as dedicated tabs. Sorted by id so
-    /// tab order is stable across launches; keying on the same
-    /// `loadedPluginsRefreshNonce` as `agentPlugins` so a `Retry` that
-    /// bumps `.toolsListChanged` re-renders both lists.
-    private var agentFailedPlugins: [PluginManager.FailedPlugin] {
-        _ = loadedPluginsRefreshNonce
-        return PluginManager.shared.failedPlugins.values
-            .filter(failedPluginAppearsInAgentDetailTabs)
-            .sorted { $0.pluginId < $1.pluginId }
     }
 
     @ViewBuilder
@@ -1189,10 +1185,23 @@ struct AgentDetailView: View {
             loadMemoryData()
             loadAgentSecrets()
             selectedModel = currentAgent.defaultModel
+            refreshDetailCaches()
             DispatchQueue.main.async {
                 isInitialLoadComplete = true
             }
             withAnimation { hasAppeared = true }
+        }
+        .onChange(of: agent.id) { _, _ in
+            refreshDetailCaches()
+        }
+        .onChange(of: loadedPluginsRefreshNonce) { _, _ in
+            refreshDetailCaches()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .schedulesChanged)) { _ in
+            refreshDetailCaches()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .watchersChanged)) { _ in
+            refreshDetailCaches()
         }
         .onChange(of: dbEnabled) { _, newValue in
             // Watch the local `@State dbEnabled` (driven by the Configure
@@ -2701,101 +2710,16 @@ struct AgentDetailView: View {
 
     // MARK: - Voice
 
-    /// auto-speak toggle + voice override. toggle is gated on the PocketTTS
-    /// model being downloaded.
+    /// Auto-speak toggle + per-agent voice override. Content lives in
+    /// `AgentDetailVoiceSection` so `TTSService.shared` observation
+    /// stays local to that subview.
     private var voiceSection: some View {
-        AgentDetailSection(title: "Voice", icon: "speaker.wave.2") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Auto Speak Responses", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                        Text(
-                            ttsService.isModelReady
-                                ? "Read replies aloud after streaming completes."
-                                : "Download the PocketTTS model in Voice settings to enable.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                    }
-                    Spacer()
-                    Toggle("", isOn: $autoSpeak)
-                        .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                        .labelsHidden()
-                        .disabled(!ttsService.isModelReady)
-                        .onChange(of: autoSpeak) { debouncedSave() }
-                }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-
-                if !ttsService.isModelReady {
-                    Button {
-                        NotificationCenter.default.post(
-                            name: .openTTSSettingsRequested,
-                            object: nil
-                        )
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.down.circle")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("Open Voice Settings", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(theme.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                if autoSpeak && ttsService.isModelReady {
-                    HStack {
-                        Text("Voice", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                        Spacer()
-                        Picker("", selection: $ttsVoice) {
-                            Text("Default (global)", bundle: .module).tag("")
-                            ForEach(agentVoiceOptions, id: \.self) { voice in
-                                Text(PocketTTSVoiceCatalog.displayName(for: voice))
-                                    .tag(voice)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(MenuPickerStyle())
-                        .frame(maxWidth: 200)
-                        .onChange(of: ttsVoice) { debouncedSave() }
-                    }
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                }
-            }
-        }
-        .onAppear { ttsService.refreshModelState() }
-    }
-
-    /// built-in catalog plus any stored custom voice (preserves legacy values).
-    private var agentVoiceOptions: [String] {
-        let builtIn = PocketTTSVoiceCatalog.availableVoices
-        let current = ttsVoice.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !current.isEmpty && !builtIn.contains(current) {
-            return [current] + builtIn
-        }
-        return builtIn
+        AgentDetailVoiceSection(
+            theme: theme,
+            autoSpeak: $autoSpeak,
+            ttsVoice: $ttsVoice,
+            onSave: debouncedSave
+        )
     }
 
     // MARK: - Tool Selection
@@ -3570,16 +3494,22 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Per-plugin route list. `AgentRelayBaseURLProvider` localizes
+    /// the `RelayTunnelManager.shared` observation needed to resolve
+    /// the public `<base>/plugins/<id>` URL when the tunnel is live.
     @ViewBuilder
     private func pluginRoutesCard(for loaded: PluginManager.LoadedPlugin) -> some View {
+        AgentRelayBaseURLProvider(agentId: agent.id, pluginId: loaded.plugin.id) { tunnelBaseURL in
+            self.pluginRoutesCardContent(for: loaded, tunnelBaseURL: tunnelBaseURL)
+        }
+    }
+
+    @ViewBuilder
+    private func pluginRoutesCardContent(
+        for loaded: PluginManager.LoadedPlugin,
+        tunnelBaseURL: String?
+    ) -> some View {
         let pid = loaded.plugin.id
-        let tunnelStatus = relayManager.agentStatuses[agent.id]
-        let tunnelBaseURL: String? = {
-            if case .connected(let baseURL) = tunnelStatus {
-                return "\(baseURL)/plugins/\(pid)"
-            }
-            return nil
-        }()
 
         AgentDetailSection(title: "Route Endpoints", icon: "arrow.left.arrow.right") {
             VStack(alignment: .leading, spacing: 16) {
@@ -4045,141 +3975,21 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Relay tunnel toggle + live status. Live reads happen inside
+    /// `AgentDetailRelaySection`, the only place observing
+    /// `RelayTunnelManager.shared`.
     @ViewBuilder
     private var relaySection: some View {
         let hasIdentity = currentAgent.agentAddress != nil && currentAgent.agentIndex != nil
         if hasIdentity {
-            let status = relayManager.agentStatuses[agent.id] ?? .disconnected
-            let isEnabled = relayManager.isTunnelEnabled(for: agent.id)
-
-            AgentDetailSection(title: "Relay", icon: "globe") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(
-                        "Expose this agent to the public internet via a relay tunnel so external services can reach it.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-
-                    HStack(spacing: 12) {
-                        relayStatusDot(status)
-                            .frame(width: 20)
-
-                        VStack(alignment: .leading, spacing: 3) {
-                            if let address = currentAgent.agentAddress {
-                                let truncated = String(address.prefix(8)) + "..." + String(address.suffix(4))
-                                Text(truncated)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-
-                            if case .connected(let url) = status {
-                                HStack(spacing: 4) {
-                                    Text(url)
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundColor(theme.accentColor)
-                                        .lineLimit(1)
-
-                                    Button {
-                                        NSPasteboard.general.clearContents()
-                                        NSPasteboard.general.setString(url, forType: .string)
-                                        copiedRelayURL = true
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                            copiedRelayURL = false
-                                        }
-                                    } label: {
-                                        Image(systemName: copiedRelayURL ? "checkmark" : "doc.on.doc")
-                                            .font(.system(size: 9, weight: .medium))
-                                            .foregroundColor(copiedRelayURL ? theme.successColor : theme.tertiaryText)
-                                    }
-                                    .buttonStyle(PlainButtonStyle())
-                                    .help(Text("Copy relay URL", bundle: .module))
-                                }
-                            }
-
-                            if case .error(let msg) = status {
-                                Text(msg)
-                                    .font(.system(size: 10))
-                                    .foregroundColor(theme.errorColor)
-                            }
-                        }
-
-                        Spacer()
-
-                        relayStatusBadge(status)
-
-                        Toggle(
-                            "",
-                            isOn: Binding(
-                                get: { isEnabled },
-                                set: { newValue in
-                                    if newValue {
-                                        showRelayConfirmation = true
-                                    } else {
-                                        relayManager.setTunnelEnabled(false, for: agent.id)
-                                    }
-                                }
-                            )
-                        )
-                        .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                        .labelsHidden()
-                    }
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                }
-            }
+            AgentDetailRelaySection(
+                theme: theme,
+                agentId: agent.id,
+                agentAddress: currentAgent.agentAddress,
+                showRelayConfirmation: $showRelayConfirmation,
+                copiedRelayURL: $copiedRelayURL
+            )
         }
-    }
-
-    @ViewBuilder
-    private func relayStatusDot(_ status: AgentRelayStatus) -> some View {
-        switch status {
-        case .disconnected:
-            Circle()
-                .fill(theme.tertiaryText.opacity(0.4))
-                .frame(width: 8, height: 8)
-        case .connecting:
-            Circle()
-                .fill(theme.warningColor)
-                .frame(width: 8, height: 8)
-                .overlay(
-                    Circle()
-                        .fill(theme.warningColor.opacity(0.3))
-                        .frame(width: 16, height: 16)
-                )
-        case .connected:
-            Circle()
-                .fill(theme.successColor)
-                .frame(width: 8, height: 8)
-        case .error:
-            Circle()
-                .fill(theme.errorColor)
-                .frame(width: 8, height: 8)
-        }
-    }
-
-    private func relayStatusBadge(_ status: AgentRelayStatus) -> some View {
-        let (label, color): (String, Color) = {
-            switch status {
-            case .disconnected: return ("Disconnected", theme.tertiaryText)
-            case .connecting: return ("Connecting", theme.warningColor)
-            case .connected: return ("Connected", theme.successColor)
-            case .error: return ("Error", theme.errorColor)
-            }
-        }()
-        return Text(label)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(color.opacity(0.1)))
     }
 
     /// Single quick-actions block surfaced under Custom in the merged
@@ -5054,6 +4864,283 @@ struct AgentDetailView: View {
                 saveIndicator = nil
             }
         }
+    }
+}
+
+// MARK: - Agent Detail Voice Section
+
+/// Auto-speak toggle + per-agent voice override. Owns the
+/// `TTSService.shared` observation so high-frequency model-state
+/// updates don't invalidate the whole `AgentDetailView` body.
+private struct AgentDetailVoiceSection: View {
+    @ObservedObject private var ttsService = TTSService.shared
+    let theme: ThemeProtocol
+    @Binding var autoSpeak: Bool
+    @Binding var ttsVoice: String
+    let onSave: () -> Void
+
+    var body: some View {
+        AgentDetailSection(title: "Voice", icon: "speaker.wave.2") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Auto Speak Responses", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                        Text(
+                            ttsService.isModelReady
+                                ? "Read replies aloud after streaming completes."
+                                : "Download the PocketTTS model in Voice settings to enable.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $autoSpeak)
+                        .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                        .labelsHidden()
+                        .disabled(!ttsService.isModelReady)
+                        .onChange(of: autoSpeak) { onSave() }
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+
+                if !ttsService.isModelReady {
+                    Button {
+                        NotificationCenter.default.post(
+                            name: .openTTSSettingsRequested,
+                            object: nil
+                        )
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.down.circle")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Open Voice Settings", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if autoSpeak && ttsService.isModelReady {
+                    HStack {
+                        Text("Voice", bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                        Spacer()
+                        Picker("", selection: $ttsVoice) {
+                            Text("Default (global)", bundle: .module).tag("")
+                            ForEach(agentVoiceOptions, id: \.self) { voice in
+                                Text(PocketTTSVoiceCatalog.displayName(for: voice))
+                                    .tag(voice)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(MenuPickerStyle())
+                        .frame(maxWidth: 200)
+                        .onChange(of: ttsVoice) { onSave() }
+                    }
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                }
+            }
+        }
+        .onAppear { ttsService.refreshModelState() }
+    }
+
+    /// Built-in catalog plus any stored custom voice (preserves legacy values).
+    private var agentVoiceOptions: [String] {
+        let builtIn = PocketTTSVoiceCatalog.availableVoices
+        let current = ttsVoice.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !current.isEmpty && !builtIn.contains(current) {
+            return [current] + builtIn
+        }
+        return builtIn
+    }
+}
+
+// MARK: - Agent Detail Relay Section
+
+/// Relay tunnel toggle + live status badge. Localizes
+/// `RelayTunnelManager.shared` observation so per-second tunnel
+/// ticks don't invalidate `AgentDetailView`.
+private struct AgentDetailRelaySection: View {
+    @ObservedObject private var relayManager = RelayTunnelManager.shared
+    let theme: ThemeProtocol
+    let agentId: UUID
+    let agentAddress: String?
+    @Binding var showRelayConfirmation: Bool
+    @Binding var copiedRelayURL: Bool
+
+    var body: some View {
+        let status = relayManager.agentStatuses[agentId] ?? .disconnected
+        let isEnabled = relayManager.isTunnelEnabled(for: agentId)
+
+        AgentDetailSection(title: "Relay", icon: "globe") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(
+                    "Expose this agent to the public internet via a relay tunnel so external services can reach it.",
+                    bundle: .module
+                )
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+
+                HStack(spacing: 12) {
+                    relayStatusDot(status)
+                        .frame(width: 20)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let address = agentAddress {
+                            let truncated = String(address.prefix(8)) + "..." + String(address.suffix(4))
+                            Text(truncated)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+
+                        if case .connected(let url) = status {
+                            HStack(spacing: 4) {
+                                Text(url)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(theme.accentColor)
+                                    .lineLimit(1)
+
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(url, forType: .string)
+                                    copiedRelayURL = true
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        copiedRelayURL = false
+                                    }
+                                } label: {
+                                    Image(systemName: copiedRelayURL ? "checkmark" : "doc.on.doc")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundColor(copiedRelayURL ? theme.successColor : theme.tertiaryText)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .help(Text("Copy relay URL", bundle: .module))
+                            }
+                        }
+
+                        if case .error(let msg) = status {
+                            Text(msg)
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.errorColor)
+                        }
+                    }
+
+                    Spacer()
+
+                    relayStatusBadge(status)
+
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { isEnabled },
+                            set: { newValue in
+                                if newValue {
+                                    showRelayConfirmation = true
+                                } else {
+                                    relayManager.setTunnelEnabled(false, for: agentId)
+                                }
+                            }
+                        )
+                    )
+                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                    .labelsHidden()
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func relayStatusDot(_ status: AgentRelayStatus) -> some View {
+        switch status {
+        case .disconnected:
+            Circle()
+                .fill(theme.tertiaryText.opacity(0.4))
+                .frame(width: 8, height: 8)
+        case .connecting:
+            Circle()
+                .fill(theme.warningColor)
+                .frame(width: 8, height: 8)
+                .overlay(
+                    Circle()
+                        .fill(theme.warningColor.opacity(0.3))
+                        .frame(width: 16, height: 16)
+                )
+        case .connected:
+            Circle()
+                .fill(theme.successColor)
+                .frame(width: 8, height: 8)
+        case .error:
+            Circle()
+                .fill(theme.errorColor)
+                .frame(width: 8, height: 8)
+        }
+    }
+
+    private func relayStatusBadge(_ status: AgentRelayStatus) -> some View {
+        let (label, color): (String, Color) = {
+            switch status {
+            case .disconnected: return ("Disconnected", theme.tertiaryText)
+            case .connecting: return ("Connecting", theme.warningColor)
+            case .connected: return ("Connected", theme.successColor)
+            case .error: return ("Error", theme.errorColor)
+            }
+        }()
+        return Text(label)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(color.opacity(0.1)))
+    }
+}
+
+// MARK: - Agent Relay Base URL Provider
+
+/// Resolves the agent's live `<base>/plugins/<pid>` tunnel URL
+/// (or `nil` when disconnected) and hands it to `content`. Used by
+/// `pluginRoutesCard` to keep the relay observation off the parent.
+private struct AgentRelayBaseURLProvider<Content: View>: View {
+    @ObservedObject private var relayManager = RelayTunnelManager.shared
+    let agentId: UUID
+    let pluginId: String
+    @ViewBuilder let content: (String?) -> Content
+
+    var body: some View {
+        let tunnelBaseURL: String? = {
+            if case .connected(let baseURL) = relayManager.agentStatuses[agentId] {
+                return "\(baseURL)/plugins/\(pluginId)"
+            }
+            return nil
+        }()
+        content(tunnelBaseURL)
     }
 }
 

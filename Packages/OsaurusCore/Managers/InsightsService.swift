@@ -35,24 +35,87 @@ final class InsightsService: ObservableObject {
     /// Active filter for HTTP method
     @Published var methodFilter: MethodFilter = .all
 
-    // MARK: - Computed Properties
+    // MARK: - Derived Snapshots
 
-    /// Filtered logs based on current filter settings
-    var filteredLogs: [RequestLog] {
+    /// Filtered logs based on current filter settings.
+    ///
+    /// Previously this was a computed property that re-ran a filter over
+    /// the (up to 500-entry) ring buffer on every body evaluation of
+    /// `InsightsView` — including the body recomputation triggered by
+    /// each new logged request. With heavy traffic, the cost of fuzzy
+    /// search across `path / model / shortModelName / pluginId` for
+    /// every entry, every time, was visible. The pipeline below
+    /// recomputes the filter + stats off the synchronous body path,
+    /// debounced ~200 ms.
+    @Published public private(set) var filteredLogs: [RequestLog] = []
+
+    /// Summary statistics. Recomputed alongside `filteredLogs`.
+    @Published public private(set) var stats: InsightsStats = .empty
+
+    private var pipelineCancellable: AnyCancellable?
+
+    // MARK: - Initialization
+
+    private init() {
+        // Seed the snapshots with current (empty) state so the first
+        // render of InsightsView has something to show before the
+        // pipeline's debounced emission lands.
+        stats = Self.computeStats(logs: logs)
+        filteredLogs = Self.computeFilteredLogs(
+            logs: logs,
+            search: searchFilter,
+            source: sourceFilter,
+            method: methodFilter
+        )
+
+        pipelineCancellable = Publishers.CombineLatest4(
+            $logs,
+            $searchFilter,
+            $sourceFilter,
+            $methodFilter
+        )
+        // Drop the synthetic initial emission — we already seeded
+        // snapshots above. Without this, `removeDuplicates` would
+        // miss the very first user keystroke when it lands inside
+        // the debounce window.
+        .dropFirst()
+        .debounce(for: .milliseconds(200), scheduler: DispatchQueue.main)
+        .map { logs, search, source, method in
+            let filtered = Self.computeFilteredLogs(
+                logs: logs,
+                search: search,
+                source: source,
+                method: method
+            )
+            let stats = Self.computeStats(logs: logs)
+            return (filtered, stats)
+        }
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] filtered, stats in
+            guard let self else { return }
+            self.filteredLogs = filtered
+            self.stats = stats
+        }
+    }
+
+    private static func computeFilteredLogs(
+        logs: [RequestLog],
+        search: String,
+        source: SourceFilter,
+        method: MethodFilter
+    ) -> [RequestLog] {
         logs.filter { log in
-            // Search filter (path, model, or pluginId) using fuzzy matching
-            if !searchFilter.isEmpty {
-                let matchesPath = SearchService.matches(query: searchFilter, in: log.path)
-                let matchesModel = log.model.map { SearchService.matches(query: searchFilter, in: $0) } ?? false
-                let matchesShortModel = SearchService.matches(query: searchFilter, in: log.shortModelName)
-                let matchesPlugin = log.pluginId.map { SearchService.matches(query: searchFilter, in: $0) } ?? false
+            if !search.isEmpty {
+                let matchesPath = SearchService.matches(query: search, in: log.path)
+                let matchesModel = log.model.map { SearchService.matches(query: search, in: $0) } ?? false
+                let matchesShortModel = SearchService.matches(query: search, in: log.shortModelName)
+                let matchesPlugin = log.pluginId.map { SearchService.matches(query: search, in: $0) } ?? false
                 if !matchesPath && !matchesModel && !matchesShortModel && !matchesPlugin {
                     return false
                 }
             }
 
-            // Source filter
-            switch sourceFilter {
+            switch source {
             case .all:
                 break
             case .chatUI:
@@ -63,8 +126,7 @@ final class InsightsService: ObservableObject {
                 if log.source != .plugin { return false }
             }
 
-            // Method filter
-            switch methodFilter {
+            switch method {
             case .all:
                 break
             case .get:
@@ -77,15 +139,14 @@ final class InsightsService: ObservableObject {
         }
     }
 
-    /// Summary statistics
-    var stats: InsightsStats {
+    private static func computeStats(logs: [RequestLog]) -> InsightsStats {
         let total = logs.count
         let successCount = logs.filter { $0.isSuccess }.count
         let successRate = total > 0 ? Double(successCount) / Double(total) * 100 : 0
         let errors = logs.filter { $0.isError }.count
-        let avgDuration = logs.isEmpty ? 0 : logs.map(\.durationMs).reduce(0, +) / Double(logs.count)
+        let avgDuration =
+            logs.isEmpty ? 0 : logs.map(\.durationMs).reduce(0, +) / Double(logs.count)
 
-        // Inference-specific stats (only from chat requests)
         let inferenceLogs = logs.filter { $0.isInference }
         let totalInputTokens = inferenceLogs.reduce(0) { $0 + ($1.inputTokens ?? 0) }
         let totalOutputTokens = inferenceLogs.reduce(0) { $0 + ($1.outputTokens ?? 0) }
@@ -105,10 +166,6 @@ final class InsightsService: ObservableObject {
             averageSpeed: avgSpeed
         )
     }
-
-    // MARK: - Initialization
-
-    private init() {}
 
     // MARK: - Logging Methods
 
@@ -170,7 +227,7 @@ enum MethodFilter: String, CaseIterable {
     }
 }
 
-struct InsightsStats {
+struct InsightsStats: Equatable {
     let totalRequests: Int
     let successRate: Double
     let errorCount: Int
@@ -181,6 +238,17 @@ struct InsightsStats {
     let totalInputTokens: Int
     let totalOutputTokens: Int
     let averageSpeed: Double
+
+    static let empty = InsightsStats(
+        totalRequests: 0,
+        successRate: 0,
+        errorCount: 0,
+        averageDurationMs: 0,
+        inferenceCount: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        averageSpeed: 0
+    )
 
     var formattedSuccessRate: String {
         String(format: "%.0f%%", successRate)

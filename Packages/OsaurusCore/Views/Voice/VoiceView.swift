@@ -26,7 +26,17 @@ enum VoiceTab: String, CaseIterable, AnimatedTabItem {
 
 struct VoiceView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var speechService = SpeechService.shared
+    // Deliberately NOT `@ObservedObject` here. SpeechService republishes
+    // on every audio-level meter tick + every load-progress chunk,
+    // which would force a re-evaluation of the whole VoiceView shell
+    // (header, sidebar tab counts, tab content) at high frequency.
+    // The two indicators that actually need live SpeechService state
+    // live in dedicated `VoiceStatusIndicator` / audio-meter subviews
+    // that observe it locally. `microphonePermissionGranted` is read
+    // directly off the singleton — it changes rarely (system prompt)
+    // and the next published mutation on `modelManager` will pick up
+    // any change for the header subtitle.
+    private let speechService = SpeechService.shared
     @ObservedObject private var modelManager = SpeechModelManager.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
 
@@ -103,7 +113,7 @@ struct VoiceView: View {
             title: L("Voice"),
             subtitle: headerSubtitle
         ) {
-            statusIndicator
+            VoiceHeaderStatusIndicator(isSetupComplete: isSetupComplete)
         } tabsRow: {
             HeaderTabsRow(
                 selection: $selectedTab,
@@ -124,8 +134,23 @@ struct VoiceView: View {
         }
     }
 
-    @ViewBuilder
-    private var statusIndicator: some View {
+}
+
+// MARK: - Voice Status Indicator
+
+/// Header status pill for the Voice tab. Observes `SpeechService` here
+/// (instead of at the `VoiceView` root) so the high-frequency
+/// `objectWillChange` publishes that drive the model-load progress and
+/// audio-level meter only re-render this small pill, not the entire
+/// Voice settings shell. Named `…HeaderStatusIndicator` to avoid the
+/// public `VoiceStatusIndicator` in `VoiceComponents.swift`.
+private struct VoiceHeaderStatusIndicator: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var speechService = SpeechService.shared
+
+    let isSetupComplete: Bool
+
+    var body: some View {
         if speechService.isLoadingModel {
             HStack(spacing: 6) {
                 ProgressView()
@@ -182,22 +207,21 @@ private struct VoiceModelsTab: View {
 
     @State private var searchText: String = ""
 
-    private var filteredModels: [SpeechModel] {
-        if searchText.isEmpty {
-            return modelManager.availableModels
-        }
-        return modelManager.availableModels.filter {
-            SearchService.matches(query: searchText, in: $0.name)
-                || SearchService.matches(query: searchText, in: $0.description)
-        }
-    }
+    /// Single-pass output of the filter + partition step. Used to
+    /// be three independent computed properties (`filteredModels`,
+    /// `recommendedModels`, `otherModels`) that each walked
+    /// `availableModels` per body render. With download progress
+    /// republishing `modelManager.objectWillChange` at high frequency
+    /// during model setup, that meant 3 full-list passes per progress
+    /// chunk on top of the per-keystroke search work.
+    @State private var partitioned: PartitionedModels = PartitionedModels(
+        recommended: [],
+        other: []
+    )
 
-    private var recommendedModels: [SpeechModel] {
-        filteredModels.filter { $0.isRecommended }
-    }
-
-    private var otherModels: [SpeechModel] {
-        filteredModels.filter { !$0.isRecommended }
+    private struct PartitionedModels {
+        var recommended: [SpeechModel]
+        var other: [SpeechModel]
     }
 
     var body: some View {
@@ -214,7 +238,7 @@ private struct VoiceModelsTab: View {
                     .padding(.horizontal, 24)
 
                 // Recommended section
-                if !recommendedModels.isEmpty {
+                if !partitioned.recommended.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("RECOMMENDED", bundle: .module)
                             .font(.system(size: 11, weight: .bold))
@@ -223,7 +247,7 @@ private struct VoiceModelsTab: View {
                             .padding(.horizontal, 24)
 
                         VStack(spacing: 12) {
-                            ForEach(recommendedModels) { model in
+                            ForEach(partitioned.recommended) { model in
                                 SpeechModelRow(model: model)
                             }
                         }
@@ -232,7 +256,7 @@ private struct VoiceModelsTab: View {
                 }
 
                 // Other models section
-                if !otherModels.isEmpty {
+                if !partitioned.other.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("ALL MODELS", bundle: .module)
                             .font(.system(size: 11, weight: .bold))
@@ -241,7 +265,7 @@ private struct VoiceModelsTab: View {
                             .padding(.horizontal, 24)
 
                         VStack(spacing: 12) {
-                            ForEach(otherModels) { model in
+                            ForEach(partitioned.other) { model in
                                 SpeechModelRow(model: model)
                             }
                         }
@@ -253,6 +277,43 @@ private struct VoiceModelsTab: View {
             }
             .padding(.top, 16)
         }
+        .onAppear { refreshPartition() }
+        .task(id: searchText) {
+            // Debounce search input so partition doesn't run on every
+            // keystroke. 150 ms matches the equivalent debounce in
+            // ModelDownloadView and keeps the UI feeling live.
+            try? await Task.sleep(for: .milliseconds(150))
+            if !Task.isCancelled { refreshPartition() }
+        }
+        .onReceive(modelManager.objectWillChange) { _ in
+            // SpeechModelManager publishes per download progress chunk.
+            // Refresh on every publish — the single-pass walk is cheap
+            // (small fixed list); the win is collapsing three full
+            // passes per body into one.
+            refreshPartition()
+        }
+    }
+
+    private func refreshPartition() {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        var recommended: [SpeechModel] = []
+        var other: [SpeechModel] = []
+        recommended.reserveCapacity(modelManager.availableModels.count)
+        other.reserveCapacity(modelManager.availableModels.count)
+        for model in modelManager.availableModels {
+            if !trimmed.isEmpty {
+                let match =
+                    SearchService.matches(query: trimmed, in: model.name)
+                    || SearchService.matches(query: trimmed, in: model.description)
+                if !match { continue }
+            }
+            if model.isRecommended {
+                recommended.append(model)
+            } else {
+                other.append(model)
+            }
+        }
+        partitioned = PartitionedModels(recommended: recommended, other: other)
     }
 }
 

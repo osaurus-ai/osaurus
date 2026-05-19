@@ -26,6 +26,11 @@ public final class ScheduleManager {
     /// All schedules
     public private(set) var schedules: [Schedule] = []
 
+    /// Per-agent schedule counts, kept in sync with `schedules`.
+    /// Lets `AgentCard` look up its count in O(1) instead of
+    /// re-filtering the array on every render.
+    public private(set) var scheduleCountsByAgent: [UUID: Int] = [:]
+
     /// Currently running tasks (schedule ID -> run info)
     public private(set) var runningTasks: [UUID: ScheduleRunInfo] = [:]
 
@@ -80,6 +85,21 @@ public final class ScheduleManager {
     /// Reload schedules from disk
     public func refresh() {
         schedules = ScheduleStore.loadAll()
+        recomputeAgentCounts()
+    }
+
+    /// Number of schedules linked to the given agent.
+    public func scheduleCount(forAgentId agentId: UUID) -> Int {
+        scheduleCountsByAgent[agentId] ?? 0
+    }
+
+    private func recomputeAgentCounts() {
+        var counts: [UUID: Int] = [:]
+        for schedule in schedules {
+            guard let agentId = schedule.agentId else { continue }
+            counts[agentId, default: 0] += 1
+        }
+        scheduleCountsByAgent = counts
     }
 
     /// Create a new schedule

@@ -655,7 +655,78 @@
         }
 
         public func info() async -> ContainerInfo {
-            let currentStatus = refreshStatus()
+            // Avoid a heavy `refreshStatus()` filesystem walk when the
+            // caller really just wants the metrics during normal running.
+            // If a start is in flight, or we already know we're not
+            // running, short-circuit before doing any exec.
+            if inFlightStartTask != nil {
+                return ContainerInfo(
+                    status: _status,
+                    agentUsers: [],
+                    diskUsage: nil,
+                    uptime: nil,
+                    memoryUsage: nil,
+                    cpuLoad: nil,
+                    processCount: nil
+                )
+            }
+
+            // Fast path: if our in-memory status already says "running",
+            // trust it and skip the stat() / stale-dir-cleanup pass
+            // inside `refreshStatus()`. Only fall back to the full
+            // status walk when we genuinely might have lost the
+            // container (e.g. linuxContainer became nil).
+            let currentStatus: ContainerStatus
+            if _status == .running && linuxContainer != nil {
+                currentStatus = .running
+            } else {
+                currentStatus = refreshStatus()
+            }
+
+            guard currentStatus.isRunning else {
+                return ContainerInfo(
+                    status: currentStatus,
+                    agentUsers: [],
+                    diskUsage: nil,
+                    uptime: nil,
+                    memoryUsage: nil,
+                    cpuLoad: nil,
+                    processCount: nil
+                )
+            }
+
+            return await collectRunningContainerInfo(status: currentStatus)
+        }
+
+        /// Single round-trip metric collection for the running container.
+        /// Previously this method issued six sequential `exec` calls, each
+        /// paying the full vsock + agent round-trip cost. The settings
+        /// dashboard refreshes every 5 s while the user is on the Sandbox
+        /// tab, so the cumulative cost was meaningful. We now emit one
+        /// `KEY=value` blob and parse on the host.
+        ///
+        /// Output contract (one line per field, terminated by `\n`):
+        /// ```
+        /// USERS=agent-a,agent-b
+        /// DISK=4.0K
+        /// UPTIME=123 seconds
+        /// MEM=128MB / 512MB
+        /// CPU=0.10 0.05 0.01
+        /// PROCS=42
+        /// ```
+        /// Any individual field may be absent or empty if its underlying
+        /// /proc / awk pipeline failed — the host treats missing fields as
+        /// `nil`, exactly like the prior per-call try-fail semantics.
+        private func collectRunningContainerInfo(status: ContainerStatus) async -> ContainerInfo {
+            let script = """
+                printf 'USERS=%s\\n' "$(awk -F: '$3 >= 1000 && $3 < 65534 {print $1}' /etc/passwd 2>/dev/null | paste -sd, -)"
+                printf 'DISK=%s\\n' "$(du -sh /workspace 2>/dev/null | cut -f1)"
+                printf 'UPTIME=%s\\n' "$(awk '{printf "%.0f seconds", $1}' /proc/uptime 2>/dev/null)"
+                printf 'MEM=%s\\n' "$(awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{if (t>0) printf "%dMB / %dMB", (t-a)/1024, t/1024}' /proc/meminfo 2>/dev/null)"
+                printf 'CPU=%s\\n' "$(awk '{printf "%s %s %s", $1, $2, $3}' /proc/loadavg 2>/dev/null)"
+                printf 'PROCS=%s\\n' "$(ls -1 /proc 2>/dev/null | grep -c '^[0-9]')"
+                """
+
             var users: [String] = []
             var disk: String? = nil
             var uptime: String? = nil
@@ -663,35 +734,35 @@
             var cpuLoad: String? = nil
             var processCount: Int? = nil
 
-            if currentStatus.isRunning {
-                if let result = try? await exec(command: "awk -F: '$3 >= 1000 && $3 < 65534 {print $1}' /etc/passwd") {
-                    users = result.stdout.split(separator: "\n").map(String.init)
-                }
-                if let result = try? await exec(command: "du -sh /workspace 2>/dev/null | cut -f1") {
-                    disk = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                if let result = try? await exec(command: "cat /proc/uptime | awk '{printf \"%.0f seconds\", $1}'") {
-                    uptime = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                if let result = try? await exec(
-                    command:
-                        "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf \"%dMB / %dMB\", (t-a)/1024, t/1024}' /proc/meminfo"
-                ) {
-                    let mem = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !mem.isEmpty { memoryUsage = mem }
-                }
-                if let result = try? await exec(command: "awk '{printf \"%s %s %s\", $1, $2, $3}' /proc/loadavg") {
-                    let load = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !load.isEmpty { cpuLoad = load }
-                }
-                if let result = try? await exec(command: "ls -1 /proc | grep -c '^[0-9]'") {
-                    let count = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                    processCount = Int(count)
+            if let result = try? await exec(command: script, timeout: 5) {
+                for rawLine in result.stdout.split(separator: "\n", omittingEmptySubsequences: true) {
+                    let line = String(rawLine)
+                    guard let eq = line.firstIndex(of: "=") else { continue }
+                    let key = String(line[..<eq])
+                    let value = String(line[line.index(after: eq)...])
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if value.isEmpty { continue }
+                    switch key {
+                    case "USERS":
+                        users = value.split(separator: ",").map(String.init)
+                    case "DISK":
+                        disk = value
+                    case "UPTIME":
+                        uptime = value
+                    case "MEM":
+                        memoryUsage = value
+                    case "CPU":
+                        cpuLoad = value
+                    case "PROCS":
+                        processCount = Int(value)
+                    default:
+                        continue
+                    }
                 }
             }
 
             return ContainerInfo(
-                status: currentStatus,
+                status: status,
                 agentUsers: users,
                 diskUsage: disk,
                 uptime: uptime,

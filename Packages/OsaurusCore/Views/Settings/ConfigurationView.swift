@@ -810,14 +810,66 @@ struct ConfigurationView: View {
 
     // MARK: - Configuration Loading
 
+    /// Wrapper so we can hand a single immutable snapshot back to
+    /// MainActor instead of four typed return values. `Sendable` is
+    /// required for `Task.detached`.
+    private struct ConfigurationSnapshot: Sendable {
+        let server: ServerConfiguration
+        let chat: ChatConfiguration
+        let memory: MemoryConfiguration
+        let toast: ToastConfiguration
+    }
+
+    /// Asynchronous loader. The original synchronous version of this
+    /// method called four `…ConfigurationStore.load()` functions on the
+    /// main thread inside `.onAppear`, blocking SwiftUI from committing
+    /// the post-appear frame with default values while four
+    /// `JSONDecoder`+disk reads ran. On a fresh tab visit this was
+    /// dozens of ms of visible jank. The detached task below moves the
+    /// pure JSON reads (`MemoryConfigurationStore`, `ToastConfigurationStore`
+    /// are already nonisolated) off the main thread; the two remaining
+    /// `@MainActor`-bound stores hop back briefly via `MainActor.run`,
+    /// but the disk reads inside them happen on a separate tick so
+    /// SwiftUI has already painted the shell. The result is applied
+    /// in a single MainActor batch via `applyLoadedConfiguration(_:)`.
     private func loadConfiguration() {
-        let configuration = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        Task { @MainActor in
+            // Yield once so SwiftUI gets to commit the post-`.onAppear`
+            // frame with default `tempX` values before we start the
+            // disk reads. The yield + detached pattern below is what
+            // turns the "Settings tab blocks for ~30 ms on first visit"
+            // case into a clean two-frame transition.
+            await Task.yield()
+
+            let snapshot: ConfigurationSnapshot = await Task.detached(priority: .userInitiated) {
+                async let server: ServerConfiguration = MainActor.run {
+                    ServerConfigurationStore.load() ?? ServerConfiguration.default
+                }
+                async let chat: ChatConfiguration = MainActor.run {
+                    ChatConfigurationStore.load()
+                }
+                let memory = MemoryConfigurationStore.load()
+                let toast = ToastConfigurationStore.load()
+                return await ConfigurationSnapshot(
+                    server: server,
+                    chat: chat,
+                    memory: memory,
+                    toast: toast
+                )
+            }.value
+
+            applyLoadedConfiguration(snapshot)
+        }
+    }
+
+    private func applyLoadedConfiguration(_ snapshot: ConfigurationSnapshot) {
+        let configuration = snapshot.server
         tempPortString = String(configuration.port)
         tempExposeToNetwork = configuration.exposeToNetwork
         tempStartAtLogin = configuration.startAtLogin
         tempHideDockIcon = configuration.hideDockIcon
 
-        let chat = ChatConfigurationStore.load()
+        let chat = snapshot.chat
         tempChatHotkey = chat.hotkey
         tempSystemPrompt = chat.systemPrompt
         tempChatTemperature = chat.temperature.map { String($0) } ?? ""
@@ -827,7 +879,7 @@ struct ConfigurationView: View {
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempPreflightSearchMode = chat.preflightSearchMode ?? .balanced
         tempDisableTools = chat.disableTools
-        tempMemoryEnabled = MemoryConfigurationStore.load().enabled
+        tempMemoryEnabled = snapshot.memory.enabled
         tempCoreModelProvider = chat.coreModelProvider ?? ""
         tempCoreModelName = chat.coreModelName ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
@@ -843,7 +895,6 @@ struct ConfigurationView: View {
             ? GenerativeGreetingService.defaultPersonaInstruction
             : chat.greetingPersona
 
-        // Work generation settings
         tempAgentTemperature = chat.workTemperature.map { String($0) } ?? ""
         tempAgentMaxTokens = chat.workMaxTokens.map(String.init) ?? ""
         tempAgentTopP = chat.workTopPOverride.map { String($0) } ?? ""
@@ -855,8 +906,7 @@ struct ConfigurationView: View {
         tempEvictionPolicy = configuration.modelEvictionPolicy
         tempIdleResidencyPolicy = configuration.modelIdleResidencyPolicy
 
-        // Load toast configuration
-        let toastConfig = ToastConfigurationStore.load()
+        let toastConfig = snapshot.toast
         tempToastPosition = toastConfig.position
         tempToastEnabled = toastConfig.enabled
         let toastDefaults = ToastConfiguration.default
@@ -2190,7 +2240,17 @@ private struct AgentSettingsSection: View {
 
 private struct AgentToolPermissionRow: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    /// Observing `ToolRegistry` here is what lets us read the configured
+    /// policy from memory instead of doing a synchronous `tools.json`
+    /// disk read in every body evaluation. `setPolicy()` updates the
+    /// registry's `@Published configuration`, which republishes here.
+    @ObservedObject private var toolRegistry = ToolRegistry.shared
     @State private var isHovered = false
+    /// Cached configured policy. Sourced from `ToolRegistry.shared` on
+    /// `.onAppear` and refreshed when the registry publishes a change.
+    /// Avoids the per-render `ToolConfigurationStore.load()` (which used
+    /// to call `JSONDecoder().decode` and `FileManager.fileExists`).
+    @State private var configuredPolicy: ToolPermissionPolicy?
 
     let name: String
     let displayName: String
@@ -2198,11 +2258,6 @@ private struct AgentToolPermissionRow: View {
     let isDestructive: Bool
     let defaultPolicy: ToolPermissionPolicy
     let onPolicyChange: () -> Void
-
-    /// Returns the configured policy, or nil if using default
-    private var configuredPolicy: ToolPermissionPolicy? {
-        ToolConfigurationStore.load().policy[name]
-    }
 
     /// Returns the effective policy (configured or default)
     private var effectivePolicy: ToolPermissionPolicy {
@@ -2236,7 +2291,8 @@ private struct AgentToolPermissionRow: View {
                 selection: Binding(
                     get: { effectivePolicy },
                     set: { newValue in
-                        ToolRegistry.shared.setPolicy(newValue, for: name)
+                        toolRegistry.setPolicy(newValue, for: name)
+                        configuredPolicy = toolRegistry.configuredPolicy(for: name)
                         onPolicyChange()
                     }
                 )
@@ -2252,5 +2308,18 @@ private struct AgentToolPermissionRow: View {
         .padding(.vertical, 10)
         .background(isHovered ? themeManager.currentTheme.tertiaryBackground.opacity(0.5) : Color.clear)
         .onHover { isHovered = $0 }
+        .onAppear {
+            configuredPolicy = toolRegistry.configuredPolicy(for: name)
+        }
+        .onReceive(toolRegistry.objectWillChange) { _ in
+            // Registry's `@Published configuration` republishes on any
+            // `setPolicy` / `clearPolicy` call (including the bulk
+            // "Reset All to Default" flow). Re-read in case another
+            // row mutated our key.
+            let latest = toolRegistry.configuredPolicy(for: name)
+            if latest != configuredPolicy {
+                configuredPolicy = latest
+            }
+        }
     }
 }

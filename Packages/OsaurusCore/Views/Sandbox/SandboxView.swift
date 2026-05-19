@@ -18,8 +18,8 @@ struct SandboxView: View {
 
     @State private var hasAppeared = false
 
-    @State private var config = SandboxConfigurationStore.load()
-    @State private var pendingConfig = SandboxConfigurationStore.load()
+    @State private var config: SandboxConfiguration
+    @State private var pendingConfig: SandboxConfiguration
     @State private var provisionError: String?
     @State private var actionError: String?
     @State private var containerInfo: SandboxManager.ContainerInfo?
@@ -27,9 +27,35 @@ struct SandboxView: View {
     @State private var showRemoveConfirm = false
     @State private var diagResults: [SandboxManager.DiagnosticResult]?
     @State private var isRunningDiag = false
-    @State private var refreshTimer: Timer?
+    @State private var refreshTask: Task<Void, Never>?
 
     @State private var showProvisionSheet = false
+
+    /// Gated mount for the heaviest subviews (currently
+    /// `SandboxLogConsoleCard`). Stays `false` until just after first
+    /// paint so the user sees the rest of the running-container view
+    /// immediately, then flips true to bring the log card in.
+    @State private var hasRenderedHeavyCards = false
+    @State private var heavyCardMountTask: Task<Void, Never>?
+
+    /// Cached value of `SandboxBridgeMigrationFlag.needsRestart`. The flag
+    /// reads `sandbox.json` from disk, so we don't want to hit it from the
+    /// body on every state publish — refresh it once on appear and again
+    /// whenever the container status changes (which is the only event that
+    /// can flip its value during a single visit to this tab).
+    @State private var needsBridgeMigrationRestart = false
+
+    init() {
+        // Load the persisted sandbox configuration exactly once per view
+        // construction and seed both the committed and pending copies from
+        // it. The previous double `SandboxConfigurationStore.load()` did
+        // two disk reads on the main thread every time the user clicked
+        // the Sandbox sidebar tab (since `SidebarNavigation` rebuilds the
+        // content via `.id(selection)`).
+        let loaded = SandboxConfigurationStore.load()
+        _config = State(initialValue: loaded)
+        _pendingConfig = State(initialValue: loaded)
+    }
 
     private var configIsDirty: Bool { pendingConfig != config }
 
@@ -47,11 +73,15 @@ struct SandboxView: View {
         .background(theme.primaryBackground)
         .environment(\.theme, theme)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
+            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
+            needsBridgeMigrationRestart = SandboxBridgeMigrationFlag.needsRestart
         }
-        .onDisappear { stopRefreshTimer() }
+        .onChange(of: sandboxState.status) { _, _ in
+            needsBridgeMigrationRestart = SandboxBridgeMigrationFlag.needsRestart
+        }
+        .onDisappear { stopRefreshLoop() }
         .sheet(isPresented: $showProvisionSheet) {
             SandboxProvisionSheet(
                 pendingConfig: $pendingConfig,
@@ -102,12 +132,14 @@ private extension SandboxView {
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if SandboxBridgeMigrationFlag.needsRestart {
+                    if needsBridgeMigrationRestart {
                         bridgeMigrationBanner
                     }
                     statusDashboard
                     if sandboxState.status == .running {
-                        SandboxLogConsoleCard()
+                        if hasRenderedHeavyCards {
+                            SandboxLogConsoleCard()
+                        }
                         diagnosticsCard
                     }
                     workspaceCard
@@ -118,9 +150,14 @@ private extension SandboxView {
             }
             .onAppear {
                 refreshInfo()
-                startRefreshTimer()
+                startRefreshLoop()
+                scheduleHeavyCardMount()
             }
-            .onDisappear { stopRefreshTimer() }
+            .onDisappear {
+                stopRefreshLoop()
+                heavyCardMountTask?.cancel()
+                heavyCardMountTask = nil
+            }
         }
     }
 
@@ -443,11 +480,29 @@ private struct SandboxLogConsoleCard: View {
 
     @State private var logLevelFilter: SandboxLogBuffer.Entry.Level?
     @State private var pendingScrollTask: Task<Void, Never>?
+    @State private var showFullHistory = false
 
-    private var filteredLogEntries: [SandboxLogBuffer.Entry] {
-        guard let filter = logLevelFilter else { return logBuffer.entries }
-        return logBuffer.entries.filter { $0.level == filter }
-    }
+    /// Snapshot of the buffer entries the view actually renders, recomputed
+    /// off the body path via `.onReceive(logBuffer.objectWillChange)` so
+    /// the (potentially up to 2000-entry) filter/slice does not run inside
+    /// every `body` evaluation triggered by the buffer's ~10 Hz publish.
+    @State private var visibleEntries: [SandboxLogBuffer.Entry] = []
+    @State private var visibleRefreshTask: Task<Void, Never>?
+
+    /// Default soft cap on rendered rows. The buffer holds up to
+    /// `SandboxLogBuffer.maxEntries` (2000); displaying all of them on
+    /// every flush is the dominant first-paint cost of this card. Users
+    /// who actually need older lines can click "Show full history".
+    private static let defaultVisibleLimit = 100
+
+    /// Hard cap used when "Show full history" is toggled on. Matches the
+    /// ring-buffer ceiling so we still bound the worst case.
+    private static let maxVisibleLimit = 2000
+
+    /// Minimum interval between snapshot refreshes. The buffer itself
+    /// already coalesces `objectWillChange` to ~10 Hz; this throttles UI
+    /// rebuilds to ~5 Hz so layout/diff cost is halved during bursts.
+    private static let refreshThrottle: Duration = .milliseconds(200)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -492,6 +547,24 @@ private struct SandboxLogConsoleCard: View {
 
                     Spacer()
 
+                    Button(action: { showFullHistory.toggle() }) {
+                        Text(showFullHistory ? "Tail" : "Full", bundle: .module)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(theme.inputBackground)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(
+                        showFullHistory
+                            ? "Showing full ring buffer. Click to tail the most recent \(Self.defaultVisibleLimit) lines."
+                            : "Tailing the most recent \(Self.defaultVisibleLimit) lines. Click to show the full ring buffer."
+                    )
+
                     Button(action: { logBuffer.clear() }) {
                         Image(systemName: "trash")
                             .font(.system(size: 11))
@@ -503,8 +576,7 @@ private struct SandboxLogConsoleCard: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            let filtered = filteredLogEntries
-                            if filtered.isEmpty {
+                            if visibleEntries.isEmpty {
                                 Text(
                                     "No log entries yet. Command output and container activity will stream here in real time.",
                                     bundle: .module
@@ -514,9 +586,8 @@ private struct SandboxLogConsoleCard: View {
                                 .padding(.vertical, 16)
                                 .frame(maxWidth: .infinity)
                             } else {
-                                ForEach(filtered) { entry in
+                                ForEach(visibleEntries) { entry in
                                     logEntryRow(entry)
-                                        .id(entry.id)
                                 }
                             }
                         }
@@ -530,12 +601,12 @@ private struct SandboxLogConsoleCard: View {
                                     .stroke(theme.inputBorder, lineWidth: 1)
                             )
                     )
-                    .onChange(of: logBuffer.entries.count) { _, _ in
+                    .onChange(of: visibleEntries.last?.id) { _, _ in
                         pendingScrollTask?.cancel()
                         pendingScrollTask = Task {
-                            try? await Task.sleep(for: .milliseconds(200))
+                            try? await Task.sleep(for: .milliseconds(150))
                             guard !Task.isCancelled else { return }
-                            if let last = filteredLogEntries.last {
+                            if let last = visibleEntries.last {
                                 proxy.scrollTo(last.id, anchor: .bottom)
                             }
                         }
@@ -553,6 +624,43 @@ private struct SandboxLogConsoleCard: View {
                         .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
+        .onAppear { refreshVisibleEntries() }
+        .onDisappear {
+            visibleRefreshTask?.cancel()
+            visibleRefreshTask = nil
+            pendingScrollTask?.cancel()
+            pendingScrollTask = nil
+        }
+        .onReceive(logBuffer.objectWillChange) { _ in
+            scheduleVisibleRefresh()
+        }
+        .onChange(of: logLevelFilter) { _, _ in refreshVisibleEntries() }
+        .onChange(of: showFullHistory) { _, _ in refreshVisibleEntries() }
+    }
+
+    private func scheduleVisibleRefresh() {
+        guard visibleRefreshTask == nil else { return }
+        visibleRefreshTask = Task { @MainActor in
+            try? await Task.sleep(for: Self.refreshThrottle)
+            if !Task.isCancelled {
+                refreshVisibleEntries()
+            }
+            visibleRefreshTask = nil
+        }
+    }
+
+    private func refreshVisibleEntries() {
+        let limit = showFullHistory ? Self.maxVisibleLimit : Self.defaultVisibleLimit
+        let entries = logBuffer.entries
+
+        let snapshot: [SandboxLogBuffer.Entry]
+        if let filter = logLevelFilter {
+            let filtered = entries.filter { $0.level == filter }
+            snapshot = filtered.count <= limit ? filtered : Array(filtered.suffix(limit))
+        } else {
+            snapshot = entries.count <= limit ? entries : Array(entries.suffix(limit))
+        }
+        visibleEntries = snapshot
     }
 
     private func logEntryRow(_ entry: SandboxLogBuffer.Entry) -> some View {
@@ -904,20 +1012,41 @@ private extension SandboxView {
         }
     }
 
-    func startRefreshTimer() {
-        stopRefreshTimer()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
-            Task { @MainActor in
+    /// Structured replacement for the prior `Timer.scheduledTimer`.
+    /// `Task.sleep` is cancellable, the loop awaits each `info()` call so
+    /// ticks can never overlap, and the task is torn down with the view.
+    func startRefreshLoop() {
+        stopRefreshLoop()
+        refreshTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                if Task.isCancelled { break }
                 if sandboxState.status == .running {
-                    refreshInfo()
+                    containerInfo = await SandboxManager.shared.info()
                 }
             }
         }
     }
 
-    func stopRefreshTimer() {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
+    func stopRefreshLoop() {
+        refreshTask?.cancel()
+        refreshTask = nil
+    }
+
+    /// Defer mount of `SandboxLogConsoleCard` so the first paint of the
+    /// running-container scroll view doesn't have to lay out + diff the
+    /// log buffer's contents synchronously. 120 ms is enough for AppKit
+    /// to commit the first frame on a fresh tab visit.
+    func scheduleHeavyCardMount() {
+        if hasRenderedHeavyCards { return }
+        heavyCardMountTask?.cancel()
+        heavyCardMountTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            if !Task.isCancelled {
+                hasRenderedHeavyCards = true
+            }
+            heavyCardMountTask = nil
+        }
     }
 }
 

@@ -17,17 +17,17 @@ struct ManagementView: View {
     // MARK: State Objects
 
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var repoService = PluginRepositoryService.shared
-    @ObservedObject private var remoteProviderManager = RemoteProviderManager.shared
-    @ObservedObject private var agentManager = AgentManager.shared
-    private var skillManager = SkillManager.shared
-    private var scheduleManager = ScheduleManager.shared
-    private var watcherManager = WatcherManager.shared
-    @ObservedObject private var modelManager = ModelManager.shared
-    @ObservedObject private var speechModelManager = SpeechModelManager.shared
-    @ObservedObject private var sandboxPluginLibrary = SandboxPluginLibrary.shared
     @ObservedObject private var stateManager = ManagementStateManager.shared
     @ObservedObject private var pairCoordinator = IncomingPairCoordinator.shared
+    // Single fan-in for every sidebar-badge data source. Replaced
+    // direct `@ObservedObject` references to ModelManager,
+    // RemoteProviderManager, AgentManager, PluginRepositoryService,
+    // SandboxPluginLibrary, and SpeechModelManager — each of which
+    // would otherwise re-render the entire settings shell on every
+    // publish (e.g. per model-download progress chunk). The store
+    // throttles these into a single coalesced snapshot and hoists
+    // the expensive Memory SQLite / Keychain probes off the body.
+    @ObservedObject private var badgeStore = ManagementBadgeStore.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 
@@ -214,51 +214,12 @@ private extension ManagementView {
     }
 
     func badgeCount(for tab: ManagementTab) -> Int? {
-        let count: Int
-        switch tab {
-        case .models:
-            count = modelManager.availableModels.filter { $0.isDownloaded }.count
-        case .providers:
-            count = remoteProviderManager.providerStates.values.filter(\.isConnected).count
-        case .plugins:
-            count = repoService.plugins.filter { $0.isInstalled }.count
-        case .sandbox:
-            count = sandboxPluginLibrary.plugins.count
-        case .tools:
-            count = ToolRegistry.shared.listTools().count
-        case .skills:
-            count = skillManager.skills.count
-        case .commands:
-            count = SlashCommandRegistry.shared.customCommands.count
-        case .memory:
-            count = (try? MemoryDatabase.shared.pinnedFactStats()) ?? 0
-        case .agents:
-            count = agentManager.agents.filter { !$0.isBuiltIn }.count
-        case .schedules:
-            count = scheduleManager.schedules.count
-        case .watchers:
-            count = watcherManager.watchers.count
-        case .voice:
-            count = speechModelManager.downloadedModelsCount
-        case .themes:
-            count = themeManager.installedThemes.filter { !$0.isBuiltIn }.count
-        case .identity:
-            count = MasterKey.exists() ? 0 : 1
-        default:
-            return nil
-        }
+        guard let count = badgeStore.snapshot.counts[tab] else { return nil }
         return count > 0 ? count : nil
     }
 
     func badgeHighlight(for tab: ManagementTab) -> Bool {
-        switch tab {
-        case .plugins:
-            return repoService.updatesAvailableCount > 0
-        case .identity:
-            return !MasterKey.exists()
-        default:
-            return false
-        }
+        badgeStore.snapshot.highlights.contains(tab)
     }
 }
 

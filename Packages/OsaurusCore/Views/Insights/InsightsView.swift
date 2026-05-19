@@ -15,18 +15,14 @@ struct InsightsView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var hasAppeared = false
-    @State private var selectedLogId: UUID?
+    /// Store the selected log directly instead of `selectedLogId: UUID?`
+    /// plus a body-time `logs.first(where:)`. With heavy traffic the
+    /// ring buffer can hold 500 entries and the body would re-scan it
+    /// on every new log. Selections that get evicted from the buffer
+    /// simply stay valid here until the user backs out (the detail
+    /// pane already shows captured-at-push-time data).
+    @State private var selectedLog: RequestLog?
     @State private var showClearConfirmation = false
-
-    /// Resolved log for the current selection. Recomputed on every render so
-    /// the pushed detail view stays in sync with the live ring buffer
-    /// (selection is not invalidated when new entries arrive — IDs are
-    /// stable). When the log disappears (cleared or filtered out) this
-    /// returns nil and `body` pops back to the list.
-    private var selectedLog: RequestLog? {
-        guard let id = selectedLogId else { return nil }
-        return insightsService.logs.first(where: { $0.id == id })
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,7 +52,7 @@ struct InsightsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
-            .animation(.easeInOut(duration: 0.25), value: selectedLogId == nil)
+            .animation(.easeInOut(duration: 0.25), value: selectedLog == nil)
             .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -99,13 +95,13 @@ struct InsightsView: View {
 
     private func pop() {
         withAnimation(.easeInOut(duration: 0.25)) {
-            selectedLogId = nil
+            selectedLog = nil
         }
     }
 
-    private func push(_ id: UUID) {
+    private func push(_ log: RequestLog) {
         withAnimation(.easeInOut(duration: 0.25)) {
-            selectedLogId = id
+            selectedLog = log
         }
     }
 
@@ -308,8 +304,8 @@ struct InsightsView: View {
                     ForEach(insightsService.filteredLogs) { log in
                         RequestLogRow(
                             log: log,
-                            isSelected: selectedLogId == log.id,
-                            onTap: { push(log.id) }
+                            isSelected: selectedLog?.id == log.id,
+                            onTap: { push(log) }
                         )
 
                         if log.id != insightsService.filteredLogs.last?.id {

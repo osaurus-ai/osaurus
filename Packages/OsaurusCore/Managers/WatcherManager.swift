@@ -30,6 +30,11 @@ public final class WatcherManager {
     /// All watchers
     public private(set) var watchers: [Watcher] = []
 
+    /// Per-agent watcher counts, kept in sync with `watchers`.
+    /// Mirrors `ScheduleManager.scheduleCountsByAgent` so `AgentCard`
+    /// can look up its count in O(1) instead of re-filtering.
+    public private(set) var watcherCountsByAgent: [UUID: Int] = [:]
+
     /// Currently running tasks (watcher ID -> run info)
     public private(set) var runningTasks: [UUID: WatcherRunInfo] = [:]
 
@@ -73,6 +78,21 @@ public final class WatcherManager {
     /// Reload watchers from disk
     public func refresh() {
         watchers = WatcherStore.loadAll()
+        recomputeAgentCounts()
+    }
+
+    /// Number of watchers linked to the given agent.
+    public func watcherCount(forAgentId agentId: UUID) -> Int {
+        watcherCountsByAgent[agentId] ?? 0
+    }
+
+    private func recomputeAgentCounts() {
+        var counts: [UUID: Int] = [:]
+        for watcher in watchers {
+            guard let agentId = watcher.agentId else { continue }
+            counts[agentId, default: 0] += 1
+        }
+        watcherCountsByAgent = counts
     }
 
     /// Create a new watcher

@@ -151,7 +151,31 @@ struct MLXModel: Identifiable, Codable {
     ///   - BPE: merges.txt + (vocab.json OR vocab.txt)
     ///   - SentencePiece: tokenizer.model OR spiece.model
     /// - At least one *.safetensors file exists (weights)
+    ///
+    /// Production callers (rootDirectory == nil) hit a process-wide cache
+    /// keyed by model id. The cache is invalidated whenever a download
+    /// completes or a model is deleted (both already post
+    /// `.localModelsChanged`). Tests with an explicit `rootDirectory`
+    /// always bypass the cache so the on-disk fixture is consulted.
+    /// Without this cache, every SwiftUI body that asked
+    /// `filter { $0.isDownloaded }` over the model list paid for 1 + N
+    /// `FileManager.fileExists` calls plus an enumerator open per model
+    /// — the dominant cost of the Models tab badge and grid recomputes.
     var isDownloaded: Bool {
+        if rootDirectory == nil, let cached = MLXModelDownloadCache.value(for: id) {
+            return cached
+        }
+        let value = computeIsDownloadedFromDisk()
+        if rootDirectory == nil {
+            MLXModelDownloadCache.set(value, for: id)
+        }
+        return value
+    }
+
+    /// Direct disk check used by `isDownloaded`. Kept exposed so callers
+    /// that need a freshness guarantee (e.g. immediately after a manual
+    /// file mutation) can bypass the cache.
+    func computeIsDownloadedFromDisk() -> Bool {
         let fileManager = FileManager.default
         let directory = localDirectory
 
@@ -159,17 +183,14 @@ struct MLXModel: Identifiable, Codable {
             fileManager.fileExists(atPath: directory.appendingPathComponent(name).path)
         }
 
-        // Core config
         guard exists("config.json") else { return false }
 
-        // Tokenizer variants
         let hasTokenizerJSON = exists("tokenizer.json")
         let hasBPE = exists("merges.txt") && (exists("vocab.json") || exists("vocab.txt"))
         let hasSentencePiece = exists("tokenizer.model") || exists("spiece.model")
         let hasTokenizerAssets = hasTokenizerJSON || hasBPE || hasSentencePiece
         guard hasTokenizerAssets else { return false }
 
-        // Weights
         if let items = try? fileManager.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: nil

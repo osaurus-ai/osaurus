@@ -24,10 +24,12 @@ struct PinnedFactsPanel: View {
 
     @State private var searchText = ""
 
-    private var filteredFacts: [PinnedFact] {
-        guard !searchText.isEmpty else { return facts }
-        return facts.filter { $0.content.localizedCaseInsensitiveContains(searchText) }
-    }
+    /// Debounced filter result. Previously a body computed property,
+    /// which meant `localizedCaseInsensitiveContains` ran across every
+    /// fact for every keystroke (and for every parent-publish that
+    /// caused this panel's body to re-evaluate). The `.task(id:)`
+    /// modifier below recomputes only after a 150 ms idle window.
+    @State private var filteredFacts: [PinnedFact] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -91,6 +93,28 @@ struct PinnedFactsPanel: View {
                         .stroke(theme.inputBorder, lineWidth: 1)
                 )
         )
+        .onAppear { recomputeFilter() }
+        .onChange(of: facts.count) { _, _ in recomputeFilter() }
+        .task(id: searchText) {
+            // 150 ms debounce keeps the panel responsive without
+            // re-running the localized contains over the whole pinned-
+            // facts collection on every keystroke. We still rerun
+            // immediately on `facts` mutations (above) so an add/
+            // delete reflects without a debounce delay.
+            try? await Task.sleep(for: .milliseconds(150))
+            if !Task.isCancelled {
+                recomputeFilter()
+            }
+        }
+    }
+
+    private func recomputeFilter() {
+        let query = searchText
+        if query.isEmpty {
+            filteredFacts = facts
+            return
+        }
+        filteredFacts = facts.filter { $0.content.localizedCaseInsensitiveContains(query) }
     }
 }
 

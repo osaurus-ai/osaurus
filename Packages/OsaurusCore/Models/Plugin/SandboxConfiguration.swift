@@ -70,11 +70,34 @@ public struct SandboxConfigurationStore {
         OsaurusPaths.sandboxConfigFile()
     }
 
+    /// Lock-guarded in-memory cache. `SandboxView` is destroyed and
+    /// rebuilt every time the user clicks the Sandbox sidebar tab
+    /// (`SidebarNavigation` uses `.id(selection)`), and the migration-flag
+    /// helper plus `SandboxManager` also call `load()` from several other
+    /// code paths. Without a cache each of those is a synchronous JSON
+    /// disk read on the main thread. Save() writes through so any in-app
+    /// mutation stays coherent. Osaurus never modifies sandbox.json from
+    /// outside its own process, so we don't need invalidate-on-mtime.
+    private static let cacheLock = NSLock()
+    private nonisolated(unsafe) static var cachedValue: SandboxConfiguration?
+
     public static func load() -> SandboxConfiguration {
-        guard let data = try? Data(contentsOf: configURL) else {
-            return .default
+        cacheLock.lock()
+        if let cached = cachedValue {
+            cacheLock.unlock()
+            return cached
         }
-        return (try? JSONDecoder().decode(SandboxConfiguration.self, from: data)) ?? .default
+        cacheLock.unlock()
+
+        let loaded = readFromDisk()
+
+        cacheLock.lock()
+        if cachedValue == nil {
+            cachedValue = loaded
+        }
+        let result = cachedValue ?? loaded
+        cacheLock.unlock()
+        return result
     }
 
     public static func save(_ config: SandboxConfiguration) {
@@ -84,9 +107,19 @@ public struct SandboxConfigurationStore {
         do {
             let data = try encoder.encode(config)
             try data.write(to: configURL, options: .atomic)
+            cacheLock.lock()
+            cachedValue = config
+            cacheLock.unlock()
         } catch {
             NSLog("[SandboxConfig] Failed to save: \(error)")
         }
+    }
+
+    private static func readFromDisk() -> SandboxConfiguration {
+        guard let data = try? Data(contentsOf: configURL) else {
+            return .default
+        }
+        return (try? JSONDecoder().decode(SandboxConfiguration.self, from: data)) ?? .default
     }
 }
 
