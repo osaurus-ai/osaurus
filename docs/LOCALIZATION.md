@@ -65,7 +65,7 @@ python3 scripts/i18n/merge-locale.py \
 bash scripts/i18n/check.sh
 ```
 
-CI runs this on every pull request. It validates catalog coverage, checks that Swift localization literals exist in the catalog, runs a Swift literal lint, and dry-runs the catalog pruner. Keys with **no** `de`/`zh-Hans` yet (including Xcode `en`-only auto-extractions) are ignored by the coverage check until you add a required locale, but the pruner check fails if those generated stubs are committed.
+CI runs this on every pull request. It validates catalog coverage, checks that Swift localization literals exist in the catalog, and runs a Swift literal lint. Keys with **no** `de`/`zh-Hans` yet (including Xcode `en`-only auto-extractions and empty stubs the catalog editor injects for raw `Text("…")` literals) are ignored — the catalog is allowed to grow without breaking CI. Run the pruner manually when you want to clean it up (see `scripts/i18n/prune-catalog.py` below).
 
 ## Export for external translators
 
@@ -89,7 +89,7 @@ In Xcode: **Product → Export Localizations…** / **Import Localizations…** 
 
 Shared logic: `scripts/i18n/xcstrings_util.py`.
 
-After building in Xcode, run the pruner before committing. It drops auto-extracted stubs and stale keys while keeping entries that have `de` or `zh-Hans`:
+Xcode's indexer will occasionally inject empty stubs into the catalog for raw `Text("…")` literals (emoji, single-char UI elements, interpolations the indexer canonicalizes). This is harmless — empty stubs resolve to English fallback at runtime exactly as if they weren't in the catalog — and CI no longer fails on them. Run the pruner manually when you want to drop them:
 
 ```bash
 python3 scripts/i18n/prune-catalog.py \

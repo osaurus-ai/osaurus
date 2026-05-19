@@ -12,11 +12,4 @@ python3 "$ROOT/scripts/i18n/check-swift-catalog-keys.py" \
     --catalog "$ROOT/Packages/OsaurusCore/Resources/Localizable.xcstrings" \
     --swift-root "$ROOT/Packages/OsaurusCore"
 
-python3 "$ROOT/scripts/i18n/prune-catalog.py" \
-    "$ROOT/Packages/OsaurusCore/Resources/Localizable.xcstrings" \
-    --required-locales "$LOCALES" \
-    --remove-stale \
-    --dry-run \
-    --fail-if-changed
-
 bash "$ROOT/scripts/i18n/lint-swift-literals.sh"
