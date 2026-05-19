@@ -857,7 +857,7 @@ private func tryParseBlockMath(_ trimmed: Substring, lines: [Substring], from i:
         // Single-line: open content close
         if afterOpener.hasSuffix(delim.close) && afterOpener.count > delim.close.count {
             let latex = String(afterOpener.dropLast(delim.close.count)).trimmingCharacters(in: .whitespaces)
-            guard !latex.isEmpty else { return nil }
+            guard !latex.isEmpty, looksLikeLatex(latex) else { return nil }
             return BlockMathResult(latex: latex, nextIndex: i + 1)
         }
 
@@ -871,6 +871,7 @@ private func tryParseBlockMath(_ trimmed: Substring, lines: [Substring], from i:
                 let before = ml.dropLast(delim.close.count).trimmingWhitespace()
                 if !before.isEmpty { mathLines.append(before) }
                 let latex = mathLines.map { String($0) }.joined(separator: "\n")
+                guard looksLikeLatex(latex) else { return nil }
                 return BlockMathResult(latex: latex, nextIndex: j + 1)
             }
             mathLines.append(lines[j])
@@ -880,6 +881,19 @@ private func tryParseBlockMath(_ trimmed: Substring, lines: [Substring], from i:
         return nil
     }
     return nil
+}
+
+/// A block-math segment only counts as math when its content contains a LaTeX-ish
+/// character (`\`, `^`, `_`, `{`). Prevents currency or stray `$$` runs from being typeset.
+@inline(__always)
+private func looksLikeLatex(_ s: String) -> Bool {
+    for scalar in s.unicodeScalars {
+        switch scalar {
+        case "\\", "^", "_", "{": return true
+        default: continue
+        }
+    }
+    return false
 }
 
 // MARK: - Table Parsing Helpers

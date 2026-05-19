@@ -720,8 +720,23 @@ struct SelectableTextView: NSViewRepresentable {
         let isMath: Bool
     }
 
+    /// A delimited segment only counts as math when its content contains a LaTeX-ish
+    /// character. This prevents currency runs (e.g. `$100 ... $200`) from being typeset.
+    @inline(__always)
+    private func looksLikeLatex(_ s: String) -> Bool {
+        for scalar in s.unicodeScalars {
+            switch scalar {
+            case "\\", "^", "_", "{": return true
+            default: continue
+            }
+        }
+        return false
+    }
+
     /// Split text into alternating plain-text and math segments.
     /// Handles `$...$` (no whitespace padding) and `\(...\)` delimiters.
+    /// Spans whose content does not look like LaTeX are emitted as literal text so the
+    /// outer scanner can still match a real math span later on the same line.
     private func splitInlineMath(_ text: String) -> [InlineSegment] {
         var segments: [InlineSegment] = []
         var current = ""
@@ -736,50 +751,65 @@ struct SelectableTextView: NSViewRepresentable {
             }
         }
 
+        @inline(__always)
+        func peek(_ offset: Int) -> Unicode.Scalar? {
+            let idx = i + offset
+            return idx < scalars.count ? scalars[idx] : nil
+        }
+
+        @inline(__always)
+        func slice(_ from: Int, _ to: Int) -> String {
+            String(String.UnicodeScalarView(scalars[from ..< to]))
+        }
+
+        @inline(__always)
+        func emitMath(_ content: String, advanceTo nextIndex: Int) {
+            flushText()
+            segments.append(InlineSegment(text: content, isMath: true))
+            i = nextIndex
+        }
+
         while i < scalars.count {
+            let c = scalars[i]
+
             // \(...\) delimiter
-            if i + 1 < scalars.count && scalars[i] == "\\" && scalars[i + 1] == "(" {
-                flushText()
-                i += 2
-                var math = ""
-                while i < scalars.count {
-                    if i + 1 < scalars.count && scalars[i] == "\\" && scalars[i + 1] == ")" {
-                        i += 2
-                        break
+            if c == "\\", peek(1) == "(" {
+                if let closeIdx = findClosingParen(scalars, from: i + 2) {
+                    let content = slice(i + 2, closeIdx)
+                    if !content.isEmpty, looksLikeLatex(content) {
+                        emitMath(content, advanceTo: closeIdx + 2)
+                        continue
                     }
-                    math.append(String(scalars[i]))
-                    i += 1
                 }
-                if !math.isEmpty {
-                    segments.append(InlineSegment(text: math, isMath: true))
-                }
+                // Not real math (or unclosed): treat `\(` as literal text and resume scanning.
+                current.append("\\(")
+                i += 2
                 continue
             }
 
             // Escaped \$ — not a math delimiter
-            if scalars[i] == "\\" && i + 1 < scalars.count && scalars[i + 1] == "$" {
+            if c == "\\", peek(1) == "$" {
                 current.append("$")
                 i += 2
                 continue
             }
 
             // $...$ delimiter — require non-whitespace after opening and before closing $
-            if scalars[i] == "$"
-                && i + 1 < scalars.count
-                && !scalars[i + 1].properties.isWhitespace
-                && scalars[i + 1] != "$"
+            if c == "$",
+                let after = peek(1),
+                !after.properties.isWhitespace,
+                after != "$",
+                let closeIdx = findClosingDollar(scalars, from: i + 1)
             {
-                if let closeIdx = findClosingDollar(scalars, from: i + 1) {
-                    let start = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: i + 1)
-                    let end = text.unicodeScalars.index(text.unicodeScalars.startIndex, offsetBy: closeIdx)
-                    flushText()
-                    segments.append(InlineSegment(text: String(text.unicodeScalars[start ..< end]), isMath: true))
-                    i = closeIdx + 1
+                let content = slice(i + 1, closeIdx)
+                if looksLikeLatex(content) {
+                    emitMath(content, advanceTo: closeIdx + 1)
                     continue
                 }
+                // Currency/plain text: fall through, keeping the `$` literal.
             }
 
-            current.append(String(scalars[i]))
+            current.append(String(c))
             i += 1
         }
 
@@ -787,11 +817,23 @@ struct SelectableTextView: NSViewRepresentable {
         return segments
     }
 
-    /// Find the index of a closing `$` that has no whitespace before it.
+    /// Find the index of a closing `\)` for an opening `\(`.
+    private func findClosingParen(_ scalars: [Unicode.Scalar], from start: Int) -> Int? {
+        var j = start
+        while j + 1 < scalars.count {
+            if scalars[j] == "\\" && scalars[j + 1] == ")" {
+                return j
+            }
+            j += 1
+        }
+        return nil
+    }
+
+    /// Find the index of a closing `$` whose preceding character is not whitespace.
     private func findClosingDollar(_ scalars: [Unicode.Scalar], from start: Int) -> Int? {
         var j = start
         while j < scalars.count {
-            if scalars[j] == "$" && !scalars[j - 1].properties.isWhitespace {
+            if scalars[j] == "$", j > 0, !scalars[j - 1].properties.isWhitespace {
                 return j
             }
             j += 1
