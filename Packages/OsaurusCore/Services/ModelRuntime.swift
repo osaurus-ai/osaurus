@@ -60,17 +60,27 @@ public actor ModelRuntime {
         let container: ModelContainer
         let weightsSizeBytes: Int64
         let isVLM: Bool
+        let draftStrategy: MLXLMCommon.DraftStrategy?
         init(
             name: String,
             container: ModelContainer,
             weightsSizeBytes: Int64,
-            isVLM: Bool = false
+            isVLM: Bool = false,
+            draftStrategy: MLXLMCommon.DraftStrategy? = nil
         ) {
             self.name = name
             self.container = container
             self.weightsSizeBytes = weightsSizeBytes
             self.isVLM = isVLM
+            self.draftStrategy = draftStrategy
         }
+    }
+
+    private struct NativeMTPLaunchPlan: Sendable {
+        let loadConfiguration: LoadConfiguration
+        let draftStrategy: MLXLMCommon.DraftStrategy?
+        let statusLine: String?
+        let reason: String
     }
 
     /// Sendable wrapper around an immutable snapshot of chat messages.
@@ -632,10 +642,14 @@ public actor ModelRuntime {
                 "loadContainer: task start model=\(name, privacy: .public) loadID=\(loadID, privacy: .public)"
             )
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
+            let mtpPlan = Self.resolveNativeMTPLaunchPlan(modelDirectory: localURL)
+            genLog.info(
+                "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public)"
+            )
             let container = try await loadModelContainer(
                 from: localURL,
                 using: tokenizerLoader,
-                loadConfiguration: .default
+                loadConfiguration: mtpPlan.loadConfiguration
             )
             let isVLM = await container.isVLM
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - taskStartedAt) * 1000)
@@ -646,7 +660,8 @@ public actor ModelRuntime {
                 name: name,
                 container: container,
                 weightsSizeBytes: weightsBytes,
-                isVLM: isVLM
+                isVLM: isVLM,
+                draftStrategy: mtpPlan.draftStrategy
             )
         }
 
@@ -1088,6 +1103,7 @@ public actor ModelRuntime {
                 buildToolsSpec: buildTools,
                 generation: parameters,
                 stopSequences: stopSequences,
+                draftStrategy: holder.draftStrategy,
                 runtime: cfg,
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             )
@@ -1323,9 +1339,10 @@ public actor ModelRuntime {
         minP: Float = 0,
         repetitionPenalty: Float?,
         stopSequences: [String] = [],
+        draftStrategy: MLXLMCommon.DraftStrategy? = nil,
         enableCompiledBatchDecode: Bool = true
     ) -> MLXLMCommon.GenerateParameters {
-        MLXLMCommon.GenerateParameters(
+        var params = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
             enableCompiledBatchDecode: enableCompiledBatchDecode,
             temperature: temperature,
@@ -1336,6 +1353,71 @@ public actor ModelRuntime {
             repetitionContextSize: 20,
             extraStopStrings: stopSequences
         )
+        params.draftStrategy = draftStrategy
+        return params
+    }
+
+    private nonisolated static func resolveNativeMTPLaunchPlan(
+        modelDirectory: URL
+    ) -> NativeMTPLaunchPlan {
+        let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
+        let jangConfig = try? JangLoader.loadConfig(at: modelDirectory)
+        let status: MTPBundleStatus?
+        do {
+            status = try MTPBundleInspector.inspect(
+                modelDirectory: modelDirectory,
+                jangConfig: jangConfig
+            )
+        } catch {
+            genLog.error(
+                "native MTP inspection failed for \(modelDirectory.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+            return NativeMTPLaunchPlan(
+                loadConfiguration: .default,
+                draftStrategy: nil,
+                statusLine: nil,
+                reason: "MTP inspection failed; using autoregressive load.")
+        }
+
+        var settings = VMLXServerRuntimeSettings()
+        settings.mtp.mode = .auto
+        let launch = settings.resolvedMTPLaunch(
+            configData: configData,
+            jangConfig: jangConfig,
+            status: status
+        )
+        let loadConfiguration = settings.resolvedLoadConfiguration(
+            base: .default,
+            configData: configData,
+            jangConfig: jangConfig,
+            status: status
+        )
+        let draftStrategy = settings.resolvedMTPDraftStrategy(
+            configData: configData,
+            jangConfig: jangConfig,
+            status: status
+        )
+
+        return NativeMTPLaunchPlan(
+            loadConfiguration: loadConfiguration,
+            draftStrategy: draftStrategy,
+            statusLine: status?.statusLine,
+            reason: launch.reason)
+    }
+
+    private nonisolated static func describeDraftStrategy(
+        _ strategy: MLXLMCommon.DraftStrategy?
+    ) -> String {
+        switch strategy {
+        case nil:
+            return "none"
+        case .some(.none):
+            return "none"
+        case .some(.nativeMTP(let depth)):
+            return "native_mtp:d\(depth)"
+        case .some(let strategy):
+            return strategy.kindName
+        }
     }
 
     nonisolated static func makeTokenizerTools(
