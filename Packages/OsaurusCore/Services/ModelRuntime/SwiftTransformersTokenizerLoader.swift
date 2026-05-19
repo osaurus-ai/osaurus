@@ -95,10 +95,19 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
             && upstream.convertTokenToId("</assistant>") != nil
             && upstream.convertTokenToId("<think>") != nil
             && upstream.convertTokenToId("</think>") != nil
+        let hasZayaVLVisionSentinel =
+            upstream.bosToken == "<bos>"
+            && upstream.convertTokenToId("<|vision_start|>") != nil
+            && upstream.convertTokenToId("<image>") != nil
+            && upstream.convertTokenToId("<|vision_end|>") != nil
+            && upstream.convertTokenToId("<|im_start|>") != nil
+            && upstream.convertTokenToId("<|im_end|>") != nil
         let hasDSV4Sentinel =
-            upstream.bosToken == Self.dsv4Bos
-            || (upstream.convertTokenToId(Self.dsv4Bos) != nil
+            !hasZayaVLVisionSentinel
+            && (upstream.bosToken == Self.dsv4Bos
+                || (upstream.convertTokenToId(Self.dsv4Bos) != nil
                 && upstream.convertTokenToId(Self.dsv4Eos) != nil)
+            )
         if hasLagunaSentinel
             && (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
         {
@@ -132,6 +141,18 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
         }
 
         var adjustedContext = additionalContext
+        if hasZayaVLVisionSentinel,
+            Self.messagesContainImageContent(messages),
+            (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
+            return try fallback(
+                label: "Zaya1VLVisionToolMinimal",
+                template: MLXLMCommon.ChatTemplateFallbacks.zayaVLVisionToolMinimal,
+                messages: messages,
+                tools: tools,
+                additionalContext: adjustedContext
+            )
+        }
         if adjustedContext?["reasoning_effort"] == nil,
             upstream.convertTokenToId("[MODEL_SETTINGS]") != nil,
             let enableThinking = adjustedContext?["enable_thinking"] as? Bool
@@ -185,6 +206,15 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                     additionalContext: additionalContext
                 )
             }
+            if hasZayaVLVisionSentinel, Self.messagesContainImageContent(messages) {
+                return try fallback(
+                    label: "Zaya1VLVisionToolMinimal",
+                    template: MLXLMCommon.ChatTemplateFallbacks.zayaVLVisionToolMinimal,
+                    messages: messages,
+                    tools: tools,
+                    additionalContext: adjustedContext
+                )
+            }
             if upstream.bosToken == "<bos>" {
                 let template =
                     (tools?.isEmpty ?? true)
@@ -221,6 +251,13 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
             let ordered: [(label: String, template: String)]
             if hasLagunaSentinel {
                 ordered = [("LagunaMinimal", MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal)]
+            } else if hasZayaVLVisionSentinel, Self.messagesContainImageContent(messages) {
+                ordered = [
+                    (
+                        "Zaya1VLVisionToolMinimal",
+                        MLXLMCommon.ChatTemplateFallbacks.zayaVLVisionToolMinimal
+                    )
+                ]
             } else if isGemma {
                 ordered = [
                     ("Gemma4WithTools", MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools),
@@ -250,6 +287,32 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
             }
             throw error
         }
+    }
+
+    private static func messagesContainImageContent(_ messages: [[String: any Sendable]]) -> Bool {
+        messages.contains { message in
+            contentContainsImage(message["content"])
+        }
+    }
+
+    private static func contentContainsImage(_ content: Any?) -> Bool {
+        guard let content else { return false }
+        if let blocks = content as? [[String: any Sendable]] {
+            return blocks.contains { ($0["type"] as? String) == "image" }
+        }
+        if let blocks = content as? [[String: String]] {
+            return blocks.contains { $0["type"] == "image" }
+        }
+        if let blocks = content as? [[String: Any]] {
+            return blocks.contains { ($0["type"] as? String) == "image" }
+        }
+        if let blocks = content as? [any Sendable] {
+            return blocks.contains { contentContainsImage($0) }
+        }
+        if let blocks = content as? [Any] {
+            return blocks.contains { contentContainsImage($0) }
+        }
+        return false
     }
 
     private static func deepseekV4Role(

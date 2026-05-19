@@ -10,6 +10,35 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftTransformersTokenizerLoaderTests {
+    @Test func zayaVLLocalTokenizerRendersImagePlaceholderFromOsaurusFallback() async throws {
+        let defaultPath = "/Users/eric/models/Osaurus/ZAYA1-VL-8B-MXFP4"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_ZAYA_VL_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let content: [[String: any Sendable]] = [
+            ["type": "image"],
+            ["type": "text", "text": "Describe this image."],
+        ]
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": content]],
+            tools: nil,
+            additionalContext: ["enable_thinking": false]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("<|vision_start|>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<image>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<|vision_end|>"), "Decoded: \(decoded)")
+    }
+
     @Test func dsv4LocalTokenizerUsesCanonicalNoChatTemplatePath() async throws {
         let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
