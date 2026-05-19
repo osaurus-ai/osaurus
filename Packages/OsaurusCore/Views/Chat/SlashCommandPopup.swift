@@ -16,6 +16,8 @@ struct SlashCommandPopup: View {
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
 
+    @State private var hoveredIndex: Int? = nil
+
     private let rowHeight: CGFloat = 44
     private let maxVisibleRows: Int = 6
 
@@ -84,7 +86,7 @@ struct SlashCommandPopup: View {
         let listHeight = CGFloat(visibleCount) * rowHeight
 
         return ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
+            ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
                         commandRow(command: command, index: index)
@@ -110,6 +112,8 @@ struct SlashCommandPopup: View {
 
     private func commandRow(command: SlashCommand, index: Int) -> some View {
         let isSelected = index == selectedIndex
+        let isHovered = index == hoveredIndex
+        let isHighlighted = isSelected || isHovered
 
         return Button {
             onSelect(command)
@@ -119,14 +123,14 @@ struct SlashCommandPopup: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(
-                            isSelected
+                            isHighlighted
                                 ? theme.accentColor.opacity(0.15)
                                 : theme.tertiaryBackground.opacity(0.5)
                         )
                         .frame(width: 26, height: 26)
                     Image(systemName: command.icon)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                        .foregroundColor(isHighlighted ? theme.accentColor : theme.secondaryText)
                 }
 
                 // Text
@@ -134,7 +138,7 @@ struct SlashCommandPopup: View {
                     HStack(spacing: 4) {
                         Text("/\(command.name)")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
+                            .foregroundColor(isHighlighted ? theme.accentColor : theme.primaryText)
                         if command.isBuiltIn {
                             Text("built-in", bundle: .module)
                                 .font(.system(size: 9, weight: .medium))
@@ -160,7 +164,7 @@ struct SlashCommandPopup: View {
             .padding(.horizontal, 12)
             .frame(height: rowHeight)
             .background(
-                isSelected
+                isHighlighted
                     ? theme.accentColor.opacity(theme.isDark ? 0.12 : 0.08)
                     : Color.clear
             )
@@ -169,7 +173,9 @@ struct SlashCommandPopup: View {
         .buttonStyle(.plain)
         .onHover { hovering in
             if hovering {
-                selectedIndex = index
+                hoveredIndex = index
+            } else if hoveredIndex == index {
+                hoveredIndex = nil
             }
         }
     }
