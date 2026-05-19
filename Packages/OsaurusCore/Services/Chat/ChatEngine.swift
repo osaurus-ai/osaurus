@@ -101,7 +101,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         }()
         let seedBits: UInt64? = request.seed.map { UInt64(bitPattern: Int64($0)) }
         let isJSONObject = (request.response_format?.type == "json_object")
-        var modelOptions = request.modelOptions ?? [:]
+        var modelOptions = Self.normalizedModelOptions(
+            for: request.model,
+            requestOptions: request.modelOptions
+        )
         let isHy3 = Hy3ReasoningProfile.matches(modelId: request.model)
         let requestReasoningEffort: String? = {
             guard
@@ -161,6 +164,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             remoteServices: remoteServices
         )
         return Dispatch(route: route, params: params, remoteServices: remoteServices)
+    }
+
+    private static func normalizedModelOptions(
+        for model: String,
+        requestOptions: [String: ModelOptionValue]?
+    ) -> [String: ModelOptionValue] {
+        guard ModelProfileRegistry.profile(for: model) != nil else {
+            return requestOptions ?? [:]
+        }
+        return ModelProfileRegistry.normalizedOptions(for: model, persisted: requestOptions)
     }
 
     private func estimateInputTokens(_ messages: [ChatMessage]) -> Int {
