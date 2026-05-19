@@ -188,6 +188,11 @@ Current ZAYA1 8B MXFP4 text evidence:
 - Chat T3 included `café 東京 🚀` but added extra explanatory text.
 - Responses T3 returned wrong characters (`《咖蓝》》📅`) and failed the literal
   UTF row.
+- `ChatEngineTests.openResponsesRequest_preservesLiteralUTF8TextIntoChatRequest`
+  proves the Open Responses to Chat Completions bridge preserves
+  `café 東京 🚀` in the prompt; the live red row therefore remains a
+  runtime/template/tokenizer/decode investigation rather than a known
+  Responses JSON-adapter truncation.
 - After-sequence cache stats showed `prefix_hits=5`, `disk_l2_hits=5`,
   `disk_l2_stores=12`, and `ssm_companion_hits=5`, with
   `is_paged_incompatible=true`.

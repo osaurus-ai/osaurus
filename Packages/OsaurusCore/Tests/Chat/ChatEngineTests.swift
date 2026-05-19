@@ -73,6 +73,32 @@ struct ChatEngineTests {
         #expect(chat.messages[0].imageUrls == [image])
     }
 
+    @Test func openResponsesRequest_preservesLiteralUTF8TextIntoChatRequest() throws {
+        let data = Data(
+            """
+            {
+              "model": "zaya1-8b-mxfp4",
+              "input": [
+                {
+                  "type": "message",
+                  "role": "user",
+                  "content": "Write exactly this UTF-8 string and nothing else: café 東京 🚀"
+                }
+              ]
+            }
+            """.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        let chat = request.toChatCompletionRequest()
+
+        #expect(chat.messages.count == 1)
+        #expect(
+            chat.messages[0].content
+                == "Write exactly this UTF-8 string and nothing else: café 東京 🚀"
+        )
+    }
+
     @Test func streamChat_yields_deltas_success() async throws {
         let svc = FakeModelService(deltas: ["a", "b", "c"])
         let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
