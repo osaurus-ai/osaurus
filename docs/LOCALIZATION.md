@@ -62,7 +62,7 @@ python3 scripts/i18n/merge-locale.py \
 bash scripts/i18n/check.sh
 ```
 
-CI runs this on every pull request.
+CI runs this on every pull request. Keys with **no** `de`/`zh-Hans` yet (including Xcode `en`-only auto-extractions) are ignored until you add a required locale.
 
 ## Export for external translators
 
@@ -80,5 +80,12 @@ In Xcode: **Product → Export Localizations…** / **Import Localizations…** 
 | `scripts/i18n/check.sh` | Validate core + InfoPlist catalogs |
 | `scripts/i18n/merge-locale.py` | Copy one locale from another catalog (existing keys only) |
 | `scripts/i18n/fill-zh-hans.py` | Optional machine-translation backfill (`pip install deep-translator`) |
+| `scripts/i18n/prune-catalog.py` | Remove en-only / empty Xcode auto-extraction stubs |
 
 Shared logic: `scripts/i18n/xcstrings_util.py`.
+
+To drop unstaged auto-extracted keys (keeps entries that have `de` or `zh-Hans`):
+
+```bash
+python3 scripts/i18n/prune-catalog.py Packages/OsaurusCore/Resources/Localizable.xcstrings
+```

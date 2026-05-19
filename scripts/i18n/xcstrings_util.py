@@ -63,10 +63,20 @@ def locale_issues(entry: dict, locale: str, *, key: str) -> list[str]:
     return issues
 
 
+def is_maintained_entry(key: str, entry: dict, required_locales: list[str]) -> bool:
+    """Only keys with at least one required locale are enforced (skips en-only Xcode stubs)."""
+    if not key.strip() or key in ALLOW_EMPTY_KEYS:
+        return False
+    locs = entry.get("localizations") or {}
+    if not locs:
+        return False
+    return bool(set(locs) & set(required_locales))
+
+
 def check_catalog(catalog: dict, required_locales: list[str]) -> list[str]:
     errors: list[str] = []
     for key, entry in sorted(catalog.get("strings", {}).items()):
-        if not key.strip() or key in ALLOW_EMPTY_KEYS:
+        if not is_maintained_entry(key, entry, required_locales):
             continue
         for locale in required_locales:
             for issue in locale_issues(entry, locale, key=key):
