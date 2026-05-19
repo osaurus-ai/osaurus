@@ -5,6 +5,12 @@
       "comment" : "Bundle display name",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus"
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -23,6 +29,12 @@
       "comment" : "Bundle name",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus"
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -41,6 +53,12 @@
       "comment" : "Privacy - AppleEvents Sending Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können Automatisierung nutzen, um andere Anwendungen in deinem Auftrag zu steuern."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -59,6 +77,12 @@
       "comment" : "Privacy - Calendars Full Access Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deinen Kalender zugreifen, um Termine zu lesen und zu erstellen."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -77,6 +101,12 @@
       "comment" : "Privacy - Calendars Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deinen Kalender zugreifen, um Termine zu lesen und zu erstellen."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -95,6 +125,12 @@
       "comment" : "Privacy - Contacts Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deine Kontakte zugreifen, um Kontaktinformationen zu suchen und zu lesen."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -118,12 +154,6 @@
             "state" : "new",
             "value" : ""
           }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : ""
-          }
         }
       }
     },
@@ -131,6 +161,12 @@
       "comment" : "Privacy - Local Network Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus nutzt das lokale Netzwerk, um Agenten auf anderen Geräten zu finden und zu verbinden."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -149,6 +185,12 @@
       "comment" : "Privacy - Location Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deinen Standort zugreifen, um standortbasierte Dienste bereitzustellen."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -167,6 +209,12 @@
       "comment" : "Privacy - Location When In Use Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deinen Standort zugreifen, um standortbasierte Dienste bereitzustellen."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -185,6 +233,12 @@
       "comment" : "Privacy - Microphone Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus verwendet das Mikrofon für die Spracherkennung auf dem Gerät mit FluidAudio."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -203,6 +257,12 @@
       "comment" : "Privacy - Reminders Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Plugins können auf deine Erinnerungen zugreifen, um Aufgaben zu lesen und zu erstellen."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
@@ -221,6 +281,12 @@
       "comment" : "Privacy - Screen Capture Usage Description",
       "extractionState" : "stale",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus kann Systemaudio für die Transkription aufzeichnen. Bildschirminhalte werden nicht aufgezeichnet."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",

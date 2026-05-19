@@ -69,6 +69,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Check localizations
+        run: bash scripts/i18n/check.sh
+
       - name: Set up Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
         with:

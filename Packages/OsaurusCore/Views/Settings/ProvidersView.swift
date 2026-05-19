@@ -324,7 +324,7 @@ private struct ProviderCard: View {
                     Menu {
                         Button(action: onEdit) {
                             Label {
-                                Text("Edit", bundle: .module)
+                                Text(localized: "Edit")
                             } icon: {
                                 Image(systemName: "pencil")
                             }
@@ -386,7 +386,7 @@ private struct ProviderCard: View {
                     if isCommandNotFoundError(error) {
                         Spacer(minLength: 6)
                         Button(action: onEdit) {
-                            Text("Edit")
+                            Text(localized: "Edit")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(theme.accentColor)
                                 .padding(.horizontal, 8)

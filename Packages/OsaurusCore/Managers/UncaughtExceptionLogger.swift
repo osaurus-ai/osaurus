@@ -24,13 +24,13 @@ enum UncaughtExceptionLogger {
         NSSetUncaughtExceptionHandler { exception in
             let timestamp = ISO8601DateFormatter().string(from: Date())
             let dump = """
-            timestamp: \(timestamp)
-            name:      \(exception.name.rawValue)
-            reason:    \(exception.reason ?? "<nil>")
-            userInfo:  \(String(describing: exception.userInfo))
-            stack:
-            \(exception.callStackSymbols.joined(separator: "\n"))
-            """
+                timestamp: \(timestamp)
+                name:      \(exception.name.rawValue)
+                reason:    \(exception.reason ?? "<nil>")
+                userInfo:  \(String(describing: exception.userInfo))
+                stack:
+                \(exception.callStackSymbols.joined(separator: "\n"))
+                """
             try? dump.write(
                 toFile: UncaughtExceptionLogger.logPath,
                 atomically: true,

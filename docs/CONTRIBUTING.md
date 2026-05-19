@@ -250,6 +250,10 @@ Use the "Feature request" issue template and describe:
 - Proposed solution or alternatives
 - Any additional context or prior art (links welcome)
 
+## Localization
+
+Osaurus supports English (source), German, and Simplified Chinese. All UI strings live in the OsaurusCore string catalog; see **[LOCALIZATION.md](LOCALIZATION.md)** for how to add strings, add languages, and run validation.
+
 ## Security
 
 Please do not create public issues for security vulnerabilities. See `SECURITY.md` for our security policy and private reporting process.

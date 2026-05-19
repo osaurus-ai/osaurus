@@ -120,7 +120,9 @@ public enum RemoteProviderKeychain {
     }
 
     @discardableResult
-    public static func saveOAuthTokensOffMainActor(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID) async -> Bool {
+    public static func saveOAuthTokensOffMainActor(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID) async
+        -> Bool
+    {
         await Task.detached(priority: .utility) {
             saveOAuthTokens(tokens, for: providerId)
         }.value

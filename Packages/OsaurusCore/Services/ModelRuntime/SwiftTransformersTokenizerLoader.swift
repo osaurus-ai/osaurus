@@ -120,8 +120,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             !hasZayaVLVisionSentinel
             && (upstream.bosToken == Self.dsv4Bos
                 || (upstream.convertTokenToId(Self.dsv4Bos) != nil
-                && upstream.convertTokenToId(Self.dsv4Eos) != nil)
-            )
+                    && upstream.convertTokenToId(Self.dsv4Eos) != nil))
         if hasLagunaSentinel
             && (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
         {
@@ -439,8 +438,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             call -> MLXLMCommon.DeepseekV4ChatEncoder.ToolCall? in
             let function = call["function"] as? [String: any Sendable]
             let id = deepseekV4String(call["id"])
-            guard let name = deepseekV4String(call["name"])
-                ?? deepseekV4String(function?["name"])
+            guard
+                let name = deepseekV4String(call["name"])
+                    ?? deepseekV4String(function?["name"])
             else {
                 return nil
             }

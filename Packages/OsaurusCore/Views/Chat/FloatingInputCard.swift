@@ -1166,7 +1166,7 @@ extension FloatingInputCard {
             let preview: String = {
                 let trimmed = queued.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty {
-                    return String(localized: "Queued attachment", bundle: .module)
+                    return L("Queued attachment")
                 }
                 if trimmed.count <= 80 { return trimmed }
                 return String(trimmed.prefix(80)) + "\u{2026}"

@@ -208,11 +208,11 @@ public struct SchemaTabView: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.tertiaryText)
                     if column.primaryKey {
-                        Text("PK").font(.system(size: 9, weight: .bold))
+                        Text(localized: "PK").font(.system(size: 9, weight: .bold))
                             .foregroundColor(theme.accentColor)
                     }
                     if !column.nullable {
-                        Text("NOT NULL").font(.system(size: 9))
+                        Text(localized: "NOT NULL").font(.system(size: 9))
                             .foregroundColor(theme.tertiaryText)
                     }
                     Spacer()
@@ -231,7 +231,7 @@ public struct SchemaTabView: View {
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundColor(theme.tertiaryText)
                         if index.unique {
-                            Text("UNIQUE").font(.system(size: 9, weight: .bold))
+                            Text(localized: "UNIQUE").font(.system(size: 9, weight: .bold))
                                 .foregroundColor(theme.tertiaryText)
                         }
                         Spacer()
@@ -524,7 +524,7 @@ public struct DataTabView: View {
         .help("What do these filters mean?")
         .popover(isPresented: $showFilterHelp, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Filters")
+                Text(localized: "Filters")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 ForEach(DataFilterMode.allCases) { mode in
@@ -554,7 +554,7 @@ public struct DataTabView: View {
             )
         ) {
             if tables.isEmpty {
-                Text("No tables").tag("")
+                Text(localized: "No tables").tag("")
             } else {
                 ForEach(userVisibleTables, id: \.name) { table in
                     Text(table.name).tag(table.name)
@@ -1321,7 +1321,7 @@ fileprivate struct AgentDataTableRepresentable: View {
     @ViewBuilder
     private func deletedPill(visible: Bool) -> some View {
         if visible {
-            Text("Deleted")
+            Text(localized: "Deleted")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundColor(theme.warningColor)
                 .padding(.horizontal, 6)

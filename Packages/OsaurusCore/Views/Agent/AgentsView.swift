@@ -2956,7 +2956,7 @@ struct AgentDetailView: View {
     private func bundleManifestSummary(_ manifest: AgentBundleManifest) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text("Agent:").font(.system(size: 11, weight: .semibold))
+                Text(localized: "Agent:").font(.system(size: 11, weight: .semibold))
                 Text(manifest.agentName).font(.system(size: 11))
             }
             if !manifest.agentDescription.isEmpty {
@@ -2986,7 +2986,7 @@ struct AgentDetailView: View {
         panel.allowedContentTypes = []
         panel.nameFieldStringValue = currentAgent.displayName
         panel.canCreateDirectories = true
-        panel.title = String(localized: "Export Bundle", bundle: .module)
+        panel.title = L("Export Bundle")
         panel.message = String(
             localized: "Pick a folder for the .osaurus-agent bundle.",
             bundle: .module
@@ -3003,7 +3003,7 @@ struct AgentDetailView: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowedContentTypes = []
-        panel.title = String(localized: "Import Bundle", bundle: .module)
+        panel.title = L("Import Bundle")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         bundleImportSource = url
         bundlePassphraseInput = ""
