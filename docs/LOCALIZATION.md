@@ -76,23 +76,34 @@ In Xcode: **Product → Export Localizations…** / **Import Localizations…** 
 - **OsaurusCLI** is English-only.
 - **User-generated content** (chat, model output) is not localized.
 
+## First-time setup
+
+Opt in to the repo-tracked git hooks so committing a `.xcstrings` change automatically re-prunes Xcode's auto-extracted stubs before they're staged:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook is idempotent — it's a no-op when nothing needs pruning. The same pruner also runs as a Debug-build Run Script phase on the `osaurus` app target, so a local Xcode Debug build leaves the catalog already pruned.
+
 ## Maintainer scripts
 
 | Script | Purpose |
 | ------ | ------- |
-| `scripts/i18n/check.sh` | Validate core + InfoPlist catalogs, lint risky Swift literals, and dry-run pruning |
+| `scripts/i18n/check.sh` | Validate core + InfoPlist catalogs, lint risky Swift literals, and dry-run pruning. On failure, prints a remediation hint pointing at `format.sh`. |
+| `scripts/i18n/format.sh` | One-command write-mode prune of the core catalog. Run this if `check.sh` fails locally, or rely on the pre-commit hook / Debug build phase to invoke it automatically. |
 | `scripts/i18n/check-swift-catalog-keys.py` | Ensure Swift localization references exist in the core catalog |
 | `scripts/i18n/lint-swift-literals.py` | Flag Swift literals that bypass package-bundle localization |
 | `scripts/i18n/merge-locale.py` | Copy one locale from another catalog (existing keys only) |
 | `scripts/i18n/fill-zh-hans.py` | Optional machine-translation backfill (`pip install deep-translator`) |
-| `scripts/i18n/prune-catalog.py` | Remove en-only / empty Xcode auto-extraction stubs and stale keys |
+| `scripts/i18n/prune-catalog.py` | Remove en-only / empty Xcode auto-extraction stubs and stale keys. Pass `--swift-root` so keys still referenced from Swift source survive even if Xcode flagged them stale. |
 
-Shared logic: `scripts/i18n/xcstrings_util.py`.
+Shared logic: `scripts/i18n/xcstrings_util.py`. Shared paths/locales for shell scripts: `scripts/i18n/_paths.sh`.
 
-After building in Xcode, run the pruner before committing. It drops auto-extracted stubs and stale keys while keeping entries that have `de` or `zh-Hans`:
+After building in Xcode, the catalog is auto-pruned by either the pre-commit hook or the Debug Run Script phase. If you skipped those (or you're on a fresh checkout), run the formatter manually before committing — it drops auto-extracted stubs and stale keys while keeping entries that still have `de`, `zh-Hans`, or a live Swift reference:
 
 ```bash
-python3 scripts/i18n/prune-catalog.py \
-  Packages/OsaurusCore/Resources/Localizable.xcstrings \
-  --remove-stale
+bash scripts/i18n/format.sh
 ```
+
+On PRs from this repo (not forks), the `i18n autofix` workflow runs the same formatter and pushes a fixup commit if the catalog drifted, so contributors without the hook installed are still covered. Fork PRs see the actionable error from `scripts/i18n/check.sh` in the main CI job and need to run `format.sh` locally.

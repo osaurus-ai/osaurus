@@ -8,6 +8,85 @@ from pathlib import Path
 
 ALLOW_EMPTY_KEYS = frozenset()
 
+SWIFT_LOCALIZATION_MARKERS = (
+    'L("',
+    'Text(localized: "',
+    'Button(localized: "',
+    'Label(localized: "',
+    'localizedHelp("',
+)
+
+
+def _parse_swift_string(line: str, marker: str, start: int) -> tuple[str, int] | None:
+    index = start + len(marker)
+    chars: list[str] = []
+    interpolation_depth = 0
+    escape_next = False
+
+    while index < len(line):
+        char = line[index]
+        nxt = line[index + 1] if index + 1 < len(line) else ""
+
+        if escape_next:
+            chars.append("\\" + char)
+            escape_next = False
+            index += 1
+            continue
+
+        if char == "\\" and nxt == "(":
+            interpolation_depth += 1
+            chars.append(r"\(")
+            index += 2
+            continue
+
+        if char == "\\":
+            escape_next = True
+            index += 1
+            continue
+
+        if interpolation_depth > 0:
+            chars.append(char)
+            if char == "(":
+                interpolation_depth += 1
+            elif char == ")":
+                interpolation_depth -= 1
+            index += 1
+            continue
+
+        if char == '"':
+            return "".join(chars), index + 1
+
+        chars.append(char)
+        index += 1
+
+    return None
+
+
+def swift_referenced_keys(root: Path) -> dict[str, list[str]]:
+    """Find every L("..."), Text(localized: "..."), etc. literal under *root*."""
+    refs: dict[str, list[str]] = {}
+    for path in sorted(root.rglob("*.swift")):
+        if ".build" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for line_no, line in enumerate(text.splitlines(), 1):
+            for marker in SWIFT_LOCALIZATION_MARKERS:
+                search_from = 0
+                while True:
+                    start = line.find(marker, search_from)
+                    if start == -1:
+                        break
+                    parsed = _parse_swift_string(line, marker, start)
+                    search_from = start + len(marker)
+                    if not parsed:
+                        continue
+                    raw_key, next_index = parsed
+                    search_from = next_index
+                    key = raw_key.replace(r"\"", '"')
+                    if key.strip():
+                        refs.setdefault(key, []).append(f"{path}:{line_no}")
+    return refs
+
 
 def load_catalog(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -65,7 +144,12 @@ def locale_issues(entry: dict, locale: str, *, key: str) -> list[str]:
 
 
 def is_maintained_entry(key: str, entry: dict, required_locales: list[str]) -> bool:
-    """Only keys with at least one required locale are enforced (skips en-only Xcode stubs)."""
+    """A key is maintained when it has at least one required locale.
+
+    Callers that also want to preserve Swift-referenced keys (e.g. the pruner)
+    should test catalog membership against `swift_referenced_keys()` separately;
+    this function only inspects the catalog entry itself.
+    """
     if not key.strip() or key in ALLOW_EMPTY_KEYS:
         return False
     locs = entry.get("localizations") or {}

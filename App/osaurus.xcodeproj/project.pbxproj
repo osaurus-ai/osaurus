@@ -136,6 +136,7 @@
 				F0BB3C232E51FBCC00895593 /* Frameworks */,
 				F0BB3C242E51FBCC00895593 /* Resources */,
 				F0EEC1202E60000100895593 /* Embed CLI */,
+				F0AB1A8E2E60010000895593 /* Prune Localizable.xcstrings */,
 			);
 			buildRules = (
 			);
@@ -269,6 +270,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		F0AB1A8E2E60010000895593 /* Prune Localizable.xcstrings */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Prune Localizable.xcstrings";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Mirrors scripts/i18n/format.sh so a local Debug build leaves the\n# catalog already pruned. Skipped on Release/archive and CI so tracked\n# source is never mutated outside a dev's Debug iteration.\nif [ \"${CONFIGURATION}\" != \"Debug\" ] || [ -n \"${CI:-}\" ] || [ -n \"${GITHUB_ACTIONS:-}\" ]; then\n  exit 0\nfi\nif ! command -v python3 >/dev/null 2>&1; then\n  echo \"warning: python3 not found; run scripts/i18n/format.sh manually.\"\n  exit 0\nfi\nbash \"${SRCROOT}/../scripts/i18n/format.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		F0BB3C222E51FBCC00895593 /* Sources */ = {

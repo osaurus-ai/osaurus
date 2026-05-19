@@ -13,7 +13,13 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from xcstrings_util import is_maintained_entry, is_stale_entry, load_catalog, save_catalog  # noqa: E402
+from xcstrings_util import (  # noqa: E402
+    is_maintained_entry,
+    is_stale_entry,
+    load_catalog,
+    save_catalog,
+    swift_referenced_keys,
+)
 
 
 def prune_catalog(
@@ -21,11 +27,18 @@ def prune_catalog(
     required_locales: list[str],
     *,
     remove_stale: bool = False,
+    referenced_keys: set[str] | None = None,
 ) -> tuple[dict, Counter]:
     reasons: Counter = Counter()
     kept: dict = {}
+    referenced = referenced_keys or set()
 
     for key, entry in catalog.get("strings", {}).items():
+        # Swift-referenced keys are kept regardless of stale state — removing
+        # them would orphan the L()/Text(localized:) call sites.
+        if key in referenced:
+            kept[key] = entry
+            continue
         if remove_stale and is_stale_entry(entry):
             reasons["stale"] += 1
             continue
@@ -66,12 +79,28 @@ def main() -> int:
         action="store_true",
         help="Exit with status 1 if pruning would remove any keys",
     )
+    parser.add_argument(
+        "--swift-root",
+        type=Path,
+        default=None,
+        help="Scan Swift sources under this path and preserve any catalog keys "
+        "referenced from L()/Text(localized:) literals, even if Xcode flagged "
+        "them stale or they only have English.",
+    )
     args = parser.parse_args()
 
     locales = [loc.strip() for loc in args.required_locales.split(",") if loc.strip()]
     catalog = load_catalog(args.catalog)
     before = len(catalog.get("strings", {}))
-    pruned, reasons = prune_catalog(catalog, locales, remove_stale=args.remove_stale)
+    referenced: set[str] | None = None
+    if args.swift_root is not None:
+        referenced = set(swift_referenced_keys(args.swift_root))
+    pruned, reasons = prune_catalog(
+        catalog,
+        locales,
+        remove_stale=args.remove_stale,
+        referenced_keys=referenced,
+    )
     after = len(pruned.get("strings", {}))
 
     print(f"{args.catalog}: {before} keys -> {after} keys (removed {before - after})")

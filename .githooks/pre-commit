@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Opt-in pre-commit hook: re-prunes staged .xcstrings via scripts/i18n/format.sh
+# so Xcode-generated stub keys never reach CI. Enable with
+# `git config core.hooksPath .githooks` (see docs/LOCALIZATION.md).
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+if ! git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.xcstrings$'; then
+    exit 0
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "pre-commit (i18n): python3 not found on PATH; skipping auto-prune." >&2
+    echo "  Run 'bash scripts/i18n/check.sh' before pushing." >&2
+    exit 0
+fi
+
+if ! bash "$REPO_ROOT/scripts/i18n/format.sh" >/dev/null; then
+    echo "pre-commit (i18n): scripts/i18n/format.sh failed. Aborting commit." >&2
+    echo "  Run it manually for the full error: bash scripts/i18n/format.sh" >&2
+    exit 1
+fi
+
+CATALOG="$REPO_ROOT/Packages/OsaurusCore/Resources/Localizable.xcstrings"
+if ! git diff --quiet -- "$CATALOG"; then
+    git add -- "$CATALOG"
+    echo "pre-commit (i18n): pruned Localizable.xcstrings and re-staged."
+fi
