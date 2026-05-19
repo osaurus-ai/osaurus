@@ -3,6 +3,35 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.28</title>
+            <pubDate>Tue, 19 May 2026 04:53:14 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.28</sparkle:version>
+            <sparkle:shortVersionString>0.18.28</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.28/Osaurus-0.18.28.dmg" length="42520619" type="application/octet-stream" sparkle:edSignature="99xM//QPS5bfv2/HrLtq7jyeY2zIeXFmZWcK5TvrYsNKYU9Ec+urXh11hIBT9TSQi15J/yZ9Wf3/vcpDaZ6SAA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🚀 Features
+
+- added oauth login for openrouter (#1154) by @tpae
+- added view in finder feature for agent sandbox workspace folders (#1153) by @tpae
+
+## 🐛 Bug Fixes
+
+- potential fix for launch regression in sequoia (#1156) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- fix latex dollars (#1158) by @tpae
+- fixed scrolling jank in messages (#1157) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.27...0.18.28
+]]></description>
+        </item>
+        <item>
             <title>0.18.27</title>
             <pubDate>Mon, 18 May 2026 21:32:21 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
