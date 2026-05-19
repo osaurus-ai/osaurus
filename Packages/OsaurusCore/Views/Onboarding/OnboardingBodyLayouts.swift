@@ -330,16 +330,11 @@ struct OnboardingHeroBody: View {
     }
 
     var body: some View {
-        GeometryReader { geo in
-            ScrollView(.vertical, showsIndicators: false) {
-                heroStack
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, OnboardingMetrics.heroBodyHorizontalPadding)
-                    .padding(.vertical, OnboardingMetrics.heroBodyVerticalPadding)
-                    .frame(minHeight: geo.size.height, alignment: .center)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+        heroStack
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, OnboardingMetrics.heroBodyHorizontalPadding)
+            .padding(.vertical, OnboardingMetrics.heroBodyVerticalPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var heroStack: some View {
