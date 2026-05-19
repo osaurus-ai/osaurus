@@ -82,7 +82,7 @@ Status words:
 | Single-batch | Default B=1 path coherent with full cache stack and no unnecessary scheduler contention. | Limited live rows. | PARTIAL |
 | Multi-batch | B>1 route where feasible, no cross-talk, independent sessions/ports, cache correctness preserved. | Manifest only. | OPEN |
 | Memory | RSS plus Activity Monitor physical footprint before/after load, each turn, cache hit, sleep, wake. | Current rows mostly RSS-only. | PARTIAL |
-| Old-library sweep | No active inference path imports old `vmlx-swift-lm`, standalone `Jinja`, standalone `swift-transformers`, or old `mlx-swift`; transitive non-inference deps documented. | Source policy tests and package docs; final post-live sweep still required. | PARTIAL |
+| Old-library sweep | No active inference path imports old `vmlx-swift-lm`, standalone `Jinja`, standalone `swift-transformers`, or old `mlx-swift`; transitive non-inference deps documented. | Source policy tests, package docs, and `pr1147/old-library-sweep-20260518T1728/REPORT.md`; final post-live sweep still required. | PARTIAL |
 
 ## Model Family Tracker
 

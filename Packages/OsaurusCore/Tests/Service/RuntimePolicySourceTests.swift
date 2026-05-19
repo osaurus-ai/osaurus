@@ -734,6 +734,9 @@ struct RuntimePolicySourceTests {
             "Services/ModelRuntime/SwiftTransformersTokenizerLoader.swift"
         )
         let jinjaTests = try Self.source("Tests/Service/JinjaTemplateCompatibilityTests.swift")
+        let acknowledgements = try Self.source("../../App/osaurus/Acknowledgements.json")
+        let acknowledgementFallback = try Self.source("Views/Management/AcknowledgementsView.swift")
+        let acknowledgementGenerator = try Self.source("../../scripts/release/generate_acknowledgements.py")
 
         #expect(!manifest.contains("vmlxRuntimeModuleAliases"))
         #expect(!manifest.contains("moduleAliases:"))
@@ -759,6 +762,13 @@ struct RuntimePolicySourceTests {
         #expect(contributing.contains("single consolidated `vmlx-swift` pin"))
         #expect(contributing.contains("prefixed inside `vmlx-swift`"))
         #expect(contributing.contains("Keep the two mirror files in sync"))
+
+        for generatedText in [acknowledgements, acknowledgementFallback, acknowledgementGenerator] {
+            #expect(generatedText.contains("vmlx-swift"))
+            #expect(!generatedText.contains("mlx-swift-lm"))
+            #expect(!generatedText.contains("\"identity\": \"mlx-swift\""))
+        }
+        #expect(acknowledgementGenerator.contains("script_dir.parent.parent"))
     }
 
     @Test("Current runtime docs name consolidated vmlx-swift package")

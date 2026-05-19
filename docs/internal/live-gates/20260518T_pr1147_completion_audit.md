@@ -503,6 +503,16 @@ hit has a fresh vmlx no-guard proof plus Osaurus focused tests, but the family
 still needs app/API long-output, cache, SSM, memory, and saved-setting carryover
 artifacts before production-clear.
 
+The active old-library sweep is:
+`docs/internal/live-gates/pr1147/old-library-sweep-20260518T1728/REPORT.md`.
+It confirms the direct inference package/import path is consolidated
+`vmlx-swift`, documents the remaining transitive non-inference
+`swift-transformers` resolver entries, and fixes stale generated/fallback
+acknowledgements that still named `mlx-swift-lm` or standalone `mlx-swift`.
+This closes the acknowledgement/zombie-reference cleanup for the current
+worktree, but a final sweep is still required after the remaining live model
+fixes.
+
 Hy3 has fresh vmlx-only proof at
 `/Users/eric/vmlx-swift/docs/internal/live-gates/20260518T_hy3_jangtq_no_guard_refresh/`.
 That proof confirms generic `enable_thinking=true` is not the Hy3 reasoning
