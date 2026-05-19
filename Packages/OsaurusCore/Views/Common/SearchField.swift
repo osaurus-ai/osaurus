@@ -10,7 +10,7 @@ import SwiftUI
 struct SearchField: View {
     @Environment(\.theme) private var theme
     @Binding var text: String
-    var placeholder: String
+    var placeholder: LocalizedStringKey
     var width: CGFloat = 240
 
     var body: some View {
@@ -22,7 +22,7 @@ struct SearchField: View {
             ZStack(alignment: .leading) {
                 // Custom placeholder for better visibility in light mode
                 if text.isEmpty {
-                    Text(placeholder)
+                    Text(localized: placeholder)
                         .font(.system(size: 14))
                         .foregroundColor(theme.placeholderText)
                         .allowsHitTesting(false)

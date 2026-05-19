@@ -52,17 +52,17 @@ struct ThemeEditorView: View {
             handleImageImport(result)
         }
         .themedAlert(
-            String(localized: "Enable Glass Background?", bundle: .module),
+            L("Enable Glass Background?"),
             isPresented: $showGlassPerformanceWarning,
             message: String(
                 localized:
                     "Glass effects use behind-window blur and additional compositing layers. This may impact performance, especially on older Macs or under heavy load.",
                 bundle: .module
             ),
-            primaryButton: .primary(String(localized: "Enable", bundle: .module)) {
+            primaryButton: .primary(L("Enable")) {
                 pendingGlassRevert = nil
             },
-            secondaryButton: .cancel(String(localized: "Cancel", bundle: .module)) {
+            secondaryButton: .cancel(L("Cancel")) {
                 pendingGlassRevert?()
                 pendingGlassRevert = nil
             }

@@ -271,7 +271,7 @@ struct CopyableURLField: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help(showCopied ? "Copied!" : "Copy to clipboard")
+                .help(showCopied ? Text(localized: "Copied!") : Text(localized: "Copy to clipboard"))
                 .onHover { hovering in
                     isHovering = hovering
                 }
@@ -522,7 +522,7 @@ struct SystemResourceMonitor: View {
                 ProgressView(value: monitor.cpuUsage / 100.0)
                     .progressViewStyle(MinimalProgressViewStyle(color: colorForUsage(monitor.cpuUsage)))
                     .frame(height: 4)
-                    .help(Text("CPU Usage: \(String(format: "%.1f", monitor.cpuUsage))%", bundle: .module))
+                    .help(Text(localized: "CPU Usage: \(String(format: "%.1f", monitor.cpuUsage))%"))
                     .onHover { hovering in
                         isHoveringCPU = hovering
                     }
@@ -594,7 +594,7 @@ struct SystemResourceMonitor: View {
                             isHoveringModels = hovering
                         }
                     }
-                    .help(Text("Loaded Models\(cachedModelCount > 0 ? " (\(cachedModelCount))" : "")", bundle: .module))
+                    .help(Text(localized: "Loaded Models\(cachedModelCount > 0 ? " (\(cachedModelCount))" : "")"))
 
                     Spacer()
 

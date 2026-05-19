@@ -52,9 +52,9 @@ public final class FolderContextService: ObservableObject {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = false
         panel.allowsMultipleSelection = false
-        panel.title = "Select Working Directory"
-        panel.message = "Choose a folder for the AI to work with"
-        panel.prompt = "Select"
+        panel.title = L("Select Working Directory")
+        panel.message = L("Choose a folder for the AI to work with")
+        panel.prompt = L("Select")
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return nil

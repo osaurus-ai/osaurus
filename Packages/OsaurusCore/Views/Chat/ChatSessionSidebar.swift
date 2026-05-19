@@ -235,7 +235,7 @@ struct ChatSessionSidebar: View {
                     .foregroundColor(theme.secondaryText)
             }
             .buttonStyle(.plain)
-            .help(Text("New Chat", bundle: .module))
+            .localizedHelp("New Chat")
         }
         .padding(.horizontal, 16)
         .padding(.top, 20)
@@ -513,7 +513,7 @@ private struct SessionRow: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(theme.secondaryText.opacity(0.8))
         }
-        .help(Text("Default", bundle: .module))
+        .localizedHelp("Default")
     }
 
     @ViewBuilder

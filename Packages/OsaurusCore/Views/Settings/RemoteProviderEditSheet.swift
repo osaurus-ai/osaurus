@@ -2210,11 +2210,11 @@ private struct SegmentedToggle<Content: View>: View {
 private struct SegmentedToggleButton: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
-    let label: String
+    let label: LocalizedStringKey
     let isSelected: Bool
     let action: () -> Void
 
-    init(_ label: String, isSelected: Bool, action: @escaping () -> Void) {
+    init(_ label: LocalizedStringKey, isSelected: Bool, action: @escaping () -> Void) {
         self.label = label
         self.isSelected = isSelected
         self.action = action
@@ -2222,7 +2222,7 @@ private struct SegmentedToggleButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(label)
+            Text(localized: label)
                 .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
                 .foregroundColor(
                     isSelected ? themeManager.currentTheme.primaryText : themeManager.currentTheme.tertiaryText

@@ -1900,8 +1900,8 @@ struct ScheduleEditorSheet: View {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = false
         panel.allowsMultipleSelection = false
-        panel.title = "Select Working Directory"
-        panel.prompt = "Select"
+        panel.title = L("Select Working Directory")
+        panel.prompt = L("Select")
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 

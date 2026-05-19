@@ -25,7 +25,7 @@ struct MasterMnemonicCard: View {
                     .foregroundColor(theme.tertiaryText)
                     .tracking(1)
 
-                Text("(24 words)")
+                Text(localized: "(24 words)")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
 
@@ -151,7 +151,7 @@ struct MasterMnemonicCard: View {
 
     private func saveAsTextFile() {
         let panel = NSSavePanel()
-        panel.title = "Save Recovery Phrase"
+        panel.title = L("Save Recovery Phrase")
         panel.nameFieldStringValue = "osaurus-recovery-phrase.txt"
         panel.allowedContentTypes = [.plainText]
         panel.canCreateDirectories = true

@@ -195,7 +195,7 @@ struct MemoryView: View {
                 identity: identity,
                 onSave: { newContent in
                     saveIdentityEdit(newContent)
-                    showToast("Identity saved")
+                    showToast(L("Identity saved"))
                 }
             )
             .frame(minWidth: 500, minHeight: 400)
@@ -204,7 +204,7 @@ struct MemoryView: View {
             AddOverrideSheet(
                 onAdd: { text in
                     addOverride(text)
-                    showToast("Override added")
+                    showToast(L("Override added"))
                 }
             )
             .frame(minWidth: 440, minHeight: 220)
@@ -257,7 +257,7 @@ struct MemoryView: View {
                 config.enabled = true
                 MemoryConfigurationStore.save(config)
                 loadData()
-                showToast("Memory enabled")
+                showToast(L("Memory enabled"))
             } label: {
                 Text("Enable", bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
@@ -303,7 +303,7 @@ struct MemoryView: View {
                     await MainActor.run {
                         isDistilling = false
                         loadData()
-                        showToast("Pending distillation complete")
+                        showToast(L("Pending distillation complete"))
                     }
                 }
             }
@@ -317,7 +317,7 @@ struct MemoryView: View {
                     await MainActor.run {
                         isSyncing = false
                         loadData()
-                        showToast("Sync complete")
+                        showToast(L("Sync complete"))
                     }
                 }
             }
@@ -424,7 +424,7 @@ struct MemoryView: View {
                             content: content,
                             onDelete: {
                                 removeOverride(index: index)
-                                showToast("Override removed")
+                                showToast(L("Override removed"))
                             }
                         )
                     }
@@ -492,7 +492,7 @@ struct MemoryView: View {
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help(Text("Preview memory context", bundle: .module))
+                .localizedHelp("Preview memory context")
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 4)
@@ -745,7 +745,7 @@ struct MemoryView: View {
                             await MainActor.run {
                                 isConsolidating = false
                                 loadData()
-                                showToast("Consolidation complete")
+                                showToast(L("Consolidation complete"))
                             }
                         }
                     } label: {
@@ -927,7 +927,7 @@ struct MemoryView: View {
                     await MainActor.run {
                         isLoading = false
                         onComplete?()
-                        showToast("Failed to open memory database", isError: true)
+                        showToast(L("Failed to open memory database"), isError: true)
                     }
                     return
                 }
@@ -1012,7 +1012,7 @@ struct MemoryView: View {
             try MemoryDatabase.shared.removeIdentityOverride(at: index)
         } catch {
             MemoryLogger.database.error("Failed to remove override: \(error)")
-            showToast("Failed to remove override", isError: true)
+            showToast(L("Failed to remove override"), isError: true)
         }
         loadData()
     }
@@ -1022,7 +1022,7 @@ struct MemoryView: View {
             try MemoryDatabase.shared.appendIdentityOverride(text)
         } catch {
             MemoryLogger.database.error("Failed to add override: \(error)")
-            showToast("Failed to add override", isError: true)
+            showToast(L("Failed to add override"), isError: true)
         }
         loadData()
     }
@@ -1040,7 +1040,7 @@ struct MemoryView: View {
             try MemoryDatabase.shared.saveIdentity(updated)
         } catch {
             MemoryLogger.database.error("Failed to save identity: \(error)")
-            showToast("Failed to save identity", isError: true)
+            showToast(L("Failed to save identity"), isError: true)
         }
         loadData()
     }
@@ -1053,7 +1053,7 @@ struct MemoryView: View {
         try? db.open()
         Task { await MemorySearchService.shared.clearIndex() }
         loadData()
-        showToast("All memory cleared")
+        showToast(L("All memory cleared"))
     }
 
     private func formatBytes(_ bytes: Int64) -> String {

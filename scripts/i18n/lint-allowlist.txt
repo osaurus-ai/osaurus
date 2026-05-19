@@ -1,0 +1,5 @@
+# Substrings to ignore in lint-swift-literals.sh output.
+# One pattern per line; '#' starts a comment.
+# Use this for intentional English-only strings (proper nouns, debug output,
+# strings already going through L() via a helper the linter can't see, etc.).
+

@@ -431,7 +431,7 @@ private struct SecretFieldRow: View {
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help(showValue ? "Hide value" : "Show value")
+                .help(showValue ? Text(localized: "Hide value") : Text(localized: "Show value"))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)

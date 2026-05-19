@@ -172,7 +172,7 @@ struct ConfigurationView: View {
                                                     Text("Install CLI", bundle: .module)
                                                 }
                                                 .buttonStyle(SettingsButtonStyle())
-                                                .help(Text("Create a symlink to the embedded CLI", bundle: .module))
+                                                .localizedHelp("Create a symlink to the embedded CLI")
 
                                                 if let message = cliInstallMessage {
                                                     HStack(spacing: 6) {
@@ -968,9 +968,11 @@ struct ConfigurationView: View {
 
     private func showFactoryResetConfirmation() {
         let alert = NSAlert()
-        alert.messageText = "Factory Reset Osaurus?"
+        alert.messageText = L("Factory Reset Osaurus?")
         alert.informativeText =
-            "This will permanently delete all your data, including chat history, agents, memory, and your identity keys. This action cannot be undone and the application will close."
+            L(
+                "This will permanently delete all your data, including chat history, agents, memory, and your identity keys. This action cannot be undone and the application will close."
+            )
         alert.alertStyle = .critical
         alert.addButton(withTitle: "Factory Reset")
         alert.addButton(withTitle: "Cancel")
@@ -2220,7 +2222,7 @@ private struct AgentSettingsSection: View {
                                 }
                             }
                             .buttonStyle(SettingsButtonStyle())
-                            .help(Text("Reset all work tool permissions to default", bundle: .module))
+                            .localizedHelp("Reset all work tool permissions to default")
                         }
                     }
                 }

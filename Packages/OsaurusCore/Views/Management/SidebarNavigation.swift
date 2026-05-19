@@ -134,7 +134,7 @@ private extension SidebarNavigation {
                 )
         }
         .buttonStyle(.plain)
-        .help(isCollapsed ? "Expand Sidebar" : "Collapse Sidebar")
+        .help(isCollapsed ? Text(localized: "Expand Sidebar") : Text(localized: "Collapse Sidebar"))
         .frame(maxWidth: .infinity, alignment: isCollapsed ? .center : .trailing)
         .padding(.bottom, isCollapsed ? 12 : 8)
     }
@@ -486,7 +486,7 @@ struct SidebarUpdateButton: View {
                 isHovering = hovering
             }
         }
-        .help(updateAvailable ? "Install the latest update" : "Check for app updates")
+        .help(updateAvailable ? Text(localized: "Install the latest update") : Text(localized: "Check for app updates"))
         .animation(.easeOut(duration: 0.2), value: updateAvailable)
     }
 

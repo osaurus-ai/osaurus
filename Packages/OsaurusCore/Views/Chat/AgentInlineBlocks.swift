@@ -184,7 +184,7 @@ struct InlineTodoBlock: View {
             Image(systemName: "checklist")
                 .foregroundColor(theme.accentColor)
 
-            Text("Todo")
+            Text(localized: "Todo")
                 .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                 .foregroundColor(theme.primaryText)
 
@@ -202,7 +202,7 @@ struct InlineTodoBlock: View {
         .padding(.vertical, isExpanded ? Layout.expandedPaddingV : Layout.pillPaddingV)
         .contentShape(Rectangle())
         .onTapGesture(perform: togglePin)
-        .help(isPinned ? "Unpin" : "Click to keep open")
+        .help(isPinned ? Text(localized: "Unpin") : Text(localized: "Click to keep open"))
     }
 
     private var stateIcon: some View {
@@ -216,7 +216,7 @@ struct InlineTodoBlock: View {
     @ViewBuilder
     private var stepRows: some View {
         if todo.items.isEmpty {
-            Text("No checklist items parsed.")
+            Text(localized: "No checklist items parsed.")
                 .font(theme.font(size: CGFloat(theme.captionSize)))
                 .foregroundColor(theme.tertiaryText)
                 .padding(.horizontal, Layout.contentPaddingH)
@@ -278,7 +278,7 @@ struct InlineCompleteBlock: View {
                 .padding(.top, Layout.bannerIconTopOffset)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Done")
+                Text(localized: "Done")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                     .foregroundColor(theme.successColor)
                     .textCase(.uppercase)
@@ -352,6 +352,6 @@ private struct DismissButton: View {
                 isHovered = hovering
             }
         }
-        .help("Dismiss")
+        .localizedHelp("Dismiss")
     }
 }

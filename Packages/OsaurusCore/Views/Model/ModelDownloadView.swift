@@ -282,7 +282,7 @@ struct ModelDownloadView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     .disabled(modelManager.isLoadingSuggested)
-                    .help(L("Refresh OsaurusAI models from Hugging Face"))
+                    .localizedHelp("Refresh OsaurusAI models from Hugging Face")
                 }
 
                 // Import from Hugging Face
@@ -306,7 +306,7 @@ struct ModelDownloadView: View {
                     .foregroundColor(theme.secondaryText)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help(L("Import an MLX model from Hugging Face"))
+                .localizedHelp("Import an MLX model from Hugging Face")
 
                 // Download status indicator (shown when downloads are active)
                 if modelManager.activeDownloadsCount > 0 {
@@ -758,7 +758,7 @@ struct ModelDownloadView: View {
             .popover(isPresented: $showSortPopover, arrowEdge: .top) {
                 sortPopoverView
             }
-            .help(L("Sort models"))
+            .localizedHelp("Sort models")
 
             // Filter button
             Button {
@@ -929,7 +929,7 @@ struct ModelDownloadView: View {
     }
 
     private func pillButton(
-        _ title: String,
+        _ title: LocalizedStringKey,
         icon: String? = nil,
         color: Color,
         bg: Color,
@@ -938,9 +938,13 @@ struct ModelDownloadView: View {
         Button(action: action) {
             Group {
                 if let icon {
-                    Label(title, systemImage: icon)
+                    Label {
+                        Text(localized: title)
+                    } icon: {
+                        Image(systemName: icon)
+                    }
                 } else {
-                    Text(title)
+                    Text(localized: title)
                 }
             }
             .font(.system(size: 12, weight: .medium))
@@ -1363,7 +1367,7 @@ private struct DownloadStatusIndicator: View {
                 isHovering = hovering
             }
         }
-        .help(Text("Downloading \(activeCount) model\(activeCount == 1 ? "" : "s") – Click to view", bundle: .module))
+        .help(Text(localized: "Downloading \(activeCount) model\(activeCount == 1 ? "" : "s") – Click to view"))
     }
 }
 

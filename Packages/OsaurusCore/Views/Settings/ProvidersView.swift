@@ -51,7 +51,7 @@ struct ProvidersView: View {
                                         // card is scrolled off-screen.
                                         await MainActor.run {
                                             ToastManager.shared.error(
-                                                "OAuth sign-in failed",
+                                                L("OAuth sign-in failed"),
                                                 message: error.localizedDescription
                                             )
                                         }
@@ -72,7 +72,7 @@ struct ProvidersView: View {
                                     } catch {
                                         await MainActor.run {
                                             ToastManager.shared.error(
-                                                "Couldn't connect with new token",
+                                                L("Couldn't connect with new token"),
                                                 message: error.localizedDescription
                                             )
                                         }
@@ -324,7 +324,7 @@ private struct ProviderCard: View {
                     Menu {
                         Button(action: onEdit) {
                             Label {
-                                Text("Edit", bundle: .module)
+                                Text(localized: "Edit")
                             } icon: {
                                 Image(systemName: "pencil")
                             }
@@ -386,7 +386,7 @@ private struct ProviderCard: View {
                     if isCommandNotFoundError(error) {
                         Spacer(minLength: 6)
                         Button(action: onEdit) {
-                            Text("Edit")
+                            Text(localized: "Edit")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(theme.accentColor)
                                 .padding(.horizontal, 8)

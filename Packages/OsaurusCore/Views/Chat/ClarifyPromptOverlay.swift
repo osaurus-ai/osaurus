@@ -183,7 +183,7 @@ private struct ClarifyPromptCard: View {
             .foregroundColor(theme.tertiaryText)
             Spacer()
             Button(action: submitMultiSelect) {
-                Text("Submit")
+                Text(localized: "Submit")
                     .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .semibold))
                     .foregroundColor(canSubmitMultiSelect ? .white : theme.tertiaryText)
                     .padding(.horizontal, 14)

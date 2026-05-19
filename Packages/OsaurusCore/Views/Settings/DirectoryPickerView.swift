@@ -56,7 +56,7 @@ struct DirectoryPickerView: View {
                             )
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help(Text("Select custom directory", bundle: .module))
+                    .localizedHelp("Select custom directory")
 
                     if directoryPicker.hasValidDirectory {
                         Button(action: {
@@ -76,7 +76,7 @@ struct DirectoryPickerView: View {
                                 )
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .help(Text("Reset to default directory", bundle: .module))
+                        .localizedHelp("Reset to default directory")
                     }
                 }
             }

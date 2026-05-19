@@ -224,7 +224,7 @@ struct AudioSettingsTab: View {
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help(Text("Refresh available devices", bundle: .module))
+                .localizedHelp("Refresh available devices")
             }
 
             // Input Source Picker

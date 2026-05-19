@@ -72,7 +72,7 @@ struct CloseButton: View {
                 isHovered = hovering
             }
         }
-        .help(Text("Close window", bundle: .module))
+        .localizedHelp("Close window")
     }
 }
 
@@ -104,7 +104,7 @@ struct PinButton: View {
                 isHovered = hovering
             }
         }
-        .help(isPinned ? "Unpin from top" : "Pin to top")
+        .help(isPinned ? Text(localized: "Unpin from top") : Text(localized: "Pin to top"))
         .animation(theme.springAnimation(), value: isPinned)
     }
 }
@@ -279,7 +279,7 @@ struct AgentPill: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(Text("Edit agent settings", bundle: .module))
+        .localizedHelp("Edit agent settings")
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isGearHovered = hovering

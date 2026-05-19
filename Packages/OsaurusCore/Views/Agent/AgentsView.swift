@@ -366,10 +366,10 @@ struct AgentsView: View {
         Task { @MainActor in
             let result = await agentManager.delete(id: agent.id)
             guard result.deleted else {
-                ToastManager.shared.error("Failed to delete agent", message: "Please try again.")
+                ToastManager.shared.errorLocalized("Failed to delete agent", message: "Please try again.")
                 return
             }
-            showSuccess("Deleted \"\(agent.name)\"")
+            showSuccess(L("Deleted \"\(agent.name)\""))
             sandboxCleanupNotice = result.sandboxCleanupNotice
         }
     }
@@ -1572,7 +1572,7 @@ struct AgentDetailView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-        .help(Text("Switch agent", bundle: .module))
+        .localizedHelp("Switch agent")
         .popover(isPresented: $showingAgentSwitcher, arrowEdge: .bottom) {
             agentSwitcherPopover
         }
@@ -2107,8 +2107,8 @@ struct AgentDetailView: View {
         AgentDetailSection(title: "Empty State", icon: "sparkles") {
             VStack(alignment: .leading, spacing: 14) {
                 Picker("", selection: emptyStateModeBinding) {
-                    Label("AI", systemImage: "sparkles").tag(EmptyStateMode.ai)
-                    Label("Custom", systemImage: "pencil.and.scribble").tag(EmptyStateMode.manual)
+                    Label(localized: "AI", systemImage: "sparkles").tag(EmptyStateMode.ai)
+                    Label(localized: "Custom", systemImage: "pencil.and.scribble").tag(EmptyStateMode.manual)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -2293,7 +2293,7 @@ struct AgentDetailView: View {
             }
         }
         .buttonStyle(.plain)
-        .help(Text("Remove custom avatar", bundle: .module))
+        .localizedHelp("Remove custom avatar")
     }
 
     /// "Upload…" tile: opens an NSOpenPanel and writes the selected image
@@ -2312,7 +2312,7 @@ struct AgentDetailView: View {
             .frame(width: 40, height: 40)
         }
         .buttonStyle(.plain)
-        .help(Text("Upload custom image", bundle: .module))
+        .localizedHelp("Upload custom image")
     }
 
     @MainActor
@@ -2322,7 +2322,7 @@ struct AgentDetailView: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .gif, .image]
-        panel.prompt = "Choose"
+        panel.prompt = L("Choose")
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         guard let original = NSImage(contentsOf: url) else { return }
@@ -2782,7 +2782,7 @@ struct AgentDetailView: View {
                     Button {
                         beginBundleExport()
                     } label: {
-                        Label("Export Bundle…", systemImage: "square.and.arrow.up")
+                        Label(localized: "Export Bundle…", systemImage: "square.and.arrow.up")
                             .font(.system(size: 11, weight: .medium))
                     }
                     .buttonStyle(.bordered)
@@ -2791,7 +2791,7 @@ struct AgentDetailView: View {
                     Button {
                         beginBundleImport()
                     } label: {
-                        Label("Import Bundle…", systemImage: "square.and.arrow.down")
+                        Label(localized: "Import Bundle…", systemImage: "square.and.arrow.down")
                             .font(.system(size: 11, weight: .medium))
                     }
                     .buttonStyle(.bordered)
@@ -2801,7 +2801,7 @@ struct AgentDetailView: View {
                     Button(role: .destructive) {
                         showDeleteDBConfirmation = true
                     } label: {
-                        Label("Delete Data", systemImage: "trash")
+                        Label(localized: "Delete Data", systemImage: "trash")
                             .font(.system(size: 11, weight: .medium))
                     }
                     .buttonStyle(.bordered)
@@ -2815,10 +2815,10 @@ struct AgentDetailView: View {
             isPresented: $showDeleteDBConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Delete Data", role: .destructive) {
+            Button(localized: "Delete Data", role: .destructive) {
                 deleteAgentDatabaseData()
             }
-            Button("Cancel", role: .cancel) {}
+            Button(localized: "Cancel", role: .cancel) {}
         } message: {
             Text(
                 "This permanently erases the encrypted SQLite database, all "
@@ -2862,13 +2862,13 @@ struct AgentDetailView: View {
                 .textFieldStyle(.roundedBorder)
             HStack {
                 Spacer()
-                Button("Cancel") {
+                Button(localized: "Cancel") {
                     bundleExportDestination = nil
                     bundlePassphraseInput = ""
                     bundleConfirmPassphraseInput = ""
                 }
                 .controlSize(.small)
-                Button("Export") {
+                Button(localized: "Export") {
                     performBundleExport()
                 }
                 .controlSize(.small)
@@ -2902,12 +2902,12 @@ struct AgentDetailView: View {
                 .textFieldStyle(.roundedBorder)
             HStack {
                 Spacer()
-                Button("Cancel") {
+                Button(localized: "Cancel") {
                     bundleImportSource = nil
                     bundlePassphraseInput = ""
                 }
                 .controlSize(.small)
-                Button("Unlock") {
+                Button(localized: "Unlock") {
                     performBundleImport()
                 }
                 .controlSize(.small)
@@ -2937,11 +2937,11 @@ struct AgentDetailView: View {
             .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Spacer()
-                Button("Discard", role: .destructive) {
+                Button(localized: "Discard", role: .destructive) {
                     discardBundlePreview()
                 }
                 .controlSize(.small)
-                Button("Activate") {
+                Button(localized: "Activate") {
                     activateBundlePreview()
                 }
                 .controlSize(.small)
@@ -2956,7 +2956,7 @@ struct AgentDetailView: View {
     private func bundleManifestSummary(_ manifest: AgentBundleManifest) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text("Agent:").font(.system(size: 11, weight: .semibold))
+                Text(localized: "Agent:").font(.system(size: 11, weight: .semibold))
                 Text(manifest.agentName).font(.system(size: 11))
             }
             if !manifest.agentDescription.isEmpty {
@@ -2966,12 +2966,12 @@ struct AgentDetailView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 12) {
-                Text("Tables: \(manifest.schemaTables)").font(.system(size: 11))
-                Text("Views: \(manifest.savedViews)").font(.system(size: 11))
+                Text(localized: "Tables: \(manifest.schemaTables)").font(.system(size: 11))
+                Text(localized: "Views: \(manifest.savedViews)").font(.system(size: 11))
                 Spacer()
             }
             .foregroundColor(theme.secondaryText)
-            Text("Exported \(manifest.exportedAt.formatted(date: .abbreviated, time: .shortened))")
+            Text(localized: "Exported \(manifest.exportedAt.formatted(date: .abbreviated, time: .shortened))")
                 .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
         }
@@ -2986,7 +2986,7 @@ struct AgentDetailView: View {
         panel.allowedContentTypes = []
         panel.nameFieldStringValue = currentAgent.displayName
         panel.canCreateDirectories = true
-        panel.title = String(localized: "Export Bundle", bundle: .module)
+        panel.title = L("Export Bundle")
         panel.message = String(
             localized: "Pick a folder for the .osaurus-agent bundle.",
             bundle: .module
@@ -3003,7 +3003,7 @@ struct AgentDetailView: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowedContentTypes = []
-        panel.title = String(localized: "Import Bundle", bundle: .module)
+        panel.title = L("Import Bundle")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         bundleImportSource = url
         bundlePassphraseInput = ""
@@ -3648,7 +3648,7 @@ struct AgentDetailView: View {
                 .background(Circle().fill(theme.tertiaryBackground.opacity(0.5)))
         }
         .buttonStyle(PlainButtonStyle())
-        .help(isCopied ? "Copied" : "Copy URL")
+        .help(isCopied ? Text(localized: "Copied") : Text(localized: "Copy URL"))
     }
 
     private func routeMethodColor(_ method: String) -> Color {
@@ -3823,7 +3823,7 @@ struct AgentDetailView: View {
                 try await agentManager.updateAutonomousExec(config, for: agent.id)
             } catch {
                 ToastManager.shared.error(
-                    "Failed to update sandbox access",
+                    L("Failed to update sandbox access"),
                     message: error.localizedDescription
                 )
             }
@@ -5033,7 +5033,7 @@ private struct AgentDetailRelaySection: View {
                                         .foregroundColor(copiedRelayURL ? theme.successColor : theme.tertiaryText)
                                 }
                                 .buttonStyle(PlainButtonStyle())
-                                .help(Text("Copy relay URL", bundle: .module))
+                                .localizedHelp("Copy relay URL")
                             }
                         }
 
@@ -5606,7 +5606,7 @@ private struct AgentEditorSheet: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help(Text("Pick which tools and skills this agent can use", bundle: .module))
+                .localizedHelp("Pick which tools and skills this agent can use")
             }
             .padding(12)
             .background(
@@ -6021,7 +6021,7 @@ fileprivate struct AgentSecretRow: View {
             color: theme.tertiaryText,
             bg: theme.tertiaryBackground
         ) { showValue.toggle() }
-        .help(showValue ? "Hide value" : "Show value")
+        .help(showValue ? Text(localized: "Hide value") : Text(localized: "Show value"))
     }
 
     private var deleteButton: some View {
@@ -6031,7 +6031,7 @@ fileprivate struct AgentSecretRow: View {
             bg: theme.errorColor.opacity(0.1),
             action: onDelete
         )
-        .help(Text("Delete secret", bundle: .module))
+        .localizedHelp("Delete secret")
     }
 
     private func iconButton(

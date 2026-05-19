@@ -66,7 +66,7 @@ struct AgentKeyManagementRow: View {
                         .foregroundColor(theme.secondaryText)
 
                     if isMismatched {
-                        Text("Stale")
+                        Text(localized: "Stale")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundColor(theme.errorColor)
                             .padding(.horizontal, 6)
@@ -104,7 +104,7 @@ struct AgentKeyManagementRow: View {
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help(Text("Copy address"))
+                .localizedHelp("Copy address")
             }
 
             Button(action: onToggleExpanded) {
@@ -118,7 +118,7 @@ struct AgentKeyManagementRow: View {
                     )
             }
             .buttonStyle(PlainButtonStyle())
-            .help(Text(isExpanded ? "Collapse" : "Manage agent key"))
+            .help(isExpanded ? Text(localized: "Collapse") : Text(localized: "Manage agent key"))
         }
     }
 
@@ -153,7 +153,7 @@ struct AgentKeyManagementRow: View {
                 )
             }
             .buttonStyle(PlainButtonStyle())
-            .help(Text("Derive a new agent address and revoke any access keys scoped to the previous one."))
+            .localizedHelp("Derive a new agent address and revoke any access keys scoped to the previous one.")
 
             Button(action: onRevoke) {
                 HStack(spacing: 4) {
@@ -171,7 +171,7 @@ struct AgentKeyManagementRow: View {
                 )
             }
             .buttonStyle(PlainButtonStyle())
-            .help(Text("Clear this agent's address and revoke every access key scoped to it."))
+            .localizedHelp("Clear this agent's address and revoke every access key scoped to it.")
 
             Spacer()
         }

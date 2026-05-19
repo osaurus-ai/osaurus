@@ -95,7 +95,7 @@ struct PermissionsView: View {
             HeaderSecondaryButton("Refresh", icon: "arrow.clockwise") {
                 permissionService.refreshAllPermissions()
             }
-            .help(Text("Refresh permission status", bundle: .module))
+            .localizedHelp("Refresh permission status")
         }
     }
 }
@@ -215,7 +215,7 @@ private struct SystemPermissionRow: View {
                         )
                         .buttonStyle(PlainButtonStyle())
                         .disabled(isTesting)
-                        .help(Text("Run a diagnostic test to verify permission", bundle: .module))
+                        .localizedHelp("Run a diagnostic test to verify permission")
                     }
 
                     // Action button

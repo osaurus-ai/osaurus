@@ -197,7 +197,7 @@ struct ModelRowView: View {
                             .foregroundColor(.white)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help(Text("Resume download", bundle: .module))
+                    .localizedHelp("Resume download")
                 } else if !isPaused, let onPause {
                     Button(action: onPause) {
                         Image(systemName: "pause.circle.fill")
@@ -205,7 +205,7 @@ struct ModelRowView: View {
                             .foregroundColor(.white)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help(Text("Pause download", bundle: .module))
+                    .localizedHelp("Pause download")
                 }
 
                 if let onCancel {
@@ -215,7 +215,7 @@ struct ModelRowView: View {
                             .foregroundColor(.white.opacity(0.9))
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help(Text("Cancel download", bundle: .module))
+                    .localizedHelp("Cancel download")
                 }
             }
 

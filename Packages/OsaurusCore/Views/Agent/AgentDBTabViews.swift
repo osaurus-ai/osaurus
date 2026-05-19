@@ -85,7 +85,7 @@ public struct SchemaTabView: View {
     @ViewBuilder
     private func errorState(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Couldn't open the database", systemImage: "exclamationmark.triangle")
+            Label(localized: "Couldn't open the database", systemImage: "exclamationmark.triangle")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(.red)
             Text(message)
@@ -192,12 +192,12 @@ public struct SchemaTabView: View {
                         ]
                     )
                 } label: {
-                    Label("Browse", systemImage: "arrow.right.square")
+                    Label(localized: "Browse", systemImage: "arrow.right.square")
                         .font(.system(size: 10, weight: .medium))
                         .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.borderless)
-                .help("Open this table in the Data tab")
+                .localizedHelp("Open this table in the Data tab")
             }
             ForEach(table.columns, id: \.name) { column in
                 HStack(spacing: 8) {
@@ -208,11 +208,11 @@ public struct SchemaTabView: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.tertiaryText)
                     if column.primaryKey {
-                        Text("PK").font(.system(size: 9, weight: .bold))
+                        Text(localized: "PK").font(.system(size: 9, weight: .bold))
                             .foregroundColor(theme.accentColor)
                     }
                     if !column.nullable {
-                        Text("NOT NULL").font(.system(size: 9))
+                        Text(localized: "NOT NULL").font(.system(size: 9))
                             .foregroundColor(theme.tertiaryText)
                     }
                     Spacer()
@@ -231,7 +231,7 @@ public struct SchemaTabView: View {
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundColor(theme.tertiaryText)
                         if index.unique {
-                            Text("UNIQUE").font(.system(size: 9, weight: .bold))
+                            Text(localized: "UNIQUE").font(.system(size: 9, weight: .bold))
                                 .foregroundColor(theme.tertiaryText)
                         }
                         Spacer()
@@ -420,10 +420,10 @@ public struct DataTabView: View {
             isPresented: $showBulkDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Soft-Delete \(selectedRowIds.count) Rows", role: .destructive) {
+            Button(localized: "Soft-Delete \(selectedRowIds.count) Rows", role: .destructive) {
                 Task { await bulkSoftDelete() }
             }
-            Button("Cancel", role: .cancel) {}
+            Button(localized: "Cancel", role: .cancel) {}
         } message: {
             Text(
                 "These rows will be soft-deleted (their `_deleted_at` "
@@ -483,7 +483,7 @@ public struct DataTabView: View {
                 Button(role: .destructive) {
                     showBulkDeleteConfirm = true
                 } label: {
-                    Label("Delete \(selectedRowIds.count)", systemImage: "trash")
+                    Label(localized: "Delete \(selectedRowIds.count)", systemImage: "trash")
                         .font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(.bordered)
@@ -491,15 +491,15 @@ public struct DataTabView: View {
                 .tint(.red)
             }
             if truncated {
-                Label("Truncated", systemImage: "scissors")
+                Label(localized: "Truncated", systemImage: "scissors")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
-                    .help("The result was capped at 500 rows.")
+                    .localizedHelp("The result was capped at 500 rows.")
             }
             Button {
                 exportCSV()
             } label: {
-                Label("Export CSV", systemImage: "square.and.arrow.up")
+                Label(localized: "Export CSV", systemImage: "square.and.arrow.up")
                     .font(.system(size: 11, weight: .medium))
             }
             .buttonStyle(.bordered)
@@ -521,10 +521,10 @@ public struct DataTabView: View {
                 .foregroundColor(theme.tertiaryText)
         }
         .buttonStyle(.plain)
-        .help("What do these filters mean?")
+        .localizedHelp("What do these filters mean?")
         .popover(isPresented: $showFilterHelp, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Filters")
+                Text(localized: "Filters")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 ForEach(DataFilterMode.allCases) { mode in
@@ -554,7 +554,7 @@ public struct DataTabView: View {
             )
         ) {
             if tables.isEmpty {
-                Text("No tables").tag("")
+                Text(localized: "No tables").tag("")
             } else {
                 ForEach(userVisibleTables, id: \.name) { table in
                     Text(table.name).tag(table.name)
@@ -576,7 +576,7 @@ public struct DataTabView: View {
     private var content: some View {
         if let error = loadError {
             VStack(alignment: .leading, spacing: 6) {
-                Label("Couldn't load rows", systemImage: "exclamationmark.triangle")
+                Label(localized: "Couldn't load rows", systemImage: "exclamationmark.triangle")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.red)
                 Text(error)
@@ -700,7 +700,7 @@ public struct DataTabView: View {
                     .foregroundColor(theme.tertiaryText)
             }
             .buttonStyle(.plain)
-            .help("Hide this tip")
+            .localizedHelp("Hide this tip")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
@@ -1242,7 +1242,7 @@ fileprivate struct AgentDataTableRepresentable: View {
                 .toggleStyle(.checkbox)
                 .labelsHidden()
                 .frame(width: checkboxColumnWidth, alignment: .center)
-                .help("Select all rows on this page")
+                .localizedHelp("Select all rows on this page")
             }
             if showsStatusColumn {
                 Color.clear.frame(width: statusColumnWidth)
@@ -1321,7 +1321,7 @@ fileprivate struct AgentDataTableRepresentable: View {
     @ViewBuilder
     private func deletedPill(visible: Bool) -> some View {
         if visible {
-            Text("Deleted")
+            Text(localized: "Deleted")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundColor(theme.warningColor)
                 .padding(.horizontal, 6)
@@ -1350,7 +1350,7 @@ fileprivate struct AgentDataTableRepresentable: View {
                 .foregroundColor(theme.accentColor)
         }
         .buttonStyle(.plain)
-        .help("Open row")
+        .localizedHelp("Open row")
     }
 
     /// Display-string id for this row, or nil when the row has no
@@ -1416,7 +1416,7 @@ fileprivate struct MutationsInFlightIndicator: View {
                     .foregroundColor(theme.tertiaryText)
             }
             .padding(.horizontal, 6)
-            .help("Mutations in flight on this agent's serial queue.")
+            .localizedHelp("Mutations in flight on this agent's serial queue.")
         }
     }
 }
@@ -1437,7 +1437,7 @@ fileprivate struct StorageQuotaBadge: View {
 
     var body: some View {
         if agentManager.storageWarningAgentIds.contains(agentId) {
-            Label("Approaching quota", systemImage: "exclamationmark.triangle.fill")
+            Label(localized: "Approaching quota", systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(.orange)
                 .padding(.horizontal, 8)
@@ -1448,7 +1448,7 @@ fileprivate struct StorageQuotaBadge: View {
                 .overlay(
                     Capsule(style: .continuous).stroke(Color.orange.opacity(0.4), lineWidth: 1)
                 )
-                .help("This agent's database is approaching its storage quota.")
+                .localizedHelp("This agent's database is approaching its storage quota.")
         }
     }
 }
@@ -2016,7 +2016,7 @@ public struct ViewsTabView: View {
                 Button(role: .destructive) {
                     Task { await drop(view) }
                 } label: {
-                    Label("Drop", systemImage: "trash")
+                    Label(localized: "Drop", systemImage: "trash")
                         .font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(.bordered)

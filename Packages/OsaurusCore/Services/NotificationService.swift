@@ -27,7 +27,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         // Register category with an action to open the Model Manager window
         let openAction = UNNotificationAction(
             identifier: actionOpenId,
-            title: "Open Models",
+            title: L("Open Models"),
             options: [.foreground]
         )
         let category = UNNotificationCategory(
@@ -46,7 +46,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     func postPluginVerificationFailed(name: String, version: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Plugin verification failed"
+        content.title = L("Plugin verification failed")
         content.body = "\(name) @ \(version)"
 
         let request = UNNotificationRequest(
@@ -59,8 +59,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     func postModelReady(modelId: String, modelName: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Model ready"
-        content.body = "\(modelName) is downloaded and ready to use."
+        content.title = L("Model ready")
+        content.body = L("\(modelName) is downloaded and ready to use.")
         content.userInfo = ["modelId": modelId]
         content.categoryIdentifier = categoryId
 
@@ -76,8 +76,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     func postSafeModeActive() {
         let content = UNMutableNotificationContent()
-        content.title = "Osaurus started in safe mode"
-        content.body = "Plugins disabled after repeated crashes. Run \"osaurus tools reset\" in Terminal to recover."
+        content.title = L("Osaurus started in safe mode")
+        content.body = L("Plugins disabled after repeated crashes. Run \"osaurus tools reset\" in Terminal to recover.")
         let request = UNNotificationRequest(identifier: "safe-mode", content: content, trigger: nil)
         center.add(request, withCompletionHandler: nil)
     }
@@ -122,11 +122,11 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         guard count > 0 else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "Plugin updates available"
+        content.title = L("Plugin updates available")
         if count == 1 {
-            content.body = "\(pluginNames.first ?? "1 plugin") has an update available."
+            content.body = L("\(pluginNames.first ?? "1 plugin") has an update available.")
         } else {
-            content.body = "\(count) plugins have updates available."
+            content.body = L("\(count) plugins have updates available.")
         }
         content.userInfo = ["pluginCount": count]
 

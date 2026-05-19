@@ -149,3 +149,6 @@ results/
 # Swift test coverage artifacts
 default.profraw
 *.profraw
+
+# Local i18n tooling venv (scripts/i18n/fill-zh-hans.py)
+.venv-i18n/

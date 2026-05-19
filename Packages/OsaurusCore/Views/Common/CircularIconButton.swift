@@ -10,12 +10,12 @@ import SwiftUI
 struct CircularIconButton: View {
     @Environment(\.theme) private var theme
     let systemName: String
-    let help: String?
+    let help: LocalizedStringKey?
     let action: () -> Void
 
     @State private var isHovered = false
 
-    init(systemName: String, help: String? = nil, action: @escaping () -> Void) {
+    init(systemName: String, help: LocalizedStringKey? = nil, action: @escaping () -> Void) {
         self.systemName = systemName
         self.help = help
         self.action = action
@@ -73,6 +73,6 @@ struct CircularIconButton: View {
                 isHovered = hovering
             }
         }
-        .help(help ?? "")
+        .help(help.map { Text(localized: $0) } ?? Text(verbatim: ""))
     }
 }

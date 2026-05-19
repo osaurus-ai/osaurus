@@ -868,7 +868,7 @@ private struct CopyModelIdButton: View {
         .onHover { hovering in
             isHovering = hovering
         }
-        .help(Text("Copy '\(modelId)' for API usage", bundle: .module))
+        .localizedHelp("Copy '\(modelId)' for API usage")
     }
 
     private func copyModelId() {
@@ -950,7 +950,7 @@ private struct RepositoryLinkRow: View {
                         .foregroundColor(showCopied ? theme.successColor : theme.tertiaryText)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .help(showCopied ? "Copied!" : "Copy URL")
+                .help(showCopied ? Text(localized: "Copied!") : Text(localized: "Copy URL"))
             }
         }
     }

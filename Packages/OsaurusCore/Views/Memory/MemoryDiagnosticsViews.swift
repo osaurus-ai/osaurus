@@ -122,7 +122,7 @@ extension MemoryView {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                 if let title = p.lastSessionTitle, !title.isEmpty {
-                    Text("Last: \(title)")
+                    Text(localized: "Last: \(title)")
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(1)
@@ -443,7 +443,7 @@ extension MemoryView {
         var updated = agent
         updated.disableMemory = false
         agentManager.update(updated)
-        showToast("Memory enabled for \(agent.displayName)")
+        showToast(L("Memory enabled for \(agent.displayName)"))
     }
 
     // MARK: - Recent processing log

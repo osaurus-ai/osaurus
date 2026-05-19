@@ -66,7 +66,9 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("AppDelegate.swift")
         let serverTask = try #require(source.range(of: "let serverStartupTask = Task { @MainActor in"))
         let serverStart = try #require(source.range(of: "await serverController.startServer()"))
-        let providerConnect = try #require(source.range(of: "await MCPProviderManager.shared.connectEnabledProviders()"))
+        let providerConnect = try #require(
+            source.range(of: "await MCPProviderManager.shared.connectEnabledProviders()")
+        )
         let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
         let speechAutoload = try #require(source.range(of: "await SpeechService.shared.autoLoadIfNeeded()"))
 
@@ -94,7 +96,7 @@ struct RuntimePolicySourceTests {
         let manager = try Self.source("Managers/RemoteProviderManager.swift")
         let connectStart = try #require(manager.range(of: "public func connect(providerId: UUID) async throws"))
         let disconnectStart = try #require(manager.range(of: "public func disconnect(providerId: UUID)"))
-        let connectBody = String(manager[connectStart.lowerBound..<disconnectStart.lowerBound])
+        let connectBody = String(manager[connectStart.lowerBound ..< disconnectStart.lowerBound])
 
         #expect(!connectBody.contains("provider.getOAuthTokens()"))
         #expect(!connectBody.contains("provider.resolvedHeaders()"))
@@ -102,9 +104,11 @@ struct RuntimePolicySourceTests {
         #expect(connectBody.contains("await provider.resolvedHeadersOffMainActor()"))
 
         let service = try Self.source("Services/Provider/RemoteProviderService.swift")
-        let fetchStart = try #require(service.range(of: "public static func fetchModels(from provider: RemoteProvider) async throws"))
+        let fetchStart = try #require(
+            service.range(of: "public static func fetchModels(from provider: RemoteProvider) async throws")
+        )
         let decodeStart = try #require(service.range(of: "static func decodeOpenAICompatibleModelsResponse"))
-        let fetchBody = String(service[fetchStart.lowerBound..<decodeStart.lowerBound])
+        let fetchBody = String(service[fetchStart.lowerBound ..< decodeStart.lowerBound])
 
         #expect(!fetchBody.contains("provider.getOAuthTokens()"))
         #expect(!fetchBody.contains("provider.resolvedHeaders()"))
@@ -117,7 +121,7 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("Networking/HTTPHandler.swift")
         let snapshot = try #require(source.range(of: "remoteOpenAIModelsSnapshot"))
         let show = try #require(source.range(of: "private func handleShowEndpoint"))
-        let body = String(source[snapshot.lowerBound..<show.lowerBound])
+        let body = String(source[snapshot.lowerBound ..< show.lowerBound])
 
         #expect(
             !body.contains("withTaskGroup"),
@@ -134,7 +138,9 @@ struct RuntimePolicySourceTests {
         #expect(!source.contains("NWConnection"))
         #expect(!source.contains("isAnyListenerActive"))
         #expect(source.contains("try await server.start("))
-        #expect(source.contains("\"Port \\(configuration.port) is already in use. Choose a different port in Settings.\""))
+        #expect(
+            source.contains("\"Port \\(configuration.port) is already in use. Choose a different port in Settings.\"")
+        )
     }
 
     @Test("vmlx pin uses consolidated package with runtime hardening")

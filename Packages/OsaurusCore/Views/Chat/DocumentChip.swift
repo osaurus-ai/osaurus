@@ -55,7 +55,7 @@ struct DocumentChip: View {
 
         if let onEdit {
             circularButton(systemName: "pencil", action: onEdit)
-                .help("Edit pasted content")
+                .localizedHelp("Edit pasted content")
         }
 
         if let onRemove {

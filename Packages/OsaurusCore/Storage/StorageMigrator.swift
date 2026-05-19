@@ -237,27 +237,29 @@ public actor StorageMigrator {
     }
 
     private func isDirectoryEmpty(_ url: URL) -> Bool {
-        let contents = (try? FileManager.default.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        )) ?? []
+        let contents =
+            (try? FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
         return contents.isEmpty
     }
 
     private func containsOnlyBuiltInThemeJSON(_ url: URL) -> Bool {
-        let files = (try? FileManager.default.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        )) ?? []
+        let files =
+            (try? FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
         guard !files.isEmpty else { return true }
 
         for file in files {
             guard file.pathExtension == "json",
-                  let data = try? Data(contentsOf: file),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  object["isBuiltIn"] as? Bool == true
+                let data = try? Data(contentsOf: file),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                object["isBuiltIn"] as? Bool == true
             else {
                 return false
             }

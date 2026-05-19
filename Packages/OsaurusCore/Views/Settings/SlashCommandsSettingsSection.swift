@@ -158,7 +158,7 @@ struct SlashCommandsSettingsSection: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help(Text("Edit command", bundle: .module))
+                    .localizedHelp("Edit command")
 
                     Button {
                         registry.delete(id: cmd.id)
@@ -170,7 +170,7 @@ struct SlashCommandsSettingsSection: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help(Text("Delete command", bundle: .module))
+                    .localizedHelp("Delete command")
                 }
             }
             .padding(.horizontal, 12)

@@ -323,9 +323,9 @@ private extension osaurusApp {
 
     var vadToggleLabel: String {
         let config = VADConfigurationStore.load()
-        guard canToggleVAD else { return String(localized: "Toggle Voice Detection") }
+        guard canToggleVAD else { return L("Toggle Voice Detection") }
         return config.vadModeEnabled
-            ? String(localized: "Disable Voice Detection") : String(localized: "Enable Voice Detection")
+            ? L("Disable Voice Detection") : L("Enable Voice Detection")
     }
 
     func toggleVAD() {

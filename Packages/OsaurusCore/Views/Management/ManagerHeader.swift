@@ -362,7 +362,7 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
     var counts: [Tab: Int]?
     var badges: [Tab: Int]?
     @Binding var searchText: String
-    var searchPlaceholder: String
+    var searchPlaceholder: LocalizedStringKey
     var showSearch: Bool
 
     init(
@@ -370,7 +370,7 @@ struct HeaderTabsRow<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAcces
         counts: [Tab: Int]? = nil,
         badges: [Tab: Int]? = nil,
         searchText: Binding<String> = .constant(""),
-        searchPlaceholder: String = "Search",
+        searchPlaceholder: LocalizedStringKey = "Search",
         showSearch: Bool = true
     ) {
         self._selection = selection
