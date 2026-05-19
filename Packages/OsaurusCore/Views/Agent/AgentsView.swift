@@ -2971,7 +2971,7 @@ struct AgentDetailView: View {
                 Spacer()
             }
             .foregroundColor(theme.secondaryText)
-            Text(localized: "Exported \(manifest.exportedAt.formatted(date: .abbreviated, time: .shortened))")
+            Text(localized: "Exported on \(manifest.exportedAt.formatted(date: .abbreviated, time: .shortened))")
                 .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
         }
