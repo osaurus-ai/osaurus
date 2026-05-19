@@ -161,6 +161,19 @@ def build_vlm_turn_plan(
     return turns
 
 
+def build_text_turn_plan(prompts: list[str]) -> list[dict[str, Any]]:
+    if not prompts:
+        raise ValueError("at least one text prompt is required")
+    return [
+        {
+            "label": f"t{index}_text",
+            "prompt": prompt,
+            "media": [],
+        }
+        for index, prompt in enumerate(prompts, start=1)
+    ]
+
+
 def chat_content_for_turn(turn: dict[str, Any]) -> str | list[dict[str, Any]]:
     media = turn["media"]
     if not media:
@@ -395,6 +408,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audio", type=Path)
     parser.add_argument("--prompt", default="Describe the media in one short sentence.")
     parser.add_argument(
+        "--text-turn",
+        action="append",
+        default=[],
+        help=(
+            "Add one text-only turn. May be repeated for multi-turn text models. "
+            "When supplied without media, overrides --prompt."
+        ),
+    )
+    parser.add_argument(
         "--different-image-prompt",
         help=(
             "Prompt for the different-image turn. Defaults to --prompt. Use an "
@@ -414,14 +436,21 @@ def main() -> int:
     args = parse_args()
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    turns = build_vlm_turn_plan(
-        image=args.image,
-        different_image=args.different_image,
-        video=args.video,
-        audio=args.audio,
-        prompt=args.prompt,
-        different_image_prompt=args.different_image_prompt,
+    has_media = any(
+        item is not None
+        for item in (args.image, args.different_image, args.video, args.audio)
     )
+    if args.text_turn and not has_media:
+        turns = build_text_turn_plan(args.text_turn)
+    else:
+        turns = build_vlm_turn_plan(
+            image=args.image,
+            different_image=args.different_image,
+            video=args.video,
+            audio=args.audio,
+            prompt=args.prompt,
+            different_image_prompt=args.different_image_prompt,
+        )
     routes = {route.strip() for route in args.routes.split(",") if route.strip()}
     route_specs: list[tuple[str, str]] = []
     if "chat" in routes:

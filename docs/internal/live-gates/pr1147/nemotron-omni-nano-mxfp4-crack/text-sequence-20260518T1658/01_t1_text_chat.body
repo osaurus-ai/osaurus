@@ -1,0 +1,1 @@
+{"object":"chat.completion","id":"chatcmpl-48222057A073","model":"nemotron-omni-nano-mxfp4-crack","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"\n2+2 equals 4."}}],"created":1779148761,"usage":{"total_tokens":13,"completion_tokens":3,"prompt_tokens":10}}

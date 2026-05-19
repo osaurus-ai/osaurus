@@ -117,7 +117,7 @@ with the correct cache/scheduler/parser/media path for that model.
 | Qwen VL / Qwen3.6 MTP VL through UI and APIs | Live matrix names Qwen3VLProcessor, MRoPE, media salt, video frame rows, native `top_k`, `chat_template_kwargs`, and `vmlx_mtp_tuning.json`. Local model census confirms Qwen3.6 MTP/VL bundles and processor files exist. | Osaurus chat-app image+text T1, text-only T2, different-image T3, repeated-media hit, video row, `/v1/chat/completions`, `/v1/responses`, saved settings, cache stats, TTFT/tok/s/RSS/footprint artifacts. |
 | Gemma VL / Gemma reasoning | Live matrix separates Gemma4 VLM/Harmony from Gemma3n text-only partial evidence and requires media controls only after real detection. Gemma3n live text artifact `gemma-3n-e2b-it-4bit/text-sequence-20260518T1652/` proves no short BOS/EOS loop in that row and proves prefix/block-L2 counter movement, but also records exact-output drift, odd Chat word-puzzle framing, and Responses UTF loss. | Osaurus Gemma4 image/video/text rows, Harmony no-leak route rows, Gemma tool cards, cache stats, Activity Monitor physical-footprint proof, and a root cause for Gemma3n request/template/decode or Responses UTF behavior before any production-clear text claim. |
 | ZAYA / ZAYA-VL | Live matrix requires ZayaCCACache/path-dependent media state, no stale thinking carryover, no sampler clamp, and separate ZAYA-VL media rows. Local census confirms ZAYA text and VL variants plus ZAYA VL processor files. Fresh Osaurus diagnostics prove blue-image grounding works in isolation and with explicit latest-image wording; the original red-to-blue plain prompt still follows prior assistant red context. | Osaurus ZAYA-VL image/video/text-only resume rows, CCA cache proof, speed target watch, no cross-session media state reuse, and root-cause closure for current red ZAYA direct-mode rows. The VLM turn contract must be unambiguous without adding sampler, parser, or output guards. |
-| Nemotron Omni / Parakeet / RADIO | Live matrix names Parakeet pre-encode, RADIO/vision facts, live voice chunk stability, repeated-video alias, and no reasoning-only short-budget false pass. Local census confirms Nemotron Omni variants and processor files. | Osaurus app/API audio/video/image/text-only resume rows, live voice resident pre-encode, cache stats, TTFT/tok/s/RSS/footprint, and unsupported-media error proof. |
+| Nemotron Omni / Parakeet / RADIO | Live matrix names Parakeet pre-encode, RADIO/vision facts, live voice chunk stability, repeated-video alias, and no reasoning-only short-budget false pass. Local census confirms Nemotron Omni variants and processor files. MXFP4 text-only artifact `nemotron-omni-nano-mxfp4-crack/text-sequence-20260518T1658/` passes short Chat and Responses math/follow-up/UTF rows and shows prefix/block-L2/SSM companion counter movement. | Osaurus app/API audio/video/image rows, live voice resident pre-encode, stream rows, sleep/wake, TTFT/tok/s/RSS/footprint, and unsupported-media error proof. |
 | DSV4 Flash renderer and runtime | Source-policy tests pin native DSV4 cache copy, SWA+CSA+HSA, fixed/disabled block size 256, generic q4/q8 disabled, pool quant visible, JIT disabled, model metadata defaults, and invalid CLI flags omitted. | Final Osaurus UI screenshot/log and API artifacts proving those exact rendered settings, DSML tool rows, `reasoning_effort=max` pass-through, native cache stats, long/growing-chat behavior, TTFT/tok/s/footprint. |
 | MiniMax reasoning/tools | Live matrix requires reasoning channel separation, MiniMax tool parser, no MTP from CRACK/name, cache stats, and no forced close or repetition penalty. | Osaurus UI/API multi-turn reasoning and tool-result artifacts with stream terminal usage and cache proof. |
 | Ling / Hy3 / hybrid SSM | Live matrix requires Ling default-off plus explicit opt-in reasoning routing, stale Qwen thinking ignored, hybrid cache topology, SSM companion hits/misses/stores, and no KV-only unsafe hit. | Osaurus long-prompt, prefix-overlap, prefix-mismatch, API tool rows, reasoning on/off/default rows, re-derive status, cache stats, and TTFT/footprint artifacts. |
@@ -140,6 +140,18 @@ Current Gemma3n live evidence:
   `disk_l2_stores=9`, with `is_paged_incompatible=true`.
 - The row has RSS-only process context and no Activity Monitor physical
   footprint, so it cannot close the production memory gate.
+
+Current Nemotron Omni MXFP4 text evidence:
+
+- artifact:
+  `docs/internal/live-gates/pr1147/nemotron-omni-nano-mxfp4-crack/text-sequence-20260518T1658/review.md`
+- Chat and Responses returned clean short text for math, follow-up, and exact
+  UTF (`café 東京 🚀`), with no short-row loop or visible parser marker.
+- After-sequence cache stats showed `prefix_hits=5`, `disk_l2_hits=5`,
+  `disk_l2_stores=12`, and `ssm_companion_hits=5`, with
+  `is_paged_incompatible=true`.
+- This is text-only evidence; it does not prove Parakeet audio input,
+  image/video/RADIO, streaming, tok/s, or Activity Monitor physical footprint.
 
 ## Local Model Census Snapshot
 

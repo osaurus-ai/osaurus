@@ -1,0 +1,27 @@
+{
+  "max_tokens": 128,
+  "messages": [
+    {
+      "content": "Answer in one short sentence: what is 2+2?",
+      "role": "user"
+    },
+    {
+      "content": "\n2+2 equals 4.",
+      "role": "assistant"
+    },
+    {
+      "content": "In one short sentence, repeat the previous answer and say no new facts.",
+      "role": "user"
+    },
+    {
+      "content": "2+2 equals 4.",
+      "role": "assistant"
+    },
+    {
+      "content": "Write exactly this UTF-8 string and nothing else: caf\u00e9 \u6771\u4eac \ud83d\ude80",
+      "role": "user"
+    }
+  ],
+  "model": "nemotron-omni-nano-mxfp4-crack",
+  "stream": false
+}

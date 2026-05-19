@@ -111,6 +111,19 @@ class LiveSequenceProbeTests(unittest.TestCase):
             self.assertEqual(response_content[1]["type"], "input_image")
             self.assertTrue(response_content[1]["image_url"].startswith("data:image/png;base64,"))
 
+    def test_text_turn_plan_supports_multiple_text_only_turns(self) -> None:
+        probe = load_probe_module()
+
+        turns = probe.build_text_turn_plan(["say 4", "repeat prior answer"])
+
+        self.assertEqual(
+            turns,
+            [
+                {"label": "t1_text", "prompt": "say 4", "media": []},
+                {"label": "t2_text", "prompt": "repeat prior answer", "media": []},
+            ],
+        )
+
     def test_ps_line_parser_handles_paths_with_spaces(self) -> None:
         probe = load_probe_module()
         row = probe.parse_ps_line(

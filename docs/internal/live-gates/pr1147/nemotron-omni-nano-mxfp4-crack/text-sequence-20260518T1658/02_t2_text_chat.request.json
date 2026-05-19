@@ -1,0 +1,19 @@
+{
+  "max_tokens": 128,
+  "messages": [
+    {
+      "content": "Answer in one short sentence: what is 2+2?",
+      "role": "user"
+    },
+    {
+      "content": "\n2+2 equals 4.",
+      "role": "assistant"
+    },
+    {
+      "content": "In one short sentence, repeat the previous answer and say no new facts.",
+      "role": "user"
+    }
+  ],
+  "model": "nemotron-omni-nano-mxfp4-crack",
+  "stream": false
+}

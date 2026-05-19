@@ -1,0 +1,1 @@
+{"id":"resp_A5DF4E4E43BD4DA696953865","created_at":1779148770,"usage":{"total_tokens":51,"output_tokens":2,"input_tokens":49},"output":[{"status":"completed","role":"assistant","content":[{"text":"\ncafé 東京 🚀","type":"output_text"}],"type":"message","id":"item_8E96E13FEE5E47E085E8CF8A"}],"object":"response","status":"completed","model":"nemotron-omni-nano-mxfp4-crack"}
