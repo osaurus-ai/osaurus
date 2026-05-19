@@ -1,1 +1,0 @@
-{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"2+2 is 4.","role":"assistant"}}],"prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","created":1779149148,"object":"chat.completion","id":"chatcmpl-B7B245A9E2B5","model":"zaya1-8b-mxfp4","usage":{"total_tokens":33,"prompt_tokens":31,"completion_tokens":2}}

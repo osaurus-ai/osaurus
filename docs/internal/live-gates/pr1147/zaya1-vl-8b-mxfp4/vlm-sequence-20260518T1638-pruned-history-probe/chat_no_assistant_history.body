@@ -1,2 +1,0 @@
-{"prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","id":"chatcmpl-5C2DD8276483","created":1779147631,"choices":[{"finish_reason":"stop","index":0,"message":{"role":"assistant","content":"The image features a blue rectangle with a small white vertical rectangle inside it."}}],"object":"chat.completion","model":"zaya1-vl-8b-mxfp4","usage":{"completion_tokens":21,"prompt_tokens":50,"total_tokens":71}}
-HTTP_STATUS:200

@@ -1,1 +1,0 @@
-{"object":"chat.completion","choices":[{"message":{"content":"Red square dominates the image.","role":"assistant"},"index":0,"finish_reason":"stop"}],"usage":{"prompt_tokens":18,"completion_tokens":7,"total_tokens":25},"model":"zaya1-vl-8b-mxfp4","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","created":1779146968,"id":"chatcmpl-E034C2D9EDBB"}

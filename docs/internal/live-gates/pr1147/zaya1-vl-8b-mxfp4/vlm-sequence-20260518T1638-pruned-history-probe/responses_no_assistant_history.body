@@ -1,2 +1,0 @@
-{"output":[{"id":"item_B3ECB660D661468F87F441EF","status":"completed","role":"assistant","type":"message","content":[{"text":"The dominant color in the image is blue, and it features a rectangular shape with a white edge.","type":"output_text"}]}],"created_at":1779147644,"object":"response","id":"resp_6C02AC17C31D4DE4BAA449B9","usage":{"total_tokens":73,"output_tokens":23,"input_tokens":50},"model":"zaya1-vl-8b-mxfp4","status":"completed"}
-HTTP_STATUS:200

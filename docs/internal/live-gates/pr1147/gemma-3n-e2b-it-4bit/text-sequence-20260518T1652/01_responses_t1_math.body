@@ -1,2 +1,0 @@
-{"id":"resp_8B0C6D063E504C288A34CCDA","model":"gemma-3n-e2b-it-4bit","usage":{"output_tokens":44,"input_tokens":12,"total_tokens":56},"object":"response","created_at":1779148295,"output":[{"id":"item_08A6F2BBC7AD4946B18FF59F","role":"assistant","content":[{"text":"Okay, let's break this down. It's a bit of a word puzzle!\n\nThe question is asking: **What is 2 + 2?**\n\nThe words are just a distraction. The answer is simply:\n\n**4**\n\n2 + 2 = 4\n","type":"output_text"}],"status":"completed","type":"message"}],"status":"completed"}
-HTTP_STATUS:200

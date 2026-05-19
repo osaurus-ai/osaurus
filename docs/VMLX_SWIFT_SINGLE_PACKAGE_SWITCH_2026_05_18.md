@@ -76,8 +76,7 @@ gate. This is intentional: MTP must be detected from the model artifact, not fro
 the model name, and activation must be driven by measured tuning rather than a
 generic fallback.
 
-The pinned package commit includes a fresh Qwen MTP census artifact at
-`docs/internal/live-gates/20260518T_qwen_mtp_census_refresh/`. It proves the
+The pinned package commit keeps the Qwen MTP gate tensor/tuning based: the
 27B/35B MXFP4/MXFP8 MTP variants all require real `mtp.*` tensors and usable
 `vmlx_mtp_tuning.json` before auto-launch; 27B MXFP4 selects D2, while 27B
 MXFP8 and both 35B variants select D3 from their tuning files.
@@ -110,10 +109,9 @@ That matrix is the merge gate for user-facing confidence: it requires real chat
 app and API rows for Qwen-VL, Gemma VLM/Gemma3n, ZAYA-VL, Nemotron Omni,
 DSV4, MiniMax, Ling, Hy3, saved reasoning settings, media salt, prefix/paged/L2
 cache stats, top-k/generation defaults, and parser leak checks.
-The per-family execution tracker is
-[`20260518T_pr1147_model_function_compatibility_tracker.md`](internal/live-gates/20260518T_pr1147_model_function_compatibility_tracker.md);
-it is the status checklist for which function rows are PASS, PARTIAL, FAIL,
-OPEN, or N-A before this PR is undrafted.
+The per-family execution tracker and raw live artifacts are intentionally kept
+out of the repository during this PR. Record current row status in the PR
+coordination channel rather than committing private live-gate artifacts.
 
 Any incoherent output, repeated EOS loop, missing reasoning close, or cache hit
 with the wrong architecture state is a runtime bug to root-cause in `vmlx-swift`.
@@ -186,10 +184,8 @@ decode produced a valid DSML envelope with an abbreviated invoke close
 and zero `.toolCall` events. The pinned `vmlx-swift` revision now accepts that
 observed DSV4 variant in the DSML parser. Post-fix live output emitted one
 structured `get_weather({"location":"Tokyo"})` call, no raw DSML marker leakage
-in `.chunk`, and no reasoning leakage. The latest pinned package commit also
-includes the refresh artifact
-`docs/internal/live-gates/20260518T_dsv4_dsml_toolcall_refresh/dsv4_dsml_toolcall.log`
-with the same `BatchEngine.generate` proof.
+in `.chunk`, and no reasoning leakage. The same `BatchEngine.generate` proof is
+kept with the private coordination artifacts rather than committed to this PR.
 
 ## Fresh Engine Process Rows
 

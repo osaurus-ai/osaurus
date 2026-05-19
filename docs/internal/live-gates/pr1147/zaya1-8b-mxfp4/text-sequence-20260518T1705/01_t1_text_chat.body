@@ -1,1 +1,0 @@
-{"model":"zaya1-8b-mxfp4","object":"chat.completion","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","choices":[{"message":{"content":"2+2 equals 4.","role":"assistant"},"finish_reason":"stop","index":0}],"usage":{"completion_tokens":3,"prompt_tokens":10,"total_tokens":13},"created":1779149143,"id":"chatcmpl-31C265625DC3"}

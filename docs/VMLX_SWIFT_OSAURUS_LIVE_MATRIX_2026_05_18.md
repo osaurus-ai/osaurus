@@ -8,11 +8,10 @@ and parser-leak checks.
 
 This document is also the place to record rows that are not clear yet. Do not turn red rows into hidden sampler defaults, fake repetition penalties, forced reasoning close tokens, or app-side parser repairs.
 
-Current completion audit:
-`docs/internal/live-gates/20260518T_pr1147_completion_audit.md`. That audit
-maps the user's requested VL/cache/UI/API/parser/defaults/carryover proof to
-artifact paths and explicitly records that the switch is not production-clear
-until the live Osaurus app/API folders exist.
+Current completion status is tracked in the PR coordination channel, not in
+repo-local live-gate artifacts. The user's requested VL/cache/UI/API/parser/
+defaults/carryover proof still requires real Osaurus app/API evidence before a
+row is production-clear.
 
 ## Evidence Standard
 
@@ -59,7 +58,7 @@ single model load, a single API route, or a unit test does not cover the row.
 
 | ID | Requirement | Required artifact evidence | Current status |
 |---|---|---|---|
-| A1 | Bundle census and autodetect | JSON/text artifact with `config.json`, `generation_config.json`, `tokenizer_config.json`, chat template source, JANG/JANGTQ sidecars, real `mtp.*` tensor count, `vmlx_mtp_tuning.json`, VLM processor files, and detected family/parser/cache topology. | File-level census artifact exists under `docs/internal/live-gates/pr1147/bundle-census`; live UI/API detection proof is still pending per model. |
+| A1 | Bundle census and autodetect | JSON/text artifact with `config.json`, `generation_config.json`, `tokenizer_config.json`, chat template source, JANG/JANGTQ sidecars, real `mtp.*` tensor count, `vmlx_mtp_tuning.json`, VLM processor files, and detected family/parser/cache topology. | File-level census is not committed to this PR; live UI/API detection proof is still pending per model. |
 | A2 | App launch and model picker | Screenshot/log proving the model appears with correct name/path, VLM/audio/video badges, MTP status from tuning, parser family, cache topology, and no stale saved profile. | Pending `osaurus-live`. |
 | A3 | Chat settings visual defaults | Screenshot/log for defaults after selecting the model: DSV4 `instruct` selected, DSV4 `max` selectable and passed as `reasoning_effort=max`, Qwen no-thinking default where applicable, ZAYA/Nemotron no-thinking defaults, MiniMax reasoning channel, Gemma Harmony controls, and no controls for unsupported features. | Source-wired for profiles; pending UI proof. |
 | A4 | Server settings and CLI preview | Screenshot/log of cache, batching, sleep/wake, generation, tool, reasoning, VLM, and MTP sections; DSV4 row must prove native DSV4 cache copy present, block size fixed/disabled at 256, generic KV q4/q8 disabled, pool quant visible, JIT disabled, generation defaults shown from `generation_config.json` / `jang_config.json` metadata including native `top_k`, and CLI preview omits topology-invalid flags: `--kv-cache-quantization`, `--enable-jit`, `--is-mllm`, and `--speculative-model`. | DSV4 checklist source-locked; pending final UI/CLI artifact. |

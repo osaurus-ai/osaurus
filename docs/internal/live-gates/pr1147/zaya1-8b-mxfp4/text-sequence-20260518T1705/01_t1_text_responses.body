@@ -1,1 +1,0 @@
-{"output":[{"type":"message","status":"completed","content":[{"type":"output_text","text":"2+2 equals 4."}],"role":"assistant","id":"item_73A58F1F5A06449ABC9DDE89"}],"model":"zaya1-8b-mxfp4","id":"resp_4A2675CAFB1F4B8080C0A7BA","status":"completed","object":"response","created_at":1779149147,"usage":{"output_tokens":3,"input_tokens":10,"total_tokens":13}}

@@ -1,1 +1,0 @@
-{"object":"response","id":"resp_8E870471C81048FEB83A6671","output":[{"content":[{"text":"The sky is a clear blue.\n\n\n\n","type":"output_text"}],"type":"message","status":"completed","id":"item_21720B465AF04038B5988EE6","role":"assistant"}],"usage":{"input_tokens":31,"total_tokens":38,"output_tokens":7},"created_at":1779151305,"model":"gemma-3n-e2b-it-4bit","status":"completed"}

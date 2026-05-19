@@ -1,1 +1,0 @@
-{"usage":{"input_tokens":31,"output_tokens":3,"total_tokens":34},"status":"completed","object":"response","model":"nemotron-omni-nano-mxfp4-crack","output":[{"content":[{"text":"2+2 equals 4.","type":"output_text"}],"id":"item_9429FF84411F42FAB5742F81","status":"completed","type":"message","role":"assistant"}],"created_at":1779148769,"id":"resp_425A80B4B474447DAA8F107B"}

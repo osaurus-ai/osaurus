@@ -1,2 +1,0 @@
-{"object":"chat.completion","created":1779147517,"usage":{"prompt_tokens":81,"total_tokens":88,"completion_tokens":7},"id":"chatcmpl-1447B74485FD","model":"zaya1-vl-8b-mxfp4","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","choices":[{"message":{"role":"assistant","content":"Red square dominates the image."},"finish_reason":"stop","index":0}]}
-HTTP_STATUS:200

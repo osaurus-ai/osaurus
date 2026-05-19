@@ -1,1 +1,0 @@
-{"usage":{"total_tokens":6,"completion_tokens":1,"prompt_tokens":5},"model":"nemotron-omni-nano-mxfp4-crack","choices":[{"message":{"content":"\nReady","role":"assistant"},"finish_reason":"stop","index":0}],"object":"chat.completion","id":"chatcmpl-6F9459DE17ED","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","created":1779148974}

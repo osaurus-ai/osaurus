@@ -1,1 +1,0 @@
-{"object":"chat.completion","usage":{"completion_tokens":2,"prompt_tokens":49,"total_tokens":51},"created":1779148770,"id":"chatcmpl-668826219674","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"\ncafé 東京 🚀"}}],"prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","model":"nemotron-omni-nano-mxfp4-crack"}

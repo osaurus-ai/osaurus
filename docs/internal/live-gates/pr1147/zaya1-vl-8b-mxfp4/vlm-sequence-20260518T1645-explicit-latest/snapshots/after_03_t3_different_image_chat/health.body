@@ -1,1 +1,0 @@
-{"resident_models":[{"idle_seconds_remaining":300,"name":"zaya1-vl-8b-mxfp4","is_current":true,"inflight":0,"idle_unload_at":"2026-05-18T23:50:28Z"}],"timestamp":"2026-05-18T23:45:28Z","current_model":"zaya1-vl-8b-mxfp4","status":"healthy","inflight":{},"loaded":["zaya1-vl-8b-mxfp4"]}

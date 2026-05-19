@@ -1,1 +1,0 @@
-{"choices":[{"finish_reason":"stop","index":0,"message":{"role":"assistant","content":"The red rectangle is set against a white background."}}],"id":"chatcmpl-819DEF21365E","usage":{"completion_tokens":13,"total_tokens":120,"prompt_tokens":107},"object":"chat.completion","model":"zaya1-vl-8b-mxfp4","created":1779141273,"prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c"}

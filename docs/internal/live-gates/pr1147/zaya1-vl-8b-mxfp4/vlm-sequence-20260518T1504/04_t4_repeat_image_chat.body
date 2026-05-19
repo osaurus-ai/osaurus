@@ -1,1 +1,0 @@
-{"id":"chatcmpl-E48F87820F4E","created":1779141426,"choices":[{"finish_reason":"stop","index":0,"message":{"role":"assistant","content":"Solid red rectangle with nothing inside."}}],"usage":{"completion_tokens":10,"total_tokens":134,"prompt_tokens":124},"object":"chat.completion","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","model":"zaya1-vl-8b-mxfp4"}

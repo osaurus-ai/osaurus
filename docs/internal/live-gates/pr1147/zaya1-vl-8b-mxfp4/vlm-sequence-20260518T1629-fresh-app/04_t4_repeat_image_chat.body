@@ -1,1 +1,0 @@
-{"id":"chatcmpl-3473063930DB","choices":[{"index":0,"message":{"role":"assistant","content":"A red square is the only element in the image."},"finish_reason":"stop"}],"prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","object":"chat.completion","created":1779146990,"model":"zaya1-vl-8b-mxfp4","usage":{"prompt_tokens":110,"completion_tokens":11,"total_tokens":121}}
