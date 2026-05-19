@@ -330,6 +330,37 @@ enum OpenAIProviderCredentialMode {
     }
 }
 
+/// Credential mode for the OpenRouter provider. The OAuth path runs PKCE in
+/// the browser and persists the returned `sk-or-v1-...` key the same way as
+/// a pasted key — there is no separate token storage.
+enum OpenRouterCredentialMode {
+    case oauthSignIn
+    case apiKey
+
+    var title: String {
+        switch self {
+        case .oauthSignIn: return "Sign in with OpenRouter"
+        case .apiKey: return "OpenRouter API key"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .oauthSignIn:
+            return "Authorize in your browser and we'll mint a key automatically."
+        case .apiKey:
+            return "Paste a key from openrouter.ai/keys."
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .oauthSignIn: return "person.crop.circle.badge.checkmark"
+        case .apiKey: return "key.fill"
+        }
+    }
+}
+
 // MARK: - Provider Badge View
 
 /// Reusable badge pill shown next to a provider name (e.g. "Privacy" for Venice AI).

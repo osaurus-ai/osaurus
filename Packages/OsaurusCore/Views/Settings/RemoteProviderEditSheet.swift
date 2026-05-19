@@ -63,6 +63,7 @@ private struct AddProviderFlow: View {
     @State private var selectedPreset: ProviderPreset?
     @State private var apiKey: String = ""
     @State private var openAIAuthMode: OpenAIProviderCredentialMode = .chatGPTSubscription
+    @State private var openRouterAuthMode: OpenRouterCredentialMode = .oauthSignIn
     @State private var oauthTokens: RemoteProviderOAuthTokens?
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
@@ -97,6 +98,9 @@ private struct AddProviderFlow: View {
             return !knownHost.trimmingCharacters(in: .whitespaces).isEmpty && !apiKey.isEmpty && apiKey.count > 5
         }
         if preset == .openai && openAIAuthMode == .chatGPTSubscription {
+            return true
+        }
+        if preset == .openrouter && openRouterAuthMode == .oauthSignIn {
             return true
         }
         return !apiKey.isEmpty && apiKey.count > 5
@@ -285,18 +289,22 @@ private struct AddProviderFlow: View {
                         openAIAuthChoiceSection
                     }
 
+                    if selectedPreset == .openrouter {
+                        openRouterAuthChoiceSection
+                    }
+
                     if selectedPreset == .azureOpenAI {
                         azureConnectionSection
                         azureDeploymentsSection
                     }
 
-                    if selectedPreset != .openai || openAIAuthMode == .platformAPIKey {
+                    if shouldShowKnownAPIKeyField {
                         apiKeySection
                     }
 
                     // Help section
                     if let preset = selectedPreset, preset.isKnown, !preset.consoleURL.isEmpty,
-                        preset != .openai || openAIAuthMode == .platformAPIKey
+                        shouldShowKnownAPIKeyField
                     {
                         helpSection(for: preset)
                     }
@@ -403,6 +411,7 @@ private struct AddProviderFlow: View {
                 apiKey = ""
                 oauthTokens = nil
                 openAIAuthMode = .chatGPTSubscription
+                openRouterAuthMode = .oauthSignIn
                 testResult = nil
                 customName = ""
                 customHost = ""
@@ -566,7 +575,112 @@ private struct AddProviderFlow: View {
         }
     }
 
+    /// Whether the known-provider API key + help sections should render. Both
+    /// OpenAI and OpenRouter expose an OAuth alternative, so we hide the raw
+    /// key field when the user picks the browser sign-in flow.
+    private var shouldShowKnownAPIKeyField: Bool {
+        guard let preset = selectedPreset else { return true }
+        switch preset {
+        case .openai:
+            return openAIAuthMode == .platformAPIKey
+        case .openrouter:
+            return openRouterAuthMode == .apiKey
+        default:
+            return true
+        }
+    }
+
     private var openAIAuthChoiceSection: some View {
+        authChoiceSection(
+            cards: [
+                authChoiceCardSpec(
+                    mode: OpenAIProviderCredentialMode.chatGPTSubscription,
+                    isSelected: openAIAuthMode == .chatGPTSubscription,
+                    action: { selectOpenAIMode(.chatGPTSubscription) }
+                ),
+                authChoiceCardSpec(
+                    mode: OpenAIProviderCredentialMode.platformAPIKey,
+                    isSelected: openAIAuthMode == .platformAPIKey,
+                    action: { selectOpenAIMode(.platformAPIKey) }
+                ),
+            ]
+        )
+    }
+
+    private var openRouterAuthChoiceSection: some View {
+        authChoiceSection(
+            cards: [
+                authChoiceCardSpec(
+                    mode: OpenRouterCredentialMode.oauthSignIn,
+                    isSelected: openRouterAuthMode == .oauthSignIn,
+                    action: { selectOpenRouterMode(.oauthSignIn) }
+                ),
+                authChoiceCardSpec(
+                    mode: OpenRouterCredentialMode.apiKey,
+                    isSelected: openRouterAuthMode == .apiKey,
+                    action: { selectOpenRouterMode(.apiKey) }
+                ),
+            ]
+        )
+    }
+
+    private func selectOpenAIMode(_ mode: OpenAIProviderCredentialMode) {
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+            openAIAuthMode = mode
+            testResult = nil
+            oauthTokens = nil
+        }
+    }
+
+    private func selectOpenRouterMode(_ mode: OpenRouterCredentialMode) {
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+            openRouterAuthMode = mode
+            testResult = nil
+            // Clear any previously-minted key so the field doesn't read as
+            // "already provided" when the user flips back to paste.
+            apiKey = ""
+        }
+    }
+
+    /// Lightweight DTO used to feed `authChoiceSection` without forcing
+    /// callers to recite the per-mode title/subtitle/icon triple.
+    private struct AuthChoiceCardSpec {
+        let title: String
+        let subtitle: String
+        let icon: String
+        let isSelected: Bool
+        let action: () -> Void
+    }
+
+    private func authChoiceCardSpec(
+        mode: OpenAIProviderCredentialMode,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> AuthChoiceCardSpec {
+        AuthChoiceCardSpec(
+            title: mode.title,
+            subtitle: mode.subtitle,
+            icon: mode.icon,
+            isSelected: isSelected,
+            action: action
+        )
+    }
+
+    private func authChoiceCardSpec(
+        mode: OpenRouterCredentialMode,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> AuthChoiceCardSpec {
+        AuthChoiceCardSpec(
+            title: mode.title,
+            subtitle: mode.subtitle,
+            icon: mode.icon,
+            isSelected: isSelected,
+            action: action
+        )
+    }
+
+    private func authChoiceSection(cards: [AuthChoiceCardSpec]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("HOW DO YOU WANT TO CONNECT?", bundle: .module)
                 .font(.system(size: 10, weight: .bold))
@@ -574,65 +688,50 @@ private struct AddProviderFlow: View {
                 .tracking(0.5)
 
             VStack(spacing: 10) {
-                openAIAuthChoiceCard(
-                    mode: .chatGPTSubscription,
-                    title: OpenAIProviderCredentialMode.chatGPTSubscription.title,
-                    subtitle: OpenAIProviderCredentialMode.chatGPTSubscription.subtitle,
-                    icon: OpenAIProviderCredentialMode.chatGPTSubscription.icon
-                )
-                openAIAuthChoiceCard(
-                    mode: .platformAPIKey,
-                    title: OpenAIProviderCredentialMode.platformAPIKey.title,
-                    subtitle: OpenAIProviderCredentialMode.platformAPIKey.subtitle,
-                    icon: OpenAIProviderCredentialMode.platformAPIKey.icon
-                )
+                ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
+                    authChoiceCard(card)
+                }
             }
         }
     }
 
-    private func openAIAuthChoiceCard(
-        mode: OpenAIProviderCredentialMode,
-        title: String,
-        subtitle: String,
-        icon: String
-    ) -> some View {
-        let selected = openAIAuthMode == mode
-        return Button {
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                openAIAuthMode = mode
-                testResult = nil
-                oauthTokens = nil
-            }
-        } label: {
+    private func authChoiceCard(_ card: AuthChoiceCardSpec) -> some View {
+        Button(action: card.action) {
             HStack(spacing: 12) {
-                Image(systemName: icon)
+                Image(systemName: card.icon)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(selected ? theme.accentColor : theme.secondaryText)
+                    .foregroundColor(card.isSelected ? theme.accentColor : theme.secondaryText)
                     .frame(width: 28, height: 28)
-                    .background(Circle().fill(selected ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground))
+                    .background(
+                        Circle()
+                            .fill(card.isSelected ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground)
+                    )
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
+                    Text(card.title)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
-                    Text(subtitle)
+                    Text(card.subtitle)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
 
                 Spacer()
 
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                Image(systemName: card.isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
+                    .foregroundColor(card.isSelected ? theme.accentColor : theme.tertiaryText)
             }
             .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(selected ? theme.accentColor.opacity(0.08) : theme.cardBackground)
+                    .fill(card.isSelected ? theme.accentColor.opacity(0.08) : theme.cardBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(selected ? theme.accentColor.opacity(0.55) : theme.cardBorder, lineWidth: 1)
+                            .stroke(
+                                card.isSelected ? theme.accentColor.opacity(0.55) : theme.cardBorder,
+                                lineWidth: 1
+                            )
                     )
             )
         }
@@ -968,12 +1067,14 @@ private struct AddProviderFlow: View {
     }
 
     private var actionButtonTitle: String {
-        if isTesting { return openAIAuthMode == .chatGPTSubscription ? L("Signing in...") : L("Testing...") }
+        let isOpenAIOAuth = selectedPreset == .openai && openAIAuthMode == .chatGPTSubscription
+        let isOpenRouterOAuth = selectedPreset == .openrouter && openRouterAuthMode == .oauthSignIn
+        let isBrowserSignIn = isOpenAIOAuth || isOpenRouterOAuth
+        if isTesting { return isBrowserSignIn ? L("Signing in...") : L("Testing...") }
         if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return L("Add Provider") }
         if case .failure = testResult { return L("Retry") }
-        if selectedPreset == .openai && openAIAuthMode == .chatGPTSubscription {
-            return L("Sign in with ChatGPT")
-        }
+        if isOpenAIOAuth { return L("Sign in with ChatGPT") }
+        if isOpenRouterOAuth { return L("Sign in with OpenRouter") }
         return L("Test Connection")
     }
 
@@ -1006,6 +1107,25 @@ private struct AddProviderFlow: View {
                         oauthTokens = tokens
                     }
                     models = await OpenAICodexOAuthService.availableModels(for: tokens)
+                } else if preset == .openrouter && openRouterAuthMode == .oauthSignIn {
+                    // The browser sign-in mints a regular OpenRouter API key.
+                    // Stash it in `apiKey` so `saveKnownProvider` persists it
+                    // via the same path as a pasted key, then verify by
+                    // running the usual /models probe with the new key.
+                    let key = try await OpenRouterOAuthService.signIn()
+                    await MainActor.run {
+                        apiKey = key
+                    }
+                    models = try await RemoteProviderManager.shared.testConnection(
+                        host: connection.host,
+                        providerProtocol: connection.providerProtocol,
+                        port: connection.port,
+                        basePath: connection.basePath,
+                        authType: .apiKey,
+                        providerType: config.providerType,
+                        apiKey: key,
+                        headers: HeaderEntry.buildHeaders(from: customHeaders)
+                    )
                 } else {
                     models = try await RemoteProviderManager.shared.testConnection(
                         host: connection.host,
@@ -1191,6 +1311,22 @@ private struct EditProviderFlow: View {
     @State private var testResult: ProviderTestResult?
     @State private var hasAppeared = false
 
+    // OpenRouter re-authorization. Collapsed to a single state so we can't
+    // accidentally render both "succeeded" and "failed" feedback at once.
+    @State private var reauthorizeState: ReauthorizeState = .idle
+
+    enum ReauthorizeState: Equatable {
+        case idle
+        case signingIn
+        case succeeded
+        case failed(String)
+
+        var isSigningIn: Bool {
+            if case .signingIn = self { return true }
+            return false
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             sheetHeader
@@ -1306,6 +1442,10 @@ private struct EditProviderFlow: View {
 
     private func knownProviderEditContent(preset: ProviderPreset) -> some View {
         VStack(alignment: .leading, spacing: 20) {
+            if preset == .openrouter {
+                openRouterReauthorizeSection
+            }
+
             // API Key section
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -1324,6 +1464,14 @@ private struct EditProviderFlow: View {
                 }
 
                 ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
+                    .onChange(of: apiKey) { _, _ in
+                        // User edited the field manually — clear any prior
+                        // re-authorize confirmation/error so we don't show
+                        // stale feedback against a typed key.
+                        if reauthorizeState != .idle && !reauthorizeState.isSigningIn {
+                            reauthorizeState = .idle
+                        }
+                    }
             }
 
             if preset == .azureOpenAI {
@@ -1342,6 +1490,111 @@ private struct EditProviderFlow: View {
 
             // Advanced settings (connection details + timeout + headers)
             advancedSettingsSection(showConnectionDetails: true)
+        }
+    }
+
+    // MARK: - OpenRouter Re-authorize
+
+    /// Inline card on the OpenRouter edit screen. Lets the user mint a fresh
+    /// `sk-or-v1-...` key without leaving the sheet — useful when the previous
+    /// key has been revoked from openrouter.ai/keys. On success the key is
+    /// written into the `apiKey` field and persisted via the usual Save path.
+    private var openRouterReauthorizeSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("ACCOUNT", bundle: .module)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(theme.tertiaryText)
+                .tracking(0.5)
+
+            HStack(spacing: 12) {
+                Image(systemName: "person.crop.circle.badge.checkmark")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(theme.accentColor.opacity(0.12)))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Re-authorize with OpenRouter", bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text("Mint a fresh key in your browser without leaving this sheet.", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                let signingIn = reauthorizeState.isSigningIn
+                Button(action: reauthorizeOpenRouter) {
+                    HStack(spacing: 6) {
+                        if signingIn {
+                            ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
+                        }
+                        Text(signingIn ? "Signing in..." : "Sign in", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(signingIn ? theme.accentColor.opacity(0.6) : theme.accentColor)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(signingIn)
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(theme.accentColor.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(theme.accentColor.opacity(0.25), lineWidth: 1)
+                    )
+            )
+
+            reauthorizeStatusLine
+        }
+    }
+
+    @ViewBuilder
+    private var reauthorizeStatusLine: some View {
+        switch reauthorizeState {
+        case .succeeded:
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.successColor)
+                Text("New key minted. Save to apply.", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.successColor)
+            }
+        case .failed(let message):
+            HStack(spacing: 6) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.errorColor)
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.errorColor)
+                    .lineLimit(2)
+            }
+        case .idle, .signingIn:
+            EmptyView()
+        }
+    }
+
+    private func reauthorizeOpenRouter() {
+        reauthorizeState = .signingIn
+        Task { @MainActor in
+            do {
+                let key = try await OpenRouterOAuthService.signIn()
+                apiKey = key
+                reauthorizeState = .succeeded
+            } catch {
+                reauthorizeState = .failed(error.localizedDescription)
+            }
         }
     }
 
