@@ -143,13 +143,23 @@ Current Gemma3n live evidence:
 
 - artifact:
   `docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1652/review.md`
+- post-scrubber artifact:
+  `docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/review.md`
 - Chat and Responses T1 returned coherent math containing `4`, but ignored the
   exact-output instruction.
 - Chat T2/T3 entered a verbose word-puzzle/decode framing; Chat T3 still
   included `café 東京 🚀`.
 - Responses T3 dropped `東京` and returned `café 🚀`.
+- The post-scrubber rerun after removing `ThinkTagScrubber` still returned
+  coherent math and sky answers on Chat and Responses, but the UTF/string row
+  remains red: Chat repeated prior sky context plus `🚀`, while Responses
+  drifted into unrelated Chinese/emoji text instead of including
+  `café 東京 🚀`.
 - After-sequence cache stats showed `prefix_hits=5`, `disk_l2_hits=5`, and
   `disk_l2_stores=9`, with `is_paged_incompatible=true`.
+- The post-scrubber rerun did not prove cache because idle residency was
+  `immediately`; every health/cache snapshot showed no resident model and zero
+  counters after request completion.
 - The row has RSS-only process context and no Activity Monitor physical
   footprint, so it cannot close the production memory gate.
 

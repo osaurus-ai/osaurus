@@ -1,0 +1,1 @@
+{"prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c","created":1779151303,"model":"gemma-3n-e2b-it-4bit","choices":[{"message":{"content":"The sky is a clear blue.\n\n\n\n","role":"assistant"},"finish_reason":"stop","index":0}],"id":"chatcmpl-5E3DC95C9DA5","object":"chat.completion","usage":{"prompt_tokens":31,"total_tokens":38,"completion_tokens":7}}

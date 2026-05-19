@@ -1,0 +1,1 @@
+{"id":"resp_315229AE455D4EE5AE485A62","usage":{"output_tokens":2,"input_tokens":11,"total_tokens":13},"output":[{"status":"completed","role":"assistant","content":[{"type":"output_text","text":"2 + 2 = 4\n"}],"type":"message","id":"item_4BE2E63CD385406AB79BDC06"}],"created_at":1779151300,"object":"response","status":"completed","model":"gemma-3n-e2b-it-4bit"}

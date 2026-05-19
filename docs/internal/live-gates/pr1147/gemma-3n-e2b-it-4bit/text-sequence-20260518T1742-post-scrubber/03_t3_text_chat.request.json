@@ -1,0 +1,27 @@
+{
+  "max_tokens": 96,
+  "messages": [
+    {
+      "content": "Answer in one short sentence: what is 2 + 2?",
+      "role": "user"
+    },
+    {
+      "content": "2 + 2 = 4\n",
+      "role": "assistant"
+    },
+    {
+      "content": "Follow up in one short sentence: what color is the sky on a clear day?",
+      "role": "user"
+    },
+    {
+      "content": "The sky is a clear blue.\n\n\n\n",
+      "role": "assistant"
+    },
+    {
+      "content": "Reply with a short sentence that includes these exact strings: caf\u00e9 \u6771\u4eac \ud83d\ude80",
+      "role": "user"
+    }
+  ],
+  "model": "gemma-3n-e2b-it-4bit",
+  "stream": false
+}

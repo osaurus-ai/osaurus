@@ -1,0 +1,1 @@
+{"id":"chatcmpl-D391D1F6ECBC","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"The sky is a clear blue. 🚀\n\n\n\n"}}],"usage":{"prompt_tokens":56,"total_tokens":63,"completion_tokens":7},"created":1779151308,"object":"chat.completion","model":"gemma-3n-e2b-it-4bit","prefix_hash":"6e340b9cffb37a989ca544e6bb780a2c"}

@@ -1,0 +1,799 @@
+{
+  "base_url": "http://127.0.0.1:4242",
+  "max_tokens": 96,
+  "model": "gemma-3n-e2b-it-4bit",
+  "results": [
+    {
+      "body_bytes": 329,
+      "body_excerpt": "{\"object\":\"chat.completion\",\"id\":\"chatcmpl-C7CB55BC9C32\",\"usage\":{\"total_tokens\":13,\"completion_tokens\":2,\"prompt_tokens\":11},\"model\":\"gemma-3n-e2b-it-4bit\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"2 + 2 = 4\\n\"},\"finish_reason\":\"stop\"}],\"created\":1779151297,\"prefix_hash\":\"6e340b9cffb37a989ca544e6bb780a2c\"}",
+      "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/01_t1_text_chat.body",
+      "content_type": "application/json",
+      "elapsed_ms": 2814.386,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "329",
+        "Content-Type": "application/json"
+      },
+      "label": "01_t1_text_chat",
+      "ok": true,
+      "output_tail": "2 + 2 = 4\n",
+      "path": "/v1/chat/completions",
+      "reason": "OK",
+      "route_name": "chat",
+      "status": 200,
+      "turn": {
+        "label": "t1_text",
+        "media": [],
+        "prompt": "Answer in one short sentence: what is 2 + 2?"
+      },
+      "url": "http://127.0.0.1:4242/v1/chat/completions"
+    },
+    {
+      "body_bytes": 361,
+      "body_excerpt": "{\"id\":\"resp_315229AE455D4EE5AE485A62\",\"usage\":{\"output_tokens\":2,\"input_tokens\":11,\"total_tokens\":13},\"output\":[{\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"2 + 2 = 4\\n\"}],\"type\":\"message\",\"id\":\"item_4BE2E63CD385406AB79BDC06\"}],\"created_at\":1779151300,\"object\":\"response\",\"status\":\"completed\",\"model\":\"gemma-3n-e2b-it-4bit\"}",
+      "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/01_t1_text_responses.body",
+      "content_type": "application/json",
+      "elapsed_ms": 2763.316,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "361",
+        "Content-Type": "application/json"
+      },
+      "label": "01_t1_text_responses",
+      "ok": true,
+      "output_tail": "2 + 2 = 4\n",
+      "path": "/v1/responses",
+      "reason": "OK",
+      "route_name": "responses",
+      "status": 200,
+      "turn": {
+        "label": "t1_text",
+        "media": [],
+        "prompt": "Answer in one short sentence: what is 2 + 2?"
+      },
+      "url": "http://127.0.0.1:4242/v1/responses"
+    },
+    {
+      "body_bytes": 350,
+      "body_excerpt": "{\"prefix_hash\":\"6e340b9cffb37a989ca544e6bb780a2c\",\"created\":1779151303,\"model\":\"gemma-3n-e2b-it-4bit\",\"choices\":[{\"message\":{\"content\":\"The sky is a clear blue.\\n\\n\\n\\n\",\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"index\":0}],\"id\":\"chatcmpl-5E3DC95C9DA5\",\"object\":\"chat.completion\",\"usage\":{\"prompt_tokens\":31,\"total_tokens\":38,\"completion_tokens\":7}}",
+      "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/02_t2_text_chat.body",
+      "content_type": "application/json",
+      "elapsed_ms": 2760.804,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "350",
+        "Content-Type": "application/json"
+      },
+      "label": "02_t2_text_chat",
+      "ok": true,
+      "output_tail": "The sky is a clear blue.\n\n\n\n",
+      "path": "/v1/chat/completions",
+      "reason": "OK",
+      "route_name": "chat",
+      "status": 200,
+      "turn": {
+        "label": "t2_text",
+        "media": [],
+        "prompt": "Follow up in one short sentence: what color is the sky on a clear day?"
+      },
+      "url": "http://127.0.0.1:4242/v1/chat/completions"
+    },
+    {
+      "body_bytes": 382,
+      "body_excerpt": "{\"object\":\"response\",\"id\":\"resp_8E870471C81048FEB83A6671\",\"output\":[{\"content\":[{\"text\":\"The sky is a clear blue.\\n\\n\\n\\n\",\"type\":\"output_text\"}],\"type\":\"message\",\"status\":\"completed\",\"id\":\"item_21720B465AF04038B5988EE6\",\"role\":\"assistant\"}],\"usage\":{\"input_tokens\":31,\"total_tokens\":38,\"output_tokens\":7},\"created_at\":1779151305,\"model\":\"gemma-3n-e2b-it-4bit\",\"status\":\"completed\"}",
+      "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/02_t2_text_responses.body",
+      "content_type": "application/json",
+      "elapsed_ms": 2758.984,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "382",
+        "Content-Type": "application/json"
+      },
+      "label": "02_t2_text_responses",
+      "ok": true,
+      "output_tail": "The sky is a clear blue.\n\n\n\n",
+      "path": "/v1/responses",
+      "reason": "OK",
+      "route_name": "responses",
+      "status": 200,
+      "turn": {
+        "label": "t2_text",
+        "media": [],
+        "prompt": "Follow up in one short sentence: what color is the sky on a clear day?"
+      },
+      "url": "http://127.0.0.1:4242/v1/responses"
+    },
+    {
+      "body_bytes": 355,
+      "body_excerpt": "{\"id\":\"chatcmpl-D391D1F6ECBC\",\"choices\":[{\"index\":0,\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"The sky is a clear blue. \ud83d\ude80\\n\\n\\n\\n\"}}],\"usage\":{\"prompt_tokens\":56,\"total_tokens\":63,\"completion_tokens\":7},\"created\":1779151308,\"object\":\"chat.completion\",\"model\":\"gemma-3n-e2b-it-4bit\",\"prefix_hash\":\"6e340b9cffb37a989ca544e6bb780a2c\"}",
+      "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/03_t3_text_chat.body",
+      "content_type": "application/json",
+      "elapsed_ms": 2846.912,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "355",
+        "Content-Type": "application/json"
+      },
+      "label": "03_t3_text_chat",
+      "ok": true,
+      "output_tail": "The sky is a clear blue. \ud83d\ude80\n\n\n\n",
+      "path": "/v1/chat/completions",
+      "reason": "OK",
+      "route_name": "chat",
+      "status": 200,
+      "turn": {
+        "label": "t3_text",
+        "media": [],
+        "prompt": "Reply with a short sentence that includes these exact strings: caf\u00e9 \u6771\u4eac \ud83d\ude80"
+      },
+      "url": "http://127.0.0.1:4242/v1/chat/completions"
+    },
+    {
+      "body_bytes": 611,
+      "body_excerpt": "{\"id\":\"resp_E0B4B87EAFE0475DAE21C78A\",\"usage\":{\"input_tokens\":56,\"output_tokens\":55,\"total_tokens\":111},\"status\":\"completed\",\"created_at\":1779151311,\"object\":\"response\",\"output\":[{\"status\":\"completed\",\"id\":\"item_BC186B1A39314937AAE8C771\",\"content\":[{\"type\":\"output_text\",\"text\":\"Okay, here's a short, silly response including those characters! \\n\\n**\\\"\u54af\u5566\u5566\uff01 \u98de\u8f66\u8fc7\u5bb6\u5bb6\uff01 \ud83c\udf08\\\"** \\n\\n(Translation: \\\"Clang! Flying car to your house! \ud83c\udf08\\\")\\n\\nIt's a little random, but I tried to include all the characters you listed! \u2728\\n\"}],\"role\":\"assistant\",\"type\":\"message\"}],\"model\":\"gemma-3n-e2b-it-4bit\"}",
+      "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/03_t3_text_responses.body",
+      "content_type": "application/json",
+      "elapsed_ms": 5472.413,
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Connection": "close",
+        "Content-Length": "611",
+        "Content-Type": "application/json"
+      },
+      "label": "03_t3_text_responses",
+      "ok": true,
+      "output_tail": "Okay, here's a short, silly response including those characters! \n\n**\"\u54af\u5566\u5566\uff01 \u98de\u8f66\u8fc7\u5bb6\u5bb6\uff01 \ud83c\udf08\"** \n\n(Translation: \"Clang! Flying car to your house! \ud83c\udf08\")\n\nIt's a little random, but I tried to include all the characters you listed! \u2728\n",
+      "path": "/v1/responses",
+      "reason": "OK",
+      "route_name": "responses",
+      "status": 200,
+      "turn": {
+        "label": "t3_text",
+        "media": [],
+        "prompt": "Reply with a short sentence that includes these exact strings: caf\u00e9 \u6771\u4eac \ud83d\ude80"
+      },
+      "url": "http://127.0.0.1:4242/v1/responses"
+    }
+  ],
+  "snapshots": [
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:37Z\",\"models\":[],\"aggregate\":{\"prefix_hits\":0,\"disk_l2_misses\":0,\"paged_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_hits\":0,\"disk_l2_hits\":0,\"paged_misses\":0,\"prefix_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_rederives\":0}}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_sequence/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.22,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:37Z\",\"models\":[],\"aggregate\":{\"prefix_hits\":0,\"disk_l2_misses\":0,\"paged_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_hits\":0,\"disk_l2_hits\":0,\"paged_misses\":0,\"prefix_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_rederives\":0}}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"status\":\"healthy\",\"timestamp\":\"2026-05-19T00:41:37Z\",\"resident_models\":[],\"loaded\":[],\"current_model\":null,\"inflight\":{}}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_sequence/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 5.48,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"status\":\"healthy\",\"timestamp\":\"2026-05-19T00:41:37Z\",\"resident_models\":[],\"loaded\":[],\"current_model\":null,\"inflight\":{}}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_sequence",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_sequence/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:37Z\",\"models\":[],\"aggregate\":{\"prefix_hits\":0,\"disk_l2_misses\":0,\"paged_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_hits\":0,\"disk_l2_hits\":0,\"paged_misses\":0,\"prefix_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_rederives\":0}}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_01_t1_text_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.248,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:37Z\",\"models\":[],\"aggregate\":{\"prefix_hits\":0,\"disk_l2_misses\":0,\"paged_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_hits\":0,\"disk_l2_hits\":0,\"paged_misses\":0,\"prefix_misses\":0,\"ssm_companion_misses\":0,\"ssm_companion_rederives\":0}}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"status\":\"healthy\",\"timestamp\":\"2026-05-19T00:41:37Z\",\"resident_models\":[],\"loaded\":[],\"current_model\":null,\"inflight\":{}}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_01_t1_text_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.533,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"status\":\"healthy\",\"timestamp\":\"2026-05-19T00:41:37Z\",\"resident_models\":[],\"loaded\":[],\"current_model\":null,\"inflight\":{}}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_01_t1_text_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_01_t1_text_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":0,\"prefix_misses\":0,\"ssm_companion_rederives\":0,\"paged_hits\":0,\"paged_misses\":0,\"prefix_hits\":0,\"disk_l2_hits\":0},\"timestamp\":\"2026-05-19T00:41:40Z\",\"status\":\"ok\"}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_01_t1_text_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.985,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":0,\"prefix_misses\":0,\"ssm_companion_rederives\":0,\"paged_hits\":0,\"paged_misses\":0,\"prefix_hits\":0,\"disk_l2_hits\":0},\"timestamp\":\"2026-05-19T00:41:40Z\",\"status\":\"ok\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"inflight\":{},\"resident_models\":[],\"status\":\"healthy\",\"loaded\":[],\"timestamp\":\"2026-05-19T00:41:40Z\",\"current_model\":null}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_01_t1_text_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 42.22,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"inflight\":{},\"resident_models\":[],\"status\":\"healthy\",\"loaded\":[],\"timestamp\":\"2026-05-19T00:41:40Z\",\"current_model\":null}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_01_t1_text_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_01_t1_text_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":0,\"prefix_misses\":0,\"ssm_companion_rederives\":0,\"paged_hits\":0,\"paged_misses\":0,\"prefix_hits\":0,\"disk_l2_hits\":0},\"timestamp\":\"2026-05-19T00:41:40Z\",\"status\":\"ok\"}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_01_t1_text_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.711,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":0,\"prefix_misses\":0,\"ssm_companion_rederives\":0,\"paged_hits\":0,\"paged_misses\":0,\"prefix_hits\":0,\"disk_l2_hits\":0},\"timestamp\":\"2026-05-19T00:41:40Z\",\"status\":\"ok\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"inflight\":{},\"resident_models\":[],\"status\":\"healthy\",\"loaded\":[],\"timestamp\":\"2026-05-19T00:41:40Z\",\"current_model\":null}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_01_t1_text_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.22,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"inflight\":{},\"resident_models\":[],\"status\":\"healthy\",\"loaded\":[],\"timestamp\":\"2026-05-19T00:41:40Z\",\"current_model\":null}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_01_t1_text_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_01_t1_text_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"aggregate\":{\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_hits\":0,\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":0,\"ssm_companion_rederives\":0,\"prefix_hits\":0,\"paged_hits\":0},\"timestamp\":\"2026-05-19T00:41:42Z\",\"status\":\"ok\",\"models\":[]}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_01_t1_text_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.071,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"aggregate\":{\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_hits\":0,\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":0,\"ssm_companion_rederives\":0,\"prefix_hits\":0,\"paged_hits\":0},\"timestamp\":\"2026-05-19T00:41:42Z\",\"status\":\"ok\",\"models\":[]}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"current_model\":null,\"inflight\":{},\"status\":\"healthy\",\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:42Z\",\"loaded\":[]}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_01_t1_text_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 42.007,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"current_model\":null,\"inflight\":{},\"status\":\"healthy\",\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:42Z\",\"loaded\":[]}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_01_t1_text_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_01_t1_text_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"aggregate\":{\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_hits\":0,\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":0,\"ssm_companion_rederives\":0,\"prefix_hits\":0,\"paged_hits\":0},\"timestamp\":\"2026-05-19T00:41:42Z\",\"status\":\"ok\",\"models\":[]}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_02_t2_text_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.623,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"aggregate\":{\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_hits\":0,\"disk_l2_misses\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"ssm_companion_hits\":0,\"ssm_companion_rederives\":0,\"prefix_hits\":0,\"paged_hits\":0},\"timestamp\":\"2026-05-19T00:41:42Z\",\"status\":\"ok\",\"models\":[]}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"current_model\":null,\"inflight\":{},\"status\":\"healthy\",\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:42Z\",\"loaded\":[]}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_02_t2_text_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.118,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"current_model\":null,\"inflight\":{},\"status\":\"healthy\",\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:42Z\",\"loaded\":[]}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_02_t2_text_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_02_t2_text_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"timestamp\":\"2026-05-19T00:41:45Z\",\"status\":\"ok\",\"aggregate\":{\"paged_hits\":0,\"disk_l2_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"prefix_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"prefix_misses\":0,\"ssm_companion_hits\":0,\"paged_misses\":0},\"models\":[]}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_02_t2_text_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.879,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"timestamp\":\"2026-05-19T00:41:45Z\",\"status\":\"ok\",\"aggregate\":{\"paged_hits\":0,\"disk_l2_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"prefix_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"prefix_misses\":0,\"ssm_companion_hits\":0,\"paged_misses\":0},\"models\":[]}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"timestamp\":\"2026-05-19T00:41:45Z\",\"inflight\":{},\"resident_models\":[],\"current_model\":null,\"loaded\":[],\"status\":\"healthy\"}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_02_t2_text_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 42.716,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"timestamp\":\"2026-05-19T00:41:45Z\",\"inflight\":{},\"resident_models\":[],\"current_model\":null,\"loaded\":[],\"status\":\"healthy\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_02_t2_text_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_02_t2_text_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"timestamp\":\"2026-05-19T00:41:45Z\",\"status\":\"ok\",\"aggregate\":{\"paged_hits\":0,\"disk_l2_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"prefix_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"prefix_misses\":0,\"ssm_companion_hits\":0,\"paged_misses\":0},\"models\":[]}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_02_t2_text_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.678,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"timestamp\":\"2026-05-19T00:41:45Z\",\"status\":\"ok\",\"aggregate\":{\"paged_hits\":0,\"disk_l2_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"prefix_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0,\"prefix_misses\":0,\"ssm_companion_hits\":0,\"paged_misses\":0},\"models\":[]}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"timestamp\":\"2026-05-19T00:41:45Z\",\"inflight\":{},\"resident_models\":[],\"current_model\":null,\"loaded\":[],\"status\":\"healthy\"}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_02_t2_text_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.145,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"timestamp\":\"2026-05-19T00:41:45Z\",\"inflight\":{},\"resident_models\":[],\"current_model\":null,\"loaded\":[],\"status\":\"healthy\"}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_02_t2_text_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_02_t2_text_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_stores\":0,\"paged_hits\":0,\"ssm_companion_misses\":0,\"prefix_hits\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"ssm_companion_hits\":0},\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:48Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_02_t2_text_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.12,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_stores\":0,\"paged_hits\":0,\"ssm_companion_misses\":0,\"prefix_hits\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"ssm_companion_hits\":0},\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:48Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"status\":\"healthy\",\"timestamp\":\"2026-05-19T00:41:48Z\",\"current_model\":null,\"inflight\":{},\"resident_models\":[],\"loaded\":[]}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_02_t2_text_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 43.095,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"status\":\"healthy\",\"timestamp\":\"2026-05-19T00:41:48Z\",\"current_model\":null,\"inflight\":{},\"resident_models\":[],\"loaded\":[]}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_02_t2_text_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_02_t2_text_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_stores\":0,\"paged_hits\":0,\"ssm_companion_misses\":0,\"prefix_hits\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"ssm_companion_hits\":0},\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:48Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_03_t3_text_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.664,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"prefix_misses\":0,\"paged_misses\":0,\"disk_l2_stores\":0,\"paged_hits\":0,\"ssm_companion_misses\":0,\"prefix_hits\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"ssm_companion_hits\":0},\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:48Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"status\":\"healthy\",\"timestamp\":\"2026-05-19T00:41:48Z\",\"current_model\":null,\"inflight\":{},\"resident_models\":[],\"loaded\":[]}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_03_t3_text_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.094,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"status\":\"healthy\",\"timestamp\":\"2026-05-19T00:41:48Z\",\"current_model\":null,\"inflight\":{},\"resident_models\":[],\"loaded\":[]}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_03_t3_text_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_03_t3_text_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"aggregate\":{\"paged_hits\":0,\"disk_l2_stores\":0,\"disk_l2_hits\":0,\"ssm_companion_hits\":0,\"ssm_companion_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_misses\":0,\"prefix_misses\":0,\"paged_misses\":0,\"prefix_hits\":0},\"models\":[],\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:51Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_03_t3_text_chat/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.998,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"aggregate\":{\"paged_hits\":0,\"disk_l2_stores\":0,\"disk_l2_hits\":0,\"ssm_companion_hits\":0,\"ssm_companion_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_misses\":0,\"prefix_misses\":0,\"paged_misses\":0,\"prefix_hits\":0},\"models\":[],\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:51Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"inflight\":{},\"current_model\":null,\"status\":\"healthy\",\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:51Z\",\"loaded\":[]}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_03_t3_text_chat/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 43.734,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"inflight\":{},\"current_model\":null,\"status\":\"healthy\",\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:51Z\",\"loaded\":[]}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_03_t3_text_chat",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_03_t3_text_chat/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"aggregate\":{\"paged_hits\":0,\"disk_l2_stores\":0,\"disk_l2_hits\":0,\"ssm_companion_hits\":0,\"ssm_companion_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_misses\":0,\"prefix_misses\":0,\"paged_misses\":0,\"prefix_hits\":0},\"models\":[],\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:51Z\"}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_03_t3_text_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.669,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"aggregate\":{\"paged_hits\":0,\"disk_l2_stores\":0,\"disk_l2_hits\":0,\"ssm_companion_hits\":0,\"ssm_companion_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_misses\":0,\"prefix_misses\":0,\"paged_misses\":0,\"prefix_hits\":0},\"models\":[],\"status\":\"ok\",\"timestamp\":\"2026-05-19T00:41:51Z\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"inflight\":{},\"current_model\":null,\"status\":\"healthy\",\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:51Z\",\"loaded\":[]}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_03_t3_text_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.101,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"inflight\":{},\"current_model\":null,\"status\":\"healthy\",\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:51Z\",\"loaded\":[]}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "before_03_t3_text_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/before_03_t3_text_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"prefix_hits\":0,\"prefix_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"paged_misses\":0,\"ssm_companion_hits\":0,\"paged_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-19T00:41:57Z\",\"status\":\"ok\"}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_03_t3_text_responses/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.059,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"prefix_hits\":0,\"prefix_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"paged_misses\":0,\"ssm_companion_hits\":0,\"paged_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-19T00:41:57Z\",\"status\":\"ok\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"status\":\"healthy\",\"current_model\":null,\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:57Z\",\"loaded\":[],\"inflight\":{}}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_03_t3_text_responses/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 46.034,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"status\":\"healthy\",\"current_model\":null,\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:57Z\",\"loaded\":[],\"inflight\":{}}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_03_t3_text_responses",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_03_t3_text_responses/memory.json"
+    },
+    {
+      "cache_stats": {
+        "body_bytes": 273,
+        "body_excerpt": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"prefix_hits\":0,\"prefix_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"paged_misses\":0,\"ssm_companion_hits\":0,\"paged_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-19T00:41:57Z\",\"status\":\"ok\"}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_sequence/cache_stats.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 0.7,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "273",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "cache_stats",
+        "ok": true,
+        "output_tail": "{\"models\":[],\"aggregate\":{\"disk_l2_misses\":0,\"prefix_hits\":0,\"prefix_misses\":0,\"ssm_companion_rederives\":0,\"disk_l2_hits\":0,\"paged_misses\":0,\"ssm_companion_hits\":0,\"paged_hits\":0,\"disk_l2_stores\":0,\"ssm_companion_misses\":0},\"timestamp\":\"2026-05-19T00:41:57Z\",\"status\":\"ok\"}",
+        "path": "/admin/cache-stats",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/admin/cache-stats"
+      },
+      "health": {
+        "body_bytes": 123,
+        "body_excerpt": "{\"status\":\"healthy\",\"current_model\":null,\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:57Z\",\"loaded\":[],\"inflight\":{}}",
+        "body_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_sequence/health.body",
+        "content_type": "application/json; charset=utf-8",
+        "elapsed_ms": 1.229,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Connection": "close",
+          "Content-Length": "123",
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "label": "health",
+        "ok": true,
+        "output_tail": "{\"status\":\"healthy\",\"current_model\":null,\"resident_models\":[],\"timestamp\":\"2026-05-19T00:41:57Z\",\"loaded\":[],\"inflight\":{}}",
+        "path": "/health",
+        "reason": "OK",
+        "status": 200,
+        "url": "http://127.0.0.1:4242/health"
+      },
+      "label": "after_sequence",
+      "memory_path": "docs/internal/live-gates/pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1742-post-scrubber/snapshots/after_sequence/memory.json"
+    }
+  ],
+  "stream": false,
+  "turns": [
+    {
+      "label": "t1_text",
+      "media": [],
+      "prompt": "Answer in one short sentence: what is 2 + 2?"
+    },
+    {
+      "label": "t2_text",
+      "media": [],
+      "prompt": "Follow up in one short sentence: what color is the sky on a clear day?"
+    },
+    {
+      "label": "t3_text",
+      "media": [],
+      "prompt": "Reply with a short sentence that includes these exact strings: caf\u00e9 \u6771\u4eac \ud83d\ude80"
+    }
+  ]
+}
