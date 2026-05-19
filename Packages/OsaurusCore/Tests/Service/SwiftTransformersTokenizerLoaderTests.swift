@@ -10,7 +10,7 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftTransformersTokenizerLoaderTests {
-    @Test func dsv4LocalTokenizerUsesVmlxFallback() async throws {
+    @Test func dsv4LocalTokenizerUsesCanonicalNoChatTemplatePath() async throws {
         let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
         let modelURL = URL(fileURLWithPath: modelPath)
@@ -32,7 +32,7 @@ struct SwiftTransformersTokenizerLoaderTests {
 
         #expect(
             decoded.hasPrefix("<\u{FF5C}begin\u{2581}of\u{2581}sentence\u{FF5C}>"),
-            "DSV4 bundles have no tokenizer chat_template; Osaurus must route through vmlx's DSV4 fallback. Decoded: \(decoded)"
+            "DSV4 bundles have no tokenizer chat_template; Osaurus must route through vmlx's canonical DSV4 encoder path. Decoded: \(decoded)"
         )
         #expect(
             decoded.hasSuffix("<\u{FF5C}Assistant\u{FF5C}></think>"),
@@ -64,7 +64,77 @@ struct SwiftTransformersTokenizerLoaderTests {
             ),
             "DSV4 final instruct tail must be closed-thinking. Decoded: \(multiTurnDecoded)"
         )
+    }
 
+    @Test func dsv4LocalTokenizerRendersDSMLToolsFromOsaurusToolSpec() async throws {
+        let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "get_weather",
+                description: "Get weather for a city.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "location": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("location")]),
+                ])
+            )
+        )
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                ["role": "system", "content": "Helpful assistant."],
+                ["role": "user", "content": "Weather in Paris?"],
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: ["enable_thinking": false]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("## Tools"), "DSV4 canonical template path must render tools. Decoded: \(decoded)")
+        #expect(
+            decoded.contains("<\u{FF5C}DSML\u{FF5C}tool_calls>"),
+            "DSV4 canonical template path must use DSML tool-call blocks. Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.contains("<\u{FF5C}DSML\u{FF5C}invoke name=\"$TOOL_NAME\">"),
+            "DSV4 canonical template path must teach DSML invocation syntax. Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.contains("\"name\":\"get_weather\""),
+            "DSV4 canonical template path must include the Osaurus-provided tool schema. Decoded: \(decoded)"
+        )
+        #expect(
+            !decoded.contains("<available_tools>"),
+            "DSV4 canonical template path must not use the generic tool dialect. Decoded: \(decoded)"
+        )
+    }
+
+    @Test func dsv4LocalTokenizerPreservesAssistantToolHistory() async throws {
+        let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
         let toolCallArguments: [String: any Sendable] = [
             "city": "Paris",
             "units": "metric",
@@ -94,21 +164,62 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
         #expect(
             toolHistoryDecoded.contains("<\u{FF5C}DSML\u{FF5C}tool_calls>"),
-            "DSV4 fallback must render assistant tool history as a DSML block. Decoded: \(toolHistoryDecoded)"
+            "DSV4 canonical template path must render assistant tool history as a DSML block. Decoded: \(toolHistoryDecoded)"
         )
         #expect(
             toolHistoryDecoded.contains("<\u{FF5C}DSML\u{FF5C}invoke name=\"get_weather\">"),
-            "DSV4 fallback must preserve the assistant tool function name. Decoded: \(toolHistoryDecoded)"
+            "DSV4 canonical template path must preserve the assistant tool function name. Decoded: \(toolHistoryDecoded)"
         )
         #expect(
             toolHistoryDecoded.contains(
                 "<\u{FF5C}DSML\u{FF5C}parameter name=\"city\" string=\"true\">Paris</\u{FF5C}DSML\u{FF5C}parameter>"
             ),
-            "DSV4 fallback must preserve string arguments in DSML. Decoded: \(toolHistoryDecoded)"
+            "DSV4 canonical template path must preserve string arguments in DSML. Decoded: \(toolHistoryDecoded)"
         )
         #expect(
             toolHistoryDecoded.contains("<tool_result>{\"temp_c\":18}</tool_result>"),
-            "DSV4 fallback must carry tool-role output into the follow-up prompt. Decoded: \(toolHistoryDecoded)"
+            "DSV4 canonical template path must carry tool-role output into the follow-up prompt. Decoded: \(toolHistoryDecoded)"
+        )
+    }
+
+    @Test func dsv4LocalTokenizerPreservesRawMaxPromptPath() async throws {
+        let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let maxTokenIds = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": "Return 42."]],
+            tools: nil,
+            additionalContext: ["enable_thinking": true, "reasoning_effort": "max"]
+        )
+        let maxDecoded = tokenizer.decode(tokenIds: maxTokenIds, skipSpecialTokens: false)
+
+        #expect(
+            maxDecoded.contains("Reasoning Effort: Absolute maximum"),
+            "DSV4 raw max must preserve the canonical max-effort preface. Decoded: \(maxDecoded)"
+        )
+        #expect(
+            maxDecoded.hasSuffix("<\u{FF5C}Assistant\u{FF5C}><think>"),
+            "DSV4 raw max must leave the assistant thinking block open. Decoded: \(maxDecoded)"
+        )
+
+        let highTokenIds = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": "Return 42."]],
+            tools: nil,
+            additionalContext: ["enable_thinking": true, "reasoning_effort": "high"]
+        )
+        let highDecoded = tokenizer.decode(tokenIds: highTokenIds, skipSpecialTokens: false)
+        #expect(
+            !highDecoded.contains("Reasoning Effort: Absolute maximum"),
+            "DSV4 high reasoning must not receive the raw max preface. Decoded: \(highDecoded)"
         )
     }
 }

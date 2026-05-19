@@ -36,6 +36,10 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
         + String(UnicodeScalar(0x2581)!) + "sentence"
         + String(UnicodeScalar(0xFF5C)!) + ">"
 
+    private enum DeepseekV4BridgeError: Error {
+        case invalidRole(String)
+    }
+
     func encode(text: String, addSpecialTokens: Bool) -> [Int] {
         upstream.encode(text: text, addSpecialTokens: addSpecialTokens)
     }
@@ -143,6 +147,13 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
         {
             adjustedContext?.removeValue(forKey: "reasoning_effort")
         }
+        if hasDSV4Sentinel {
+            return try applyDeepseekV4NativeTemplate(
+                messages: messages,
+                tools: tools,
+                additionalContext: adjustedContext
+            )
+        }
 
         do {
             return try upstream.applyChatTemplate(
@@ -158,15 +169,6 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
                 return try fallback(
                     label: "LagunaMinimal",
                     template: MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal,
-                    messages: messages,
-                    tools: tools,
-                    additionalContext: adjustedContext
-                )
-            }
-            if hasDSV4Sentinel {
-                return try fallback(
-                    label: "DSV4Minimal",
-                    template: MLXLMCommon.ChatTemplateFallbacks.dsv4Minimal,
                     messages: messages,
                     tools: tools,
                     additionalContext: adjustedContext
@@ -219,8 +221,6 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
             let ordered: [(label: String, template: String)]
             if hasLagunaSentinel {
                 ordered = [("LagunaMinimal", MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal)]
-            } else if hasDSV4Sentinel {
-                ordered = [("DSV4Minimal", MLXLMCommon.ChatTemplateFallbacks.dsv4Minimal)]
             } else if isGemma {
                 ordered = [
                     ("Gemma4WithTools", MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools),
@@ -250,6 +250,195 @@ private struct TokenizerBridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
             }
             throw error
         }
+    }
+
+    private static func deepseekV4Role(
+        from rawRole: String
+    ) throws -> MLXLMCommon.DeepseekV4ChatEncoder.MessageRole {
+        switch rawRole {
+        case "system": return .system
+        case "developer": return .developer
+        case "user": return .user
+        case "assistant": return .assistant
+        case "tool": return .tool
+        case "latest_reminder": return .latestReminder
+        default: throw DeepseekV4BridgeError.invalidRole(rawRole)
+        }
+    }
+
+    private static func deepseekV4String(_ value: Any?) -> String? {
+        guard let value else { return nil }
+        if let string = value as? String { return string }
+        if let blocks = value as? [[String: any Sendable]] {
+            let text = blocks.compactMap { block -> String? in
+                if let text = block["text"] as? String { return text }
+                if let content = block["content"] as? String { return content }
+                return nil
+            }.joined(separator: "\n")
+            return text.isEmpty ? nil : text
+        }
+        if let blocks = value as? [[String: Any]] {
+            let text = blocks.compactMap { block -> String? in
+                if let text = block["text"] as? String { return text }
+                if let content = block["content"] as? String { return content }
+                return nil
+            }.joined(separator: "\n")
+            return text.isEmpty ? nil : text
+        }
+        return String(describing: value)
+    }
+
+    private static func deepseekV4JSONObject(_ value: Any) -> Any {
+        switch value {
+        case let value as String:
+            return value
+        case let value as Bool:
+            return value
+        case let value as Int:
+            return value
+        case let value as Int64:
+            return value
+        case let value as Double:
+            return value
+        case let value as Float:
+            return Double(value)
+        case let value as NSNull:
+            return value
+        case let value as [String: any Sendable]:
+            return value.mapValues { deepseekV4JSONObject($0) }
+        case let value as [String: Any]:
+            return value.mapValues { deepseekV4JSONObject($0) }
+        case let value as [any Sendable]:
+            return value.map { deepseekV4JSONObject($0) }
+        case let value as [Any]:
+            return value.map { deepseekV4JSONObject($0) }
+        default:
+            return String(describing: value)
+        }
+    }
+
+    private static func deepseekV4JSONString(_ value: Any?) -> String {
+        guard let value else { return "{}" }
+        if let string = value as? String { return string }
+        let json = deepseekV4JSONObject(value)
+        guard JSONSerialization.isValidJSONObject(json),
+            let data = try? JSONSerialization.data(
+                withJSONObject: json,
+                options: [.withoutEscapingSlashes, .sortedKeys]
+            ),
+            let text = String(data: data, encoding: .utf8)
+        else {
+            return "{}"
+        }
+        return text
+    }
+
+    private static func deepseekV4ToolCalls(
+        from rawToolCalls: Any?
+    ) -> [MLXLMCommon.DeepseekV4ChatEncoder.ToolCall]? {
+        guard let rawToolCalls else { return nil }
+        let rawCalls: [[String: any Sendable]]
+        if let calls = rawToolCalls as? [[String: any Sendable]] {
+            rawCalls = calls
+        } else {
+            return nil
+        }
+
+        let converted = rawCalls.compactMap {
+            call -> MLXLMCommon.DeepseekV4ChatEncoder.ToolCall? in
+            let function = call["function"] as? [String: any Sendable]
+            let id = deepseekV4String(call["id"])
+            guard let name = deepseekV4String(call["name"])
+                ?? deepseekV4String(function?["name"])
+            else {
+                return nil
+            }
+            let arguments = deepseekV4JSONString(call["arguments"] ?? function?["arguments"])
+            return MLXLMCommon.DeepseekV4ChatEncoder.ToolCall(
+                id: id,
+                name: name,
+                arguments: arguments
+            )
+        }
+        return converted.isEmpty ? nil : converted
+    }
+
+    private func applyDeepseekV4NativeTemplate(
+        messages: [[String: any Sendable]],
+        tools: [[String: any Sendable]]?,
+        additionalContext: [String: any Sendable]?
+    ) throws -> [Int] {
+        var dsv4Messages = try messages.map { raw -> MLXLMCommon.DeepseekV4ChatEncoder.Message in
+            let role = try Self.deepseekV4Role(
+                from: Self.deepseekV4String(raw["role"]) ?? "user"
+            )
+            return MLXLMCommon.DeepseekV4ChatEncoder.Message(
+                role: role,
+                content: Self.deepseekV4String(raw["content"]),
+                reasoningContent: Self.deepseekV4String(raw["reasoning_content"]),
+                toolCalls: Self.deepseekV4ToolCalls(from: raw["tool_calls"]),
+                toolCallId: Self.deepseekV4String(raw["tool_call_id"]),
+                responseFormat: raw["response_format"] as? [String: any Sendable],
+                task: Self.deepseekV4String(raw["task"])
+            )
+        }
+
+        if let tools, !tools.isEmpty {
+            if let idx = dsv4Messages.firstIndex(where: {
+                $0.role == .system || $0.role == .developer
+            }) {
+                dsv4Messages[idx].tools = tools
+            } else {
+                dsv4Messages.insert(
+                    MLXLMCommon.DeepseekV4ChatEncoder.Message(
+                        role: .system,
+                        content: "",
+                        tools: tools
+                    ),
+                    at: 0
+                )
+            }
+        }
+
+        if let responseFormat = additionalContext?["response_format"] as? [String: any Sendable] {
+            if let idx = dsv4Messages.firstIndex(where: {
+                $0.role == .system || $0.role == .developer
+            }) {
+                dsv4Messages[idx].responseFormat = responseFormat
+            } else {
+                dsv4Messages.insert(
+                    MLXLMCommon.DeepseekV4ChatEncoder.Message(
+                        role: .system,
+                        content: "",
+                        responseFormat: responseFormat
+                    ),
+                    at: 0
+                )
+            }
+        }
+
+        let enableThinking = additionalContext?["enable_thinking"] as? Bool
+        let thinkingMode: MLXLMCommon.DeepseekV4ThinkingMode =
+            enableThinking == true ? .thinking : .chat
+
+        let effort: MLXLMCommon.DeepseekV4ReasoningEffort?
+        if thinkingMode == .thinking {
+            switch Self.deepseekV4String(additionalContext?["reasoning_effort"]) {
+            case "max": effort = .max
+            case "high": effort = .high
+            default: effort = nil
+            }
+        } else {
+            effort = nil
+        }
+
+        let prompt = MLXLMCommon.DeepseekV4ChatEncoder().encode(
+            messages: dsv4Messages,
+            thinkingMode: thinkingMode,
+            reasoningEffort: effort,
+            dropEarlierReasoning: true
+        )
+        return upstream.encode(text: prompt, addSpecialTokens: false)
     }
 
     private func fallback(
