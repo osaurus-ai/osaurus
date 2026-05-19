@@ -110,6 +110,10 @@ That matrix is the merge gate for user-facing confidence: it requires real chat
 app and API rows for Qwen-VL, Gemma VLM/Gemma3n, ZAYA-VL, Nemotron Omni,
 DSV4, MiniMax, Ling, Hy3, saved reasoning settings, media salt, prefix/paged/L2
 cache stats, top-k/generation defaults, and parser leak checks.
+The per-family execution tracker is
+[`20260518T_pr1147_model_function_compatibility_tracker.md`](internal/live-gates/20260518T_pr1147_model_function_compatibility_tracker.md);
+it is the status checklist for which function rows are PASS, PARTIAL, FAIL,
+OPEN, or N-A before this PR is undrafted.
 
 Any incoherent output, repeated EOS loop, missing reasoning close, or cache hit
 with the wrong architecture state is a runtime bug to root-cause in `vmlx-swift`.

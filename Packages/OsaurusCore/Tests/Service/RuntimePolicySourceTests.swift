@@ -195,6 +195,9 @@ struct RuntimePolicySourceTests {
         let componentMatrix = try Self.source(
             "../../docs/internal/live-gates/20260518T_pr1147_component_edge_case_matrix.md"
         )
+        let compatibilityTracker = try Self.source(
+            "../../docs/internal/live-gates/20260518T_pr1147_model_function_compatibility_tracker.md"
+        )
         let forcedBehaviorAudit = try Self.source(
             "../../docs/internal/live-gates/pr1147/forced-behavior-audit-20260518T1545/REPORT.md"
         )
@@ -383,6 +386,7 @@ struct RuntimePolicySourceTests {
             "fake `HOME`",
             "20260518T_pr1147_live_user_api_execution_manifest.md",
             "20260518T_pr1147_component_edge_case_matrix.md",
+            "20260518T_pr1147_model_function_compatibility_tracker.md",
             "source anchors",
             "UI/API/cache/parser",
             "forced-behavior-audit-20260518T1545/REPORT.md",
@@ -615,6 +619,55 @@ struct RuntimePolicySourceTests {
             #expect(
                 componentMatrix.contains(required),
                 "missing component edge-case matrix requirement: \(required)"
+            )
+        }
+
+        for required in [
+            "PR 1147 Model Function Compatibility Tracker",
+            "Function Axis Tracker",
+            "Model Family Tracker",
+            "Natural decode only",
+            "Generation defaults resolve from `jang_config.json",
+            "Native `top_k` must apply",
+            "MTP is tensor/tuning-gated",
+            "VLM/audio/video rows must send real media",
+            "Cache proof requires prefix, paged, block-L2, TurboQuant KV",
+            "SSM companion",
+            "DSV4-native cache",
+            "ZAYA CCA",
+            "media cache",
+            "Reasoning controls are family-specific",
+            "DSV4 uses `instruct/high/max`",
+            "Hy3 uses native",
+            "Parser proof requires tools omitted",
+            "tool_choice=auto",
+            "second turn with tool result",
+            "Saved settings are part of the gate",
+            "UI model picker",
+            "Chat settings visuals",
+            "Server settings and CLI preview",
+            "Chat Completions",
+            "Responses",
+            "Anthropic Messages",
+            "Ollama chat/generate",
+            "Coding/tool context",
+            "Single-batch",
+            "Multi-batch",
+            "Old-library sweep",
+            "Qwen3.6 MXFP MTP/VL",
+            "Gemma4 VLM / Harmony",
+            "Gemma3n E2B text",
+            "ZAYA1-VL MXFP4/JANGTQ",
+            "Nemotron Omni MXFP4/JANGTQ",
+            "MiniMax M2.7",
+            "Ling 2.6 flash",
+            "Hy3 preview",
+            "GLM / GPT-OSS / Mistral",
+            "Not production-ready",
+        ] {
+            #expect(
+                compatibilityTracker.contains(required),
+                "missing compatibility-tracker requirement: \(required)"
             )
         }
 

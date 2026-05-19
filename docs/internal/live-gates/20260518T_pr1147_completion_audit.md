@@ -486,6 +486,12 @@ media turn sequences, cache/scheduler proof, parser and reasoning leak checks,
 saved-setting/cache-key inverses, and artifact acceptance rules. It is still a
 checklist, not a pass report.
 
+The model/function compatibility tracker is:
+`docs/internal/live-gates/20260518T_pr1147_model_function_compatibility_tracker.md`.
+It maps every family and runtime axis to required UI/API/cache/reasoning/parser
+evidence, current status, and the rows that remain open. It is also a checklist,
+not a pass report.
+
 The forced-behavior source audit is:
 `docs/internal/live-gates/pr1147/forced-behavior-audit-20260518T1545/REPORT.md`.
 It currently marks source hits for background `no_think`, explicit
