@@ -573,7 +573,6 @@ struct MLXBatchAdapter {
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         generation: GenerationParameters,
         stopSequences: [String],
-        draftStrategy: MLXLMCommon.DraftStrategy?,
         runtime: RuntimeConfig,
         maxBatchSize: Int
     ) async throws -> PreparedStream {
@@ -629,7 +628,6 @@ struct MLXBatchAdapter {
             minP: effective.minP,
             repetitionPenalty: effective.repetitionPenalty,
             stopSequences: stopSequences,
-            draftStrategy: draftStrategy,
             enableCompiledBatchDecode: effective.compiledBatchDecode
         )
 
