@@ -92,11 +92,24 @@ def load_catalog(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def save_catalog(path: Path, catalog: dict) -> None:
-    path.write_text(
-        json.dumps(catalog, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+def save_catalog(path: Path, catalog: dict) -> bool:
+    """Write *catalog* to *path*. Skips the write (and bumping the mtime)
+    when the serialized output is byte-identical to what's already on disk;
+    returns True iff the file was actually written.
+
+    Filesystem-level idempotency matters because Xcode's String Catalog
+    editor and live string extractor watch the catalog for changes — a
+    rewrite-with-identical-bytes still triggers a re-index pass.
+    """
+    serialized = json.dumps(catalog, ensure_ascii=False, indent=2) + "\n"
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        existing = None
+    if existing == serialized:
+        return False
+    path.write_text(serialized, encoding="utf-8")
+    return True
 
 
 def iter_string_units(entry: dict, locale: str):

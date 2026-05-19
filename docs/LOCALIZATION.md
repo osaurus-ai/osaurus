@@ -84,7 +84,7 @@ Opt in to the repo-tracked git hooks so committing a `.xcstrings` change automat
 git config core.hooksPath .githooks
 ```
 
-The hook is idempotent — it's a no-op when nothing needs pruning. The same pruner also runs as a Debug-build Run Script phase on the `osaurus` app target, so a local Xcode Debug build leaves the catalog already pruned.
+The hook is idempotent — it's a no-op when nothing needs pruning. The pruner also skips the write entirely when the catalog content is byte-identical to disk, so Xcode's String Catalog editor doesn't see spurious file changes.
 
 ## Maintainer scripts
 
@@ -100,7 +100,7 @@ The hook is idempotent — it's a no-op when nothing needs pruning. The same pru
 
 Shared logic: `scripts/i18n/xcstrings_util.py`. Shared paths/locales for shell scripts: `scripts/i18n/_paths.sh`.
 
-After building in Xcode, the catalog is auto-pruned by either the pre-commit hook or the Debug Run Script phase. If you skipped those (or you're on a fresh checkout), run the formatter manually before committing — it drops auto-extracted stubs and stale keys while keeping entries that still have `de`, `zh-Hans`, or a live Swift reference:
+If you installed the pre-commit hook, committing an Xcode-modified `.xcstrings` re-prunes it automatically. Otherwise run the formatter manually before committing — it drops auto-extracted stubs and stale keys while keeping entries that still have `de`, `zh-Hans`, or a live Swift reference:
 
 ```bash
 bash scripts/i18n/format.sh

@@ -112,8 +112,8 @@ def main() -> int:
     if args.dry_run:
         return 1 if args.fail_if_changed and removed else 0
 
-    save_catalog(args.catalog, pruned)
-    print(f"Wrote {args.catalog}")
+    wrote = save_catalog(args.catalog, pruned)
+    print(f"Wrote {args.catalog}" if wrote else f"{args.catalog}: unchanged")
     return 1 if args.fail_if_changed and removed else 0
 
 
