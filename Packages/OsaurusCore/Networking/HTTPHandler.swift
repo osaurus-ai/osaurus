@@ -361,6 +361,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleShowEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
                 handleChatCompletions(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/generate" {
+                handleOllamaGenerate(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat" {
                 handleChatNDJSON(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/mcp/health" {
@@ -4074,6 +4076,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // assistant content. Add a `thinking` field on the
                     // NDJSON response shape (and decode reasoning here
                     // first) when an upstream client requests it.
+                    if StreamingReasoningHint.decode(delta) != nil { continue }
                     if StreamingStatsHint.decode(delta) != nil { continue }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     hop {
@@ -4169,6 +4172,282 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             }
         }
+    }
+
+    private struct OllamaGenerateOptions: Decodable, Sendable {
+        let num_predict: Int?
+        let temperature: Float?
+        let top_p: Float?
+        let stop: FlexibleStringArray?
+    }
+
+    private struct OllamaGenerateRequest: Decodable, Sendable {
+        let model: String
+        let prompt: String
+        let system: String?
+        let stream: Bool?
+        let options: OllamaGenerateOptions?
+    }
+
+    private struct FlexibleStringArray: Decodable, Sendable {
+        let values: [String]
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let value = try? container.decode(String.self) {
+                values = [value]
+            } else {
+                values = (try? container.decode([String].self)) ?? []
+            }
+        }
+    }
+
+    private func handleOllamaGenerate(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        guard let ollama = try? JSONDecoder().decode(OllamaGenerateRequest.self, from: data) else {
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "text/plain; charset=utf-8")],
+                body: "Invalid request format"
+            )
+            logRequest(
+                method: "POST",
+                path: "/generate",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request format"
+            )
+            return
+        }
+
+        let maxTokens = ollama.options?.num_predict.flatMap { $0 > 0 ? $0 : nil }
+        var messages: [ChatMessage] = []
+        if let system = ollama.system?.trimmingCharacters(in: .whitespacesAndNewlines), !system.isEmpty {
+            messages.append(ChatMessage(role: "system", content: system))
+        }
+        messages.append(ChatMessage(role: "user", content: ollama.prompt))
+        let chatRequest = ChatCompletionRequest(
+            model: ollama.model,
+            messages: messages,
+            temperature: ollama.options?.temperature,
+            max_tokens: maxTokens,
+            stream: ollama.stream,
+            top_p: ollama.options?.top_p,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: ollama.options?.stop?.values,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        let shouldStream = ollama.stream ?? true
+        if !shouldStream {
+            handleOllamaGenerateNonStreaming(
+                head: head,
+                context: context,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBodyString: requestBodyString,
+                request: chatRequest
+            )
+            return
+        }
+
+        let writer = OllamaGenerateNDJSONResponseWriter()
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let writerBound = NIOLoopBound(writer, eventLoop: loop)
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        hop {
+            writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
+        }
+
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+        let logModel = chatRequest.model
+        let logTemperature = chatRequest.temperature ?? 0.7
+        let logMaxTokens = chatRequest.max_tokens ?? 1024
+        let logSelf = self
+        Task(priority: .userInitiated) {
+            do {
+                let stream = try await self.chatEngine.streamChat(request: chatRequest)
+                for try await delta in stream {
+                    if StreamingReasoningHint.decode(delta) != nil { continue }
+                    if StreamingStatsHint.decode(delta) != nil { continue }
+                    if StreamingToolHint.isSentinel(delta) { continue }
+                    hop {
+                        writerBound.value.writeContent(
+                            delta,
+                            model: chatRequest.model,
+                            created: Int(Date().timeIntervalSince1970),
+                            context: ctx.value
+                        )
+                    }
+                }
+                hop {
+                    writerBound.value.writeFinish(
+                        chatRequest.model,
+                        created: Int(Date().timeIntervalSince1970),
+                        context: ctx.value
+                    )
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/generate",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    temperature: logTemperature,
+                    maxTokens: logMaxTokens,
+                    finishReason: .stop
+                )
+            } catch {
+                hop {
+                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/generate",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    temperature: logTemperature,
+                    maxTokens: logMaxTokens,
+                    finishReason: .error,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func handleOllamaGenerateNonStreaming(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        requestBodyString: String?,
+        request: ChatCompletionRequest
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        Task(priority: .userInitiated) {
+            do {
+                let response = try await self.chatEngine.completeChat(request: request)
+                let content = response.choices.first?.message.content ?? ""
+                let body = Self.ollamaGenerateJSON(
+                    model: request.model,
+                    response: content,
+                    done: true
+                )
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/generate",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: request.model,
+                    tokensInput: response.usage.prompt_tokens,
+                    tokensOutput: response.usage.completion_tokens,
+                    temperature: request.temperature ?? 0.7,
+                    maxTokens: request.max_tokens ?? 1024,
+                    finishReason: .stop
+                )
+            } catch {
+                let body = Self.ollamaGenerateErrorJSON(error.localizedDescription)
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .internalServerError,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/generate",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseStatus: 500,
+                    startTime: startTime,
+                    model: request.model,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private static func ollamaGenerateJSON(model: String, response: String, done: Bool) -> String {
+        let object: [String: Any] = [
+            "model": model,
+            "created_at": Date().ISO8601Format(),
+            "response": response,
+            "done": done,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return #"{"done":true}"#
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func ollamaGenerateErrorJSON(_ message: String) -> String {
+        let object: [String: Any] = [
+            "error": [
+                "message": message,
+                "type": "internal_error",
+            ],
+            "done": true,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return #"{"error":{"message":"internal error","type":"internal_error"},"done":true}"#
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
     // MARK: - SSE keepalive

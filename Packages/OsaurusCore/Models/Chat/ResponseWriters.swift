@@ -484,6 +484,85 @@ final class NDJSONResponseWriter: ResponseWriter {
     }
 }
 
+final class OllamaGenerateNDJSONResponseWriter {
+    func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
+        var head = HTTPResponseHead(version: .http1_1, status: .ok)
+        var headers = HTTPHeaders()
+        headers.add(name: "Content-Type", value: "application/x-ndjson")
+        headers.add(name: "Cache-Control", value: "no-cache, no-transform")
+        headers.add(name: "Connection", value: "keep-alive")
+        headers.add(name: "Transfer-Encoding", value: "chunked")
+        if let extraHeaders {
+            for (name, value) in extraHeaders { headers.add(name: name, value: value) }
+        }
+        head.headers = headers
+        context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
+        context.flush()
+    }
+
+    func writeContent(
+        _ content: String,
+        model: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        guard !content.isEmpty else { return }
+        writeMessage(content, model: model, done: false, context: context)
+    }
+
+    func writeFinish(
+        _ model: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        writeMessage("", model: model, done: true, context: context)
+    }
+
+    func writeError(_ message: String, context: ChannelHandlerContext) {
+        let response: [String: Any] = [
+            "error": [
+                "message": message,
+                "type": "internal_error",
+            ],
+            "done": true,
+        ]
+        writeJSONObject(response, context: context)
+    }
+
+    func writeEnd(_ context: ChannelHandlerContext) {
+        let ctx = NIOLoopBound(context, eventLoop: context.eventLoop)
+        context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
+            _ in
+            ctx.value.close(promise: nil)
+        }
+    }
+
+    private func writeMessage(
+        _ content: String,
+        model: String,
+        done: Bool,
+        context: ChannelHandlerContext
+    ) {
+        let response: [String: Any] = [
+            "model": model,
+            "created_at": Date().ISO8601Format(),
+            "response": content,
+            "done": done,
+        ]
+        writeJSONObject(response, context: context)
+    }
+
+    private func writeJSONObject(_ response: [String: Any], context: ChannelHandlerContext) {
+        if let jsonData = try? JSONSerialization.data(withJSONObject: response) {
+            var buffer = context.channel.allocator.buffer(capacity: 256)
+            buffer.writeBytes(jsonData)
+            buffer.writeString("\n")
+            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+            context.flush()
+        }
+    }
+}
+
 // MARK: - Anthropic SSE Response Writer
 
 /// SSE Response Writer for Anthropic Messages API format
