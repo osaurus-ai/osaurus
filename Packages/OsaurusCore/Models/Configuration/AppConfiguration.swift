@@ -110,10 +110,23 @@ public final class AppConfiguration: ObservableObject {
             config = backfillFoundationCoreModelIfMissing(config)
         }
 
+        config = clearLegacyDefaultChatMaxTokens(config)
+
         if config != initial {
             saveToDisk(config)
         }
         return config
+    }
+
+    /// Older defaults persisted `maxTokens=16384`, which makes ordinary chat
+    /// requests look client-explicit and prevents local model generation_config
+    /// from supplying its own max_new_tokens. Treat that historical default as
+    /// automatic; users can still set another explicit cap.
+    static func clearLegacyDefaultChatMaxTokens(_ config: ChatConfiguration) -> ChatConfiguration {
+        guard config.maxTokens == 16_384 else { return config }
+        var updated = config
+        updated.maxTokens = nil
+        return updated
     }
 
     /// Clear a persisted `coreModelName == "foundation"` when this Mac

@@ -368,4 +368,31 @@ struct AppConfigurationMigrationTests {
             #expect(cfg.coreModelName == nil)
         }
     }
+
+    @Test
+    func defaultConfig_leavesChatMaxTokensAutomatic() {
+        #expect(ChatConfiguration.default.maxTokens == nil)
+    }
+
+    @Test
+    @MainActor
+    func clearLegacyDefaultChatMaxTokens_treatsOldDefaultAsAutomatic() {
+        var input = ChatConfiguration.default
+        input.maxTokens = 16_384
+
+        let result = AppConfiguration.clearLegacyDefaultChatMaxTokens(input)
+
+        #expect(result.maxTokens == nil)
+    }
+
+    @Test
+    @MainActor
+    func clearLegacyDefaultChatMaxTokens_preservesExplicitNonDefaultCap() {
+        var input = ChatConfiguration.default
+        input.maxTokens = 4_096
+
+        let result = AppConfiguration.clearLegacyDefaultChatMaxTokens(input)
+
+        #expect(result.maxTokens == 4_096)
+    }
 }

@@ -1736,7 +1736,7 @@ public actor RemoteProviderService: ToolCapableService {
             // Reasoning models (o1, gpt-5) forbid temperature/top_p when reasoning is active as inferred from
             // https://community.openai.com/t/gpt-5-nano-accepted-parameters/1355086/2
             temperature: isReasoningModel ? nil : parameters.temperature,
-            max_completion_tokens: parameters.maxTokens,
+            max_completion_tokens: parameters.maxTokensExplicit ? parameters.maxTokens : nil,
             stream: stream,
             top_p: isReasoningModel ? nil : parameters.topPOverride,
             // Forward the raw OpenAI penalties — most upstream OpenAI-
