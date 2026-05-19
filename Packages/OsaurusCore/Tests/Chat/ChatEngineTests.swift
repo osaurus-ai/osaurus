@@ -149,6 +149,45 @@ struct ChatEngineTests {
         #expect(resp.choices.first?.message.content == "hello")
     }
 
+    @Test func completeChat_routesLocalModelWithoutFetchingRemoteServices() async throws {
+        actor RemoteProbe {
+            private(set) var called = false
+
+            func services() -> [ModelService] {
+                called = true
+                return []
+            }
+        }
+
+        let probe = RemoteProbe()
+        let svc = FakeModelService()
+        let engine = ChatEngine(
+            services: [svc],
+            installedModelsProvider: { [] },
+            remoteServicesProvider: { await probe.services() }
+        )
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 32,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        let resp = try await engine.completeChat(request: req)
+
+        #expect(resp.choices.first?.message.content == "hello")
+        #expect(await probe.called == false)
+    }
+
     @Test func completeChat_threadsOpenAIReasoningFieldsIntoModelOptions() async throws {
         actor Capture {
             var params: GenerationParameters?

@@ -10,6 +10,7 @@ import Foundation
 actor ChatEngine: Sendable, ChatEngineProtocol {
     private let services: [ModelService]
     private let installedModelsProvider: @Sendable () -> [String]
+    private let remoteServicesProvider: @Sendable () async -> [ModelService]
 
     /// Source of the inference (for logging purposes)
     private var inferenceSource: InferenceSource = .httpAPI
@@ -19,10 +20,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         installedModelsProvider: @escaping @Sendable () -> [String] = {
             MLXService.getAvailableModels()
         },
+        remoteServicesProvider: @escaping @Sendable () async -> [ModelService] = {
+            await MainActor.run {
+                RemoteProviderManager.shared.connectedServices().map { $0 as ModelService }
+            }
+        },
         source: InferenceSource = .httpAPI
     ) {
         self.services = services
         self.installedModelsProvider = installedModelsProvider
+        self.remoteServicesProvider = remoteServicesProvider
         self.inferenceSource = source
     }
     /// Errors thrown by `ChatEngine` that carry a classification so the
@@ -151,12 +158,21 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         )
 
         let services = self.services
-        // Fetch remote services on the MainActor so routing reflects the
-        // latest connected Bonjour/remote agents per request.
-        trace?.mark("fetch_remote_services")
-        let remoteServices = await MainActor.run {
-            RemoteProviderManager.shared.connectedServices()
+        trace?.mark("route_resolve_local")
+        let localRoute = ModelServiceRouter.resolve(
+            requestedModel: request.model,
+            services: services,
+            remoteServices: []
+        )
+        if case .service = localRoute {
+            return Dispatch(route: localRoute, params: params, remoteServices: [])
         }
+
+        // Only touch remote provider state after local services decline the
+        // model. Provider startup can block on Keychain; local MLX requests
+        // must not inherit that unrelated startup dependency.
+        trace?.mark("fetch_remote_services")
+        let remoteServices = await remoteServicesProvider()
         trace?.mark("route_resolve")
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,

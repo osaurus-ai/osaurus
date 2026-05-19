@@ -4684,10 +4684,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 models.insert(OpenAIModel(modelName: "foundation"), at: 0)
             }
 
-            // Get remote provider models
-            let remoteModels = await MainActor.run {
-                RemoteProviderManager.shared.getOpenAIModels()
-            }
+            // Remote provider startup may be blocked on Keychain auth. Keep
+            // local model listing responsive and append remote models only
+            // when the MainActor snapshot is immediately available.
+            let remoteModels = await Self.remoteOpenAIModelsSnapshot()
             models.append(contentsOf: remoteModels)
 
             let response = ModelsResponse(data: models)
@@ -4770,10 +4770,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 models.insert(fm, at: 0)
             }
 
-            // Get remote provider models
-            let remoteModels = await MainActor.run {
-                RemoteProviderManager.shared.getOpenAIModels()
-            }
+            // Keep Ollama tags usable for local models even if remote
+            // provider auth is blocked during app startup.
+            let remoteModels = await Self.remoteOpenAIModelsSnapshot()
             for var remoteModel in remoteModels {
                 remoteModel.modified_at = now
                 remoteModel.size = 0
@@ -4814,6 +4813,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 responseStatus: 200,
                 startTime: logStartTime
             )
+        }
+    }
+
+    private static func remoteOpenAIModelsSnapshot(timeoutNanoseconds: UInt64 = 250_000_000) async
+        -> [OpenAIModel]
+    {
+        await withTaskGroup(of: [OpenAIModel].self) { group in
+            group.addTask {
+                await MainActor.run {
+                    RemoteProviderManager.shared.getOpenAIModels()
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                return []
+            }
+            let models = await group.next() ?? []
+            group.cancelAll()
+            return models
         }
     }
 
