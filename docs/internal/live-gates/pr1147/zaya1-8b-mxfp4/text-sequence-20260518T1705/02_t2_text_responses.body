@@ -1,0 +1,1 @@
+{"output":[{"type":"message","status":"completed","content":[{"type":"output_text","text":"2+2 is 4."}],"role":"assistant","id":"item_B42793BE8449437785E7DBD4"}],"usage":{"output_tokens":2,"input_tokens":31,"total_tokens":33},"object":"response","model":"zaya1-8b-mxfp4","id":"resp_CAD7FF3B0F3340339FE53477","status":"completed","created_at":1779149149}

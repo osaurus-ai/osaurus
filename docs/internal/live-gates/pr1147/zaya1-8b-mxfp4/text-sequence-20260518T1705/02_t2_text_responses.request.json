@@ -1,0 +1,22 @@
+{
+  "input": [
+    {
+      "content": "Answer in one short sentence: what is 2+2?",
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "content": "2+2 equals 4.",
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "content": "In one short sentence, repeat the previous answer and say no new facts.",
+      "role": "user",
+      "type": "message"
+    }
+  ],
+  "max_output_tokens": 128,
+  "model": "zaya1-8b-mxfp4",
+  "stream": false
+}

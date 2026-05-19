@@ -23,6 +23,7 @@ metadata routes can close only their own subchecks.
 | Gemma3n text live sequence | PARTIAL / RED | `pr1147/gemma-3n-e2b-it-4bit/text-sequence-20260518T1652/review.md` | Live Chat and Responses rows returned coherent math and moved prefix/block-L2 counters, but exact-output instructions were ignored, Chat used odd word-puzzle framing, Responses dropped `東京` in the UTF row, and the artifact has RSS only rather than Activity Monitor physical footprint. |
 | Nemotron Omni MXFP4 text sequence | TEXT PASS / FAMILY PARTIAL | `pr1147/nemotron-omni-nano-mxfp4-crack/text-sequence-20260518T1658/review.md` | Text-only Chat and Responses rows answered math/follow-up/UTF cleanly and moved prefix, block-L2, and SSM companion counters. This is not Parakeet/audio, image/video/RADIO, stream, tok/s, or physical-footprint proof. |
 | Nemotron Omni MXFP4 audio sequence | AUDIO SMOKE PASS / FAMILY PARTIAL | `pr1147/nemotron-omni-nano-mxfp4-crack/audio-sequence-20260518T1702/review.md` | Chat Completions accepted a real 16 kHz WAV and returned a coherent transcription-like answer preserving the probe word `blue`. It is non-streaming only, not word-perfect ASR, and still lacks repeated-audio cache, tok/s, media/RADIO, and physical-footprint proof. |
+| ZAYA1 8B MXFP4 text sequence | PARTIAL / RED | `pr1147/zaya1-8b-mxfp4/text-sequence-20260518T1705/review.md` | Math/follow-up rows were coherent on Chat and Responses and prefix/block-L2/SSM companion counters moved, but Chat added extra text to the UTF row and Responses corrupted the UTF string. No sampler/output guard is allowed as a fix. |
 | Model production readiness | NOT COMPLETE | Manifest and this matrix | Real visible multi-turn output, no loops/leaks, TTFT, tok/s, RSS, physical footprint, and per-topology cache proof. |
 
 ## Source-To-Artifact Wiring
@@ -226,6 +227,11 @@ The following remain open until concrete artifacts exist:
   ZAYA1-VL video remains intentionally unsupported until a real engine video
   processor exists; Osaurus now gates ZAYA1-VL as image-only so the UI/composer
   does not advertise a fake video path.
+  The text-only ZAYA1 8B MXFP4 row at
+  `zaya1-8b-mxfp4/text-sequence-20260518T1705/` is coherent for short math and
+  proves `prefix_hits=5`, `disk_l2_hits=5`, `disk_l2_stores=12`, and
+  `ssm_companion_hits=5`, but it remains partial/red because Chat adds extra
+  text to the literal UTF prompt and Responses corrupts the UTF string.
 - Nemotron Omni audio/video/image rows through Osaurus, including Parakeet and
   RADIO evidence. The MXFP4 text-only row at
   `nemotron-omni-nano-mxfp4-crack/text-sequence-20260518T1658/` is clean for
