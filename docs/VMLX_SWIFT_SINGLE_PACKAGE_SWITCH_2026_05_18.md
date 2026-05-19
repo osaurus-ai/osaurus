@@ -81,6 +81,10 @@ The pinned package commit includes a fresh Qwen MTP census artifact at
 27B/35B MXFP4/MXFP8 MTP variants all require real `mtp.*` tensors and usable
 `vmlx_mtp_tuning.json` before auto-launch; 27B MXFP4 selects D2, while 27B
 MXFP8 and both 35B variants select D3 from their tuning files.
+Those MXFP rows are the current Osaurus PR release scope. JANG_4M/JANG_2K MTP
+rows may remain useful reference evidence, but they do not close the MXFP
+production gate and must not auto-enable unless their own tensor/tuning/live
+rows are explicitly in scope.
 
 ## Release Gate Still Required
 

@@ -110,6 +110,18 @@ red or partial until live Osaurus app/API artifacts show coherent multi-turn
 answers under real bundle defaults and explicit kwargs, with no fake guard and
 with the correct cache/scheduler/parser/media path for that model.
 
+## Universal Per-Model Release Blocker
+
+All VL, MTP, JANG, JANGTQ, MXFP, MLX, dense, MoE, hybrid SSM,
+sliding-window, omni, and media rows require natural decode under bundle
+defaults and explicit user/API kwargs. No row may be promoted by a hidden
+app/runtime behavior guard.
+
+Any code, template, tokenizer, parser, cache, scheduler, or UI fix made after
+a red row requires the same row to be rerun. The production artifact must keep
+the pre-fix failure artifact and the post-fix live artifact together so the
+change is proven behaviorally, not just by source inspection.
+
 ## Prompt-to-Artifact Completion Map
 
 | Requirement | Current evidence | Missing before production-clear |
@@ -225,9 +237,11 @@ Processor/tuning facts found:
   `video_preprocessor_config.json`, and `vmlx_mtp_tuning.json`.
 - Qwen3.6 27B MXFP4 MTP tuning selects best depth 2 and explicitly says not to
   force D3 by default.
-- Qwen3.6 27B JANG_4M, 27B MXFP8, 35B MXFP4, and 35B MXFP8 MTP tuning selects
-  best depth 3 from validated output-equivalent rows.
-- Qwen3.6 35B JANG_2K MTP tuning is blocked and must not auto-enable.
+- Current PR MTP release rows are the 27B/35B MXFP4 and MXFP8 variants only.
+  JANG_4M and JANG_2K rows are reference material for this PR scope and must
+  not be used to close the MXFP production gate.
+- Qwen3.6 27B MXFP8, 35B MXFP4, and 35B MXFP8 MTP tuning selects best depth 3
+  from validated output-equivalent rows; 27B MXFP4 remains depth 2 by tuning.
 - ZAYA-VL and Nemotron Omni variants have VLM processor files where listed
   above.
 

@@ -26,6 +26,43 @@ metadata routes can close only their own subchecks.
 | ZAYA1 8B MXFP4 text sequence | PARTIAL / RED | `pr1147/zaya1-8b-mxfp4/text-sequence-20260518T1705/review.md` | Math/follow-up rows were coherent on Chat and Responses and prefix/block-L2/SSM companion counters moved, but Chat added extra text to the UTF row and Responses corrupted the UTF string. No sampler/output guard is allowed as a fix. |
 | Model production readiness | NOT COMPLETE | Manifest and this matrix | Real visible multi-turn output, no loops/leaks, TTFT, tok/s, RSS, physical footprint, and per-topology cache proof. |
 
+## Universal Per-Model Release Blocker
+
+All VL, MTP, JANG, JANGTQ, MXFP, MLX, dense, MoE, hybrid SSM,
+sliding-window, omni, and media rows stay red or partial until the exact live
+row proves natural decode under bundle defaults and explicit user/API kwargs.
+No row may be promoted by a hidden app/runtime behavior guard.
+
+For every model family, the release artifact must prove:
+
+- coherent visible multi-turn output, no loops, no EOS/BOS repetition, no
+  hidden reasoning-only response, and normal stop behavior with enough max
+  tokens to expose failure modes;
+- reasoning default, OFF, ON, and max/native effort behavior where supported,
+  with reasoning kept out of visible content and unsupported families sending
+  no stale reasoning fields;
+- omitted sampler fields resolved from `jang_config.json` /
+  `generation_config.json`, including native `top_k`, with no injected
+  temperature, top-p, top-k, min-p, repetition, frequency, presence, EOS, or
+  length floor unless the user/API request explicitly supplied it;
+- no forced `</think>` close, parser repair, output rewrite, token/logit bias,
+  prompt rewrite, or family clamp used to make a broken row look coherent;
+- prefix, paged, block-L2, TurboQuant KV, SSM companion, DSV4-native cache,
+  ZAYA CCA, media cache, sleep/wake, and single-batch/multi-batch behavior
+  proven as ON/OFF or topology-N-A with counters, timing, RSS, and Activity
+  Monitor physical footprint;
+- VLM/video/audio rows using real media payloads with image/video/audio
+  processor evidence, text-only follow-up media salt nil/absent, repeated-media
+  hit, different-media miss, and unsupported-media inverse;
+- MTP rows enabled only from real `mtp.*` tensor evidence plus usable
+  `vmlx_mtp_tuning.json`, never from CRACK/display names, with MTP ON/OFF
+  speed, acceptance, cache, and coherency proof.
+
+Any code, template, tokenizer, parser, cache, scheduler, or UI fix made after a
+red row requires the same row to be rerun after the fix. A source patch, unit
+test, or metadata census cannot close a production row without the post-fix
+live artifact next to the pre-fix failure.
+
 ## Source-To-Artifact Wiring
 
 | Source surface | What it owns | Artifact proof required |
@@ -44,7 +81,7 @@ metadata routes can close only their own subchecks.
 | Family | Bundle examples | Required UI defaults | Required media and turn sequence | Cache and scheduler proof | Parser/reasoning/tool proof | Red-row rule |
 |---|---|---|---|---|---|---|
 | DSV4 Flash | `JANGQ/DeepSeek-V4-Flash-JANGTQ-K`, `JANGQ/DeepSeek-V4-Flash-JANGTQ2` | Reasoning mode defaults to `instruct`; `Reasoning` maps to high; `Max` passes `reasoning_effort=max`; native DSV4 cache copy, SWA+CSA+HSA, pool quant visible; block size fixed/disabled at 256; generic q4/q8 and JIT controls disabled. | Text T1, prefix-follow-up T2, long/growing chat T3, stop/retry, switch away/back. | `DeepseekV4Cache`; DSV4-native cache stats; generic paged marked N-A when `pagedIncompatible=true`; L2 bytes and hit counters if valid; TTFT/tok/s/RSS/physical footprint. | DSML tools on/off; tool result ordering; visible text has no raw DSML or instruct markers; no forced think close; no sampler/repetition guard. | Any loop, `reasoning_effort=max` downgrade, generic cache misuse, or DSML leak is FAIL. |
-| Qwen3.6 MTP/VL | `Qwen3.6-27B-MXFP4-MTP`, `Qwen3.6-27B-MXFP8-MTP`, `Qwen3.6-35B-A3B-MXFP4-MTP`, `Qwen3.6-35B-A3B-MXFP8-MTP`, `Qwen3.6-27B-JANG_4M-MTP` | Disable Thinking default ON; VLM controls only when processor files exist; MTP shown only when real `mtp.*` tensors and valid `vmlx_mtp_tuning.json` allow it. | Image+text T1, text-only T2 with media salt nil/absent, same image repeat hit, different image miss, video-frame row, saved/relaunch row, MTP on/off row where valid. | Qwen3VLProcessor, MRoPE, prefix/paged/block-L2, media cache alias, effective MTP depth from tuning, accepted tokens per verify, TTFT/tok/s/RSS/physical footprint. | `<think>` split when ON, no thinking when OFF, Qwen tool XML into `tool_calls`, tool result preserved, no stale DSV4/Ling parser. | CRACK/name-only MTP activation is FAIL; ignored `vmlx_mtp_tuning.json` is FAIL; video path without cache/memory proof is PARTIAL. |
+| Qwen3.6 MTP/VL | `Qwen3.6-27B-MXFP4-MTP`, `Qwen3.6-27B-MXFP8-MTP`, `Qwen3.6-35B-A3B-MXFP4-MTP`, `Qwen3.6-35B-A3B-MXFP8-MTP`; JANG_4M/JANG_2K rows are reference-only for this PR scope | Disable Thinking default ON; VLM controls only when processor files exist; MTP shown only when real `mtp.*` tensors and valid `vmlx_mtp_tuning.json` allow it. | Image+text T1, text-only T2 with media salt nil/absent, same image repeat hit, different image miss, video-frame row, saved/relaunch row, MTP on/off row where valid. | Qwen3VLProcessor, MRoPE, prefix/paged/block-L2, media cache alias, effective MTP depth from tuning, accepted tokens per verify, TTFT/tok/s/RSS/physical footprint. | `<think>` split when ON, no thinking when OFF, Qwen tool XML into `tool_calls`, tool result preserved, no stale DSV4/Ling parser. | CRACK/name-only MTP activation is FAIL; ignored `vmlx_mtp_tuning.json` is FAIL; video path without cache/memory proof is PARTIAL. |
 | Qwen non-MTP control | Qwen3.6 CRACK or MXFP CRACK rows with no `mtp.*` tensor evidence | Thinking behavior from profile; MTP hidden/disabled with explicit `no mtp tensor evidence`. | Text multi-turn plus image/video only when real VLM processor evidence exists. | Prefix/paged/L2 proof without MTP; no MTP speed claim. | Qwen reasoning/tool parser separation. | Any MTP auto-enable from display name is FAIL. |
 | Gemma4 / Gemma VLM | `dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK` | Gemma VLM media controls only after real capability; Harmony/Gemma reasoning controls only when capability exists; Gemma3n text evidence must not enable Gemma4 VLM controls. | Image+text, text-only follow-up, image switch, video only if bundle/runtime proves support, long code/math output to catch loops. | Sliding-window or heterogeneous cache topology surfaced; prefix/paged/L2 counters; no app-forced global KV shape; TTFT/tok/s/RSS/physical footprint. | Harmony/thought/final separation where valid; Gemma tool card structured; no raw Harmony/Gemma markers in visible text. | Gemma3n UTF drift and any looping stay red until root-caused; no sampler clamp. |
 | Gemma3n text | `mlx-community/gemma-3n-E2B-it-4bit` | Text-only unless a separate media-capability proof exists; unsupported reasoning hidden. | Multi-turn math, code, literal UTF, cache on/off. | Prefix/paged/L2 counters, TTFT/tok/s/RSS/physical footprint. | No unsupported reasoning field; no marker leakage. | Current live row at `text-sequence-20260518T1652/` is partial/red: coherent math, but exact-output drift, odd word-puzzle framing, and Responses UTF loss. Do not repair with sampler clamps or output rewrites. |
