@@ -104,6 +104,12 @@ public final class StorageKeyManager: @unchecked Sendable {
         return key
     }
 
+    /// Populate the in-process key cache before storage database queues start
+    /// opening. This keeps later `currentKey()` calls off the slow Keychain path.
+    public func prewarmCurrentKey() throws {
+        _ = try currentKey()
+    }
+
     /// Returns true when a persisted key exists in Keychain. Cheap; no
     /// Touch ID prompt.
     public func keyExists() -> Bool {

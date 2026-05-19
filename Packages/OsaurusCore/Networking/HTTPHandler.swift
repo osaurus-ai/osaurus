@@ -20,6 +20,23 @@ private final class SendableBool: @unchecked Sendable {
     }
 }
 
+private final class OneShotContinuation<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+
+    func resume(_ continuation: CheckedContinuation<Value, Never>, returning value: Value) -> Bool {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return false
+        }
+        didResume = true
+        lock.unlock()
+        continuation.resume(returning: value)
+        return true
+    }
+}
+
 private final class HTTPTraceRecorder: @unchecked Sendable {
     private let trace: TTFTTrace?
     private let lock = NSLock()
@@ -4819,19 +4836,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private static func remoteOpenAIModelsSnapshot(timeoutNanoseconds: UInt64 = 250_000_000) async
         -> [OpenAIModel]
     {
-        await withTaskGroup(of: [OpenAIModel].self) { group in
-            group.addTask {
-                await MainActor.run {
+        await withCheckedContinuation { continuation in
+            let once = OneShotContinuation<[OpenAIModel]>()
+            let modelsTask = Task {
+                let models = await MainActor.run {
                     RemoteProviderManager.shared.getOpenAIModels()
                 }
+                _ = once.resume(continuation, returning: models)
             }
-            group.addTask {
+            Task {
                 try? await Task.sleep(nanoseconds: timeoutNanoseconds)
-                return []
+                if once.resume(continuation, returning: []) {
+                    modelsTask.cancel()
+                }
             }
-            let models = await group.next() ?? []
-            group.cancelAll()
-            return models
         }
     }
 

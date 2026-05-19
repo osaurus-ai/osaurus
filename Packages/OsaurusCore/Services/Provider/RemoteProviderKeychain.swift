@@ -119,6 +119,13 @@ public enum RemoteProviderKeychain {
         return status == errSecSuccess
     }
 
+    @discardableResult
+    public static func saveOAuthTokensOffMainActor(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID) async -> Bool {
+        await Task.detached(priority: .utility) {
+            saveOAuthTokens(tokens, for: providerId)
+        }.value
+    }
+
     public static func getOAuthTokens(for providerId: UUID) -> RemoteProviderOAuthTokens? {
         let account = "\(providerId.uuidString).oauth.tokens"
 

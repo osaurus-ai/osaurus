@@ -76,6 +76,56 @@ struct RuntimePolicySourceTests {
         #expect(source.contains("await serverStartupTask.value"))
     }
 
+    @Test("AppDelegate prewarms the storage key before database opens")
+    func appDelegatePrewarmsStorageKeyBeforeDatabaseOpen() throws {
+        let source = try Self.source("AppDelegate.swift")
+        let prewarmTask = try #require(source.range(of: "let storageKeyPrewarmTask = Task.detached"))
+        let prewarmCall = try #require(source.range(of: "try StorageKeyManager.shared.prewarmCurrentKey()"))
+        let awaitPrewarm = try #require(source.range(of: "await storageKeyPrewarmTask.value"))
+        let firstDatabaseOpen = try #require(source.range(of: "try MemoryDatabase.shared.open()"))
+
+        #expect(prewarmTask.lowerBound < firstDatabaseOpen.lowerBound)
+        #expect(prewarmCall.lowerBound < firstDatabaseOpen.lowerBound)
+        #expect(awaitPrewarm.lowerBound < firstDatabaseOpen.lowerBound)
+    }
+
+    @Test("remote provider autoconnect keeps Keychain reads off MainActor")
+    func remoteProviderAutoconnectKeepsKeychainReadsOffMainActor() throws {
+        let manager = try Self.source("Managers/RemoteProviderManager.swift")
+        let connectStart = try #require(manager.range(of: "public func connect(providerId: UUID) async throws"))
+        let disconnectStart = try #require(manager.range(of: "public func disconnect(providerId: UUID)"))
+        let connectBody = String(manager[connectStart.lowerBound..<disconnectStart.lowerBound])
+
+        #expect(!connectBody.contains("provider.getOAuthTokens()"))
+        #expect(!connectBody.contains("provider.resolvedHeaders()"))
+        #expect(connectBody.contains("await provider.getOAuthTokensOffMainActor()"))
+        #expect(connectBody.contains("await provider.resolvedHeadersOffMainActor()"))
+
+        let service = try Self.source("Services/Provider/RemoteProviderService.swift")
+        let fetchStart = try #require(service.range(of: "public static func fetchModels(from provider: RemoteProvider) async throws"))
+        let decodeStart = try #require(service.range(of: "static func decodeOpenAICompatibleModelsResponse"))
+        let fetchBody = String(service[fetchStart.lowerBound..<decodeStart.lowerBound])
+
+        #expect(!fetchBody.contains("provider.getOAuthTokens()"))
+        #expect(!fetchBody.contains("provider.resolvedHeaders()"))
+        #expect(fetchBody.contains("await provider.getOAuthTokensOffMainActor()"))
+        #expect(fetchBody.contains("await provider.resolvedHeadersOffMainActor()"))
+    }
+
+    @Test("remote model snapshot timeout does not await a cancelled MainActor child")
+    func remoteModelSnapshotTimeoutIsUnstructured() throws {
+        let source = try Self.source("Networking/HTTPHandler.swift")
+        let snapshot = try #require(source.range(of: "remoteOpenAIModelsSnapshot"))
+        let show = try #require(source.range(of: "private func handleShowEndpoint"))
+        let body = String(source[snapshot.lowerBound..<show.lowerBound])
+
+        #expect(
+            !body.contains("withTaskGroup"),
+            "`withTaskGroup` waits for cancelled children at scope exit, so it cannot timeout a MainActor task stuck in Keychain"
+        )
+        #expect(body.contains("CheckedContinuation"))
+    }
+
     @Test("ServerController relies on NIO bind instead of a startup port probe")
     func serverControllerDoesNotPreflightPortWithNetworkConnection() throws {
         let source = try Self.source("Networking/ServerController.swift")

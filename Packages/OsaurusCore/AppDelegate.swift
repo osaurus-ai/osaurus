@@ -258,6 +258,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await serverController.startServer()
         }
 
+        let storageKeyPrewarmTask = Task.detached(priority: .utility) {
+            do {
+                try StorageKeyManager.shared.prewarmCurrentKey()
+            } catch {
+                NSLog("[Osaurus] Storage key prewarm failed: \(error)")
+            }
+        }
+
         // Auto-connect to enabled providers, then update model cache with remote models
         Task { @MainActor in
             await MCPProviderManager.shared.connectEnabledProviders()
@@ -277,6 +285,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // defensively (no-op fast path) for the plugin/HTTP entry
         // points that don't go through this Task.
         let embeddingInitTask = Task.detached(priority: .utility) {
+            await storageKeyPrewarmTask.value
             var memoryDBOpened = false
             for attempt in 1 ... 3 {
                 do {
