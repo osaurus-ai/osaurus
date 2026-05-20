@@ -74,6 +74,7 @@ public enum RemoteProviderKeychain {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
 
         var result: AnyObject?
@@ -149,6 +150,7 @@ public enum RemoteProviderKeychain {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
 
         var result: AnyObject?
@@ -216,6 +218,7 @@ public enum RemoteProviderKeychain {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
 
         var result: AnyObject?
@@ -261,6 +264,7 @@ public enum RemoteProviderKeychain {
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
 
         var result: AnyObject?

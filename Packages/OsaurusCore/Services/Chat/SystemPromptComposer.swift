@@ -700,7 +700,7 @@ public struct SystemPromptComposer: Sendable {
         // tools are active, working-directory framing when chat is mounted
         // on a host folder. Static so it joins the cached prefix.
         if executionMode.usesSandboxTools {
-            let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
+            let secretNames = AgentSecretsKeychain.secretIDs(agentId: agentId)
             composer.append(
                 .static(
                     id: "sandbox",

@@ -154,6 +154,7 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecAttrAccount as String: Self.keyAccount,
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
@@ -353,6 +354,7 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -395,6 +397,7 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)

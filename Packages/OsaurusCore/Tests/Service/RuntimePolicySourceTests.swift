@@ -214,6 +214,41 @@ struct RuntimePolicySourceTests {
         #expect(body.contains("CheckedContinuation"))
     }
 
+    @Test("sandbox prompt lists secret IDs without decrypting secret values")
+    func sandboxPromptListsSecretIDsWithoutDecryptingValues() throws {
+        let keychain = try Self.source("Services/Keychain/AgentSecretsKeychain.swift")
+        #expect(keychain.contains("public static func secretIDs(agentId: UUID) -> [String]"))
+
+        let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
+        let sandboxStart = try #require(composer.range(of: "if executionMode.usesSandboxTools"))
+        let sandboxEnd = try #require(
+            composer.range(of: "} else if let folder = executionMode.folderContext", range: sandboxStart.upperBound ..< composer.endIndex)
+        )
+        let sandboxBody = String(composer[sandboxStart.lowerBound ..< sandboxEnd.lowerBound])
+
+        #expect(sandboxBody.contains("AgentSecretsKeychain.secretIDs(agentId: agentId)"))
+        #expect(!sandboxBody.contains("AgentSecretsKeychain.getAllSecrets"))
+    }
+
+    @Test("background Keychain reads use noninteractive authentication contexts")
+    func keychainReadsUseNonInteractiveAuthenticationContexts() throws {
+        let helper = try Self.source("Services/Keychain/KeychainQueryHelpers.swift")
+        #expect(helper.contains("context.interactionNotAllowed = true"))
+
+        for path in [
+            "Identity/StorageKeyManager.swift",
+            "Services/Provider/RemoteProviderKeychain.swift",
+            "Services/Keychain/AgentSecretsKeychain.swift",
+            "Services/Keychain/ToolSecretsKeychain.swift",
+            "Services/MCP/MCPProviderKeychain.swift",
+        ] {
+            let source = try Self.source(path)
+            let queryCount = source.components(separatedBy: "kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip").count - 1
+            let contextCount = source.components(separatedBy: "kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext()").count - 1
+            #expect(contextCount >= queryCount)
+        }
+    }
+
     @Test("ServerController relies on NIO bind instead of a startup port probe")
     func serverControllerDoesNotPreflightPortWithNetworkConnection() throws {
         let source = try Self.source("Networking/ServerController.swift")

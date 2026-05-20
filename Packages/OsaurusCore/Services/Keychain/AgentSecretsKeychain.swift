@@ -114,6 +114,7 @@ public enum AgentSecretsKeychain {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
 
         var result: AnyObject?
@@ -156,6 +157,19 @@ public enum AgentSecretsKeychain {
             }
         }
         return secrets
+    }
+
+    /// Enumerates secret identifiers without decrypting their values.
+    ///
+    /// Prompt construction only needs to tell the model which secret names are
+    /// available. Fetching the values here is both unnecessary and can hit the
+    /// slow Keychain data-decryption path during ordinary chat composition.
+    public static func secretIDs(agentId: UUID) -> [String] {
+        let prefix = "\(agentId.uuidString)."
+        return allAccounts()
+            .filter { $0.hasPrefix(prefix) }
+            .map { String($0.dropFirst(prefix.count)) }
+            .sorted()
     }
 
     public static func deleteAllSecrets(agentId: UUID) {
@@ -211,6 +225,7 @@ public enum AgentSecretsKeychain {
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
 
         var result: AnyObject?

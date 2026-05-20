@@ -44,6 +44,7 @@ public enum ToolSecretsKeychain {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
 
         var result: AnyObject?
@@ -240,6 +241,7 @@ public enum ToolSecretsKeychain {
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
         if !attributesOnly {
             query[kSecReturnData as String] = true

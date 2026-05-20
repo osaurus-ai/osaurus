@@ -140,6 +140,7 @@ public enum MCPProviderKeychain {
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
@@ -197,6 +198,7 @@ public enum MCPProviderKeychain {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
