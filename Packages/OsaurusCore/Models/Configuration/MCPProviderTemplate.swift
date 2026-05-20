@@ -191,6 +191,14 @@ public struct MCPProviderTemplate: Identifiable, Sendable, Equatable {
             tagline: "Search models, datasets, papers, and Spaces"
         ),
         MCPProviderTemplate(
+            id: "keenable",
+            displayName: "Keenable",
+            url: "https://api.keenable.ai/mcp",
+            authType: .none,
+            iconSystemName: "magnifyingglass",
+            tagline: "Web search for AI agents"
+        ),
+        MCPProviderTemplate(
             id: "linear",
             displayName: "Linear",
             url: "https://mcp.linear.app/mcp",

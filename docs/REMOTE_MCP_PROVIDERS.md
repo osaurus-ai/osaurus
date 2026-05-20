@@ -60,7 +60,7 @@ The key is written to your macOS Keychain (never to disk in plaintext) and sent 
 
 #### No Auth
 
-Used by DeepWiki, Exa Search.
+Used by DeepWiki, Exa Search, Keenable.
 
 - A small green **This server doesn't require authentication.** confirmation.
 - Click **Add Provider**.
@@ -94,6 +94,7 @@ The catalog is hardcoded in [`MCPProviderTemplate.swift`](../Packages/OsaurusCor
 | **Google Workspace** | Productivity        | _self-hosted_ | (user-supplied — see [community project](https://github.com/taylorwilsdon/google_workspace_mcp)) |
 | **HubSpot**          | CRM                 | API Key  | `https://app.hubspot.com/mcp/v1/http`                                                               |
 | **Hugging Face**     | AI                  | OAuth    | `https://huggingface.co/mcp`                                                                        |
+| **Keenable**         | Search              | None     | `https://api.keenable.ai/mcp`                                                                       |
 | **Linear**           | Project Management  | OAuth    | `https://mcp.linear.app/mcp`                                                                        |
 | **monday.com**       | Project Management  | OAuth    | `https://mcp.monday.com/mcp`                                                                        |
 | **Neon**             | Database            | OAuth    | `https://mcp.neon.tech/mcp`                                                                         |
