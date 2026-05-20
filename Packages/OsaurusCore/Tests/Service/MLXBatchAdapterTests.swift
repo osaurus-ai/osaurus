@@ -194,6 +194,74 @@ struct MLXBatchAdapterTests {
         #expect(effective.repetitionPenalty == 1.02)
     }
 
+    @Test func effectiveGenerationSettings_nativeMTPUsesGreedyDefaultsWhenRequestIsOmitted() {
+        let generation = GenerationParameters(
+            temperature: nil,
+            maxTokens: 128,
+            maxTokensExplicit: true,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+        let mtpBundleDefaults = LocalGenerationDefaults.Defaults(
+            maxTokens: 300,
+            temperature: 1.0,
+            topP: 0.95,
+            topK: 20,
+            minP: 0.02,
+            repetitionPenalty: 1.05,
+            doSample: true
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "JANGQ/Qwen3.6-35B-A3B-MXFP4-MTP",
+            generation: generation,
+            runtimeTopP: 1,
+            maxBatchSize: 1,
+            modelDefaults: mtpBundleDefaults,
+            draftStrategy: .nativeMTP(depth: 3)
+        )
+
+        #expect(effective.temperature == 0)
+        #expect(effective.topP == 1)
+        #expect(effective.topK == 0)
+        #expect(effective.minP == 0)
+        #expect(effective.repetitionPenalty == nil)
+    }
+
+    @Test func effectiveGenerationSettings_nativeMTPDoesNotOverrideExplicitSampling() {
+        let generation = GenerationParameters(
+            temperature: 0.7,
+            maxTokens: 128,
+            maxTokensExplicit: true,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+        let mtpBundleDefaults = LocalGenerationDefaults.Defaults(
+            maxTokens: nil,
+            temperature: 1.0,
+            topP: 0.95,
+            topK: 20,
+            minP: nil,
+            repetitionPenalty: nil,
+            doSample: true
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "JANGQ/Qwen3.6-35B-A3B-MXFP4-MTP",
+            generation: generation,
+            runtimeTopP: 1,
+            maxBatchSize: 1,
+            modelDefaults: mtpBundleDefaults,
+            draftStrategy: .nativeMTP(depth: 3)
+        )
+
+        #expect(effective.temperature == 0.7)
+        #expect(effective.topP == 0.95)
+        #expect(effective.topK == 20)
+    }
+
     @Test func effectiveGenerationSettings_doSampleFalseForcesGreedyOnlyWhenTemperatureOmitted() {
         let defaults = LocalGenerationDefaults.Defaults(
             maxTokens: nil,

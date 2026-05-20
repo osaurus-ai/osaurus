@@ -1413,7 +1413,7 @@ public actor ModelRuntime {
             return "none"
         case .some(.none):
             return "none"
-        case .some(.nativeMTP(let depth)):
+        case .some(.nativeMTP(depth: let depth, verifierMode: _)):
             return "native_mtp:d\(depth)"
         case .some(let strategy):
             return strategy.kindName

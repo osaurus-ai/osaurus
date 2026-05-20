@@ -65,7 +65,8 @@ struct MLXBatchAdapter {
         generation: GenerationParameters,
         runtimeTopP: Float,
         maxBatchSize: Int,
-        modelDefaults: LocalGenerationDefaults.Defaults
+        modelDefaults: LocalGenerationDefaults.Defaults,
+        draftStrategy: MLXLMCommon.DraftStrategy? = nil
     ) -> EffectiveGenerationSettings {
         let defaultTemperature: Float? = {
             if modelDefaults.doSample == false {
@@ -73,21 +74,49 @@ struct MLXBatchAdapter {
             }
             return modelDefaults.temperature
         }()
+        let useNativeMTPGreedyDefaults = shouldApplyNativeMTPGreedyDefaults(
+            generation: generation,
+            draftStrategy: draftStrategy
+        )
 
         return EffectiveGenerationSettings(
-            temperature: generation.temperature ?? defaultTemperature ?? 0.7,
+            temperature: useNativeMTPGreedyDefaults
+                ? 0
+                : (generation.temperature ?? defaultTemperature ?? 0.7),
             maxTokens: generation.maxTokensExplicit
                 ? generation.maxTokens
                 : (modelDefaults.maxTokens ?? generation.maxTokens),
-            topP: generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP,
-            topK: modelDefaults.topK ?? 0,
-            minP: generation.minPOverride ?? modelDefaults.minP ?? 0,
-            repetitionPenalty: generation.repetitionPenalty ?? modelDefaults.repetitionPenalty,
+            topP: useNativeMTPGreedyDefaults
+                ? (generation.topPOverride ?? 1)
+                : (generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP),
+            topK: useNativeMTPGreedyDefaults ? 0 : (modelDefaults.topK ?? 0),
+            minP: useNativeMTPGreedyDefaults
+                ? (generation.minPOverride ?? 0)
+                : (generation.minPOverride ?? modelDefaults.minP ?? 0),
+            repetitionPenalty: useNativeMTPGreedyDefaults
+                ? generation.repetitionPenalty
+                : (generation.repetitionPenalty ?? modelDefaults.repetitionPenalty),
             compiledBatchDecode: shouldEnableCompiledBatchDecode(
                 modelName: modelName,
                 maxBatchSize: maxBatchSize
             )
         )
+    }
+
+    private static func shouldApplyNativeMTPGreedyDefaults(
+        generation: GenerationParameters,
+        draftStrategy: MLXLMCommon.DraftStrategy?
+    ) -> Bool {
+        guard draftStrategy?.usesNativeMTP == true else { return false }
+        if let temperature = generation.temperature, temperature != 0 { return false }
+        if let topP = generation.topPOverride, topP < 1 { return false }
+        if let minP = generation.minPOverride, minP != 0 { return false }
+        if let repetitionPenalty = generation.repetitionPenalty,
+           repetitionPenalty != 0,
+           repetitionPenalty != 1 {
+            return false
+        }
+        return true
     }
 
     /// Same-model gate for the single-slot runtime path. With
@@ -619,7 +648,8 @@ struct MLXBatchAdapter {
             generation: generation,
             runtimeTopP: runtime.topP,
             maxBatchSize: maxBatchSize,
-            modelDefaults: modelDefaults
+            modelDefaults: modelDefaults,
+            draftStrategy: draftStrategy
         )
         let mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,
@@ -692,7 +722,7 @@ struct MLXBatchAdapter {
         }
 
         batchAdapterLog.info(
-            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
+            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(draftStrategy?.kindName ?? "none", privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
         )
 
         return PreparedStream(
