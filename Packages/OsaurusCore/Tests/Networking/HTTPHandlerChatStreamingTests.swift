@@ -514,6 +514,94 @@ struct HTTPHandlerChatStreamingTests {
         #expect(finishCount == 1)
     }
 
+    @Test func agent_run_executes_tool_without_streaming_internal_sentinels() async throws {
+        actor AgentToolLoopEngine: ChatEngineProtocol {
+            private var calls = 0
+            private(set) var sawToolMessage = false
+
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+                calls += 1
+                if calls == 1 {
+                    return AsyncThrowingStream { continuation in
+                        continuation.finish(
+                            throwing: ServiceToolInvocation(
+                                toolName: "complete",
+                                jsonArguments: #"{"summary":"agent-run sentinel test"}"#
+                            )
+                        )
+                    }
+                }
+
+                sawToolMessage = request.messages.contains { $0.role == "tool" && ($0.content?.isEmpty == false) }
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("TOOLLOOP-FINAL")
+                    continuation.finish()
+                }
+            }
+
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        let engine = AgentToolLoopEngine()
+        let server = try await startTestServer(with: engine)
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(
+                string:
+                    "http://\(server.host):\(server.port)/agents/00000000-0000-0000-0000-000000000001/run"
+            )!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        let reqBody = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "call complete then answer")],
+            temperature: 0,
+            max_tokens: 64,
+            stream: true,
+            top_p: 1,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: [
+                Tool(
+                    type: "function",
+                    function: ToolFunction(
+                        name: "complete",
+                        description: "Mark the agent task complete.",
+                        parameters: .object(["summary": .string("")])
+                    )
+                ),
+            ],
+            tool_choice: .function(
+                ToolChoiceOption.FunctionName(
+                    type: "function",
+                    function: ToolChoiceOption.Name(name: "complete")
+                )
+            ),
+            session_id: nil
+        )
+        request.httpBody = try JSONEncoder().encode(reqBody)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(body.contains("TOOLLOOP-FINAL"))
+        #expect(await engine.sawToolMessage)
+        #expect(!body.contains("\u{FFFE}tool:"))
+        #expect(!body.contains("\u{FFFE}args:"))
+        #expect(!body.contains("\u{FFFE}done:"))
+        #expect(!body.contains("agent-run sentinel test"))
+    }
+
     // MARK: - Anthropic streaming (`/messages?stream=true`)
 
     @Test func anthropic_sse_emits_thinking_delta_for_reasoning_sentinel() async throws {
