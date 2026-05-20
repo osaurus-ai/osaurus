@@ -35,6 +35,8 @@ public actor ModelRuntime {
         let name: String
         let bytes: Int64
         let isCurrent: Bool
+        let draftStrategyDescription: String?
+        let nativeMTPDepth: Int?
         let cacheStats: CacheCoordinatorStatsSnapshot?
     }
 
@@ -140,6 +142,8 @@ public actor ModelRuntime {
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,
+                draftStrategyDescription: Self.describeDraftStrategy(holder.draftStrategy),
+                nativeMTPDepth: Self.nativeMTPDepth(holder.draftStrategy),
                 cacheStats: holder.container.cacheCoordinator?.snapshotStats()
             )
         }.sorted { lhs, rhs in
@@ -1398,6 +1402,17 @@ public actor ModelRuntime {
             return "native_mtp:d\(depth)"
         case .some(let strategy):
             return strategy.kindName
+        }
+    }
+
+    private nonisolated static func nativeMTPDepth(
+        _ strategy: MLXLMCommon.DraftStrategy?
+    ) -> Int? {
+        switch strategy {
+        case .some(.nativeMTP(depth: let depth, verifierMode: _)):
+            return depth
+        default:
+            return nil
         }
     }
 

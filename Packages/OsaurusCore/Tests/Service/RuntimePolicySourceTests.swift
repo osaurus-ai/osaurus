@@ -123,6 +123,10 @@ struct RuntimePolicySourceTests {
         let apiKeys = try Self.source("Identity/APIKeyManager.swift")
         #expect(apiKeys.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
 
+        let masterKey = try Self.source("Identity/MasterKey.swift")
+        #expect(masterKey.contains("if context.interactionNotAllowed"))
+        #expect(masterKey.contains("query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip"))
+
         let server = try Self.source("Networking/OsaurusServer.swift")
         #expect(server.contains("context.interactionNotAllowed = true"))
 
@@ -768,6 +772,24 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("params.draftStrategy = draftStrategy"))
         #expect(adapter.contains("draftStrategy: MLXLMCommon.DraftStrategy?"))
         #expect(adapter.contains("draftStrategy: draftStrategy"))
+
+        let mtpSection = try Self.source("Views/Settings/ServerSettings/MTPSection.swift")
+        #expect(mtpSection.contains("status: .engineReady"))
+        #expect(!mtpSection.contains("status: .needsBridge"))
+
+        let diagnosticsSnapshot = try Self.source("Services/ModelRuntime/BatchDiagnosticsSnapshot.swift")
+        #expect(diagnosticsSnapshot.contains("nativeMTPDepthSummary"))
+        #expect(diagnosticsSnapshot.contains("prefixHits"))
+        #expect(diagnosticsSnapshot.contains("ssmCompanionReDerives"))
+
+        let diagnosticsView = try Self.source("Views/Settings/ServerSettings/BatchDiagnosticsView.swift")
+        #expect(diagnosticsView.contains("\"Native MTP\""))
+        #expect(diagnosticsView.contains("\"Prefix hits / misses\""))
+        #expect(diagnosticsView.contains("\"SSM hits / misses / re-derives\""))
+
+        let httpHandler = try Self.source("Networking/HTTPHandler.swift")
+        #expect(httpHandler.contains("\"draft_strategy\""))
+        #expect(httpHandler.contains("\"native_mtp_depth\""))
     }
 
     @Test("ModelRuntime does not repair reasoning parser output")

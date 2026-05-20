@@ -374,6 +374,42 @@ struct MLXBatchAdapter {
             var decodeSplit = 0
             var turbo = 0
             var accepting = true
+            let modelSummaries = await ModelRuntime.shared.cachedModelSummaries()
+            var nativeDepths = Set<Int>()
+            var cacheEnabled = 0
+            var hybrid = 0
+            var pagedIncompatible = 0
+            var prefixHits = 0
+            var prefixMisses = 0
+            var diskL2Hits = 0
+            var diskL2Misses = 0
+            var diskL2Stores = 0
+            var ssmHits = 0
+            var ssmMisses = 0
+            var ssmReDerives = 0
+            for summary in modelSummaries {
+                if let depth = summary.nativeMTPDepth {
+                    nativeDepths.insert(depth)
+                }
+                guard let stats = summary.cacheStats else { continue }
+                cacheEnabled += 1
+                if stats.isHybrid { hybrid += 1 }
+                if stats.isPagedIncompatible { pagedIncompatible += 1 }
+                if let pagedStats = stats.pagedStats {
+                    prefixHits += pagedStats.cacheHits
+                    prefixMisses += pagedStats.cacheMisses
+                }
+                if let diskStats = stats.diskStats {
+                    prefixHits += diskStats.hits
+                    prefixMisses += diskStats.misses
+                    diskL2Hits += diskStats.hits
+                    diskL2Misses += diskStats.misses
+                    diskL2Stores += diskStats.stores
+                }
+                ssmHits += stats.ssmStats.hits
+                ssmMisses += stats.ssmStats.misses
+                ssmReDerives += stats.ssmStats.reDerives
+            }
             for engine in engines {
                 pending += await engine.pendingCount
                 active += await engine.activeCount
@@ -391,7 +427,21 @@ struct MLXBatchAdapter {
                 activeHighWatermark: highWatermark,
                 decodeSplitCount: decodeSplit,
                 turboQuantCompressions: turbo,
-                isAcceptingRequests: accepting
+                isAcceptingRequests: accepting,
+                loadedModelCount: modelSummaries.count,
+                nativeMTPModelCount: modelSummaries.filter { $0.nativeMTPDepth != nil }.count,
+                nativeMTPDepthSummary: nativeDepths.sorted().map { "d\($0)" }.joined(separator: ", "),
+                cacheEnabledModelCount: cacheEnabled,
+                hybridModelCount: hybrid,
+                pagedIncompatibleModelCount: pagedIncompatible,
+                prefixHits: prefixHits,
+                prefixMisses: prefixMisses,
+                diskL2Hits: diskL2Hits,
+                diskL2Misses: diskL2Misses,
+                diskL2Stores: diskL2Stores,
+                ssmCompanionHits: ssmHits,
+                ssmCompanionMisses: ssmMisses,
+                ssmCompanionReDerives: ssmReDerives
             )
         }
 

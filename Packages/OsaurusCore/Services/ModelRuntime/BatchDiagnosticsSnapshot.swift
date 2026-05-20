@@ -22,6 +22,20 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
     public let decodeSplitCount: Int
     public let turboQuantCompressions: Int
     public let isAcceptingRequests: Bool
+    public let loadedModelCount: Int
+    public let nativeMTPModelCount: Int
+    public let nativeMTPDepthSummary: String?
+    public let cacheEnabledModelCount: Int
+    public let hybridModelCount: Int
+    public let pagedIncompatibleModelCount: Int
+    public let prefixHits: Int
+    public let prefixMisses: Int
+    public let diskL2Hits: Int
+    public let diskL2Misses: Int
+    public let diskL2Stores: Int
+    public let ssmCompanionHits: Int
+    public let ssmCompanionMisses: Int
+    public let ssmCompanionReDerives: Int
 
     public init(
         pendingCount: Int,
@@ -29,7 +43,21 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
         activeHighWatermark: Int,
         decodeSplitCount: Int,
         turboQuantCompressions: Int,
-        isAcceptingRequests: Bool
+        isAcceptingRequests: Bool,
+        loadedModelCount: Int = 0,
+        nativeMTPModelCount: Int = 0,
+        nativeMTPDepthSummary: String? = nil,
+        cacheEnabledModelCount: Int = 0,
+        hybridModelCount: Int = 0,
+        pagedIncompatibleModelCount: Int = 0,
+        prefixHits: Int = 0,
+        prefixMisses: Int = 0,
+        diskL2Hits: Int = 0,
+        diskL2Misses: Int = 0,
+        diskL2Stores: Int = 0,
+        ssmCompanionHits: Int = 0,
+        ssmCompanionMisses: Int = 0,
+        ssmCompanionReDerives: Int = 0
     ) {
         self.pendingCount = pendingCount
         self.activeCount = activeCount
@@ -37,5 +65,19 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
         self.decodeSplitCount = decodeSplitCount
         self.turboQuantCompressions = turboQuantCompressions
         self.isAcceptingRequests = isAcceptingRequests
+        self.loadedModelCount = loadedModelCount
+        self.nativeMTPModelCount = nativeMTPModelCount
+        self.nativeMTPDepthSummary = nativeMTPDepthSummary
+        self.cacheEnabledModelCount = cacheEnabledModelCount
+        self.hybridModelCount = hybridModelCount
+        self.pagedIncompatibleModelCount = pagedIncompatibleModelCount
+        self.prefixHits = prefixHits
+        self.prefixMisses = prefixMisses
+        self.diskL2Hits = diskL2Hits
+        self.diskL2Misses = diskL2Misses
+        self.diskL2Stores = diskL2Stores
+        self.ssmCompanionHits = ssmCompanionHits
+        self.ssmCompanionMisses = ssmCompanionMisses
+        self.ssmCompanionReDerives = ssmCompanionReDerives
     }
 }

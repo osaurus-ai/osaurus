@@ -555,6 +555,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     "is_current": summary.isCurrent,
                     "weights_bytes": summary.bytes,
                 ]
+                if let draftStrategy = summary.draftStrategyDescription {
+                    row["draft_strategy"] = draftStrategy
+                } else {
+                    row["draft_strategy"] = NSNull()
+                }
+                if let nativeMTPDepth = summary.nativeMTPDepth {
+                    row["native_mtp_depth"] = nativeMTPDepth
+                } else {
+                    row["native_mtp_depth"] = NSNull()
+                }
                 guard let stats = summary.cacheStats else {
                     row["cache_enabled"] = false
                     return row
@@ -4718,6 +4728,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     "is_current": summary.isCurrent,
                     "inflight": inflight[summary.name] ?? 0,
                 ]
+                if let draftStrategy = summary.draftStrategyDescription {
+                    row["draft_strategy"] = draftStrategy
+                } else {
+                    row["draft_strategy"] = NSNull()
+                }
+                if let nativeMTPDepth = summary.nativeMTPDepth {
+                    row["native_mtp_depth"] = nativeMTPDepth
+                } else {
+                    row["native_mtp_depth"] = NSNull()
+                }
                 if let unloadAt = residencyByName[summary.name]?.unloadAt {
                     row["idle_unload_at"] = unloadAt.ISO8601Format()
                     row["idle_seconds_remaining"] =

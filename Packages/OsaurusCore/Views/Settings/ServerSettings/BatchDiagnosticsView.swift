@@ -25,6 +25,33 @@ struct BatchDiagnosticsView: View {
                     "Engine status",
                     value: snapshot.isAcceptingRequests ? L("Accepting requests") : L("Draining")
                 )
+                stat("Loaded models", value: "\(snapshot.loadedModelCount)")
+                stat(
+                    "Native MTP",
+                    value: nativeMTPValue(snapshot)
+                )
+                stat(
+                    "Cache-enabled models",
+                    value: "\(snapshot.cacheEnabledModelCount)"
+                )
+                stat("Hybrid caches", value: "\(snapshot.hybridModelCount)")
+                stat(
+                    "Paged-incompatible caches",
+                    value: "\(snapshot.pagedIncompatibleModelCount)"
+                )
+                stat(
+                    "Prefix hits / misses",
+                    value: "\(snapshot.prefixHits) / \(snapshot.prefixMisses)"
+                )
+                stat(
+                    "Disk L2 hits / misses / stores",
+                    value: "\(snapshot.diskL2Hits) / \(snapshot.diskL2Misses) / \(snapshot.diskL2Stores)"
+                )
+                stat(
+                    "SSM hits / misses / re-derives",
+                    value:
+                        "\(snapshot.ssmCompanionHits) / \(snapshot.ssmCompanionMisses) / \(snapshot.ssmCompanionReDerives)"
+                )
             }
         } else {
             HStack(spacing: 8) {
@@ -58,5 +85,15 @@ struct BatchDiagnosticsView: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(theme.inputBackground)
         )
+    }
+
+    private func nativeMTPValue(_ snapshot: BatchDiagnosticsSnapshot) -> String {
+        guard snapshot.nativeMTPModelCount > 0 else { return L("Not active") }
+        if let depthSummary = snapshot.nativeMTPDepthSummary,
+           !depthSummary.isEmpty
+        {
+            return "\(snapshot.nativeMTPModelCount) \(L("active")) (\(depthSummary))"
+        }
+        return "\(snapshot.nativeMTPModelCount) \(L("active"))"
     }
 }
