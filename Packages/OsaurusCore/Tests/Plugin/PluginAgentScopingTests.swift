@@ -596,3 +596,89 @@ struct ToolSecretsKeychainAgentSweepTests {
         ToolSecretsKeychain.deleteAllSecrets(forAgent: target)
     }
 }
+
+// MARK: - ToolSecretsKeychain.resolvedSecretsMerging
+
+/// Pins the Plugins-tab-default / Agents-tab-override merge that fixed the
+/// "Tavily key saved but agent silently routes to DDG" bug. Uses synthetic
+/// UUIDs (not `Agent.defaultId`) to avoid pre-populated production keychain
+/// entries on CI runners.
+struct ResolvedSecretsMergingTests {
+
+    @Test func defaultsFlowToPrimary() {
+        let pluginId = "com.test.merge.\(UUID().uuidString)"
+        let primary = UUID()
+        let defaults = UUID()
+        defer {
+            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: defaults)
+            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: primary)
+        }
+
+        ToolSecretsKeychain.saveSecret(
+            "tav-default", id: "TAVILY_API_KEY", for: pluginId, agentId: defaults)
+
+        let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
+            pluginId: pluginId, primary: primary, defaults: defaults)
+        #expect(resolved["TAVILY_API_KEY"] == "tav-default")
+    }
+
+    @Test func primaryOverridesDefault() {
+        let pluginId = "com.test.merge.\(UUID().uuidString)"
+        let primary = UUID()
+        let defaults = UUID()
+        defer {
+            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: defaults)
+            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: primary)
+        }
+
+        ToolSecretsKeychain.saveSecret(
+            "tav-default", id: "TAVILY_API_KEY", for: pluginId, agentId: defaults)
+        ToolSecretsKeychain.saveSecret(
+            "tav-primary", id: "TAVILY_API_KEY", for: pluginId, agentId: primary)
+
+        let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
+            pluginId: pluginId, primary: primary, defaults: defaults)
+        #expect(resolved["TAVILY_API_KEY"] == "tav-primary")
+    }
+
+    @Test func mergesDisjointKeys() {
+        let pluginId = "com.test.merge.\(UUID().uuidString)"
+        let primary = UUID()
+        let defaults = UUID()
+        defer {
+            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: defaults)
+            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: primary)
+        }
+
+        ToolSecretsKeychain.saveSecret(
+            "tav-default", id: "TAVILY_API_KEY", for: pluginId, agentId: defaults)
+        ToolSecretsKeychain.saveSecret(
+            "brave-primary", id: "BRAVE_SEARCH_API_KEY", for: pluginId, agentId: primary)
+
+        let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
+            pluginId: pluginId, primary: primary, defaults: defaults)
+        #expect(resolved["TAVILY_API_KEY"] == "tav-default")
+        #expect(resolved["BRAVE_SEARCH_API_KEY"] == "brave-primary")
+    }
+
+    @Test func primaryEqualToDefaultsSkipsMerge() {
+        let pluginId = "com.test.merge.\(UUID().uuidString)"
+        let id = UUID()
+        let unrelated = UUID()
+        defer {
+            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: id)
+            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: unrelated)
+        }
+
+        ToolSecretsKeychain.saveSecret(
+            "tav-default", id: "TAVILY_API_KEY", for: pluginId, agentId: id)
+        // Bystander agent's value must not leak into the read.
+        ToolSecretsKeychain.saveSecret(
+            "leak", id: "BRAVE_SEARCH_API_KEY", for: pluginId, agentId: unrelated)
+
+        let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
+            pluginId: pluginId, primary: id, defaults: id)
+        #expect(resolved["TAVILY_API_KEY"] == "tav-default")
+        #expect(resolved["BRAVE_SEARCH_API_KEY"] == nil)
+    }
+}

@@ -9,16 +9,78 @@
 
 import Foundation
 
-public struct CSVAdapter: DocumentFormatAdapter {
+/// CSV is the validation adapter for the plugin ABI because it already has a
+/// mature core parser while still behaving like a simple record stream.
+public struct CSVAdapter: DocumentFormatAdapter, FormatAdapter {
+    public static var formatIdentifier: String { CSVDelimiter.comma.formatId }
+    public static var detectionBytePatterns: [Data] { [] }
+
     public let delimiter: CSVDelimiter
+    private let openState: OpenState
+
     public var formatId: String { delimiter.formatId }
 
     public init(delimiter: CSVDelimiter = .comma) {
         self.delimiter = delimiter
+        self.openState = OpenState()
     }
 
     public func canHandle(url: URL, uti: String?) -> Bool {
         url.pathExtension.lowercased() == delimiter.fileExtension
+    }
+
+    public func openDocument(at url: URL) throws -> DocumentReference {
+        guard canHandle(url: url, uti: nil) else {
+            throw FormatAdapterError.unsupportedURL(
+                formatIdentifier: formatId,
+                pathExtension: url.pathExtension.lowercased()
+            )
+        }
+        guard (try? url.checkResourceIsReachable()) == true else {
+            throw DocumentAdapterError.readFailed(underlying: "File is not reachable")
+        }
+
+        let fileSize = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+        let reference = DocumentReference(
+            formatIdentifier: formatId,
+            displayName: url.lastPathComponent,
+            fileSize: fileSize,
+            metadata: ["delimiter": delimiter.rawValue]
+        )
+        openState.update(url: url, reference: reference)
+        return reference
+    }
+
+    public func streamRecords(into continuation: AsyncStream<Record>.Continuation) async throws {
+        defer { continuation.finish() }
+        guard let opened = openState.openedDocument() else {
+            throw FormatAdapterError.documentNotOpened(formatIdentifier: formatId)
+        }
+
+        let document = try await parse(
+            url: opened.url,
+            sizeLimit: DocumentLimits.limit(forFormatId: formatId)
+        )
+        guard let csv = document.representation.underlying as? CSVDocument else {
+            throw FormatAdapterError.representationMismatch(formatIdentifier: formatId)
+        }
+
+        for row in csv.rows {
+            try Task.checkCancellation()
+            continuation.yield(
+                Record(
+                    index: row.rowIndex,
+                    fields: row.cells.map(\.text),
+                    anchorIdentifier: row.anchorId,
+                    metadata: [
+                        "documentId": opened.reference.id.uuidString,
+                        "formatIdentifier": opened.reference.formatIdentifier,
+                        "sourceStartUTF16": "\(row.sourceRange.startUTF16Offset)",
+                        "sourceLengthUTF16": "\(row.sourceRange.length)",
+                    ]
+                )
+            )
+        }
     }
 
     public func parse(url: URL, sizeLimit: Int64) async throws -> StructuredDocument {
@@ -435,5 +497,27 @@ public struct CSVAdapter: DocumentFormatAdapter {
     private struct BuiltCSVDocument {
         let document: CSVDocument
         let structure: DocumentStructure
+    }
+
+    private final class OpenState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var current: OpenedDocument?
+
+        func update(url: URL, reference: DocumentReference) {
+            lock.lock()
+            defer { lock.unlock() }
+            current = OpenedDocument(url: url, reference: reference)
+        }
+
+        func openedDocument() -> OpenedDocument? {
+            lock.lock()
+            defer { lock.unlock() }
+            return current
+        }
+    }
+
+    private struct OpenedDocument: Sendable {
+        let url: URL
+        let reference: DocumentReference
     }
 }

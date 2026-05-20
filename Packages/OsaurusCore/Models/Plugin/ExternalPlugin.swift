@@ -1066,9 +1066,12 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    /// Returns all configured secrets for this plugin from the Keychain, scoped to the given agent.
+    /// Per-agent secrets merged on top of `Agent.defaultId` defaults.
     func resolvedSecrets(agentId: UUID) -> [String: String] {
-        return ToolSecretsKeychain.getAllSecrets(for: manifest.plugin_id, agentId: agentId)
+        return ToolSecretsKeychain.resolvedSecretsWithDefaults(
+            pluginId: manifest.plugin_id,
+            agentId: agentId
+        )
     }
 
     /// Checks if all required secrets are configured for the given agent.
