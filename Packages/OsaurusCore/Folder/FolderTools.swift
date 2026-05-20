@@ -18,6 +18,40 @@ enum FolderToolError: LocalizedError {
     case fileNotFound(String)
     case directoryNotFound(String)
     case operationFailed(String)
+    /// File at `path` is binary (or otherwise not decodable as text).
+    /// `ext` is the lowercased file extension when available; `detail`
+    /// is a structured reason the envelope mapper folds into the model-
+    /// facing message so the agent sees a single non-retryable signal
+    /// instead of opaque `NSCocoaError` text.
+    case binaryContent(path: String, ext: String?, detail: BinaryDetail)
+
+    /// Sub-classification on `binaryContent`. Each case carries a tailored
+    /// pivot hint (`pivotHint`) so the model gets a concrete next step
+    /// instead of a generic "this is binary" message.
+    enum BinaryDetail: Sendable {
+        /// First-chunk NUL-byte sniff matched.
+        case nulByte
+        /// Bytes weren't valid UTF-8.
+        case decodeFailed
+        /// `DocumentParser` returned an image-only PDF (no text layer).
+        case imageOnlyPdf
+        /// `DocumentParser` threw `.readFailed` / `.unsupportedFormat` /
+        /// `.fileTooLarge`.
+        case parseFailed
+
+        var pivotHint: String? {
+            switch self {
+            case .imageOnlyPdf:
+                return
+                    "The PDF has no extractable text layer (likely scanned images); use an OCR tool via shell_run."
+            case .parseFailed:
+                return
+                    "The document couldn't be parsed — it may be encrypted, password-protected, or malformed."
+            case .nulByte, .decodeFailed:
+                return nil
+            }
+        }
+    }
 
     var errorDescription: String? {
         switch self {
@@ -26,6 +60,11 @@ enum FolderToolError: LocalizedError {
         case .fileNotFound(let path): return "File not found: \(path)"
         case .directoryNotFound(let path): return "Directory not found: \(path)"
         case .operationFailed(let msg): return "Operation failed: \(msg)"
+        case .binaryContent(let path, let ext, _):
+            if let ext, !ext.isEmpty {
+                return "Binary content at \(path) (.\(ext))"
+            }
+            return "Binary content at \(path)"
         }
     }
 }
@@ -309,6 +348,20 @@ struct FileReadTool: OsaurusTool {
     /// Consistent with truncation limits on shell_run (10k) and git_diff (20k).
     private static let maxOutputChars = 15_000
 
+    /// File extensions that `DocumentParser` (PDFKit + `NSAttributedString`)
+    /// already extracts plain text from. For these we route through the
+    /// parser instead of attempting a UTF-8 decode that would fail with
+    /// `NSCocoaError 264` ("isn't in the correct format").
+    private static let richDocumentExtensions: Set<String> = [
+        "pdf", "docx", "doc", "rtf", "rtfd", "html", "htm",
+    ]
+
+    /// First-chunk byte budget for the NUL-byte binary sniff. Catches
+    /// off-extension binaries whose UTF-8 decode happens to succeed by
+    /// luck. Matches the size most editors / `file(1)` use for the same
+    /// heuristic.
+    private static let binarySniffBytes = 4096
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -329,7 +382,12 @@ struct FileReadTool: OsaurusTool {
             throw FolderToolError.fileNotFound(relativePath)
         }
 
-        let content = try String(contentsOf: fileURL, encoding: .utf8)
+        let ext = fileURL.pathExtension.lowercased()
+        let content = try await loadFileContent(
+            url: fileURL,
+            relativePath: relativePath,
+            ext: ext
+        )
         let lines = content.components(separatedBy: .newlines)
 
         let startLine = coerceInt(args["start_line"]) ?? 1
@@ -348,7 +406,9 @@ struct FileReadTool: OsaurusTool {
             lastLineIncluded = i + 1
         }
 
-        if output.isEmpty { return "(empty file)" }
+        if output.isEmpty {
+            return ToolEnvelope.success(tool: name, text: "(empty file)")
+        }
 
         // If truncated, inform the model and suggest using line ranges
         if lastLineIncluded < validEnd {
@@ -363,6 +423,84 @@ struct FileReadTool: OsaurusTool {
             text = output
         }
         return ToolEnvelope.success(tool: name, text: text)
+    }
+
+    /// Pull text out of the file at `url`, throwing `binaryContent` when
+    /// the file is not decodable as text. Two branches:
+    ///   - rich extensions go through `DocumentParser` (PDFKit /
+    ///     `NSAttributedString`);
+    ///   - other extensions read raw bytes, NUL-sniff the first 4KB,
+    ///     then UTF-8 decode. The byte-first ordering catches binaries
+    ///     whose UTF-8 prefix happens to be valid by coincidence.
+    private func loadFileContent(
+        url: URL,
+        relativePath: String,
+        ext: String
+    ) async throws -> String {
+        if Self.richDocumentExtensions.contains(ext) {
+            return try await extractRichDocumentText(
+                url: url,
+                relativePath: relativePath,
+                ext: ext
+            )
+        }
+
+        let data = try Data(contentsOf: url)
+        if data.prefix(Self.binarySniffBytes).contains(0) {
+            throw binaryError(path: relativePath, ext: ext, detail: .nulByte)
+        }
+        if let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        throw binaryError(path: relativePath, ext: ext, detail: .decodeFailed)
+    }
+
+    /// Run `DocumentParser.parse(url:)` on a detached task so the
+    /// parser's internal `runBlocking` semaphore can't starve the
+    /// cooperative thread pool. Matches the production pattern in
+    /// `FloatingInputCard`.
+    private func extractRichDocumentText(
+        url: URL,
+        relativePath: String,
+        ext: String
+    ) async throws -> String {
+        let attachment: Attachment
+        do {
+            attachment = try await Task.detached(priority: .userInitiated) {
+                try DocumentParser.parse(url: url)
+            }.value
+        } catch let err as DocumentParser.ParseError {
+            switch err {
+            case .emptyContent:
+                // Empty rich doc — surface as empty string; downstream
+                // slicing produces the same "(empty)" output the plain-
+                // text path would for a zero-byte `.txt`.
+                return ""
+            case .unsupportedFormat, .readFailed, .fileTooLarge:
+                throw binaryError(path: relativePath, ext: ext, detail: .parseFailed)
+            }
+        }
+        if case .document(_, let text, _) = attachment.kind {
+            return text
+        }
+        // Image-only PDF (DocumentParser falls back to per-page image
+        // attachments). We can't surface those through file_read — emit
+        // the binary envelope so the model pivots instead of retrying.
+        throw binaryError(path: relativePath, ext: ext, detail: .imageOnlyPdf)
+    }
+
+    /// Construct a `binaryContent` error, normalising an empty extension
+    /// to `nil` so the envelope mapper doesn't emit a bare `(.)` label.
+    private func binaryError(
+        path: String,
+        ext: String,
+        detail: FolderToolError.BinaryDetail
+    ) -> FolderToolError {
+        .binaryContent(
+            path: path,
+            ext: ext.isEmpty ? nil : ext,
+            detail: detail
+        )
     }
 }
 

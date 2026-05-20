@@ -322,9 +322,30 @@ struct RemoteChatRequestEncodingTests {
         #expect(
             RemoteProviderService.echoesReasoningContent(
                 providerType: .openaiLegacy,
-                host: "api.deepseek.com"
+                host: "api.deepseek.com",
+                model: "deepseek-chat"
             ) == true
         )
+    }
+
+    /// Local ds4 servers run on `localhost`, so the host alone can't tell
+    /// us they're DeepSeek-family; we have to look at the model id too.
+    @Test func echoesReasoningContent_trueForLocalHostWithDeepSeekModel() throws {
+        let cases: [(host: String, model: String)] = [
+            ("localhost:8888", "deepseek-v4-flash"),
+            ("127.0.0.1:9000", "deepseek-r1"),
+            ("ds4.local", "DeepSeek-V3"),
+        ]
+        for c in cases {
+            #expect(
+                RemoteProviderService.echoesReasoningContent(
+                    providerType: .openaiLegacy,
+                    host: c.host,
+                    model: c.model
+                ) == true,
+                "expected reasoning_content echo for host=\(c.host) model=\(c.model)"
+            )
+        }
     }
 
     @Test func echoesReasoningContent_falseForOtherOpenAICompatHosts() throws {
@@ -332,7 +353,8 @@ struct RemoteChatRequestEncodingTests {
             #expect(
                 RemoteProviderService.echoesReasoningContent(
                     providerType: .openaiLegacy,
-                    host: host
+                    host: host,
+                    model: "gpt-4o-mini"
                 ) == false
             )
         }
@@ -343,7 +365,8 @@ struct RemoteChatRequestEncodingTests {
             #expect(
                 RemoteProviderService.echoesReasoningContent(
                     providerType: providerType,
-                    host: "api.deepseek.com"
+                    host: "api.deepseek.com",
+                    model: "deepseek-chat"
                 ) == false
             )
         }
@@ -387,6 +410,83 @@ struct RemoteChatRequestEncodingTests {
         #expect(stripped.count == 2)
         #expect(stripped[0].reasoning_content == nil)
         #expect(stripped[1].reasoning_content == nil)
+    }
+
+    /// End-to-end: a follow-up turn against a local ds4 server must keep
+    /// `reasoning_content` on the wire so ds4's prompt template renders the
+    /// same `<think>…</think>` block that produced its cached KV state.
+    @Test func wireBody_includesReasoningContent_forLocalDS4() throws {
+        let body = try Self.encodedWireBody(
+            providerType: .openaiLegacy,
+            host: "localhost:8888",
+            model: "deepseek-v4-flash",
+            assistantReasoning: "The user wants weather; call get_weather."
+        )
+
+        #expect(body.contains("\"reasoning_content\""))
+        #expect(body.contains("The user wants weather"))
+    }
+
+    /// Symmetric guard: non-DeepSeek host+model still strips
+    /// `reasoning_content` to avoid unknown-field rejections on strict schemas.
+    @Test func wireBody_omitsReasoningContent_forNonDeepSeekRemote() throws {
+        let body = try Self.encodedWireBody(
+            providerType: .openaiLegacy,
+            host: "api.openai.com",
+            model: "gpt-5",
+            assistantReasoning: "internal trace"
+        )
+
+        #expect(!body.contains("\"reasoning_content\""))
+        #expect(!body.contains("internal trace"))
+    }
+
+    /// Mirrors the strip-or-echo branch in `buildURLRequest`, then encodes
+    /// with the canonical encoder. Returns the wire body as a string.
+    private static func encodedWireBody(
+        providerType: RemoteProviderType,
+        host: String,
+        model: String,
+        assistantReasoning: String
+    ) throws -> String {
+        let request = RemoteChatRequest(
+            model: model,
+            messages: [
+                ChatMessage(role: "user", content: "hi"),
+                ChatMessage(
+                    role: "assistant",
+                    content: "answer",
+                    tool_calls: nil,
+                    tool_call_id: nil,
+                    reasoning_content: assistantReasoning
+                ),
+            ],
+            temperature: nil,
+            max_completion_tokens: nil,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            reasoning_effort: nil,
+            reasoning: nil,
+            thinking: nil,
+            modelOptions: [:],
+            veniceParameters: nil
+        )
+
+        var outbound = request
+        if !RemoteProviderService.echoesReasoningContent(
+            providerType: providerType,
+            host: host,
+            model: model
+        ) {
+            outbound.messages = RemoteProviderService.strippingReasoningContent(from: outbound.messages)
+        }
+        let data = try JSONEncoder.osaurusCanonical().encode(outbound)
+        return String(decoding: data, as: UTF8.self)
     }
 
     // MARK: - DSV4 remote effort translation
