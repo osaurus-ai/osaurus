@@ -110,15 +110,14 @@ public enum ToolSecretsKeychain {
     public static func getAllSecrets(for pluginId: String, agentId: UUID) -> [String: String] {
         let accountPrefix = agentAccountPrefix(agentId: agentId, pluginId: pluginId)
 
-        let allItems = fetchAllItems(attributesOnly: false)
+        let allItems = fetchAllItems(attributesOnly: true)
         var secrets: [String: String] = [:]
         for item in allItems {
-            if let account = item[kSecAttrAccount as String] as? String,
-                account.hasPrefix(accountPrefix),
-                let data = item[kSecValueData as String] as? Data,
-                let value = String(data: data, encoding: .utf8)
-            {
-                let secretId = String(account.dropFirst(accountPrefix.count))
+            guard let account = item[kSecAttrAccount as String] as? String,
+                account.hasPrefix(accountPrefix)
+            else { continue }
+            let secretId = String(account.dropFirst(accountPrefix.count))
+            if let value = getSecret(id: secretId, for: pluginId, agentId: agentId) {
                 secrets[secretId] = value
             }
         }
