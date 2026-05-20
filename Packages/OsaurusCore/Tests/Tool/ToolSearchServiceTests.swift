@@ -166,6 +166,52 @@ struct ToolSearchServiceTests {
             )
         }
     }
+
+    @Test @MainActor
+    func hybridSearchFallsBackToRegistryWhenToolDatabaseIsClosed() async throws {
+        await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tool-registry-fallback-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer { ToolConfigurationStore.overrideDirectory = previousOverride }
+
+            ToolDatabase.shared.close()
+            defer { ToolDatabase.shared.close() }
+
+            let fixture = SearchExposureFixtureTool()
+            ToolRegistry.shared.registerPluginTool(fixture)
+            ToolRegistry.shared.setEnabled(true, for: fixture.name)
+            defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+            let (results, diagnostic) = await ToolSearchService.shared.searchHybridWithDiagnostic(
+                query: "current headline web search",
+                topK: 5,
+                minFusedScore: CapabilitySearch.minimumFusedScore
+            )
+
+            #expect(results.contains { $0.entry.name == fixture.name })
+            #expect(diagnostic.acceptedHits.contains { $0.name == fixture.name })
+            #expect(diagnostic.acceptedHits.first { $0.name == fixture.name }?.bm25Score == nil)
+            #expect(diagnostic.acceptedHits.first { $0.name == fixture.name }?.embedScore == nil)
+
+            let capabilityResults = await CapabilitySearch.search(
+                query: "current headline web search",
+                topK: (methods: 0, tools: 5, skills: 0)
+            )
+            #expect(
+                capabilityResults.tools.contains { $0.entry.name == fixture.name },
+                "capabilities_search must still expose live registered tools when encrypted ToolDatabase is closed"
+            )
+
+            let compactIndex = try? await ToolIndexService.shared.buildCompactIndex()
+            #expect(compactIndex?.contains(fixture.name) == true)
+            #expect(compactIndex?.contains(fixture.description) == true)
+        }
+    }
 }
 
 private struct SearchExposureFixtureTool: OsaurusTool {

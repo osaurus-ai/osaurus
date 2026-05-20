@@ -129,10 +129,42 @@ public actor ToolIndexService {
     /// Build a compact text index for injection into system prompt.
     /// Only includes enabled tools from the registry.
     public func buildCompactIndex() async throws -> String {
-        let enabledNames = await MainActor.run {
-            Set(ToolRegistry.shared.listTools().filter { $0.enabled }.map { $0.name })
+        let enabledTools = await MainActor.run {
+            ToolRegistry.shared.listTools().filter { $0.enabled }
         }
-        let entries = try ToolDatabase.shared.loadAllEntries().filter { enabledNames.contains($0.name) }
+        let enabledNames = Set(enabledTools.map { $0.name })
+        let entries: [ToolIndexEntry]
+        if ToolDatabase.shared.isOpen {
+            entries = try ToolDatabase.shared.loadAllEntries().filter { enabledNames.contains($0.name) }
+        } else {
+            entries = await MainActor.run {
+                let excluded = ToolRegistry.capabilityToolNames
+                    .union(ToolRegistry.shared.runtimeManagedToolNames)
+                return enabledTools
+                    .filter { !excluded.contains($0.name) }
+                    .map { tool -> ToolIndexEntry in
+                        let runtime: ToolRuntime
+                        if ToolRegistry.shared.isSandboxTool(tool.name) {
+                            runtime = .sandbox
+                        } else if ToolRegistry.shared.isMCPTool(tool.name) {
+                            runtime = .mcp
+                        } else if ToolRegistry.shared.builtInToolNames.contains(tool.name) {
+                            runtime = .builtin
+                        } else {
+                            runtime = .native
+                        }
+                        return ToolIndexEntry(
+                            id: tool.name,
+                            name: tool.name,
+                            description: tool.description,
+                            runtime: runtime,
+                            source: .system,
+                            tokenCount: tool.estimatedTokens
+                        )
+                    }
+            }
+        }
+
         if entries.isEmpty { return "No tools available." }
 
         var lines: [String] = ["Available tools:"]

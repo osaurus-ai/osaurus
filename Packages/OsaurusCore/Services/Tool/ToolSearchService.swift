@@ -366,6 +366,27 @@ public actor ToolSearchService {
         minFusedScore: Float,
         allowedNames: Set<String>? = nil
     ) async -> (results: [ToolSearchResult], diagnostic: ToolSearchHybridDiagnostic) {
+        guard topK > 0 else {
+            let diagnostic = ToolSearchHybridDiagnostic(
+                indexedToolCount: (try? ToolDatabase.shared.entryCount()) ?? 0,
+                bm25Available: ToolDatabase.sanitizeFTS5Query(query) != nil,
+                allHits: [],
+                acceptedHits: [],
+                minFusedScore: minFusedScore
+            )
+            return ([], diagnostic)
+        }
+
+        if !ToolDatabase.shared.isOpen {
+            return await searchRegistryFallbackWithDiagnostic(
+                query: query,
+                topK: topK,
+                minFusedScore: minFusedScore,
+                allowedNames: allowedNames,
+                reason: "tool database closed"
+            )
+        }
+
         let indexedCount = (try? ToolDatabase.shared.entryCount()) ?? 0
         let bm25Available = ToolDatabase.sanitizeFTS5Query(query) != nil
 
@@ -478,6 +499,176 @@ public actor ToolSearchService {
             filteredByAllowlist: filteredByAllowlist
         )
         return (acceptedResults, diagnostic)
+    }
+
+    /// Registry fallback for local chat when encrypted tool storage is closed
+    /// by design. Built-in capability discovery must not require a storage-key
+    /// unlock or trigger Keychain UI; the live registry already has the usable
+    /// tool catalog in memory.
+    private func searchRegistryFallbackWithDiagnostic(
+        query: String,
+        topK: Int,
+        minFusedScore: Float,
+        allowedNames: Set<String>?,
+        reason: String
+    ) async -> (results: [ToolSearchResult], diagnostic: ToolSearchHybridDiagnostic) {
+        let indexedCount = (try? ToolDatabase.shared.entryCount()) ?? 0
+        let bm25Available = ToolDatabase.sanitizeFTS5Query(query) != nil
+        let entries = await registryEntries()
+
+        let scored: [(entry: ToolIndexEntry, score: Float)] =
+            entries
+            .compactMap { entry in
+                let score = Self.registryLexicalScore(
+                    query: query,
+                    name: entry.name,
+                    description: entry.description,
+                    toolsJSON: entry.toolsJSON
+                )
+                guard score > 0 else { return nil }
+                return (entry, score)
+            }
+            .sorted {
+                if $0.score == $1.score {
+                    return $0.entry.name.localizedCaseInsensitiveCompare($1.entry.name) == .orderedAscending
+                }
+                return $0.score > $1.score
+            }
+
+        let allHits = scored.map {
+            ToolSearchHybridDiagnostic.Hit(
+                name: $0.entry.name,
+                bm25Rank: nil,
+                bm25Score: nil,
+                embedRank: nil,
+                embedScore: nil,
+                fusedScore: $0.score
+            )
+        }
+
+        var acceptedResults: [ToolSearchResult] = []
+        var acceptedHits: [ToolSearchHybridDiagnostic.Hit] = []
+        var filteredByAllowlist: [String] = []
+
+        for item in scored {
+            if acceptedResults.count >= topK { break }
+            guard item.score >= minFusedScore else { continue }
+            if let allowedNames, !allowedNames.contains(item.entry.name) {
+                filteredByAllowlist.append(item.entry.name)
+                continue
+            }
+            let hit = ToolSearchHybridDiagnostic.Hit(
+                name: item.entry.name,
+                bm25Rank: nil,
+                bm25Score: nil,
+                embedRank: nil,
+                embedScore: nil,
+                fusedScore: item.score
+            )
+            acceptedResults.append(ToolSearchResult(entry: item.entry, searchScore: item.score))
+            acceptedHits.append(hit)
+        }
+
+        ToolIndexLogger.search.notice(
+            "Hybrid search using registry fallback: \(reason, privacy: .public); results=\(acceptedResults.count, privacy: .public)"
+        )
+
+        let diagnostic = ToolSearchHybridDiagnostic(
+            indexedToolCount: indexedCount,
+            bm25Available: bm25Available,
+            allHits: allHits,
+            acceptedHits: acceptedHits,
+            minFusedScore: minFusedScore,
+            filteredByAllowlist: filteredByAllowlist
+        )
+        return (acceptedResults, diagnostic)
+    }
+
+    private func registryEntries() async -> [ToolIndexEntry] {
+        await MainActor.run {
+            let excluded = ToolRegistry.capabilityToolNames
+                .union(ToolRegistry.shared.runtimeManagedToolNames)
+            return ToolRegistry.shared.listTools()
+                .filter { $0.enabled && !excluded.contains($0.name) }
+                .map { tool -> ToolIndexEntry in
+                    let runtime: ToolRuntime
+                    if ToolRegistry.shared.isSandboxTool(tool.name) {
+                        runtime = .sandbox
+                    } else if ToolRegistry.shared.isMCPTool(tool.name) {
+                        runtime = .mcp
+                    } else if ToolRegistry.shared.builtInToolNames.contains(tool.name) {
+                        runtime = .builtin
+                    } else {
+                        runtime = .native
+                    }
+                    return ToolIndexEntry(
+                        id: tool.name,
+                        name: tool.name,
+                        description: tool.description,
+                        runtime: runtime,
+                        toolsJSON: Self.registryParameterText(tool.parameters),
+                        source: .system,
+                        tokenCount: tool.estimatedTokens
+                    )
+                }
+        }
+    }
+
+    private static func registryLexicalScore(
+        query: String,
+        name: String,
+        description: String,
+        toolsJSON: String
+    ) -> Float {
+        let tokens = lexicalTokens(query)
+        guard !tokens.isEmpty else { return 0 }
+
+        let nameLower = name.lowercased()
+        let descriptionLower = description.lowercased()
+        let paramsLower = toolsJSON.lowercased()
+        let combined = "\(nameLower) \(descriptionLower) \(paramsLower)"
+
+        var score: Float = 0
+        let queryLower = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !queryLower.isEmpty, combined.contains(queryLower) {
+            score += 0.08
+        }
+
+        for token in tokens {
+            if nameLower == token { score += 0.08 }
+            if nameLower.contains(token) { score += 0.04 }
+            if descriptionLower.contains(token) { score += 0.03 }
+            if paramsLower.contains(token) { score += 0.02 }
+        }
+        return score
+    }
+
+    private static func lexicalTokens(_ text: String) -> [String] {
+        let raw = text
+            .lowercased()
+            .split { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "-" }
+            .map(String.init)
+        var seen = Set<String>()
+        return raw.filter { token in
+            token.count >= 2 && seen.insert(token).inserted
+        }
+    }
+
+    private static func registryParameterText(_ parameters: JSONValue?) -> String {
+        guard case .object(let schema) = parameters,
+            case .object(let properties) = schema["properties"]
+        else { return "" }
+
+        var parts: [String] = []
+        for (key, value) in properties {
+            parts.append(key)
+            if case .object(let propSchema) = value,
+                case .string(let desc) = propSchema["description"]
+            {
+                parts.append(desc)
+            }
+        }
+        return parts.joined(separator: " ")
     }
 
     /// The production `CapabilitySearch` cutoff was tuned for fused
