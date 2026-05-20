@@ -2,34 +2,92 @@
 //  ServerSettingsHelpers.swift
 //  osaurus
 //
-//  Shared SwiftUI helpers for the Server → Settings tab. The repeated
-//  "string-state-mirrors-an-optional-Int/Double" boilerplate that used
-//  to live inline in every section now lives here as
-//  `OptionalIntField` / `OptionalDoubleField` / `OptionalStringField`,
-//  along with the small `SectionStatus` / `PlannedSubsectionBanner`
-//  badge rows that mark each section's bridging state.
+//  Shared SwiftUI helpers for the Server → Settings tab:
+//
+//  • `ServerSettingsCard` — the consistent card wrapper used by every
+//    section. Pulls title + icon from `ServerSettingsSection` and only
+//    surfaces a status chip for `needsBridge` / `future` controls.
+//  • `ServerSettingsPlannedBanner` — inline "Planned" callout used
+//    inside `SettingsSubsection`s to flag fields vmlx persists today
+//    but Osaurus doesn't yet bridge.
+//  • `OptionalIntField` / `OptionalDoubleField` / `OptionalStringField`
+//    — boilerplate-killing wrappers around `StyledSettingsTextField`
+//    for the (very common) "text input mirrors an `Optional<T>` binding"
+//    pattern.
 //
 
 import SwiftUI
 
-// MARK: - Section status row
+// MARK: - Section card
 
-/// Section heading row that pairs a `ServerSettingsStatusBadge` with a
-/// one-line explanation of how the section's controls feed the runtime.
-struct ServerSettingsSectionStatus: View {
+/// Card wrapper used by every Server → Settings section. Renders a
+/// proper card header (title + subtitle), only surfacing the
+/// engineering-state status chip when the controls aren't fully wired
+/// yet (`needsBridge`, `future`).
+///
+/// `status` of `.engineReady` or `.hostOwned` is the common case and
+/// shows no chip — the title speaks for itself. Only off-by-default
+/// "Planned" or "Future" cards get the inline chip so the user knows
+/// the change won't take effect today.
+struct ServerSettingsCard<Content: View>: View {
+    let section: ServerSettingsSection
     let status: ServerSettingsStatusBadge.Status
     let blurb: String
+    var spacing: CGFloat = 18
+    @ViewBuilder let content: () -> Content
 
     @Environment(\.theme) private var theme
 
+    private var shouldShowChip: Bool {
+        switch status {
+        case .needsBridge, .future: return true
+        case .engineReady, .hostOwned: return false
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            ServerSettingsStatusBadge(status: status)
-            Text(LocalizedStringKey(blurb), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
+        VStack(alignment: .leading, spacing: spacing) {
+            header
+            content()
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Image(systemName: section.icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                    .frame(width: 20)
+
+                Text(LocalizedStringKey(section.title), bundle: .module)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                if shouldShowChip {
+                    ServerSettingsStatusBadge(status: status)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if !blurb.isEmpty {
+                Text(LocalizedStringKey(blurb), bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 30)
+            }
         }
     }
 }

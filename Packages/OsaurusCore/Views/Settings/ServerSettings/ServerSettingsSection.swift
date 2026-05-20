@@ -1,0 +1,108 @@
+//
+//  ServerSettingsSection.swift
+//  osaurus
+//
+//  Anchor + grouping model for the Server → Settings sidebar
+//  navigation. Each case is the `.id(...)` of one section card in
+//  `ServerSettingsTabContent`; the sidebar uses these to render the
+//  left rail and to drive `ScrollViewReader.scrollTo(...)`.
+//
+
+import SwiftUI
+
+/// One anchor row in the Server → Settings sidebar. Order of the
+/// `allCases` array is also the visual order in the panel (sidebar +
+/// scroll content), so keep new cases inserted in the position they
+/// should render.
+enum ServerSettingsSection: String, CaseIterable, Hashable, Identifiable {
+    case connection
+    case authentication
+    case sampling
+    case concurrency
+    case cache
+    case speculative
+    case liveActivity
+    case multimodal
+    case tools
+    case modelMemory
+    case power
+    case requestLimits
+
+    var id: String { rawValue }
+
+    /// User-facing row title.
+    var title: String {
+        switch self {
+        case .connection: return "Connection"
+        case .authentication: return "Authentication"
+        case .sampling: return "Sampling Defaults"
+        case .concurrency: return "Concurrency & Batching"
+        case .cache: return "Cache"
+        case .speculative: return "Speculative Decoding"
+        case .liveActivity: return "Live Activity"
+        case .multimodal: return "Multimodal"
+        case .tools: return "Tools & Templates"
+        case .modelMemory: return "Model Memory"
+        case .power: return "Power & Sleep"
+        case .requestLimits: return "Request Limits"
+        }
+    }
+
+    /// SF Symbol used for the sidebar row icon.
+    var icon: String {
+        switch self {
+        case .connection: return "network"
+        case .authentication: return "key.horizontal"
+        case .sampling: return "slider.horizontal.3"
+        case .concurrency: return "gauge.with.dots.needle.bottom.0percent"
+        case .cache: return "externaldrive.connected.to.line.below"
+        case .speculative: return "bolt.horizontal"
+        case .liveActivity: return "waveform.path.ecg"
+        case .multimodal: return "photo.on.rectangle.angled"
+        case .tools: return "wrench.and.screwdriver"
+        case .modelMemory: return "memorychip"
+        case .power: return "powersleep"
+        case .requestLimits: return "shield.lefthalf.filled"
+        }
+    }
+
+    var group: ServerSettingsSectionGroup {
+        switch self {
+        case .connection, .authentication:
+            return .server
+        case .sampling:
+            return .generation
+        case .concurrency, .cache, .speculative, .liveActivity:
+            return .performance
+        case .multimodal, .tools:
+            return .capabilities
+        case .modelMemory, .power, .requestLimits:
+            return .lifecycle
+        }
+    }
+}
+
+/// Sidebar group header. Order here drives the visual order of groups
+/// in the sidebar; sections inside a group preserve `ServerSettingsSection.allCases` order.
+enum ServerSettingsSectionGroup: String, CaseIterable, Hashable {
+    case server
+    case generation
+    case performance
+    case capabilities
+    case lifecycle
+
+    var title: String {
+        switch self {
+        case .server: return "Server"
+        case .generation: return "Generation"
+        case .performance: return "Performance"
+        case .capabilities: return "Capabilities"
+        case .lifecycle: return "Lifecycle"
+        }
+    }
+
+    /// Sections in this group, preserving `ServerSettingsSection.allCases` order.
+    var sections: [ServerSettingsSection] {
+        ServerSettingsSection.allCases.filter { $0.group == self }
+    }
+}

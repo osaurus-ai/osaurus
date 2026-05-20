@@ -2,7 +2,7 @@
 //  AdvancedHTTPSection.swift
 //  osaurus
 //
-//  HTTP body limits for the Server → Settings tab. Persisted to
+//  Request body limits for the Server → Settings tab. Persisted to
 //  `server.json` and enforced by Osaurus's HTTP pipeline (`/v1/...`
 //  endpoints and the unauthenticated `/pair` route).
 //
@@ -13,29 +13,29 @@ struct AdvancedHTTPSection: View {
     @Binding var draft: ServerConfiguration
 
     var body: some View {
-        SettingsSection(title: "Advanced HTTP", icon: "shield.lefthalf.filled") {
-            VStack(alignment: .leading, spacing: 20) {
-                ServerSettingsSectionStatus(
-                    status: .hostOwned,
-                    blurb: "Hard caps applied by Osaurus's HTTP pipeline."
-                )
+        ServerSettingsCard(
+            section: .requestLimits,
+            status: .hostOwned,
+            blurb:
+                "Hard caps on incoming request bodies. Requests larger than these are rejected with HTTP 413."
+        ) {
+            OptionalIntField(
+                label: "Max Request Body (MB)",
+                placeholder: "32",
+                help:
+                    "Applies to chat / completions / embeddings endpoints. Raise for very long prompts or large file uploads.",
+                value: requestBodyBinding,
+                clamp: 1 ... 8192
+            )
 
-                OptionalIntField(
-                    label: "Max Request Body (MB)",
-                    placeholder: "32",
-                    help: "Reject bodies larger than this with 413.",
-                    value: requestBodyBinding,
-                    clamp: 1 ... 8192
-                )
-
-                OptionalIntField(
-                    label: "Max Pairing Body (KB)",
-                    placeholder: "64",
-                    help: "Tighter cap for the unauthenticated /pair endpoint.",
-                    value: pairingBodyBinding,
-                    clamp: 1 ... 1024 * 1024
-                )
-            }
+            OptionalIntField(
+                label: "Max Pairing Body (KB)",
+                placeholder: "64",
+                help:
+                    "Tighter cap for the unauthenticated /pair endpoint. Should stay small.",
+                value: pairingBodyBinding,
+                clamp: 1 ... 1024 * 1024
+            )
         }
     }
 

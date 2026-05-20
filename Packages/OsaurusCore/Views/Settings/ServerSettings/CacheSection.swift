@@ -2,9 +2,9 @@
 //  CacheSection.swift
 //  osaurus
 //
-//  Cache controls (prefix / paged KV / disk / codec / rotating-window /
-//  SSM rederive) for the Server → Settings tab. Bridged end-to-end
-//  through `settings.cacheCoordinatorConfig(...)` inside
+//  Cache controls (prefix / paged KV / disk / codec / per-session
+//  window / SSM rederive) for the Server → Settings tab. Bridged
+//  end-to-end through `settings.cacheCoordinatorConfig(...)` inside
 //  `ModelRuntime.buildCacheCoordinatorConfig`.
 //
 
@@ -13,96 +13,96 @@ import SwiftUI
 
 struct CacheSection: View {
     @Binding var draft: VMLXServerRuntimeSettings
-    @Environment(\.theme) private var theme
 
     var body: some View {
-        SettingsSection(title: "Cache", icon: "externaldrive.connected.to.line.below") {
-            VStack(alignment: .leading, spacing: 20) {
-                ServerSettingsSectionStatus(
-                    status: .engineReady,
-                    blurb:
-                        "Bridged through settings.cacheCoordinatorConfig(...) into BatchEngine. Auto defaults derive from the model's resolved cache topology."
-                )
+        ServerSettingsCard(
+            section: .cache,
+            status: .engineReady,
+            blurb:
+                "Reuses previously-computed prompt prefixes so the second turn of a conversation starts faster than the first."
+        ) {
+            SettingsToggle(
+                title: L("Prefix Cache"),
+                description:
+                    "Reuse cached prompt prefixes across requests for faster TTFT. When off, GPU and disk reuse are also disabled.",
+                isOn: $draft.cache.prefix.enabled
+            )
 
-                SettingsToggle(
-                    title: L("Prefix Cache"),
-                    description: "Master switch. When off, paged KV and disk reuse are also disabled.",
-                    isOn: $draft.cache.prefix.enabled
-                )
+            SettingsDivider()
 
-                SettingsDivider()
+            SettingsSubsection(label: "GPU Cache (Paged KV)") {
+                VStack(alignment: .leading, spacing: 12) {
+                    SettingsToggle(
+                        title: L("Enable GPU Cache"),
+                        description:
+                            "Block-based KV cache held in GPU memory. Required for cross-request sharing.",
+                        isOn: $draft.cache.pagedKV.enabled
+                    )
 
-                SettingsSubsection(label: "Paged KV (L1)") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SettingsToggle(
-                            title: L("Enable Paged KV"),
-                            description: "Block-based KV cache in GPU memory.",
-                            isOn: $draft.cache.pagedKV.enabled
-                        )
+                    OptionalIntField(
+                        label: "Block Size (tokens)",
+                        placeholder: "Blank = engine default (64)",
+                        help: "Tokens per paged block.",
+                        value: $draft.cache.pagedKV.blockSize
+                    )
 
-                        OptionalIntField(
-                            label: "Paged Block Size",
-                            placeholder: "Empty = engine default (64)",
-                            help: "Tokens per paged block.",
-                            value: $draft.cache.pagedKV.blockSize
-                        )
-
-                        OptionalIntField(
-                            label: "Max Paged Blocks",
-                            placeholder: "Empty = engine default (1000)",
-                            help: "Cap on total paged blocks across slots.",
-                            value: $draft.cache.pagedKV.maxBlocks
-                        )
-                    }
+                    OptionalIntField(
+                        label: "Max Blocks",
+                        placeholder: "Blank = engine default (1000)",
+                        help: "Upper bound on GPU cache memory.",
+                        value: $draft.cache.pagedKV.maxBlocks
+                    )
                 }
+            }
 
-                SettingsDivider()
+            SettingsDivider()
 
-                SettingsSubsection(label: "Disk Cache (L2)") {
-                    diskCacheControls
+            SettingsSubsection(label: "Disk Spillover") {
+                diskCacheControls
+            }
+
+            SettingsDivider()
+
+            SettingsSubsection(label: "On-the-fly Compression") {
+                liveKVCodecControls
+            }
+
+            SettingsDivider()
+
+            SettingsSubsection(label: "Per-Session Window Cap") {
+                VStack(alignment: .leading, spacing: 12) {
+                    OptionalIntField(
+                        label: "Per-Session Window (tokens)",
+                        placeholder: "Blank = engine default",
+                        help:
+                            "Maximum cached tokens per chat slot. 65 536 is the recommended default.",
+                        value: $draft.cache.defaultMaxKVSize
+                    )
+
+                    OptionalDoubleField(
+                        label: "Long-Prompt Window Multiplier",
+                        placeholder: "Default 2.0",
+                        help:
+                            "Allow prompts up to (window × multiplier) before the cap kicks in.",
+                        value: longPromptBinding,
+                        format: "%.2f"
+                    )
                 }
+            }
 
-                SettingsDivider()
+            SettingsDivider()
 
-                SettingsSubsection(label: "Live KV Codec") {
-                    liveKVCodecControls
-                }
+            SettingsToggle(
+                title: L("Re-derive SSM State After Generation"),
+                description:
+                    "Hybrid Mamba models only. Off by default since chat workloads rarely re-hit the same boundary on the next turn.",
+                isOn: $draft.cache.enableSSMReDerive
+            )
 
-                SettingsDivider()
+            SettingsDivider()
 
-                SettingsSubsection(label: "Rotating Window") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        OptionalIntField(
-                            label: "Default Max KV Size (tokens)",
-                            placeholder: "Empty = engine default",
-                            help: "Per-slot ring window. 65536 is the recommended default.",
-                            value: $draft.cache.defaultMaxKVSize
-                        )
-
-                        OptionalDoubleField(
-                            label: "Long Prompt Multiplier",
-                            placeholder: "Default 2.0",
-                            help: "Cap kicks in past defaultMaxKVSize × multiplier.",
-                            value: longPromptBinding,
-                            format: "%.2f"
-                        )
-                    }
-                }
-
-                SettingsDivider()
-
-                SettingsToggle(
-                    title: L("SSM Re-derive"),
-                    description:
-                        "Runs a post-generation SSM-state re-derive for hybrid Mamba/Arrays caches.",
-                    isOn: $draft.cache.enableSSMReDerive
-                )
-
-                SettingsDivider()
-
-                SettingsSubsection(label: "Planned Cache Controls") {
-                    plannedControls
-                }
+            SettingsSubsection(label: "Planned Cache Controls") {
+                plannedControls
             }
         }
     }
@@ -114,27 +114,28 @@ struct CacheSection: View {
         VStack(alignment: .leading, spacing: 12) {
             if draft.cache.pagedKV.enabled {
                 SettingsToggle(
-                    title: L("Block Disk Cache"),
-                    description: "Persists paged blocks to disk for cross-process reuse.",
+                    title: L("Disk Cache"),
+                    description:
+                        "Spill paged blocks to disk so cache survives restarts and shares across processes.",
                     isOn: $draft.cache.blockDisk.enabled
                 )
                 OptionalDoubleField(
-                    label: "Block Disk Max Size (GB)",
-                    placeholder: "Empty = engine default (10 GB)",
-                    help: "Soft cap before eviction.",
+                    label: "Disk Cache Size (GB)",
+                    placeholder: "Blank = engine default (10 GB)",
+                    help: "Soft cap before older entries are evicted.",
                     value: $draft.cache.blockDisk.maxSizeGB,
                     format: "%.1f"
                 )
             } else {
                 SettingsToggle(
                     title: L("Legacy Disk Cache"),
-                    description: "Falls back to legacy disk layout when paged KV is off.",
+                    description: "Used when the GPU paged cache is off.",
                     isOn: $draft.cache.legacyDisk.enabled
                 )
                 OptionalDoubleField(
-                    label: "Legacy Disk Max Size (GB)",
-                    placeholder: "Empty = engine default (10 GB)",
-                    help: "Soft cap before eviction.",
+                    label: "Disk Cache Size (GB)",
+                    placeholder: "Blank = engine default (10 GB)",
+                    help: "Soft cap before older entries are evicted.",
                     value: $draft.cache.legacyDisk.maxSizeGB,
                     format: "%.1f"
                 )
@@ -148,7 +149,7 @@ struct CacheSection: View {
             SettingsField(
                 label: "Codec",
                 hint:
-                    "TurboQuant requires explicit key/value bit widths. Other modes use the engine default."
+                    "Compress KV cache entries in memory. TurboQuant trades quality for footprint and needs explicit bit widths."
             ) {
                 Picker("", selection: $draft.cache.liveKVCodec) {
                     ForEach(VMLXKVCacheCodec.allCases, id: \.self) { codec in
@@ -184,12 +185,14 @@ struct CacheSection: View {
     private var plannedControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             ServerSettingsPlannedBanner(
-                blurb: "Persisted today; cacheCoordinatorConfig does not yet consume these."
+                blurb:
+                    "Persisted today; the cache coordinator does not yet consume these. Ships in a follow-up."
             )
 
             SettingsToggle(
                 title: L("Legacy Entry-Count Cache"),
-                description: "Use the older entry-count prefix cache instead of the new heap cache.",
+                description:
+                    "Use the older entry-count prefix cache instead of the new heap-based one.",
                 isOn: $draft.cache.prefix.legacyEntryCountCache
             )
 

@@ -13,43 +13,42 @@ struct ModelResidencySection: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        SettingsSection(title: "Model Residency", icon: "memorychip") {
-            VStack(alignment: .leading, spacing: 16) {
-                ServerSettingsSectionStatus(
-                    status: .hostOwned,
-                    blurb: "Osaurus-owned model memory policy. Persisted to server.json."
-                )
-
-                SettingsSubsection(label: "Eviction Policy") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Picker("", selection: $draft.modelEvictionPolicy) {
-                            ForEach(ModelEvictionPolicy.allCases, id: \.self) { policy in
-                                Text(policy.rawValue).tag(policy)
-                            }
+        ServerSettingsCard(
+            section: .modelMemory,
+            status: .hostOwned,
+            blurb:
+                "When to evict a loaded model from RAM, and how long to keep it warm after the last request.",
+            spacing: 16
+        ) {
+            SettingsSubsection(label: "Eviction Policy") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("", selection: $draft.modelEvictionPolicy) {
+                        ForEach(ModelEvictionPolicy.allCases, id: \.self) { policy in
+                            Text(policy.rawValue).tag(policy)
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-
-                        Text(draft.modelEvictionPolicy.description)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+
+                    Text(draft.modelEvictionPolicy.description)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
                 }
+            }
 
-                SettingsSubsection(label: "Keep Model Loaded") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Picker("", selection: $draft.modelIdleResidencyPolicy) {
-                            ForEach(ModelIdleResidencyPolicy.presets, id: \.self) { policy in
-                                Text(policy.displayName).tag(policy)
-                            }
+            SettingsSubsection(label: "Keep Model Loaded") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("", selection: $draft.modelIdleResidencyPolicy) {
+                        ForEach(ModelIdleResidencyPolicy.presets, id: \.self) { policy in
+                            Text(policy.displayName).tag(policy)
                         }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-
-                        Text(draft.modelIdleResidencyPolicy.description)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
                     }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+
+                    Text(draft.modelIdleResidencyPolicy.description)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
                 }
             }
         }

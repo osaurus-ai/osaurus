@@ -2,15 +2,23 @@
 //  ServerSettingsTabContent.swift
 //  osaurus
 //
-//  Centralized Server → Settings panel. Single editing surface for
-//  every runtime knob exposed by `VMLXServerRuntimeSettings` (network,
-//  generation, concurrency, cache, multimodal, MTP, power, tools),
-//  plus the Osaurus-specific model residency and HTTP body limits that
-//  still live on `ServerConfiguration`.
+//  Server → Settings panel. Two-pane layout with a sticky action bar:
 //
-//  Each section lives in its own file under `ServerSettings/`. This
-//  file owns the draft state, the save-pending bookkeeping, validation
-//  banner, restart banner, and the Save / Reset action row.
+//   ┌──────────────┬──────────────────────────────────────────┐
+//   │ Sidebar      │  [Validation banner — only on errors]    │
+//   │ (grouped     │                                          │
+//   │  anchors,    │  ScrollView of section cards             │
+//   │  pure nav)   │                                          │
+//   ├──────────────┴──────────────────────────────────────────┤
+//   │ [● Unsaved]  [⟳ Restart required]    [Reset] [Save]     │
+//   └─────────────────────────────────────────────────────────┘
+//
+//  Click an anchor → `ScrollViewReader.scrollTo(...)`. Save / Reset
+//  live in the full-width sticky `ServerSettingsActionBar` at the
+//  bottom of the window so they're always in the user's eye line and
+//  feel anchored to the entire panel, not just the content pane. The
+//  restart-required signal lives as a chip in that same bar (not a
+//  top banner) since it's "state about what happens when you Save".
 //
 
 import AppKit
@@ -34,6 +42,7 @@ struct ServerSettingsTabContent: View {
     @State private var hasLoaded: Bool = false
     @State private var saving: Bool = false
     @State private var successMessage: String?
+    @State private var activeSection: ServerSettingsSection = .connection
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -61,44 +70,39 @@ struct ServerSettingsTabContent: View {
         draft.validationIssues()
     }
 
+    /// True when the current draft would force a server-side rebind on
+    /// save AND the server is actually running. Drives the inline
+    /// "Restart required" chip in `ServerSettingsActionBar`.
+    private var requiresRestart: Bool { pendingRestart && server.isRunning }
+
     var body: some View {
-        ZStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    if pendingRestart && server.isRunning {
-                        restartBanner
-                    }
-                    if !validationIssues.isEmpty {
-                        validationIssuesBanner
-                    }
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    ServerSettingsSidebarNav(selection: $activeSection)
+                        .frame(width: 220)
 
-                    NetworkSection(draft: $draft)
-                    GenerationDefaultsSection(draft: $draft)
-                    ConcurrencySection(draft: $draft)
-                    CacheSection(draft: $draft)
-                    MultimodalSection(draft: $draft)
-                    MTPSection(draft: $draft)
-                    PowerSection(draft: $draft)
-                    ToolsTemplatesSection(draft: $draft)
-                    ModelResidencySection(draft: $draftLegacy)
-                    AdvancedHTTPSection(draft: $draftLegacy)
-
-                    actionRow
+                    contentPane
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                ServerSettingsActionBar(
+                    hasUnsavedChanges: hasUnsavedChanges,
+                    requiresRestart: requiresRestart,
+                    saving: saving,
+                    onSave: { Task { await save() } },
+                    onReset: resetToDefaults
+                )
             }
 
             if let message = successMessage {
-                VStack {
-                    Spacer()
-                    ThemedToastView(message, type: .success)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .padding(.bottom, 20)
-                }
+                ThemedToastView(message, type: .success)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .padding(.bottom, 70)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.primaryBackground)
         .onAppear {
             guard !hasLoaded else { return }
             hasLoaded = true
@@ -113,107 +117,73 @@ struct ServerSettingsTabContent: View {
         }
     }
 
-    // MARK: - Banners
+    // MARK: - Content pane
 
-    private var validationIssuesBanner: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Text("Configuration issues", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
+    private var contentPane: some View {
+        VStack(spacing: 0) {
+            validationBanner
+            sectionScroll
+        }
+    }
+
+    /// Top-of-content validation banner. Restart-required state is
+    /// shown inline in `ServerSettingsActionBar`, so the top region is
+    /// reserved for actionable error detail only.
+    @ViewBuilder
+    private var validationBanner: some View {
+        if !validationIssues.isEmpty {
+            ServerSettingsValidationBanner(issues: validationIssues)
+                .padding(EdgeInsets(top: 18, leading: 24, bottom: 6, trailing: 24))
+        }
+    }
+
+    private var sectionScroll: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 24) {
+                    ConnectionSection(draft: $draft)
+                        .id(ServerSettingsSection.connection)
+                    AuthenticationSection(draft: $draft)
+                        .id(ServerSettingsSection.authentication)
+                    GenerationDefaultsSection(draft: $draft)
+                        .id(ServerSettingsSection.sampling)
+                    ConcurrencySection(draft: $draft)
+                        .id(ServerSettingsSection.concurrency)
+                    CacheSection(draft: $draft)
+                        .id(ServerSettingsSection.cache)
+                    MTPSection(draft: $draft)
+                        .id(ServerSettingsSection.speculative)
+                    LiveActivitySection()
+                        .id(ServerSettingsSection.liveActivity)
+                    MultimodalSection(draft: $draft)
+                        .id(ServerSettingsSection.multimodal)
+                    ToolsTemplatesSection(draft: $draft)
+                        .id(ServerSettingsSection.tools)
+                    ModelResidencySection(draft: $draftLegacy)
+                        .id(ServerSettingsSection.modelMemory)
+                    PowerSection(draft: $draft)
+                        .id(ServerSettingsSection.power)
+                    AdvancedHTTPSection(draft: $draftLegacy)
+                        .id(ServerSettingsSection.requestLimits)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(validationIssues, id: \.field) { issue in
-                    issueRow(issue)
+            // Gives `scrollTo(_:anchor: .top)` a breathing-room buffer so
+            // anchored sections don't kiss the top edge of the scroll.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Color.clear.frame(height: 12)
+            }
+            .onChange(of: activeSection) { _, new in
+                withAnimation(.smooth(duration: 0.45)) {
+                    proxy.scrollTo(new, anchor: .top)
                 }
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(banneredBackground(color: theme.warningColor))
-    }
-
-    private func issueRow(_ issue: VMLXServerSettingsIssue) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(
-                systemName: issue.severity == .error
-                    ? "xmark.octagon.fill" : "exclamationmark.bubble.fill"
-            )
-            .font(.system(size: 10))
-            .foregroundColor(issue.severity == .error ? theme.errorColor : theme.warningColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(issue.field)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                Text(issue.message)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var restartBanner: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.warningColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Server restart required", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Text(
-                    "Saving these changes will restart the NIO server to bind the new socket and refresh middleware.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-            }
-            Spacer()
-        }
-        .padding(12)
-        .background(banneredBackground(color: theme.warningColor))
-    }
-
-    private func banneredBackground(color: Color) -> some View {
-        RoundedRectangle(cornerRadius: 10)
-            .fill(color.opacity(0.06))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(color.opacity(0.15), lineWidth: 1)
-            )
     }
 
     // MARK: - Actions
-
-    private var actionRow: some View {
-        HStack(spacing: 12) {
-            Spacer()
-            Button(action: resetToDefaults) {
-                Text("Reset to Defaults", bundle: .module)
-            }
-            .buttonStyle(SettingsButtonStyle())
-            .disabled(saving)
-
-            Button(action: { Task { await save() } }) {
-                HStack(spacing: 6) {
-                    if saving {
-                        ProgressView().scaleEffect(0.6)
-                    } else {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    Text(saving ? "Saving…" : "Save Changes", bundle: .module)
-                }
-            }
-            .buttonStyle(SettingsButtonStyle(isPrimary: true))
-            .disabled(saving || !hasUnsavedChanges)
-        }
-        .padding(.top, 8)
-    }
 
     private func resetToDefaults() {
         // Migrate from the current legacy ServerConfiguration so the
@@ -249,19 +219,21 @@ struct ServerSettingsTabContent: View {
         }
 
         await server.saveRuntimeSettings(draft)
+        mirrorMaxBatchSizeToUserDefaults(draft.concurrency.maxConcurrentSequences)
+        showSuccess(L("Settings saved successfully"))
+    }
 
-        // Mirror BatchEngine concurrency into the legacy UserDefaults
-        // key so existing readers stay in sync when nothing else
-        // consults the runtime snapshot.
+    /// Mirror BatchEngine concurrency into the legacy UserDefaults key
+    /// so existing readers stay in sync when nothing else consults the
+    /// runtime snapshot.
+    private func mirrorMaxBatchSizeToUserDefaults(_ value: Int?) {
         let defaults = UserDefaults.standard
         let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        if let maxConcurrent = draft.concurrency.maxConcurrentSequences {
-            defaults.set(maxConcurrent, forKey: key)
+        if let value {
+            defaults.set(value, forKey: key)
         } else {
             defaults.removeObject(forKey: key)
         }
-
-        showSuccess(L("Settings saved successfully"))
     }
 
     private func showSuccess(_ message: String) {

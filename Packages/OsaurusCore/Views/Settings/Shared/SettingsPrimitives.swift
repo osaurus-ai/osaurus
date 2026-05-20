@@ -116,18 +116,9 @@ struct StyledSettingsTextField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                Spacer()
-
-                Text(LocalizedStringKey(help), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
+            Text(LocalizedStringKey(label), bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
 
             HStack(spacing: 10) {
                 ZStack(alignment: .leading) {
@@ -167,6 +158,13 @@ struct StyledSettingsTextField: View {
                             )
                     )
             )
+
+            if !help.isEmpty {
+                Text(LocalizedStringKey(help), bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
@@ -200,18 +198,9 @@ struct SettingsSliderField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                Spacer()
-
-                Text(LocalizedStringKey(help), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
+            Text(LocalizedStringKey(label), bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
 
             HStack(spacing: 12) {
                 Text(String(format: formatString, range.lowerBound))
@@ -260,6 +249,13 @@ struct SettingsSliderField: View {
                             .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
                     )
             )
+
+            if !help.isEmpty {
+                Text(LocalizedStringKey(help), bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .onAppear {
             sliderValue = effectiveValue
@@ -300,18 +296,9 @@ struct SettingsStepperField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                Spacer()
-
-                Text(LocalizedStringKey(help), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
+            Text(LocalizedStringKey(label), bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
 
             HStack(spacing: 0) {
                 ZStack(alignment: .leading) {
@@ -387,6 +374,13 @@ struct SettingsStepperField: View {
                             )
                     )
             )
+
+            if !help.isEmpty {
+                Text(LocalizedStringKey(help), bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -534,10 +528,11 @@ struct ServerSettingsStatusBadge: View {
     var body: some View {
         let color = status.color(theme: themeManager.currentTheme)
         Text(LocalizedStringKey(status.label), bundle: .module)
-            .font(.system(size: 9, weight: .bold))
+            .font(.system(size: 10, weight: .semibold))
             .foregroundColor(color)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 7)
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.12)))
+            .overlay(Capsule().stroke(color.opacity(0.25), lineWidth: 0.5))
     }
 }
