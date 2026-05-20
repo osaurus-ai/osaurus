@@ -114,6 +114,17 @@ struct RuntimePolicySourceTests {
         #expect(source.contains("Skipping chat history persistence: storage key is not already unlocked"))
     }
 
+    @Test("memory ingest fails fast when memory is disabled")
+    func memoryIngestFailsFastWhenMemoryDisabled() throws {
+        let source = try Self.source("Networking/HTTPHandler.swift")
+        let disabledGate = try #require(source.range(of: "guard MemoryConfigurationStore.load().enabled else"))
+        let waitForOpen = try #require(source.range(of: "MemoryDatabase.waitForSharedOpen(timeoutSeconds: 8)"))
+
+        #expect(disabledGate.lowerBound < waitForOpen.lowerBound)
+        #expect(source.contains(#""error":"memory_disabled""#))
+        #expect(source.contains(#"errorMessage: "memory disabled""#))
+    }
+
     @Test("scheduler startup does not unlock storage key")
     func schedulerStartupDoesNotUnlockStorageKey() throws {
         let source = try Self.source("AppDelegate.swift")

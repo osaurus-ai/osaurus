@@ -1877,6 +1877,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         let cors = stateRef.value.corsHeaders
+        guard MemoryConfigurationStore.load().enabled else {
+            let responseBody = #"{"error":"memory_disabled","message":"Memory is disabled"}"#
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .serviceUnavailable,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + cors,
+                body: responseBody
+            )
+            logRequest(
+                method: "POST",
+                path: "/memory/ingest",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseBody: responseBody,
+                responseStatus: 503,
+                startTime: startTime,
+                errorMessage: "memory disabled"
+            )
+            return
+        }
+
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
