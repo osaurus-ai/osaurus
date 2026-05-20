@@ -331,9 +331,7 @@ struct ModelDownloadView: View {
                 ],
                 badges: modelManager.activeDownloadsCount > 0
                     ? [.downloaded: modelManager.activeDownloadsCount]
-                    : nil,
-                searchText: $searchText,
-                searchPlaceholder: "Search models"
+                    : nil
             )
         }
     }
@@ -427,7 +425,10 @@ struct ModelDownloadView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Text("Filters", bundle: .module)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(0.6)
+                        .foregroundColor(theme.tertiaryText)
+                        .textCase(.uppercase)
                     Spacer()
                     if filterState.isActive {
                         Button {
@@ -657,7 +658,7 @@ struct ModelDownloadView: View {
                     sortFilterBar
                         .padding(.horizontal, 24)
                         .padding(.top, 12)
-                        .padding(.bottom, 4)
+                        .padding(.bottom, 12)
 
                     ScrollView {
                         VStack(spacing: 12) {
@@ -670,20 +671,7 @@ struct ModelDownloadView: View {
                             } else {
                                 switch selectedTab {
                                 case .all:
-                                    if !lists.suggested.isEmpty {
-                                        modelGridSection(
-                                            title: L("Recommended"),
-                                            models: lists.suggested,
-                                            isFirst: true
-                                        )
-                                    }
-                                    if !lists.others.isEmpty {
-                                        modelGridSection(
-                                            title: L("Others"),
-                                            models: lists.others,
-                                            isFirst: lists.suggested.isEmpty
-                                        )
-                                    }
+                                    modelGrid(models: lists.displayed)
                                 case .downloaded:
                                     modelGrid(models: lists.downloaded)
                                 }
@@ -719,6 +707,8 @@ struct ModelDownloadView: View {
 
     private var sortFilterBar: some View {
         HStack(spacing: 12) {
+            SearchField(text: $searchText, placeholder: "Search models", width: 240, compact: true)
+
             Spacer()
 
             // Sort button
@@ -727,15 +717,15 @@ struct ModelDownloadView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 13))
+                        .font(.system(size: 12))
                     if sortOption == .recommended {
                         Text("Sort", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                     } else {
                         Text("Sort: ", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             + Text(sortOption.displayName)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                     }
                 }
                 .lineLimit(1)
@@ -769,15 +759,15 @@ struct ModelDownloadView: View {
                         systemName: filterState.isActive
                             ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
                     )
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     if let active = activeFilterSummary {
                         Text("Filter: ", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             + Text(active)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                     } else {
                         Text("Filter", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                     }
                 }
                 .lineLimit(1)
@@ -1088,11 +1078,14 @@ struct ModelDownloadView: View {
     private func computeGridLists() -> GridLists {
         let mem = systemMonitor.totalMemoryGB
 
-        let availSearched = SearchService.filterModels(modelManager.availableModels, with: debouncedSearchText)
+        let osaurusOnly = modelManager.availableModels.filter { Self.isOsaurusAI($0) }
+        let osaurusSuggested = modelManager.suggestedModels.filter { Self.isOsaurusAI($0) }
+
+        let availSearched = SearchService.filterModels(osaurusOnly, with: debouncedSearchText)
         let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
         let allFiltered = applySort(to: availFiltered)
 
-        let suggSearched = SearchService.filterModels(modelManager.suggestedModels, with: debouncedSearchText)
+        let suggSearched = SearchService.filterModels(osaurusSuggested, with: debouncedSearchText)
         let suggFiltered = filterState.apply(to: suggSearched, totalMemoryGB: mem)
         let suggested = sortedSuggested(suggFiltered)
 
@@ -1220,6 +1213,10 @@ struct ModelDownloadView: View {
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
         }
+    }
+
+    private static func isOsaurusAI(_ model: MLXModel) -> Bool {
+        model.id.lowercased().hasPrefix("osaurusai/")
     }
 
     private func compatibilityRank(_ model: MLXModel) -> Int {
@@ -1353,6 +1350,8 @@ private struct DownloadStatusIndicator: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)
             }
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(
