@@ -21,7 +21,14 @@ final class ChatSessionsManager: ObservableObject {
     @Published var currentSessionId: UUID?
 
     private init() {
-        refresh()
+        Task { [weak self] in
+            do {
+                try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+            } catch {
+                print("[ChatSessionsManager] Storage key prewarm failed before session refresh: \(error)")
+            }
+            self?.refresh()
+        }
     }
 
     // MARK: - Public API

@@ -82,13 +82,45 @@ struct RuntimePolicySourceTests {
     func appDelegatePrewarmsStorageKeyBeforeDatabaseOpen() throws {
         let source = try Self.source("AppDelegate.swift")
         let prewarmTask = try #require(source.range(of: "let storageKeyPrewarmTask = Task.detached"))
-        let prewarmCall = try #require(source.range(of: "try StorageKeyManager.shared.prewarmCurrentKey()"))
+        let prewarmCall = try #require(
+            source.range(of: "try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()")
+        )
         let awaitPrewarm = try #require(source.range(of: "await storageKeyPrewarmTask.value"))
         let firstDatabaseOpen = try #require(source.range(of: "try MemoryDatabase.shared.open()"))
 
         #expect(prewarmTask.lowerBound < firstDatabaseOpen.lowerBound)
         #expect(prewarmCall.lowerBound < firstDatabaseOpen.lowerBound)
         #expect(awaitPrewarm.lowerBound < firstDatabaseOpen.lowerBound)
+    }
+
+    @Test("scheduler startup waits for storage-key prewarm")
+    func schedulerStartupWaitsForStorageKeyPrewarm() throws {
+        let source = try Self.source("AppDelegate.swift")
+        let schedulerBlock = try #require(source.range(of: "Task { @MainActor in\n            await storageKeyPrewarmTask.value\n            NextRunScheduler.shared.start()\n        }"))
+        let prewarmTask = try #require(source.range(of: "let storageKeyPrewarmTask = Task.detached"))
+
+        #expect(prewarmTask.lowerBound < schedulerBlock.lowerBound)
+    }
+
+    @Test("HTTP chat persistence runs after response path")
+    func httpChatPersistenceRunsAfterResponsePath() throws {
+        let source = try Self.source("Networking/HTTPHandler.swift")
+
+        #expect(source.contains("ChatHistoryWriter.persistInBackground("))
+        #expect(!source.contains("ChatHistoryWriter.persist(\n                            source: .http"))
+    }
+
+    @Test("chat session manager refresh does not synchronously open history on init")
+    func chatSessionManagerRefreshDoesNotSynchronouslyOpenHistoryOnInit() throws {
+        let source = try Self.source("Managers/Chat/ChatSessionsManager.swift")
+        let initStart = try #require(source.range(of: "private init() {"))
+        let initEnd = try #require(source.range(of: "    }\n\n    // MARK: - Public API", range: initStart.upperBound ..< source.endIndex))
+        let initBody = source[initStart.lowerBound ..< initEnd.upperBound]
+
+        #expect(initBody.contains("Task { [weak self] in"))
+        #expect(initBody.contains("try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()"))
+        #expect(initBody.contains("self?.refresh()"))
+        #expect(!initBody.contains("\n        refresh()\n"))
     }
 
     @Test("remote provider autoconnect keeps Keychain reads off MainActor")

@@ -731,7 +731,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
                 let stopSequences = request.stop ?? []
                 do {
-                    let text = try await toolSvc.respondWithTools(
+                    let stream = try await toolSvc.streamWithTools(
                         messages: messages,
                         parameters: params,
                         stopSequences: stopSequences,
@@ -739,6 +739,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         toolChoice: request.tool_choice,
                         requestedModel: request.model
                     )
+                    var text = ""
+                    var terminalStopReason = "stop"
+                    for try await delta in stream {
+                        if let stats = StreamingStatsHint.decode(delta) {
+                            if let stopReason = stats.stopReason, !stopReason.isEmpty {
+                                terminalStopReason = stopReason
+                            }
+                            continue
+                        }
+                        if StreamingToolHint.isSentinel(delta) { continue }
+                        if StreamingReasoningHint.decode(delta) != nil { continue }
+                        text += delta
+                    }
                     let outputTokens = TokenEstimator.estimate(text)
                     let choice = ChatChoice(
                         index: 0,
@@ -748,7 +761,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             tool_calls: nil,
                             tool_call_id: nil
                         ),
-                        finish_reason: "stop"
+                        finish_reason: terminalStopReason
                     )
                     let usage = Usage(
                         prompt_tokens: inputTokens,
@@ -776,7 +789,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             durationMs: durationMs,
                             temperature: temperature,
                             maxTokens: maxTokens,
-                            finishReason: .stop,
+                            finishReason: RequestLog.FinishReason(rawValue: terminalStopReason) ?? .stop,
                             requestBody: requestBodyJSON,
                             responseBody: Self.serializeResponseForLog(response)
                         )

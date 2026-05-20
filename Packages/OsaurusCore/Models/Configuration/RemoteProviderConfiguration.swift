@@ -301,9 +301,9 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
 
     /// Resolve Keychain-backed headers away from the main actor.
     public func resolvedHeadersOffMainActor() async -> [String: String] {
-        await Task.detached(priority: .utility) {
+        await RemoteProviderKeychain.runOffCooperativeExecutor {
             self.resolvedHeaders()
-        }.value
+        }
     }
 
     /// Check if provider has an API key stored in Keychain
@@ -326,9 +326,9 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
 
     /// Resolve OAuth tokens away from the main actor.
     public func getOAuthTokensOffMainActor() async -> RemoteProviderOAuthTokens? {
-        await Task.detached(priority: .utility) {
+        await RemoteProviderKeychain.runOffCooperativeExecutor {
             self.getOAuthTokens()
-        }.value
+        }
     }
 
     public func mergedModelIds(discovered: [String]) -> [String] {

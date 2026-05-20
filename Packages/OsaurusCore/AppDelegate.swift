@@ -262,7 +262,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         let storageKeyPrewarmTask = Task.detached(priority: .utility) {
             do {
-                try StorageKeyManager.shared.prewarmCurrentKey()
+                try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
             } catch {
                 NSLog("[Osaurus] Storage key prewarm failed: \(error)")
             }
@@ -354,12 +354,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
 
-        // Start the self-scheduling loop (spec §9). The scheduler reads
-        // from `~/.osaurus/scheduler.sqlite` so the storage migrator
-        // must already be ready by this point — and it is, because
-        // `StorageMigrationCoordinator.blockingAwaitReady` ran at the
-        // top of `applicationDidFinishLaunching`.
-        NextRunScheduler.shared.start()
+        // Start the self-scheduling loop (spec §9). The scheduler reads from
+        // `~/.osaurus/scheduler.sqlite`, so it also needs the storage key.
+        // Waiting for the prewarm here prevents a launch-time scheduler open
+        // from pinning a cooperative-executor thread behind synchronous
+        // Keychain IO while the first local model request is trying to load.
+        Task { @MainActor in
+            await storageKeyPrewarmTask.value
+            NextRunScheduler.shared.start()
+        }
 
         // Start sandbox tool registrar. Internally awaits container
         // auto-start before the initial `registerTools` call, so the first

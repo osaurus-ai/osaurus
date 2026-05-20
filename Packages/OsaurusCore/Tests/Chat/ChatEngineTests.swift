@@ -594,7 +594,16 @@ struct ChatEngineTests {
                 tools: [Tool],
                 toolChoice: ToolChoiceOption?,
                 requestedModel: String?
-            ) async throws -> AsyncThrowingStream<String, Error> { AsyncThrowingStream { $0.finish() } }
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                AsyncThrowingStream { continuation in
+                    continuation.finish(
+                        throwing: ServiceToolInvocation(
+                            toolName: "get_weather",
+                            jsonArguments: "{\"city\":\"SF\"}"
+                        )
+                    )
+                }
+            }
         }
 
         let engine = ChatEngine(services: [FakeToolService()], installedModelsProvider: { [] })
@@ -624,6 +633,78 @@ struct ChatEngineTests {
         #expect(toolCalls?.first?.function.name == "get_weather")
         let id = toolCalls?.first?.id ?? ""
         #expect(id.hasPrefix("call_"))
+    }
+
+    @Test func completeChat_preserves_tool_stream_length_finish_reason() async throws {
+        struct FakeLengthToolService: ToolCapableService {
+            var id: String { "fake" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { (requestedModel ?? "") == "fake" }
+            func streamDeltas(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?,
+                stopSequences: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> { AsyncThrowingStream { $0.finish() } }
+            func generateOneShot(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?
+            ) async throws -> String { "" }
+            func respondWithTools(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                stopSequences: [String],
+                tools: [Tool],
+                toolChoice: ToolChoiceOption?,
+                requestedModel: String?
+            ) async throws -> String { "truncated" }
+            func streamWithTools(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                stopSequences: [String],
+                tools: [Tool],
+                toolChoice: ToolChoiceOption?,
+                requestedModel: String?
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                AsyncThrowingStream { continuation in
+                    continuation.yield("truncated")
+                    continuation.yield(
+                        StreamingStatsHint.encode(
+                            tokenCount: 8,
+                            tokensPerSecond: 12.5,
+                            stopReason: "length"
+                        )
+                    )
+                    continuation.finish()
+                }
+            }
+        }
+
+        let engine = ChatEngine(services: [FakeLengthToolService()], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0,
+            max_tokens: 8,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: [
+                Tool(
+                    type: "function",
+                    function: ToolFunction(name: "lookup", description: nil, parameters: .object([:]))
+                )
+            ],
+            tool_choice: .auto,
+            session_id: nil
+        )
+        let resp = try await engine.completeChat(request: req)
+        #expect(resp.choices.first?.message.content == "truncated")
+        #expect(resp.choices.first?.finish_reason == "length")
     }
 
     @Test func streamChat_throws_when_no_route() async throws {

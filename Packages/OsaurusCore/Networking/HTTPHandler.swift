@@ -3726,7 +3726,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 ChatMessage(role: "assistant", content: accumulatedContent)
                             )
                         }
-                        ChatHistoryWriter.persist(
+                        ChatHistoryWriter.persistInBackground(
                             source: .http,
                             sourcePluginId: nil,
                             agentId: resolvedAgentUUID,
@@ -3922,7 +3922,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if persistOnSuccess, let assistantMsg = resp.choices.first?.message {
                         var finalMessages = priorMessages
                         finalMessages.append(assistantMsg)
-                        ChatHistoryWriter.persist(
+                        ChatHistoryWriter.persistInBackground(
                             source: .http,
                             sourcePluginId: nil,
                             agentId: resolvedAgentUUID,

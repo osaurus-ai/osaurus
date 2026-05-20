@@ -76,6 +76,7 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     private var lock = os_unfair_lock_s()
     private var cachedKey: SymmetricKey?
+    private let keychainQueue = DispatchQueue(label: "ai.osaurus.storage-key.keychain")
 
     private init() {}
 
@@ -91,23 +92,47 @@ public final class StorageKeyManager: @unchecked Sendable {
         }
         os_unfair_lock_unlock(&lock)
 
-        let key: SymmetricKey
-        if let existing = try readKeychainKey() {
-            key = SymmetricKey(data: existing)
-        } else {
-            key = try generateAndPersistKey()
-        }
+        return try keychainQueue.sync {
+            os_unfair_lock_lock(&lock)
+            if let cached = cachedKey {
+                os_unfair_lock_unlock(&lock)
+                return cached
+            }
+            os_unfair_lock_unlock(&lock)
 
-        os_unfair_lock_lock(&lock)
-        cachedKey = key
-        os_unfair_lock_unlock(&lock)
-        return key
+            let key: SymmetricKey
+            if let existing = try readKeychainKey() {
+                key = SymmetricKey(data: existing)
+            } else {
+                key = try generateAndPersistKey()
+            }
+
+            os_unfair_lock_lock(&lock)
+            cachedKey = key
+            os_unfair_lock_unlock(&lock)
+            return key
+        }
     }
 
     /// Populate the in-process key cache before storage database queues start
     /// opening. This keeps later `currentKey()` calls off the slow Keychain path.
     public func prewarmCurrentKey() throws {
         _ = try currentKey()
+    }
+
+    /// Prewarm from a libdispatch worker instead of pinning a Swift
+    /// cooperative-executor thread inside synchronous Keychain APIs.
+    public func prewarmCurrentKeyOffCooperativeExecutor() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    try self.prewarmCurrentKey()
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     /// Returns true when a persisted key exists in Keychain. Cheap; no

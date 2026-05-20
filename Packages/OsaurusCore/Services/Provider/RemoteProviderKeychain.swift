@@ -30,6 +30,16 @@ public struct RemoteProviderOAuthTokens: Codable, Sendable, Equatable {
 public enum RemoteProviderKeychain {
     private static let service = "ai.osaurus.remote"
 
+    public static func runOffCooperativeExecutor<T: Sendable>(
+        _ operation: @escaping @Sendable () -> T
+    ) async -> T {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: operation())
+            }
+        }
+    }
+
     // MARK: - API Key Management
 
     /// Save an API key for a provider ID
@@ -123,9 +133,9 @@ public enum RemoteProviderKeychain {
     public static func saveOAuthTokensOffMainActor(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID) async
         -> Bool
     {
-        await Task.detached(priority: .utility) {
+        await runOffCooperativeExecutor {
             saveOAuthTokens(tokens, for: providerId)
-        }.value
+        }
     }
 
     public static func getOAuthTokens(for providerId: UUID) -> RemoteProviderOAuthTokens? {
