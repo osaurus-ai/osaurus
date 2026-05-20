@@ -282,6 +282,10 @@ struct MLXBatchAdapterTests {
             repetitionPenalty: nil,
             doSample: true
         )
+        let effectiveDraftStrategy = MLXBatchAdapter.effectiveDraftStrategy(
+            generation: generation,
+            draftStrategy: .nativeMTP(depth: 3)
+        )
 
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "JANGQ/Qwen3.6-35B-A3B-MXFP4-MTP",
@@ -289,12 +293,53 @@ struct MLXBatchAdapterTests {
             runtimeTopP: 1,
             maxBatchSize: 1,
             modelDefaults: mtpBundleDefaults,
-            draftStrategy: .nativeMTP(depth: 3)
+            draftStrategy: effectiveDraftStrategy,
+            nativeMTPExplicitSamplingFallback: effectiveDraftStrategy == nil
         )
 
+        #expect(effectiveDraftStrategy == nil)
         #expect(effective.temperature == 0.7)
         #expect(effective.topP == 0.95)
-        #expect(effective.topK == 20)
+        #expect(effective.topK == 0)
+        #expect(effective.repetitionPenalty == nil)
+        #expect(effective.compiledBatchDecode == false)
+    }
+
+    @Test func effectiveDraftStrategy_dropsNativeMTPForExplicitNonGreedySampling() {
+        let explicitSampling = GenerationParameters(
+            temperature: 0.7,
+            maxTokens: 128,
+            maxTokensExplicit: true,
+            topPOverride: 0.95,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+
+        #expect(
+            MLXBatchAdapter.effectiveDraftStrategy(
+                generation: explicitSampling,
+                draftStrategy: .nativeMTP(depth: 3)
+            ) == nil
+        )
+    }
+
+    @Test func effectiveDraftStrategy_keepsNativeMTPForImplicitChatSampling() {
+        let implicitSampling = GenerationParameters(
+            temperature: 0.7,
+            maxTokens: 128,
+            maxTokensExplicit: true,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil,
+            samplingParametersAreImplicit: true
+        )
+
+        #expect(
+            MLXBatchAdapter.effectiveDraftStrategy(
+                generation: implicitSampling,
+                draftStrategy: .nativeMTP(depth: 3)
+            )?.usesNativeMTP == true
+        )
     }
 
     @Test func effectiveGenerationSettings_doSampleFalseForcesGreedyOnlyWhenTemperatureOmitted() {

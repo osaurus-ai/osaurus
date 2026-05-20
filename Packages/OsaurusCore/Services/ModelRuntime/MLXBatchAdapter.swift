@@ -66,7 +66,8 @@ struct MLXBatchAdapter {
         runtimeTopP: Float,
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
-        draftStrategy: MLXLMCommon.DraftStrategy? = nil
+        draftStrategy: MLXLMCommon.DraftStrategy? = nil,
+        nativeMTPExplicitSamplingFallback: Bool = false
     ) -> EffectiveGenerationSettings {
         let defaultTemperature: Float? = {
             if modelDefaults.doSample == false {
@@ -89,18 +90,40 @@ struct MLXBatchAdapter {
             topP: useNativeMTPGreedyDefaults
                 ? (generation.topPOverride ?? 1)
                 : (generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP),
-            topK: useNativeMTPGreedyDefaults ? 0 : (modelDefaults.topK ?? 0),
+            topK: useNativeMTPGreedyDefaults || nativeMTPExplicitSamplingFallback
+                ? 0
+                : (modelDefaults.topK ?? 0),
             minP: useNativeMTPGreedyDefaults
                 ? (generation.minPOverride ?? 0)
                 : (generation.minPOverride ?? modelDefaults.minP ?? 0),
-            repetitionPenalty: useNativeMTPGreedyDefaults
-                ? generation.repetitionPenalty
-                : (generation.repetitionPenalty ?? modelDefaults.repetitionPenalty),
-            compiledBatchDecode: shouldEnableCompiledBatchDecode(
-                modelName: modelName,
-                maxBatchSize: maxBatchSize
-            )
+            repetitionPenalty: {
+                if nativeMTPExplicitSamplingFallback {
+                    return nil
+                }
+                return useNativeMTPGreedyDefaults
+                    ? generation.repetitionPenalty
+                    : (generation.repetitionPenalty ?? modelDefaults.repetitionPenalty)
+            }(),
+            compiledBatchDecode: nativeMTPExplicitSamplingFallback
+                ? false
+                : shouldEnableCompiledBatchDecode(
+                    modelName: modelName,
+                    maxBatchSize: maxBatchSize
+                )
         )
+    }
+
+    static func effectiveDraftStrategy(
+        generation: GenerationParameters,
+        draftStrategy: MLXLMCommon.DraftStrategy?
+    ) -> MLXLMCommon.DraftStrategy? {
+        guard draftStrategy?.usesNativeMTP == true else {
+            return draftStrategy
+        }
+        return shouldApplyNativeMTPGreedyDefaults(
+            generation: generation,
+            draftStrategy: draftStrategy
+        ) ? draftStrategy : nil
     }
 
     private static func shouldApplyNativeMTPGreedyDefaults(
@@ -646,13 +669,20 @@ struct MLXBatchAdapter {
         // `GenerateParameters(generationConfig:fallback:)` behavior for the
         // local app path instead of inventing osaurus-specific defaults.
         let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
+        let effectiveDraftStrategy = Self.effectiveDraftStrategy(
+            generation: generation,
+            draftStrategy: draftStrategy
+        )
+        let nativeMTPExplicitSamplingFallback =
+            draftStrategy?.usesNativeMTP == true && effectiveDraftStrategy == nil
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
             runtimeTopP: runtime.topP,
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
-            draftStrategy: draftStrategy
+            draftStrategy: effectiveDraftStrategy,
+            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback
         )
         let mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,
@@ -662,7 +692,7 @@ struct MLXBatchAdapter {
             minP: effective.minP,
             repetitionPenalty: effective.repetitionPenalty,
             stopSequences: stopSequences,
-            draftStrategy: draftStrategy,
+            draftStrategy: effectiveDraftStrategy,
             enableCompiledBatchDecode: effective.compiledBatchDecode
         )
 
@@ -725,7 +755,7 @@ struct MLXBatchAdapter {
         }
 
         batchAdapterLog.info(
-            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(draftStrategy?.kindName ?? "none", privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
+            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
         )
 
         return PreparedStream(
