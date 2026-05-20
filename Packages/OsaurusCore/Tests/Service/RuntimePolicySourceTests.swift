@@ -716,6 +716,16 @@ struct RuntimePolicySourceTests {
         #expect(manager.contains("guard await isResident(modelName)"))
     }
 
+    @Test("RuntimeConfig snapshot does not hop to MainActor before model load")
+    func runtimeConfigSnapshotAvoidsMainActorPreLoadHop() throws {
+        let config = try Self.source("Services/ModelRuntime/RuntimeConfig.swift")
+
+        #expect(!config.contains("ServerController.sharedConfiguration()"))
+        #expect(!config.contains("MainActor.run"))
+        #expect(config.contains("diskBackedServerConfiguration()"))
+        #expect(config.contains("OsaurusPaths.serverConfigFile()"))
+    }
+
     @Test("UI and health expose model idle residency")
     func uiAndHealthExposeModelIdleResidency() throws {
         let settings = try Self.source("Views/Settings/ConfigurationView.swift")

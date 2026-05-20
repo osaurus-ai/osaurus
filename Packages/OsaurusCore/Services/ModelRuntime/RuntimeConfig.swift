@@ -17,7 +17,15 @@ struct RuntimeConfig: Sendable {
 
     /// Captures a generation config snapshot from `ServerConfiguration`.
     static func snapshot() async -> RuntimeConfig {
-        let cfg = await ServerController.sharedConfiguration()
-        return RuntimeConfig(topP: cfg?.genTopP ?? 1.0)
+        RuntimeConfig(topP: diskBackedServerConfiguration()?.genTopP ?? 1.0)
+    }
+
+    private static func diskBackedServerConfiguration() -> ServerConfiguration? {
+        let url = OsaurusPaths.resolvePath(
+            new: OsaurusPaths.serverConfigFile(),
+            legacy: "ServerConfiguration.json"
+        )
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try? JSONDecoder().decode(ServerConfiguration.self, from: Data(contentsOf: url))
     }
 }
