@@ -1060,23 +1060,29 @@ public actor ModelRuntime {
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
         await ModelResidencyManager.shared.markActive(modelName: modelName)
 
-        // Scoped start/finish around ONLY the container load — the "loading
-        // model" UI flag flips off as soon as the container is ready. The
-        // refcount in `InferenceProgressManager` keeps concurrent loads
-        // (two chat windows starting different models) from corrupting
-        // each other.
+        // Scoped start/finish around ONLY a cold container load. Hot
+        // resident turns still call `loadContainer` to get the holder, but
+        // that is a cache hit and must not flash the UI back to
+        // "Loading Model..." on every message.
         let cfg = await getConfig()
         trace?.mark("load_container_start")
-        InferenceProgressManager.shared.modelLoadWillStartAsync()
+        let shouldReportModelLoad = modelCache[modelName] == nil
+        if shouldReportModelLoad {
+            InferenceProgressManager.shared.modelLoadWillStartAsync()
+        }
         let holder: SessionHolder
         do {
             holder = try await loadContainer(id: modelId, name: modelName)
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
-            InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            if shouldReportModelLoad {
+                InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            }
             throw error
         }
-        InferenceProgressManager.shared.modelLoadDidFinishAsync()
+        if shouldReportModelLoad {
+            InferenceProgressManager.shared.modelLoadDidFinishAsync()
+        }
         trace?.mark("load_container_done")
 
         // Pin the model against eviction for the stream's lifetime.

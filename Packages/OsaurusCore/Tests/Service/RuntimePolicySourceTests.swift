@@ -732,6 +732,19 @@ struct RuntimePolicySourceTests {
         #expect(windows.contains("if idlePolicy == .immediately"))
     }
 
+    @Test("Resident same-model turns do not flash model-loading UI")
+    func residentSameModelTurnsDoNotFlashModelLoadingUI() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(runtime.contains("let shouldReportModelLoad = modelCache[modelName] == nil"))
+        #expect(runtime.contains("if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadWillStartAsync()"))
+        #expect(runtime.contains("if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadDidFinishAsync()"))
+        #expect(
+            runtime.contains("must not flash the UI back to\n        // \"Loading Model...\" on every message"),
+            "Hot resident chat turns must not emit the model-loading phase; users read that as a reload."
+        )
+    }
+
     @Test("ModelRuntime does not block model-ready on hidden Hy3 warmup generation")
     func modelRuntimeDoesNotBlockModelReadyOnHy3WarmupGeneration() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
