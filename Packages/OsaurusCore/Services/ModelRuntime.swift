@@ -622,6 +622,7 @@ public actor ModelRuntime {
         // pass, hits a precondition in TurboQuantSwitchLinear, and abort()s
         // the whole process — taking osaurus with it. Caught here so the user
         // gets a clear error and the server stays up.
+        try Self.validateUnsupportedPlainDSV4AffineJANG(at: localURL, name: name)
         try await Self.ensureJANGTQSidecar(at: localURL, modelId: id, name: name)
         let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
         genLog.info(
@@ -2113,6 +2114,104 @@ public actor ModelRuntime {
                 ]
             )
         }
+    }
+
+    /// Blocks the known-bad plain affine DeepSeek V4 Flash JANG bundle before
+    /// vmlx starts loading hundreds of GB of shards. The production DSV4 path
+    /// is JANGTQ (`weight_format == "mxtq"` + `jangtq_runtime.safetensors`),
+    /// which dispatches to TurboQuantSwitchGLU. Plain affine DSV4 JANG falls
+    /// through to the generic SwitchGLU route; current engine evidence shows
+    /// unusable decode speed and high memory pressure, not a shippable row.
+    ///
+    /// Engine developers can still opt in for diagnostics with
+    /// `OSAURUS_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG=1` or
+    /// `VMLINUX_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG=1`.
+    static func validateUnsupportedPlainDSV4AffineJANG(at directory: URL, name: String) throws {
+        guard !Self.experimentalDSV4AffineJANGAllowed else { return }
+
+        let fm = FileManager.default
+        let jangConfigURL = directory.appendingPathComponent("jang_config.json")
+        let configURL = directory.appendingPathComponent("config.json")
+        guard fm.fileExists(atPath: jangConfigURL.path),
+            fm.fileExists(atPath: configURL.path)
+        else { return }
+
+        let sidecarURL = directory.appendingPathComponent("jangtq_runtime.safetensors")
+        guard !fm.fileExists(atPath: sidecarURL.path) else { return }
+
+        let jang = Self.readJSONObject(at: jangConfigURL)
+        let config = Self.readJSONObject(at: configURL)
+        let modelType = Self.stringValue(config["model_type"])?.lowercased()
+        guard modelType == "deepseek_v4" else { return }
+
+        let weightFormat = Self.stringValue(jang["weight_format"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let codec = ((jang["quantization"] as? [String: Any])?["routed_experts"] as? [String: Any])
+            .flatMap { Self.stringValue($0["codec"]) }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let isAffine = weightFormat == nil
+            || weightFormat == "affine"
+            || weightFormat == "jang"
+            || weightFormat == "jang_v2"
+            || codec == "affine"
+
+        let routedExperts = Self.intValue(config["n_routed_experts"])
+            ?? Self.intValue(config["num_experts"])
+            ?? Self.intValue(config["num_routed_experts"])
+
+        guard isAffine, (routedExperts ?? 0) >= 128 else { return }
+
+        throw NSError(
+            domain: "ModelRuntime",
+            code: 5,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Model '\(name)' is a plain affine DeepSeek V4 Flash JANG bundle. "
+                    + "That path is not production-supported in this Osaurus build because "
+                    + "it loads through the generic SwitchGLU route and can consume very high "
+                    + "memory while decoding at unusable speed. Use the JANGTQ2 or JANGTQ-K "
+                    + "DeepSeek V4 Flash bundle instead. For engine diagnostics only, set "
+                    + "OSAURUS_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG=1."
+            ]
+        )
+    }
+
+    private static var experimentalDSV4AffineJANGAllowed: Bool {
+        let env = ProcessInfo.processInfo.environment
+        for key in [
+            "OSAURUS_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG",
+            "VMLINUX_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG",
+        ] {
+            guard let raw = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+                continue
+            }
+            if ["1", "true", "yes", "on"].contains(raw) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func readJSONObject(at url: URL) -> [String: Any] {
+        guard let data = try? Data(contentsOf: url),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+        return object
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        if let string = value as? String { return string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String { return Int(string) }
+        return nil
     }
 
     /// Async wrapper around `validateJANGTQSidecarIfRequired` that, on a
