@@ -124,6 +124,18 @@ struct RuntimePolicySourceTests {
         #expect(apiKeys.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
     }
 
+    @Test("plugin host inference carries agent memory like HTTP chat")
+    func pluginHostInferenceInjectsAgentMemoryPrefix() throws {
+        let source = try Self.source("Services/Plugin/PluginHostAPI.swift")
+
+        #expect(source.contains("let memorySection: String?"))
+        #expect(source.contains("resolveAgentContext(agentId: activeAgentId, messages: request.messages)"))
+        #expect(source.contains("query: extractPreflightQuery(from: messages)"))
+        #expect(source.contains("messages: messages"))
+        #expect(source.contains("memorySection: composed.memorySection"))
+        #expect(source.contains("SystemPromptComposer.injectMemoryPrefix(ctx.memorySection, into: &messages)"))
+    }
+
     @Test("HTTP chat persistence runs after response path")
     func httpChatPersistenceRunsAfterResponsePath() throws {
         let source = try Self.source("Networking/HTTPHandler.swift")
