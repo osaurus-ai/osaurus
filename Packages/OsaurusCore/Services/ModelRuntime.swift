@@ -37,6 +37,7 @@ public actor ModelRuntime {
         let isCurrent: Bool
         let draftStrategyDescription: String?
         let nativeMTPDepth: Int?
+        let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
     }
 
@@ -144,6 +145,7 @@ public actor ModelRuntime {
                 isCurrent: holder.name == currentModelName,
                 draftStrategyDescription: Self.describeDraftStrategy(holder.draftStrategy),
                 nativeMTPDepth: Self.nativeMTPDepth(holder.draftStrategy),
+                mlxPressStatus: holder.container.mlxPressStatus(),
                 cacheStats: holder.container.cacheCoordinator?.snapshotStats()
             )
         }.sorted { lhs, rhs in

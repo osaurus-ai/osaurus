@@ -620,6 +620,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } else {
                     row["native_mtp_depth"] = NSNull()
                 }
+                let mlxPress = summary.mlxPressStatus
+                var mlxPressStatus: [String: Any] = [
+                    "enabled": mlxPress.enabled,
+                    "backend": mlxPress.backend.rawValue,
+                    "tiles_under_management": mlxPress.tilesUnderManagement,
+                    "total_routed_bytes": mlxPress.totalRoutedBytes,
+                ]
+                if let coldFraction = mlxPress.coldFraction {
+                    mlxPressStatus["cold_fraction"] = coldFraction
+                } else {
+                    mlxPressStatus["cold_fraction"] = NSNull()
+                }
+                row["mlx_press"] = mlxPressStatus
                 guard let stats = summary.cacheStats else {
                     row["cache_enabled"] = false
                     return row

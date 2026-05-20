@@ -333,7 +333,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "b2ccf65dea3ec05c71836fa4ef7fb918bdc289de"
+        let currentVmlxRevision = "b28d8c4d91351544266946ed1f08c39b501c76af"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
@@ -901,6 +901,7 @@ struct RuntimePolicySourceTests {
         let httpHandler = try Self.source("Networking/HTTPHandler.swift")
         #expect(httpHandler.contains("\"draft_strategy\""))
         #expect(httpHandler.contains("\"native_mtp_depth\""))
+        #expect(httpHandler.contains("\"mlx_press\""))
     }
 
     @Test("ModelRuntime does not repair reasoning parser output")
