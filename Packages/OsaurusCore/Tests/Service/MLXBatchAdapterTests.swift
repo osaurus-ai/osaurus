@@ -55,6 +55,48 @@ struct MLXBatchAdapterTests {
         #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 1)
     }
 
+    @Test func maxBatchSize_runtimeSettingsOverrideUserDefaults() {
+        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
+        let defaults = isolatedDefaults()
+        defaults.set(2, forKey: key)
+        // The vmlx runtime contract trumps the legacy UserDefaults
+        // key; this is the path the Server → Settings panel uses to
+        // persist user choice.
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.concurrency.maxConcurrentSequences = 6
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+                in: defaults,
+                runtime: runtime
+            ) == 6
+        )
+    }
+
+    @Test func maxBatchSize_runtimeSettingsClampsAndFallsBackOnNil() {
+        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
+        let defaults = isolatedDefaults()
+        defaults.set(4, forKey: key)
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.concurrency.maxConcurrentSequences = 200
+        // Clamp to 32 just like the legacy path.
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+                in: defaults,
+                runtime: runtime
+            ) == 32
+        )
+
+        // Absent runtime value defers to UserDefaults so users who
+        // never opened the panel keep their existing override.
+        runtime.concurrency.maxConcurrentSequences = nil
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+                in: defaults,
+                runtime: runtime
+            ) == 4
+        )
+    }
+
     @Test func preencodeAudioSources_replacesRawAudioAndCountsInputs() {
         let rawSamples: [Float] = [0.1, -0.2, 0.3]
         let chat = [
@@ -145,7 +187,7 @@ struct MLXBatchAdapterTests {
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ",
             generation: generation,
-            runtimeTopP: 1,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
             maxBatchSize: 1,
             modelDefaults: defaults
         )
@@ -181,7 +223,7 @@ struct MLXBatchAdapterTests {
         let effective = MLXBatchAdapter.effectiveGenerationSettings(
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ",
             generation: generation,
-            runtimeTopP: 1,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
             maxBatchSize: 1,
             modelDefaults: defaults
         )
@@ -212,7 +254,7 @@ struct MLXBatchAdapterTests {
                 maxTokens: 64,
                 maxTokensExplicit: true
             ),
-            runtimeTopP: 1,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
             maxBatchSize: 1,
             modelDefaults: defaults
         )
@@ -225,7 +267,7 @@ struct MLXBatchAdapterTests {
                 maxTokens: 64,
                 maxTokensExplicit: true
             ),
-            runtimeTopP: 1,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
             maxBatchSize: 1,
             modelDefaults: defaults
         )

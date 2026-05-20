@@ -8,8 +8,6 @@ struct ConfigurationView: View {
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var tempPortString: String = ""
-    @State private var tempExposeToNetwork: Bool = false
     @State private var tempStartAtLogin: Bool = false
     @State private var tempHideDockIcon: Bool = false
     @State private var cliInstallMessage: String? = nil
@@ -48,13 +46,8 @@ struct ConfigurationView: View {
     @State private var tempAgentTopP: String = ""
     @State private var tempAgentMaxIterations: String = ""
 
-    // Server settings state
-    @State private var tempAllowedOrigins: String = ""
-
-    // Local Inference settings state
-    @State private var tempTopP: String = ""
-    @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
-    @State private var tempIdleResidencyPolicy: ModelIdleResidencyPolicy = .immediately
+    // Server / Local Inference settings now live in the Server →
+    // Settings tab. Their state was deleted with the inline UI.
 
     // Toast settings state
     @State private var tempToastPosition: ToastPosition = .topRight
@@ -434,124 +427,32 @@ struct ConfigurationView: View {
                             )
                         }
 
-                        // MARK: - Server Section
-                        if matchesSearch("Server", "Port", "Network", "Expose", "CORS", "Origins", "Allowed Origins") {
-                            SettingsSection(title: "Server", icon: "network") {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    Text("Configure the local API server for external integrations.", bundle: .module)
-                                        .font(.system(size: 12))
-                                        .foregroundColor(theme.secondaryText)
-
-                                    // Port
-                                    SettingsStepperField(
-                                        label: "Port",
-                                        help: "Port number (1–65535)",
-                                        text: $tempPortString,
-                                        range: 1 ... 65535,
-                                        step: 1,
-                                        defaultValue: 1337
-                                    )
-
-                                    // Network Exposure Toggle
-                                    SettingsToggle(
-                                        title: L("Expose to Network"),
-                                        description: "Allow devices on your network to connect",
-                                        isOn: $tempExposeToNetwork
-                                    )
-
-                                    // CORS Settings
-                                    StyledSettingsTextField(
-                                        label: "Allowed Origins",
-                                        text: $tempAllowedOrigins,
-                                        placeholder: "https://example.com, https://app.localhost",
-                                        help:
-                                            "Loopback (127.0.0.1) is always allowed. This list adds extra origins for LAN access. Use * for any."
-                                    )
-                                }
-                            }
-                        }
-
-                        // MARK: - Local Inference Section
+                        // MARK: - Server settings moved
+                        // The Server (Port/Expose/CORS) and Local
+                        // Inference (Top P, eviction, idle residency)
+                        // sections previously lived here. They're now
+                        // the canonical home of the Server → Settings
+                        // tab in `ServerView`, which is backed by
+                        // `VMLXServerRuntimeSettings`. A small
+                        // pointer card surfaces the move when the
+                        // user searches for any of those keywords.
                         if matchesSearch(
+                            "Server",
+                            "Port",
+                            "Network",
+                            "Expose",
+                            "CORS",
+                            "Origins",
+                            "Allowed Origins",
                             "Local Inference",
                             "Inference",
                             "Sampling",
                             "Top P",
-                            "CPU",
-                            "Memory"
+                            "Eviction",
+                            "Idle Residency",
+                            "Keep model loaded"
                         ) {
-                            SettingsSection(title: "Local Inference", icon: "bolt") {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    Text(
-                                        "Tune the local model runtime. These settings only affect models running on this device.",
-                                        bundle: .module
-                                    )
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.secondaryText)
-
-                                    // Sampling
-                                    SettingsSubsection(label: "Sampling") {
-                                        VStack(alignment: .leading, spacing: 12) {
-                                            SettingsSliderField(
-                                                label: "Top P",
-                                                help: "Default sampling diversity (0–1)",
-                                                text: $tempTopP,
-                                                range: 0 ... 1,
-                                                step: 0.05,
-                                                defaultValue: 1.0,
-                                                formatString: "%.2f"
-                                            )
-                                        }
-                                    }
-
-                                    // KV cache sizing is owned end-to-end by
-                                    // vmlx-swift's `CacheCoordinator` —
-                                    // surfacing a per-user override here would
-                                    // conflict with the library's per-model
-                                    // cache geometry (see the comment in
-                                    // `ModelRuntime.makeGenerateParameters`).
-
-                                    SettingsDivider()
-
-                                    // Eviction Policy
-                                    SettingsSubsection(label: "Model Management") {
-                                        VStack(alignment: .leading, spacing: 14) {
-                                            Picker("", selection: $tempEvictionPolicy) {
-                                                ForEach(ModelEvictionPolicy.allCases, id: \.self) { policy in
-                                                    Text(policy.rawValue).tag(policy)
-                                                }
-                                            }
-                                            .pickerStyle(.segmented)
-                                            .labelsHidden()
-
-                                            Text(tempEvictionPolicy.description)
-                                                .font(.system(size: 11))
-                                                .foregroundColor(theme.tertiaryText)
-
-                                            VStack(alignment: .leading, spacing: 8) {
-                                                HStack(spacing: 12) {
-                                                    Text("Keep model loaded after use", bundle: .module)
-                                                        .font(.system(size: 12, weight: .medium))
-                                                        .foregroundColor(theme.primaryText)
-                                                    Spacer()
-                                                    Picker("", selection: $tempIdleResidencyPolicy) {
-                                                        ForEach(ModelIdleResidencyPolicy.presets, id: \.self) {
-                                                            policy in
-                                                            Text(policy.displayName).tag(policy)
-                                                        }
-                                                    }
-                                                    .pickerStyle(.menu)
-                                                    .labelsHidden()
-                                                }
-
-                                                Text(tempIdleResidencyPolicy.description)
-                                                    .font(.system(size: 11))
-                                                    .foregroundColor(theme.tertiaryText)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            ServerSettingsMovedNotice()
                         }
 
                         // MARK: - Voice Section
@@ -864,8 +765,6 @@ struct ConfigurationView: View {
 
     private func applyLoadedConfiguration(_ snapshot: ConfigurationSnapshot) {
         let configuration = snapshot.server
-        tempPortString = String(configuration.port)
-        tempExposeToNetwork = configuration.exposeToNetwork
         tempStartAtLogin = configuration.startAtLogin
         tempHideDockIcon = configuration.hideDockIcon
 
@@ -900,12 +799,6 @@ struct ConfigurationView: View {
         tempAgentTopP = chat.workTopPOverride.map { String($0) } ?? ""
         tempAgentMaxIterations = chat.workMaxIterations.map(String.init) ?? ""
 
-        let defaults = ServerConfiguration.default
-        tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
-        tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
-        tempEvictionPolicy = configuration.modelEvictionPolicy
-        tempIdleResidencyPolicy = configuration.modelIdleResidencyPolicy
-
         let toastConfig = snapshot.toast
         tempToastPosition = toastConfig.position
         tempToastEnabled = toastConfig.enabled
@@ -927,11 +820,8 @@ struct ConfigurationView: View {
         let serverDefaults = ServerConfiguration.default
         let chatDefaults = ChatConfiguration.default
 
-        tempPortString = String(serverDefaults.port)
-        tempExposeToNetwork = serverDefaults.exposeToNetwork
         tempStartAtLogin = serverDefaults.startAtLogin
         tempHideDockIcon = serverDefaults.hideDockIcon
-        tempAllowedOrigins = ""
 
         tempChatHotkey = chatDefaults.hotkey
         tempSystemPrompt = ""
@@ -956,10 +846,6 @@ struct ConfigurationView: View {
         tempAgentMaxTokens = ""
         tempAgentTopP = ""
         tempAgentMaxIterations = ""
-
-        tempTopP = ""
-        tempEvictionPolicy = serverDefaults.modelEvictionPolicy
-        tempIdleResidencyPolicy = serverDefaults.modelIdleResidencyPolicy
 
         showSuccess("Settings restored to defaults")
     }
@@ -993,56 +879,15 @@ struct ConfigurationView: View {
     // MARK: - Configuration Saving
 
     private func saveConfiguration() {
-        guard let port = Int(tempPortString), (1 ..< 65536).contains(port) else { return }
-
         let previousServerCfg = ServerConfigurationStore.load() ?? ServerConfiguration.default
         let previousChatCfg = ChatConfigurationStore.load()
 
         var configuration = previousServerCfg
-        configuration.port = port
-        configuration.exposeToNetwork = tempExposeToNetwork
         configuration.startAtLogin = tempStartAtLogin
         configuration.hideDockIcon = tempHideDockIcon
 
-        let defaults = ServerConfiguration.default
-        let trimmedTopP = tempTopP.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedTopP.isEmpty {
-            configuration.genTopP = defaults.genTopP
-        } else {
-            configuration.genTopP = Float(trimmedTopP) ?? defaults.genTopP
-        }
-
-        // `genMaxKVSize` is no longer applied at runtime (KV cache sizing is
-        // owned by vmlx-swift's `CacheCoordinator`). The field stays on
-        // `ServerConfiguration` for backward-compatible decoding of existing
-        // configs but is not surfaced in the UI any more.
-
-        configuration.modelEvictionPolicy = tempEvictionPolicy
-        configuration.modelIdleResidencyPolicy = tempIdleResidencyPolicy
-
-        let parsedOrigins: [String] =
-            tempAllowedOrigins
-            .split(separator: ",")
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        configuration.allowedOrigins = parsedOrigins
-
         let serverConfigChanged = previousServerCfg != configuration
         let startAtLoginChanged = previousServerCfg.startAtLogin != configuration.startAtLogin
-
-        // `serverRestartNeeded` gates restarting the NIO HTTP server. Only the
-        // fields that affect how the socket is opened / CORS / eviction belong
-        // here. Generation-time settings (top-p) flow into
-        // `RuntimeConfig.snapshot()` and are re-read on the next request via
-        // `ModelRuntime.invalidateConfig()` below — they do NOT require a NIO
-        // restart nor a model reload.
-        let serverRestartNeeded =
-            previousServerCfg.port != configuration.port
-            || previousServerCfg.exposeToNetwork != configuration.exposeToNetwork
-            || previousServerCfg.allowedOrigins != configuration.allowedOrigins
-            || previousServerCfg.modelEvictionPolicy != configuration.modelEvictionPolicy
-
-        let runtimeConfigChanged = previousServerCfg.genTopP != configuration.genTopP
 
         ServerConfigurationStore.save(configuration)
 
@@ -1155,14 +1000,10 @@ struct ConfigurationView: View {
             if serverConfigChanged {
                 AppDelegate.shared?.serverController.configuration = configuration
             }
-            if serverRestartNeeded {
-                await AppDelegate.shared?.serverController.restartServer()
-            }
-            if runtimeConfigChanged {
-                // Drop the cached RuntimeConfig snapshot so the next
-                // generation re-reads fresh values from ServerConfiguration.
-                await ModelRuntime.shared.invalidateConfig()
-            }
+            // Note: Server / Local Inference settings (port, expose,
+            // CORS, top-p, eviction, idle residency) moved to the
+            // Server → Settings tab, which owns its own restart +
+            // RuntimeConfig invalidation flow.
         }
 
         showSuccess("Settings saved successfully")
@@ -1490,93 +1331,60 @@ private struct ToastPositionPicker: View {
     }
 }
 
-// MARK: - Reusable Settings Components
+// MARK: - Settings primitives (`SettingsSection`, `SettingsField`,
+// `SettingsSubsection`, `StyledSettingsTextField`, `SettingsSliderField`,
+// `SettingsStepperField`, `SettingsToggle`, `SettingsDivider`,
+// `SettingsButtonStyle`) now live in
+// `Packages/OsaurusCore/Views/Settings/Shared/SettingsPrimitives.swift`
+// so the Server → Settings tab can reuse them.
 
-private struct SettingsSection<Content: View>: View {
+// MARK: - Server Settings Moved Notice
+
+/// Surfaces when the user searches for Server/Local Inference
+/// keywords inside the legacy Configuration view. Links to the new
+/// Server → Settings tab where those controls now live.
+private struct ServerSettingsMovedNotice: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
-    let title: String
-    let icon: String
-    @ViewBuilder let content: () -> Content
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Section header with icon and uppercase title
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
-
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .textCase(.uppercase)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-                    .tracking(0.5)
-            }
-
-            content()
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(themeManager.currentTheme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-}
-
-private struct SettingsField<Content: View>: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    var hint: String? = nil
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
-            content()
-
-            if let hint = hint {
-                Text(LocalizedStringKey(hint), bundle: .module)
+        let theme = themeManager.currentTheme
+        Button(action: openServerSettings) {
+            HStack(spacing: 12) {
+                Image(systemName: "arrow.right.circle.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Server settings moved", bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Port, network exposure, CORS, top-P, model eviction, and idle residency now live in Server → Settings, backed by the vmlx server-runtime contract.",
+                        bundle: .module
+                    )
                     .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.leading)
+                }
+                Spacer()
+                Text("Open", bundle: .module)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
             }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(theme.cardBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(theme.accentColor.opacity(0.25), lineWidth: 1)
+                    )
+            )
         }
+        .buttonStyle(PlainButtonStyle())
     }
-}
 
-private struct SettingsSubsection<Content: View>: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Subsection header
-            HStack(spacing: 6) {
-                Rectangle()
-                    .fill(themeManager.currentTheme.accentColor)
-                    .frame(width: 3, height: 14)
-                    .clipShape(RoundedRectangle(cornerRadius: 1.5))
-
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .textCase(.uppercase)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .tracking(0.5)
-            }
-
-            content()
-                .padding(.leading, 9)
-        }
+    private func openServerSettings() {
+        AppDelegate.shared?.showManagementWindow(initialTab: .server)
     }
 }
 
@@ -1627,396 +1435,6 @@ private struct StyledSettingsTextArea: View {
                 .font(.system(size: 11))
                 .foregroundColor(themeManager.currentTheme.tertiaryText)
         }
-    }
-}
-
-// MARK: - Styled Settings Text Field
-
-private struct StyledSettingsTextField: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    @Binding var text: String
-    let placeholder: String
-    let help: String
-
-    @State private var isFocused = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                Spacer()
-
-                Text(LocalizedStringKey(help), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            HStack(spacing: 10) {
-                ZStack(alignment: .leading) {
-                    // Themed placeholder overlay
-                    if text.isEmpty && !placeholder.isEmpty {
-                        Text(LocalizedStringKey(placeholder), bundle: .module)
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(themeManager.currentTheme.placeholderText)
-                            .allowsHitTesting(false)
-                    }
-
-                    TextField(
-                        "",
-                        text: $text,
-                        onEditingChanged: { editing in
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                isFocused = editing
-                            }
-                        }
-                    )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isFocused
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
-            )
-        }
-    }
-}
-
-// MARK: - Settings Slider Field
-
-private struct SettingsSliderField: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    let help: String
-    @Binding var text: String
-    let range: ClosedRange<Float>
-    let step: Float
-    let defaultValue: Float
-    let formatString: String
-
-    @State private var sliderValue: Float = 0
-    @State private var isInitialized = false
-
-    private var effectiveValue: Float {
-        if let v = Float(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            return min(max(v, range.lowerBound), range.upperBound)
-        }
-        return defaultValue
-    }
-
-    private var displayValue: String {
-        String(format: formatString, effectiveValue)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                Spacer()
-
-                Text(LocalizedStringKey(help), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            HStack(spacing: 12) {
-                Text(String(format: formatString, range.lowerBound))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .frame(width: 28, alignment: .trailing)
-
-                Slider(
-                    value: $sliderValue,
-                    in: range,
-                    step: step
-                )
-                .tint(themeManager.currentTheme.accentColor)
-                .onChange(of: sliderValue) { _, newValue in
-                    guard isInitialized else { return }
-                    text = String(format: formatString, newValue)
-                }
-
-                Text(String(format: formatString, range.upperBound))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .frame(width: 28, alignment: .leading)
-
-                // Current value badge
-                Text(displayValue)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(themeManager.currentTheme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                    .frame(width: 52)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                    )
-            )
-        }
-        .onAppear {
-            sliderValue = effectiveValue
-            DispatchQueue.main.async {
-                isInitialized = true
-            }
-        }
-        .onChange(of: text) { _, _ in
-            guard isInitialized else { return }
-            let newEffective = effectiveValue
-            if abs(sliderValue - newEffective) > step / 2 {
-                sliderValue = newEffective
-            }
-        }
-    }
-}
-
-// MARK: - Settings Stepper Field
-
-private struct SettingsStepperField: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    let help: String
-    @Binding var text: String
-    let range: ClosedRange<Int>
-    let step: Int
-    let defaultValue: Int
-
-    @State private var isFocused = false
-
-    private var effectiveValue: Int {
-        if let v = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            return min(max(v, range.lowerBound), range.upperBound)
-        }
-        return defaultValue
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                Spacer()
-
-                Text(LocalizedStringKey(help), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            HStack(spacing: 0) {
-                ZStack(alignment: .leading) {
-                    if text.isEmpty {
-                        Text(String(defaultValue))
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(themeManager.currentTheme.placeholderText)
-                            .allowsHitTesting(false)
-                    }
-
-                    TextField(
-                        "",
-                        text: $text,
-                        onEditingChanged: { editing in
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                isFocused = editing
-                            }
-                        }
-                    )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                }
-                .padding(.horizontal, 12)
-
-                Divider()
-                    .frame(height: 20)
-
-                // Stepper buttons
-                HStack(spacing: 0) {
-                    Button(action: decrement) {
-                        Image(systemName: "minus")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(
-                                effectiveValue <= range.lowerBound
-                                    ? themeManager.currentTheme.tertiaryText
-                                    : themeManager.currentTheme.primaryText
-                            )
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(effectiveValue <= range.lowerBound)
-
-                    Divider()
-                        .frame(height: 20)
-
-                    Button(action: increment) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(
-                                effectiveValue >= range.upperBound
-                                    ? themeManager.currentTheme.tertiaryText
-                                    : themeManager.currentTheme.primaryText
-                            )
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(effectiveValue >= range.upperBound)
-                }
-            }
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isFocused
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
-            )
-        }
-    }
-
-    private func increment() {
-        let newValue = min(effectiveValue + step, range.upperBound)
-        text = String(newValue)
-    }
-
-    private func decrement() {
-        let newValue = max(effectiveValue - step, range.lowerBound)
-        text = String(newValue)
-    }
-}
-
-private struct SettingsToggle: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let title: String
-    let description: String
-    var badge: String? = nil
-    @Binding var isOn: Bool
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(LocalizedStringKey(title), bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(themeManager.currentTheme.primaryText)
-                    if let badge {
-                        Text(LocalizedStringKey(badge), bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(themeManager.currentTheme.accentColor)
-                    }
-                }
-                Text(LocalizedStringKey(description), bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundStyle(themeManager.currentTheme.tertiaryText)
-            }
-
-            Spacer()
-
-            Toggle("", isOn: $isOn)
-                .toggleStyle(SwitchToggleStyle(tint: themeManager.currentTheme.accentColor))
-                .labelsHidden()
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                )
-        )
-    }
-}
-
-private struct SettingsDivider: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    var body: some View {
-        Rectangle()
-            .fill(themeManager.currentTheme.cardBorder)
-            .frame(height: 1)
-    }
-}
-
-private struct SettingsButtonStyle: ButtonStyle {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    let isPrimary: Bool
-    let isDestructive: Bool
-
-    init(isPrimary: Bool = false, isDestructive: Bool = false) {
-        self.isPrimary = isPrimary
-        self.isDestructive = isDestructive
-    }
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(
-                isDestructive
-                    ? .red
-                    : (isPrimary ? .white : themeManager.currentTheme.primaryText)
-            )
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(
-                        isPrimary ? themeManager.currentTheme.accentColor : themeManager.currentTheme.tertiaryBackground
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(isPrimary ? Color.clear : themeManager.currentTheme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
 }
 

@@ -8,6 +8,7 @@
 import Combine
 import Darwin
 import Foundation
+@preconcurrency import MLXLMCommon
 import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -22,6 +23,11 @@ final class ServerController: ObservableObject {
     @Published var serverHealth: ServerHealth = .stopped
     @Published var localNetworkAddress: String = "127.0.0.1"
     @Published var configuration: ServerConfiguration = .default
+    /// Canonical vmlx runtime settings (network/cache/concurrency/etc.).
+    /// The Server → Settings tab edits this; `configuration` is
+    /// projected from it on every save so the NIO socket layer keeps
+    /// working unchanged.
+    @Published var runtimeSettings: VMLXServerRuntimeSettings = .init()
     @Published var activeRequestCount: Int = 0
     @Published var isRestarting: Bool = false
 
@@ -180,6 +186,11 @@ final class ServerController: ObservableObject {
         if let saved = ServerConfigurationStore.load() {
             self.configuration = saved
         }
+        // Load (or one-time migrate) the canonical vmlx runtime
+        // settings. Migration uses the freshly-loaded
+        // `ServerConfiguration` above so the two stay aligned on first
+        // launch.
+        self.runtimeSettings = ServerRuntimeSettingsStore.loadOrMigrate()
         // Keep exposeToNetwork in sync with Bonjour-enabled agents
         agentsCancellable = AgentManager.shared.$agents
             .sink { agents in
@@ -188,7 +199,11 @@ final class ServerController: ObservableObject {
                     let shouldExpose = agents.contains { $0.bonjourEnabled }
                     guard self.configuration.exposeToNetwork != shouldExpose else { return }
                     self.configuration.exposeToNetwork = shouldExpose
+                    // Mirror into vmlx runtime settings so the
+                    // Settings panel reflects the override.
+                    self.runtimeSettings.network.host = shouldExpose ? "0.0.0.0" : "127.0.0.1"
                     self.saveConfiguration()
+                    ServerRuntimeSettingsStore.save(self.runtimeSettings)
                     if self.isRunning {
                         await self.restartServer()
                     }
@@ -213,6 +228,46 @@ final class ServerController: ObservableObject {
     /// Saves the current configuration to disk
     func saveConfiguration() {
         ServerConfigurationStore.save(configuration)
+    }
+
+    /// Persists the supplied vmlx runtime settings, projects the
+    /// network/CORS/generation slice back into the legacy
+    /// `ServerConfiguration` JSON, and decides whether the NIO socket
+    /// needs to restart.
+    ///
+    /// Fields that require a NIO restart: port, host (expose toggle),
+    /// CORS origins.
+    /// Fields that only need a generation-config invalidate: `genTopP`
+    /// changes (consumed by `RuntimeConfig.snapshot()` on the next
+    /// request).
+    func saveRuntimeSettings(_ settings: VMLXServerRuntimeSettings) async {
+        let previousConfig = configuration
+        let projected = ServerRuntimeSettingsStore.projectIntoLegacy(
+            settings,
+            base: previousConfig
+        )
+
+        runtimeSettings = settings
+        ServerRuntimeSettingsStore.save(settings)
+
+        let configChanged = projected != previousConfig
+        let restartNeeded =
+            previousConfig.port != projected.port
+            || previousConfig.exposeToNetwork != projected.exposeToNetwork
+            || previousConfig.allowedOrigins != projected.allowedOrigins
+        let runtimeConfigChanged = previousConfig.genTopP != projected.genTopP
+
+        if configChanged {
+            configuration = projected
+            saveConfiguration()
+        }
+
+        if restartNeeded, isRunning {
+            await restartServer()
+        }
+        if runtimeConfigChanged {
+            await ModelRuntime.shared.invalidateConfig()
+        }
     }
 
     // MARK: - Private Helpers

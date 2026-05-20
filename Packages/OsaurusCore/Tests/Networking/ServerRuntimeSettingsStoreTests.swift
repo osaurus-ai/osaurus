@@ -1,0 +1,160 @@
+//
+//  ServerRuntimeSettingsStoreTests.swift
+//  osaurusTests
+//
+//  Coverage for `ServerRuntimeSettingsStore` — the canonical
+//  persistence path for the vmlx `VMLXServerRuntimeSettings`
+//  contract used by the Server → Settings tab.
+//
+
+import Foundation
+@preconcurrency import MLXLMCommon
+import Testing
+
+@testable import OsaurusCore
+
+@Suite(.serialized)
+struct ServerRuntimeSettingsStoreTests {
+
+    @Test @MainActor func loadOrMigrate_buildsFromLegacyOnFirstRun() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            // Override the legacy server.json directory too so the
+            // migration source is the in-repo defaults rather than
+            // whatever the developer machine has persisted at
+            // `~/.osaurus/config/server.json`.
+            let previousLegacy = ServerConfigurationStore.overrideDirectory
+            ServerConfigurationStore.overrideDirectory = dir
+            defer { ServerConfigurationStore.overrideDirectory = previousLegacy }
+
+            // No file present yet — loadOrMigrate should derive the
+            // settings from the legacy `server.json` defaults +
+            // `UserDefaults` and persist them.
+            let migrated = ServerRuntimeSettingsStore.loadOrMigrate()
+            #expect(migrated.network.port == ServerConfiguration.default.port)
+            #expect(migrated.network.host == "127.0.0.1")
+            // The default disk-cache topology mirrors what
+            // `ModelRuntime.buildCacheCoordinatorConfig` used to hardcode.
+            #expect(migrated.cache.prefix.enabled == true)
+            #expect(migrated.cache.pagedKV.enabled == true)
+            #expect(migrated.cache.blockDisk.enabled == true)
+            #expect(migrated.cache.legacyDisk.enabled == false)
+            #expect(migrated.cache.defaultMaxKVSize == 65536)
+            #expect(migrated.cache.longPromptMultiplier == 2.0)
+
+            // File should now exist.
+            let url = dir.appendingPathComponent("server-runtime.json")
+            #expect(FileManager.default.fileExists(atPath: url.path))
+        }
+    }
+
+    @Test @MainActor func save_thenLoadReturnsSameValue() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var settings = VMLXServerRuntimeSettings()
+            settings.network.port = 4242
+            settings.network.host = "0.0.0.0"
+            settings.network.corsOrigins = ["https://example.com"]
+            settings.generation.temperature = 0.42
+            settings.concurrency.maxConcurrentSequences = 5
+            settings.cache.defaultMaxKVSize = 16_384
+
+            ServerRuntimeSettingsStore.save(settings)
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = ServerRuntimeSettingsStore.load()
+
+            #expect(loaded == settings)
+            #expect(ServerRuntimeSettingsStore.snapshot() == settings)
+        }
+    }
+
+    @Test func migratedFromLegacy_projectsCorsAndPort() async throws {
+        var legacy = ServerConfiguration.default
+        legacy.port = 9000
+        legacy.exposeToNetwork = true
+        legacy.allowedOrigins = ["https://a.example", "https://b.example"]
+        legacy.genTopP = 0.42
+
+        let migrated = ServerRuntimeSettingsStore.migratedFromLegacy(
+            serverConfiguration: legacy,
+            userDefaults: throwawayDefaults()
+        )
+
+        #expect(migrated.network.port == 9000)
+        #expect(migrated.network.host == "0.0.0.0")
+        #expect(migrated.network.corsOrigins == ["https://a.example", "https://b.example"])
+        // Only non-default top-p values flow into the runtime store.
+        // Float → Double round-trips through `Float`, so we compare
+        // against the rounded value rather than the literal 0.42.
+        let topP = try #require(migrated.generation.topP)
+        #expect(abs(topP - 0.42) < 1e-5)
+    }
+
+    @Test func migratedFromLegacy_seedsConcurrencyFromUserDefaults() async throws {
+        let defaults = throwawayDefaults()
+        defaults.set(6, forKey: "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize")
+
+        let migrated = ServerRuntimeSettingsStore.migratedFromLegacy(
+            serverConfiguration: .default,
+            userDefaults: defaults
+        )
+
+        #expect(migrated.concurrency.maxConcurrentSequences == 6)
+    }
+
+    @Test func projectIntoLegacy_mirrorsRuntimeChangesIntoServerConfiguration() async throws {
+        let base = ServerConfiguration.default
+        var settings = VMLXServerRuntimeSettings()
+        settings.network.port = 8080
+        settings.network.host = "0.0.0.0"
+        settings.network.corsOrigins = ["*", "https://app.example"]
+        settings.generation.topP = 0.85
+
+        let projected = ServerRuntimeSettingsStore.projectIntoLegacy(
+            settings,
+            base: base
+        )
+
+        #expect(projected.port == 8080)
+        #expect(projected.exposeToNetwork == true)
+        // The "*" sentinel is dropped — legacy uses an empty array
+        // to mean "no extra origins beyond the implicit loopback".
+        #expect(projected.allowedOrigins == ["https://app.example"])
+        #expect(abs(projected.genTopP - 0.85) < 1e-5)
+    }
+
+    // MARK: - Helpers
+
+    private func makeTempDirectory() throws -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(
+                "osaurus-runtime-settings-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func throwawayDefaults() -> UserDefaults {
+        let suite = "ai.osaurus.test.runtime.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        return defaults
+    }
+
+    @MainActor
+    private func withOverriddenDirectory(
+        _ dir: URL,
+        _ body: () async throws -> Void
+    ) async throws {
+        let previous = ServerRuntimeSettingsStore.overrideDirectory
+        ServerRuntimeSettingsStore.overrideDirectory = dir
+        ServerRuntimeSettingsStore.invalidateSnapshot()
+        defer {
+            ServerRuntimeSettingsStore.overrideDirectory = previous
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            try? FileManager.default.removeItem(at: dir)
+        }
+        try await body()
+    }
+}

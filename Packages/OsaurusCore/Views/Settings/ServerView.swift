@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 
 enum ServerTab: String, CaseIterable, AnimatedTabItem {
     case overview = "Overview"
+    case settings = "Settings"
     case apiReference = "API Reference"
 
     var title: String { rawValue }
@@ -55,6 +56,8 @@ struct ServerView: View {
                 switch selectedTab {
                 case .overview:
                     OverviewTabContent()
+                case .settings:
+                    ServerSettingsTabContent()
                 case .apiReference:
                     APIReferenceTabContent(searchText: searchText)
                 }

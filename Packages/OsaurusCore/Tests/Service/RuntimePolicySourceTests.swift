@@ -388,11 +388,17 @@ struct RuntimePolicySourceTests {
     /// assertion breaks first.
     @Test("CacheCoordinatorConfig disables SSM re-derive for chat workflow")
     func cacheConfigDisablesSSMReDerive() throws {
-        let runtime = try Self.source("Services/ModelRuntime.swift")
+        // Ownership moved from `ModelRuntime.buildCacheCoordinatorConfig`
+        // (which now delegates to `VMLXServerRuntimeSettings.cacheCoordinatorConfig`)
+        // to `ServerRuntimeSettingsStore.migratedFromLegacy`. The
+        // migrated default still seeds `enableSSMReDerive: false` so
+        // osaurus's mutating-system-prefix chat workload doesn't pay the
+        // re-derive cost across turns.
+        let store = try Self.source("Models/Configuration/ServerRuntimeSettingsStore.swift")
 
         #expect(
-            runtime.contains("enableSSMReDerive: false"),
-            "ModelRuntime.buildCacheCoordinatorConfig must opt out of vmlx's default SSM re-derive — osaurus's mutating-system-prefix chat workload doesn't amortize the cost across turns"
+            store.contains("enableSSMReDerive: false"),
+            "ServerRuntimeSettingsStore.migratedFromLegacy must seed enableSSMReDerive=false — osaurus's mutating-system-prefix chat workload doesn't amortize the cost across turns"
         )
     }
 
@@ -698,12 +704,16 @@ struct RuntimePolicySourceTests {
 
     @Test("UI and health expose model idle residency")
     func uiAndHealthExposeModelIdleResidency() throws {
-        let settings = try Self.source("Views/Settings/ConfigurationView.swift")
+        let settings = try Self.source(
+            "Views/Settings/ServerSettings/ModelResidencySection.swift"
+        )
         let health = try Self.source("Networking/HTTPHandler.swift")
         let windows = try Self.source("Managers/Chat/ChatWindowManager.swift")
 
-        #expect(settings.contains("tempIdleResidencyPolicy"))
-        #expect(settings.contains("Keep model loaded after use"))
+        // Eviction + idle residency live in the Server → Settings
+        // tab's per-section file `ModelResidencySection`.
+        #expect(settings.contains("modelIdleResidencyPolicy"))
+        #expect(settings.contains("Keep Model Loaded"))
         #expect(settings.contains("ModelIdleResidencyPolicy.presets"))
         #expect(health.contains("\"resident_models\": residentModels"))
         #expect(health.contains("\"idle_unload_at\""))
