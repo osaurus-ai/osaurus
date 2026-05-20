@@ -61,13 +61,50 @@ struct HTTPHandlerChatStreamingTests {
         #expect(body.contains("c"))
     }
 
-    @Test func ndjson_path_writes_content_and_done() async throws {
+    @Test func ndjson_path_writes_content_and_done_when_streaming() async throws {
         let server = try await startTestServer(
             with: MockChatEngine(deltas: ["x", "y"], completeText: "", model: "fake")
         )
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/chat")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        let reqBody = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.2,
+            max_tokens: 8,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+        request.httpBody = try JSONEncoder().encode(reqBody)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(body.contains("\"content\":\"x\""))
+        #expect(body.contains("\"content\":\"y\""))
+        #expect(body.contains("\"done\":true") || body.contains("\"done\": true"))
+    }
+
+    @Test func ollama_chat_non_streaming_returns_single_message_object() async throws {
+        let server = try await startTestServer(
+            with: MockChatEngine(deltas: [], completeText: "hello", model: "fake")
+        )
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/api/chat")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.authenticate()
@@ -90,10 +127,14 @@ struct HTTPHandlerChatStreamingTests {
         request.httpBody = try JSONEncoder().encode(reqBody)
 
         let (data, resp) = try await URLSession.shared.data(for: request)
-        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let http = resp as? HTTPURLResponse
         let body = String(decoding: data, as: UTF8.self)
-        #expect(status == 200)
+        #expect(http?.statusCode == 200)
+        #expect(http?.value(forHTTPHeaderField: "Content-Type")?.contains("application/json") == true)
+        #expect(body.contains("\"message\""))
+        #expect(body.contains("\"content\":\"hello\""))
         #expect(body.contains("\"done\":true") || body.contains("\"done\": true"))
+        #expect(body.split(separator: "\n").count <= 1)
     }
 
     @Test func ollama_generate_streaming_writes_response_chunks_and_done() async throws {

@@ -4160,6 +4160,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        let shouldStream = req.stream ?? true
+        if !shouldStream {
+            handleOllamaChatNonStreaming(
+                head: head,
+                context: context,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBodyString: requestBodyString,
+                request: req
+            )
+            return
+        }
+
         let writer = NDJSONResponseWriter()
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -4281,6 +4294,136 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     temperature: logTemperature,
                     maxTokens: logMaxTokens,
                     finishReason: .error,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func handleOllamaChatNonStreaming(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        requestBodyString: String?,
+        request: ChatCompletionRequest
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        Task(priority: .userInitiated) {
+            do {
+                let response = try await self.chatEngine.completeChat(request: request)
+                let message = response.choices.first?.message
+                let body = Self.ollamaChatJSON(
+                    model: request.model,
+                    content: message?.content ?? "",
+                    toolCalls: message?.tool_calls,
+                    done: true
+                )
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: request.model,
+                    tokensInput: response.usage.prompt_tokens,
+                    tokensOutput: response.usage.completion_tokens,
+                    temperature: request.temperature ?? 0.7,
+                    maxTokens: request.max_tokens ?? 1024,
+                    finishReason: message?.tool_calls?.isEmpty == false ? .toolCalls : .stop
+                )
+            } catch let invs as ServiceToolInvocations {
+                let body = Self.ollamaChatToolCallsJSON(model: request.model, invocations: invs.invocations)
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                let toolLogs = invs.invocations.map {
+                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: request.model,
+                    toolCalls: toolLogs,
+                    temperature: request.temperature ?? 0.7,
+                    maxTokens: request.max_tokens ?? 1024,
+                    finishReason: .toolCalls
+                )
+            } catch let inv as ServiceToolInvocation {
+                let body = Self.ollamaChatToolCallsJSON(model: request.model, invocations: [inv])
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: request.model,
+                    toolCalls: [toolLog],
+                    temperature: request.temperature ?? 0.7,
+                    maxTokens: request.max_tokens ?? 1024,
+                    finishReason: .toolCalls
+                )
+            } catch {
+                let body = Self.ollamaGenerateErrorJSON(error.localizedDescription)
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .internalServerError,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseStatus: 500,
+                    startTime: startTime,
+                    model: request.model,
                     errorMessage: error.localizedDescription
                 )
             }
@@ -4547,6 +4690,73 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return #"{"done":true}"#
         }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func ollamaChatJSON(
+        model: String,
+        content: String,
+        toolCalls: [ToolCall]? = nil,
+        done: Bool
+    ) -> String {
+        var message: [String: Any] = [
+            "role": "assistant",
+            "content": content,
+        ]
+        if let toolCalls, !toolCalls.isEmpty {
+            message["tool_calls"] = toolCalls.map { call in
+                [
+                    "function": [
+                        "name": call.function.name,
+                        "arguments": ollamaArguments(from: call.function.arguments),
+                    ]
+                ]
+            }
+        }
+        let object: [String: Any] = [
+            "model": model,
+            "created_at": Date().ISO8601Format(),
+            "message": message,
+            "done": done,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return #"{"message":{"role":"assistant","content":""},"done":true}"#
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func ollamaChatToolCallsJSON(
+        model: String,
+        invocations: [ServiceToolInvocation]
+    ) -> String {
+        let toolCalls = invocations.map { inv in
+            [
+                "function": [
+                    "name": inv.toolName,
+                    "arguments": ollamaArguments(from: inv.jsonArguments),
+                ]
+            ]
+        }
+        let object: [String: Any] = [
+            "model": model,
+            "created_at": Date().ISO8601Format(),
+            "message": [
+                "role": "assistant",
+                "content": "",
+                "tool_calls": toolCalls,
+            ],
+            "done": true,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return #"{"message":{"role":"assistant","content":"","tool_calls":[]},"done":true}"#
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func ollamaArguments(from json: String) -> Any {
+        guard let data = json.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data)
+        else { return json }
+        return object
     }
 
     private static func ollamaGenerateErrorJSON(_ message: String) -> String {
