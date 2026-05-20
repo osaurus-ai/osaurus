@@ -1078,11 +1078,14 @@ struct ModelDownloadView: View {
     private func computeGridLists() -> GridLists {
         let mem = systemMonitor.totalMemoryGB
 
-        let availSearched = SearchService.filterModels(modelManager.availableModels, with: debouncedSearchText)
+        let osaurusOnly = modelManager.availableModels.filter { Self.isOsaurusAI($0) }
+        let osaurusSuggested = modelManager.suggestedModels.filter { Self.isOsaurusAI($0) }
+
+        let availSearched = SearchService.filterModels(osaurusOnly, with: debouncedSearchText)
         let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
         let allFiltered = applySort(to: availFiltered)
 
-        let suggSearched = SearchService.filterModels(modelManager.suggestedModels, with: debouncedSearchText)
+        let suggSearched = SearchService.filterModels(osaurusSuggested, with: debouncedSearchText)
         let suggFiltered = filterState.apply(to: suggSearched, totalMemoryGB: mem)
         let suggested = sortedSuggested(suggFiltered)
 
@@ -1210,6 +1213,10 @@ struct ModelDownloadView: View {
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
         }
+    }
+
+    private static func isOsaurusAI(_ model: MLXModel) -> Bool {
+        model.id.lowercased().hasPrefix("osaurusai/")
     }
 
     private func compatibilityRank(_ model: MLXModel) -> Int {
