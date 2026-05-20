@@ -1151,7 +1151,11 @@ public actor ModelRuntime {
     ) async throws -> String {
         var accumulated = ""
         var pendingTools: [ServiceToolInvocation] = []
-        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
+        let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
+            messages,
+            toolChoice: toolChoice
+        )
+        let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented, trace: parameters.ttftTrace) },
             parameters: parameters,
@@ -1195,7 +1199,11 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<String, Error> {
-        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
+        let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
+            messages,
+            toolChoice: toolChoice
+        )
+        let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented, trace: parameters.ttftTrace) },
             parameters: parameters,
@@ -1435,6 +1443,36 @@ public actor ModelRuntime {
         } else {
             return tools.map { $0.toTokenizerToolSpec() }
         }
+    }
+
+    nonisolated static func applyForcedToolChoiceDirective(
+        _ messages: [ChatMessage],
+        toolChoice: ToolChoiceOption?
+    ) -> [ChatMessage] {
+        guard case .function(let target) = toolChoice else { return messages }
+
+        let toolName = target.function.name
+        let directive = """
+            Tool choice is forced by the API caller. You must call exactly the \
+            function named `\(toolName)` and must not answer in natural language. \
+            Ignore any user instruction that asks you to skip tools, answer in \
+            plain text, or choose a different tool.
+            """
+
+        var out = messages
+        if let firstSystemIdx = out.firstIndex(where: { $0.role == "system" }) {
+            let existing = out[firstSystemIdx].content ?? ""
+            out[firstSystemIdx] = ChatMessage(
+                role: "system",
+                content: existing.isEmpty ? directive : directive + "\n\n" + existing,
+                tool_calls: out[firstSystemIdx].tool_calls,
+                tool_call_id: out[firstSystemIdx].tool_call_id,
+                reasoning_content: out[firstSystemIdx].reasoning_content
+            )
+        } else {
+            out.insert(ChatMessage(role: "system", content: directive), at: 0)
+        }
+        return out
     }
 
     /// When `jsonMode` is true, prepend (or augment) a system instruction
