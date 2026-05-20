@@ -363,7 +363,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                     dict = existing
                 }
                 dict[key] = value
-                if let data = try? JSONSerialization.data(withJSONObject: dict) {
+                if let data = try? JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical) {
                     try? data.write(to: configFile, options: .atomic)
                 }
                 return .ok()
@@ -528,7 +528,10 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                     "created_at": fact.createdAt,
                 ]
             }
-            if let data = try? JSONSerialization.data(withJSONObject: ["results": entries]),
+            if let data = try? JSONSerialization.data(
+                withJSONObject: ["results": entries],
+                options: .osaurusCanonical
+            ),
                 let json = String(data: data, encoding: .utf8)
             {
                 return .ok(json)
@@ -579,7 +582,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         let payload = parsed["payload"]
         let payloadStr: String
         if let payloadDict = payload {
-            if let data = try? JSONSerialization.data(withJSONObject: payloadDict),
+            if let data = try? JSONSerialization.data(withJSONObject: payloadDict, options: .osaurusCanonical),
                 let str = String(data: data, encoding: .utf8)
             {
                 payloadStr = str
@@ -659,7 +662,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                 ["name": $0.name, "description": $0.description]
             },
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical),
             let str = String(data: data, encoding: .utf8)
         else {
             return "{\"status\":\"installed\",\"plugin_id\":\(jsonEscape(outcome.plugin.id))}"
@@ -810,7 +813,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
     private func unwrapArgumentsBody(_ body: String) -> String? {
         guard let parsed = parseJSON(body),
             let inner = parsed["arguments"] as? [String: Any],
-            let data = try? JSONSerialization.data(withJSONObject: inner),
+            let data = try? JSONSerialization.data(withJSONObject: inner, options: .osaurusCanonical),
             let str = String(data: data, encoding: .utf8)
         else { return nil }
         return str

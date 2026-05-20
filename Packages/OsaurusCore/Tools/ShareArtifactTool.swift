@@ -151,7 +151,7 @@ public struct ShareArtifactTool: OsaurusTool {
         if let description { metadataDict["description"] = description }
 
         let metadataJSON: String
-        if let jsonData = try? JSONSerialization.data(withJSONObject: metadataDict),
+        if let jsonData = try? JSONSerialization.data(withJSONObject: metadataDict, options: .osaurusCanonical),
             let jsonStr = String(data: jsonData, encoding: .utf8)
         {
             metadataJSON = jsonStr

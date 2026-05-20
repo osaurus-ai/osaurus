@@ -168,7 +168,7 @@ public enum OpenRouterOAuthService {
             "code_verifier": verifier,
             "code_challenge_method": "S256",
         ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: .osaurusCanonical)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {

@@ -344,7 +344,7 @@ private func agentShellEnvironment(agentId: String, home: String, cwd: String? =
 }
 
 private func jsonResult(_ dict: [String: Any]) -> String {
-    guard let data = try? JSONSerialization.data(withJSONObject: dict),
+    guard let data = try? JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical),
         let json = String(data: data, encoding: .utf8)
     else { return "{}" }
     return json

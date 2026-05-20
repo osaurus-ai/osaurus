@@ -513,7 +513,7 @@ public final class RelayTunnelManager: ObservableObject {
     }
 
     private static func sendFrame<T: Encodable>(_ frame: T, via webSocket: URLSessionWebSocketTask?) {
-        guard let data = try? JSONEncoder().encode(frame),
+        guard let data = try? JSONEncoder.osaurusCanonical().encode(frame),
             let str = String(data: data, encoding: .utf8)
         else { return }
         webSocket?.send(.string(str)) { _ in }
@@ -638,7 +638,7 @@ public final class RelayTunnelManager: ObservableObject {
     }
 
     private func sendJSON(_ object: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: object),
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical),
             let str = String(data: data, encoding: .utf8)
         else { return }
         webSocketTask?.send(.string(str)) { error in

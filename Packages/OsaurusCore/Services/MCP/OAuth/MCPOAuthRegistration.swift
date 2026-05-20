@@ -103,7 +103,7 @@ public enum MCPOAuthRegistration {
 
         let payload: Data
         do {
-            payload = try JSONSerialization.data(withJSONObject: body)
+            payload = try JSONSerialization.data(withJSONObject: body, options: .osaurusCanonical)
         } catch {
             throw MCPOAuthRegistrationError.decodeFailed(error.localizedDescription)
         }

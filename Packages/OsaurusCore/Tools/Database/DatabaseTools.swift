@@ -175,7 +175,10 @@ final class DBSchemaTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let agentId) = agentReq else { return agentReq.failureEnvelope ?? "" }
         do {
             let schema = try LocalAgentBridge.shared.schema(agentId: agentId)
-            let data = try JSONEncoder().encode(schema)
+            // Canonical encoder: the schema becomes the tool-result content
+            // the model sees on its next turn, so byte-stable output
+            // protects prompt-prefix caches (see `JSONDeterminism.swift`).
+            let data = try JSONEncoder.osaurusCanonical().encode(schema)
             // `ToolEnvelope.success(result:)` accepts `Any` and re-encodes,
             // so route the Codable schema through a plain Foundation object.
             let json = try JSONSerialization.jsonObject(with: data)

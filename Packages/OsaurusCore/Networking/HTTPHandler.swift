@@ -611,7 +611,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "models": models,
                 "aggregate": aggregate,
             ]
-            let data = try? JSONSerialization.data(withJSONObject: obj)
+            let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
             let headers: [(String, String)] =
                 [("Content-Type", "application/json; charset=utf-8")]
@@ -1035,7 +1035,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             )
 
-            let encoder = JSONEncoder()
+            let encoder = JSONEncoder.osaurusCanonical()
             guard let requestData = try? encoder.encode(request),
                 let requestJSON = String(data: requestData, encoding: .utf8)
             else {
@@ -2205,7 +2205,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // 5. Return the agent's address, the generated API key, and the permanence flag.
             let response = PairResponse(agentAddress: agentAddress, apiKey: fullKey, isPermanent: isPermanent)
             let json =
-                (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) }
+                (try? JSONEncoder.osaurusCanonical().encode(response)).map { String(decoding: $0, as: UTF8.self) }
                 ?? #"{"error":"Encoding failed"}"#
             // Never log the freshly minted key. The wire response still
             // contains it; the request log gets a redacted copy with the
@@ -2217,7 +2217,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 isPermanent: isPermanent
             )
             let redactedJson =
-                (try? JSONEncoder().encode(redactedResponse)).map { String(decoding: $0, as: UTF8.self) }
+                (try? JSONEncoder.osaurusCanonical().encode(redactedResponse)).map {
+                    String(decoding: $0, as: UTF8.self)
+                }
                 ?? #"{"agentAddress":"<redacted>","apiKey":"<redacted>"}"#
 
             hop {
@@ -2397,7 +2399,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         relayBaseURL: invite.url,
                         apiKey: apiKey
                     )
-                    return (try? JSONEncoder().encode(body))
+                    return (try? JSONEncoder.osaurusCanonical().encode(body))
                         .map { String(decoding: $0, as: UTF8.self) }
                         ?? #"{"error":"Encoding failed"}"#
                 }
@@ -2492,7 +2494,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let response = AgentListResponse(agents: items)
             let json =
-                (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? #"{"agents":[]}"#
+                (try? JSONEncoder.osaurusCanonical().encode(response)).map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"agents":[]}"#
 
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -2591,7 +2594,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 updated_at: formatter.string(from: agent.updatedAt)
             )
             let json =
-                (try? JSONEncoder().encode(item)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                (try? JSONEncoder.osaurusCanonical().encode(item)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
 
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -3087,7 +3090,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let pollUrl = "/v1/tasks/\(resolvedId)"
                 let resp: [String: Any] = ["id": resolvedId, "status": "running", "poll_url": pollUrl]
                 responseBody =
-                    (try? JSONSerialization.data(withJSONObject: resp)).flatMap { String(decoding: $0, as: UTF8.self) }
+                    (try? JSONSerialization.data(withJSONObject: resp, options: .osaurusCanonical))
+                    .flatMap { String(decoding: $0, as: UTF8.self) }
                     ?? "{}"
                 status = .accepted
             } else {
@@ -3406,7 +3410,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let json: String
                 if ollamaFormat {
                     let response = OllamaEmbedResponse(model: EmbeddingService.modelName, embeddings: embeddings)
-                    json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                    json =
+                        (try? JSONEncoder.osaurusCanonical().encode(response)).map {
+                            String(decoding: $0, as: UTF8.self)
+                        } ?? "{}"
                 } else {
                     let objects = embeddings.enumerated().map { OpenAIEmbeddingObject(embedding: $1, index: $0) }
                     let tokenCount = texts.reduce(0) { $0 + $1.split(separator: " ").count }
@@ -3415,7 +3422,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         model: EmbeddingService.modelName,
                         usage: OpenAIEmbeddingUsage(prompt_tokens: tokenCount, total_tokens: tokenCount)
                     )
-                    json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                    json =
+                        (try? JSONEncoder.osaurusCanonical().encode(response)).map {
+                            String(decoding: $0, as: UTF8.self)
+                        } ?? "{}"
                 }
 
                 hop {
@@ -3911,7 +3921,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             model: model
                         )
                     }
-                    let json = try JSONEncoder().encode(resp)
+                    let json = try JSONEncoder.osaurusCanonical().encode(resp)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]
                     headers.append(contentsOf: cors)
                     let headersCopy = headers
@@ -4447,7 +4457,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "response": response,
             "done": done,
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical) else {
             return #"{"done":true}"#
         }
         return String(decoding: data, as: UTF8.self)
@@ -4461,7 +4471,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             ],
             "done": true,
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical) else {
             return #"{"error":{"message":"internal error","type":"internal_error"},"done":true}"#
         }
         return String(decoding: data, as: UTF8.self)
@@ -4651,7 +4661,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "inflight": inflightObj,
                 "resident_models": residentModels,
             ]
-            let data = try? JSONSerialization.data(withJSONObject: obj)
+            let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
             let headers: [(String, String)] =
                 [("Content-Type", "application/json; charset=utf-8")]
@@ -4708,7 +4718,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             models.append(contentsOf: remoteModels)
 
             let response = ModelsResponse(data: models)
-            let json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(response)).map { String(decoding: $0, as: UTF8.self) }
+                ?? "{}"
 
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -4808,7 +4820,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             let payload = ["models": models]
-            let json = (try? JSONEncoder().encode(payload)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(payload)).map { String(decoding: $0, as: UTF8.self) }
+                ?? "{}"
 
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -4944,7 +4958,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             "general.name": "Apple Foundation Model",
                         ],
                     ]
-                    let jsonData = (try? JSONSerialization.data(withJSONObject: response)) ?? Data("{}".utf8)
+                    let jsonData =
+                        (try? JSONSerialization.data(withJSONObject: response, options: .osaurusCanonical))
+                        ?? Data("{}".utf8)
                     let json = String(decoding: jsonData, as: UTF8.self)
                     hop {
                         var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5025,7 +5041,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             let response = modelInfo.toShowResponse()
-            let jsonData = (try? JSONEncoder().encode(response)) ?? Data("{}".utf8)
+            let jsonData = (try? JSONEncoder.osaurusCanonical().encode(response)) ?? Data("{}".utf8)
             let json = String(decoding: jsonData, as: UTF8.self)
 
             hop {
@@ -5082,7 +5098,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return obj
             }
             let payload: [String: Any] = ["tools": tools]
-            let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+            // Sorted keys: external MCP clients may byte-compare or hash
+            // schema bytes. See `JSONDeterminism.swift`.
+            let data =
+                (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
+                ?? Data("{}".utf8)
             let mcpToolsBody = String(decoding: data, as: UTF8.self)
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5154,10 +5174,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 case let d as Double: try container.encode(d)
                 case let s as String: try container.encode(s)
                 case let arr as [Any]:
-                    let enc = try JSONSerialization.data(withJSONObject: arr, options: [])
+                    let enc = try JSONSerialization.data(withJSONObject: arr, options: .osaurusCanonical)
                     try container.encode(String(decoding: enc, as: UTF8.self))
                 case let dict as [String: Any]:
-                    let enc = try JSONSerialization.data(withJSONObject: dict, options: [])
+                    let enc = try JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical)
                     try container.encode(String(decoding: enc, as: UTF8.self))
                 default:
                     try container.encodeNil()
@@ -5187,7 +5207,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         let argsJSON: String = {
             if let a = req.arguments?.value,
-                let d = try? JSONSerialization.data(withJSONObject: a, options: [])
+                let d = try? JSONSerialization.data(withJSONObject: a, options: .osaurusCanonical)
             {
                 return String(decoding: d, as: UTF8.self)
             }
@@ -5218,7 +5238,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             "content": [["type": "text", "text": message]],
                             "isError": true,
                         ]
-                        let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+                        let data =
+                            (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
+                            ?? Data("{}".utf8)
                         let body = String(decoding: data, as: UTF8.self)
                         hop {
                             var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5256,7 +5278,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     "content": [["type": "text", "text": result]],
                     "isError": false,
                 ]
-                let d = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+                let d =
+                    (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
+                    ?? Data("{}".utf8)
                 let body = String(decoding: d, as: UTF8.self)
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5290,7 +5314,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     "content": [["type": "text", "text": error.localizedDescription]],
                     "isError": true,
                 ]
-                let d = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+                let d =
+                    (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
+                    ?? Data("{}".utf8)
                 let body = String(decoding: d, as: UTF8.self)
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -5348,7 +5374,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         guard let anthropicReq = try? JSONDecoder().decode(AnthropicMessagesRequest.self, from: data) else {
             let error = AnthropicError(message: "Invalid request format", errorType: "invalid_request_error")
             let errorJson =
-                (try? JSONEncoder().encode(error)).map { String(decoding: $0, as: UTF8.self) }
+                (try? JSONEncoder.osaurusCanonical().encode(error)).map { String(decoding: $0, as: UTF8.self) }
                 ?? #"{"type":"error","error":{"type":"invalid_request_error","message":"Invalid request format"}}"#
             var headers = [("Content-Type", "application/json; charset=utf-8")]
             headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -5633,7 +5659,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 )
 
-                let json = try JSONEncoder().encode(anthropicResp)
+                let json = try JSONEncoder.osaurusCanonical().encode(anthropicResp)
                 var headers: [(String, String)] = [("Content-Type", "application/json")]
                 headers.append(contentsOf: cors)
                 let headersCopy = headers
@@ -5720,7 +5746,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } catch {
                 let errorResp = AnthropicError(message: error.localizedDescription, errorType: "api_error")
                 let errorJson =
-                    (try? JSONEncoder().encode(errorResp))
+                    (try? JSONEncoder.osaurusCanonical().encode(errorResp))
                     .map { String(decoding: $0, as: UTF8.self) }
                     ?? #"{"type":"error","error":{"type":"api_error","message":"Internal error"}}"#
                 var headers: [(String, String)] = [("Content-Type", "application/json")]
@@ -5882,12 +5908,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if let duration = result.durationSeconds {
                         response["duration"] = duration
                     }
-                    let jsonData = try JSONSerialization.data(withJSONObject: response)
+                    let jsonData = try JSONSerialization.data(withJSONObject: response, options: .osaurusCanonical)
                     responseBody = String(decoding: jsonData, as: UTF8.self)
                 } else {
                     // Default JSON format
                     let response = ["text": result.text]
-                    let jsonData = try JSONEncoder().encode(response)
+                    let jsonData = try JSONEncoder.osaurusCanonical().encode(response)
                     responseBody = String(decoding: jsonData, as: UTF8.self)
                 }
 
@@ -5969,7 +5995,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         guard let openResponsesReq = try? JSONDecoder().decode(OpenResponsesRequest.self, from: data) else {
             let error = OpenResponsesErrorResponse(code: "invalid_request_error", message: "Invalid request format")
             let errorJson =
-                (try? JSONEncoder().encode(error)).map { String(decoding: $0, as: UTF8.self) }
+                (try? JSONEncoder.osaurusCanonical().encode(error)).map { String(decoding: $0, as: UTF8.self) }
                 ?? #"{"error":{"type":"error","code":"invalid_request_error","message":"Invalid request format"}}"#
             var headers = [("Content-Type", "application/json; charset=utf-8")]
             headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -6259,7 +6285,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             output: items,
             usage: OpenResponsesUsage(inputTokens: 0, outputTokens: 0)
         )
-        return (try? JSONEncoder().encode(resp))
+        return (try? JSONEncoder.osaurusCanonical().encode(resp))
             .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
 
@@ -6297,7 +6323,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stopReason: "tool_use",
             usage: AnthropicUsage(inputTokens: 0, outputTokens: 0)
         )
-        return (try? JSONEncoder().encode(resp))
+        return (try? JSONEncoder.osaurusCanonical().encode(resp))
             .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
 
@@ -6428,7 +6454,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // Convert to Open Responses format
                 let openResponsesResp = resp.toOpenResponsesResponse(responseId: responseId)
 
-                let json = try JSONEncoder().encode(openResponsesResp)
+                let json = try JSONEncoder.osaurusCanonical().encode(openResponsesResp)
                 var headers: [(String, String)] = [("Content-Type", "application/json")]
                 headers.append(contentsOf: cors)
                 let headersCopy = headers
@@ -6509,7 +6535,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } catch {
                 let errorResp = OpenResponsesErrorResponse(code: "api_error", message: error.localizedDescription)
                 let errorJson =
-                    (try? JSONEncoder().encode(errorResp))
+                    (try? JSONEncoder.osaurusCanonical().encode(errorResp))
                     .map { String(decoding: $0, as: UTF8.self) }
                     ?? #"{"error":{"type":"error","code":"api_error","message":"Internal error"}}"#
                 var headers: [(String, String)] = [("Content-Type", "application/json")]

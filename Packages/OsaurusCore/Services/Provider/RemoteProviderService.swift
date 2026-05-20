@@ -1492,7 +1492,9 @@ public actor RemoteProviderService: ToolCapableService {
     /// producers and the one-shot response parser).
     private static func geminiArgsJSON(from args: [String: AnyCodableValue]?) -> String {
         let dict = (args ?? [:]).mapValues { $0.value }
-        if let data = try? JSONSerialization.data(withJSONObject: dict),
+        // Sorted keys: replayed verbatim into the next turn's
+        // `tool_calls[].function.arguments`. See `JSONDeterminism.swift`.
+        if let data = try? JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical),
             let s = String(data: data, encoding: .utf8)
         {
             return s
@@ -2009,9 +2011,11 @@ public actor RemoteProviderService: ToolCapableService {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
 
-        // Encode request body based on provider type
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
+        // Canonical (sorted-keys) encoder. Remote prompt-prefix caches
+        // (ds4, vLLM, sglang, Anthropic prompt cache, ...) hash the
+        // rendered prompt — including inlined tool schemas — byte for
+        // byte; see `JSONDeterminism.swift` / `docs/JSON_DETERMINISM.md`.
+        let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: true)
 
         let bodyData: Data
         switch requestProviderType {
@@ -2075,7 +2079,12 @@ public actor RemoteProviderService: ToolCapableService {
                 case .text(_, let text):
                     textContent += text
                 case .toolUse(_, let id, let name, let input):
-                    let argsData = try? JSONSerialization.data(withJSONObject: input.mapValues { $0.value })
+                    // Sorted keys: replayed into next-turn
+                    // `tool_calls[].function.arguments`.
+                    let argsData = try? JSONSerialization.data(
+                        withJSONObject: input.mapValues { $0.value },
+                        options: .osaurusCanonical
+                    )
                     let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
                     toolCalls.append(
                         ToolCall(
@@ -2990,7 +2999,7 @@ struct RemoteChatRequest: Encodable {
 
 extension OpenResponsesRequest {
     func toCodexOAuthPayloadData() throws -> Data {
-        let encoded = try JSONEncoder().encode(self)
+        let encoded = try JSONEncoder.osaurusCanonical().encode(self)
         guard var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
             return encoded
         }
@@ -2999,7 +3008,7 @@ extension OpenResponsesRequest {
         object["include"] = ["reasoning.encrypted_content"]
         object.removeValue(forKey: "max_output_tokens")
 
-        return try JSONSerialization.data(withJSONObject: object)
+        return try JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical)
     }
 }
 

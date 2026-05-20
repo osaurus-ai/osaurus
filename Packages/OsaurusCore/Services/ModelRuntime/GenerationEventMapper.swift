@@ -213,7 +213,11 @@ enum GenerationEventMapper {
             return errorEnvelope(toolName: toolName)
         }
         do {
-            let data = try JSONSerialization.data(withJSONObject: anyDict)
+            // Sorted keys: replayed verbatim into the next turn's
+            // `tool_calls[].function.arguments`; unstable ordering would
+            // invalidate the local KV prefix cache. See
+            // `JSONDeterminism.swift`.
+            let data = try JSONSerialization.data(withJSONObject: anyDict, options: .osaurusCanonical)
             if let json = String(data: data, encoding: .utf8) {
                 return json
             }

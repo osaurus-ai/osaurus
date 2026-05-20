@@ -192,7 +192,7 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
 ///     keys off the `action` field at the JSON root.
 enum SecretToolResult {
     static func encode(_ dict: [String: Any]) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical),
             let json = String(data: data, encoding: .utf8)
         else { return "{\"error\":\"Failed to encode result\"}" }
         return json

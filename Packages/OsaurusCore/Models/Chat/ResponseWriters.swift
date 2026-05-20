@@ -449,7 +449,7 @@ final class NDJSONResponseWriter: ResponseWriter {
     }
 
     private func writeJSONObject(_ response: [String: Any], context: ChannelHandlerContext) {
-        if let jsonData = try? JSONSerialization.data(withJSONObject: response) {
+        if let jsonData = try? JSONSerialization.data(withJSONObject: response, options: .osaurusCanonical) {
             var buffer = context.channel.allocator.buffer(capacity: 256)
             buffer.writeBytes(jsonData)
             buffer.writeString("\n")
@@ -466,7 +466,7 @@ final class NDJSONResponseWriter: ResponseWriter {
             ],
             "done": true,
         ]
-        if let jsonData = try? JSONSerialization.data(withJSONObject: response) {
+        if let jsonData = try? JSONSerialization.data(withJSONObject: response, options: .osaurusCanonical) {
             var buffer = context.channel.allocator.buffer(capacity: 256)
             buffer.writeBytes(jsonData)
             buffer.writeString("\n")
@@ -553,7 +553,7 @@ final class OllamaGenerateNDJSONResponseWriter {
     }
 
     private func writeJSONObject(_ response: [String: Any], context: ChannelHandlerContext) {
-        if let jsonData = try? JSONSerialization.data(withJSONObject: response) {
+        if let jsonData = try? JSONSerialization.data(withJSONObject: response, options: .osaurusCanonical) {
             var buffer = context.channel.allocator.buffer(capacity: 256)
             buffer.writeBytes(jsonData)
             buffer.writeString("\n")

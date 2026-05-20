@@ -972,12 +972,14 @@ extension ToolFunction {
 extension Tool {
     /// Convert to Tokenizers.ToolSpec (`[String: any Sendable]`) for MLX chat templates.
     ///
-    /// The dictionary is round-tripped through canonical JSON
-    /// (`JSONSerialization.WritingOptions.sortedKeys`) so the structure handed
-    /// to the chat template — and the resulting `<tools>` block in the
-    /// rendered prompt — is byte-stable across calls. Without this, key
-    /// iteration order from a fresh dictionary literal can shift between
-    /// requests and silently invalidate the MLX paged KV cache prefix.
+    /// The dictionary is normalised via `canonicalize` so every leaf is
+    /// JSON-encodable and the values bridge cleanly through Foundation.
+    /// Byte-stability of the resulting `<tools>` block in the rendered
+    /// prompt is enforced at *encode time* by `JSONEncoder.osaurusCanonical()`
+    /// / `.osaurusCanonical` writing options (see
+    /// `docs/JSON_DETERMINISM.md`). Without those, key iteration order
+    /// from a fresh dictionary literal silently invalidates the MLX paged
+    /// KV cache prefix.
     func toTokenizerToolSpec() -> [String: any Sendable] {
         let raw: [String: any Sendable] = [
             "type": type,
@@ -993,25 +995,30 @@ extension Tool {
     func canonicalHashPayload() -> Data {
         let spec = toTokenizerToolSpec()
         if JSONSerialization.isValidJSONObject(spec),
-            let data = try? JSONSerialization.data(withJSONObject: spec, options: [.sortedKeys])
+            let data = try? JSONSerialization.data(withJSONObject: spec, options: .osaurusCanonical)
         {
             return data
         }
 
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        let encoder = JSONEncoder.osaurusCanonical()
         return (try? encoder.encode(self)) ?? Data("\(type)\0\(function.name)".utf8)
     }
 
-    /// Round-trip a Sendable JSON value through `JSONSerialization` with
-    /// `.sortedKeys` to canonicalise nested key ordering. Returns `nil` on
-    /// the (extremely unlikely) serialisation failure so callers fall back
-    /// to the raw dict rather than emit nothing.
+    /// Normalise a `Sendable` JSON value into a Foundation-bridged dict.
+    /// Round-trips through `JSONSerialization` so every leaf comes back as
+    /// `NSNumber` / `NSString` / `NSArray` / `NSDictionary`, which avoids
+    /// surprises in downstream chat-template renderers. Falls back to
+    /// `JSONCanonicalization.normalizeObject` on the extremely unlikely
+    /// serialisation failure so callers never see the raw unsorted input
+    /// — preserving the determinism guarantee documented in
+    /// `docs/JSON_DETERMINISM.md`.
     fileprivate static func canonicalize(_ value: [String: any Sendable]) -> [String: any Sendable]? {
-        guard JSONSerialization.isValidJSONObject(value),
-            let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+        if JSONSerialization.isValidJSONObject(value),
+            let data = try? JSONSerialization.data(withJSONObject: value, options: .osaurusCanonical),
             let reparsed = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: any Sendable]
-        else { return nil }
-        return reparsed
+        {
+            return reparsed
+        }
+        return JSONCanonicalization.normalizeObject(value)
     }
 }
