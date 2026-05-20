@@ -268,7 +268,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return accumulated.isEmpty ? nil : accumulated
     }
 
-    private static func canonicalToolArgumentsJSON(_ json: String) -> String {
+    private static func canonicalToolArgumentsJSON(_ json: String, schema: JSONValue? = nil) -> String {
         let candidates = [
             json,
             json.replacingOccurrences(of: #"\""#, with: #"""#),
@@ -280,8 +280,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             return json
         }
         let normalized = normalizeNestedJSONStringValues(object)
-        guard JSONSerialization.isValidJSONObject(normalized),
-            let data = try? JSONSerialization.data(withJSONObject: normalized, options: [.sortedKeys]),
+        let coerced: Any
+        if let schema {
+            let candidate = SchemaValidator.coerceArguments(normalized, against: schema)
+            let result = SchemaValidator.validate(arguments: candidate, against: schema)
+            coerced = result.isValid ? candidate : normalized
+        } else {
+            coerced = normalized
+        }
+        guard JSONSerialization.isValidJSONObject(coerced),
+            let data = try? JSONSerialization.data(withJSONObject: coerced, options: [.sortedKeys]),
             let string = String(data: data, encoding: .utf8)
         else {
             return json
@@ -320,8 +328,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         inferenceSource: InferenceSource,
         temperature: Float?,
         maxTokens: Int,
-        requestBodyJSON: String? = nil
+        requestBodyJSON: String? = nil,
+        tools: [Tool]? = nil
     ) -> ChatCompletionResponse {
+        let schemasByName = Dictionary(
+            uniqueKeysWithValues: (tools ?? []).map { ($0.function.name, $0.function.parameters) }
+        )
         let toolCalls: [ToolCall] = invocations.map { inv in
             let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
             let callId = inv.toolCallId ?? "call_" + String(raw.prefix(24))
@@ -330,7 +342,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 type: "function",
                 function: ToolCallFunction(
                     name: inv.toolName,
-                    arguments: canonicalToolArgumentsJSON(inv.jsonArguments)
+                    arguments: canonicalToolArgumentsJSON(
+                        inv.jsonArguments,
+                        schema: schemasByName[inv.toolName] ?? nil
+                    )
                 ),
                 geminiThoughtSignature: inv.geminiThoughtSignature
             )
@@ -807,7 +822,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         inferenceSource: inferenceSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
-                        requestBodyJSON: requestBodyJSON
+                        requestBodyJSON: requestBodyJSON,
+                        tools: tools
                     )
                 } catch let inv as ServiceToolInvocation {
                     return Self.makeToolCallResponse(
@@ -820,7 +836,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         inferenceSource: inferenceSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
-                        requestBodyJSON: requestBodyJSON
+                        requestBodyJSON: requestBodyJSON,
+                        tools: tools
                     )
                 }
             }

@@ -194,7 +194,7 @@ struct HTTPHandlerChatStreamingTests {
                     continuation.finish(
                         throwing: ServiceToolInvocation(
                             toolName: "get_weather",
-                            jsonArguments: "{\"city\":\"SF\"}"
+                            jsonArguments: "{\"city\":\"SF\",\"count\":\"7\"}"
                         )
                     )
                 }
@@ -229,7 +229,14 @@ struct HTTPHandlerChatStreamingTests {
                     function: ToolFunction(
                         name: "get_weather",
                         description: nil,
-                        parameters: .object(["city": .string("")])
+                        parameters: .object([
+                            "type": .string("object"),
+                            "properties": .object([
+                                "city": .object(["type": .string("string")]),
+                                "count": .object(["type": .string("integer")]),
+                            ]),
+                            "required": .array([.string("city"), .string("count")]),
+                        ])
                     )
                 )
             ],
@@ -260,7 +267,7 @@ struct HTTPHandlerChatStreamingTests {
                     continuation.finish(
                         throwing: ServiceToolInvocation(
                             toolName: "get_weather",
-                            jsonArguments: "{\"city\":\"SF\"}"
+                            jsonArguments: "{\"city\":\"SF\",\"count\":\"7\"}"
                         )
                     )
                 }
@@ -298,7 +305,14 @@ struct HTTPHandlerChatStreamingTests {
                     function: ToolFunction(
                         name: "get_weather",
                         description: nil,
-                        parameters: .object(["city": .string("")])
+                        parameters: .object([
+                            "type": .string("object"),
+                            "properties": .object([
+                                "city": .object(["type": .string("string")]),
+                                "count": .object(["type": .string("integer")]),
+                            ]),
+                            "required": .array([.string("city"), .string("count")]),
+                        ])
                     )
                 )
             ],
@@ -313,6 +327,8 @@ struct HTTPHandlerChatStreamingTests {
         #expect(status == 200)
         #expect(body.contains("\"tool_calls\""))
         #expect(body.contains("\"function\":{\"name\":\"get_weather\""))
+        #expect(body.contains("\\\"count\\\":7"))
+        #expect(!body.contains("\\\"count\\\":\\\"7\\\""))
         #expect(body.contains("\"finish_reason\":\"tool_calls\""))
     }
     @Test func sse_path_emits_reasoning_content_field() async throws {

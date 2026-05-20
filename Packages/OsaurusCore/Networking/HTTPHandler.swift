@@ -3830,6 +3830,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // and unavailable in this catch — at worst we under-
                     // count by the agent system-prompt fragment.
                     let promptTokens = Self.estimatePromptTokens(req.messages)
+                    let requestTools = req.tools
                     hop {
                         for (idx, inv) in invs.invocations.enumerated() {
                             self.writeOpenAIToolCallSSE(
@@ -3839,7 +3840,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 model: model,
                                 responseId: responseId,
                                 created: created,
-                                context: ctx.value
+                                context: ctx.value,
+                                tools: requestTools
                             )
                         }
                         writerBound.value.writeFinishWithReason(
@@ -3885,6 +3887,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.set("http_tool_call_count", 1)
                     let includeUsage = req.stream_options?.include_usage == true
                     let promptTokens = Self.estimatePromptTokens(req.messages)
+                    let requestTools = req.tools
                     hop {
                         self.writeOpenAIToolCallSSE(
                             inv,
@@ -3893,7 +3896,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             model: model,
                             responseId: responseId,
                             created: created,
-                            context: ctx.value
+                            context: ctx.value,
+                            tools: requestTools
                         )
                         writerBound.value.writeFinishWithReason(
                             "tool_calls",
@@ -6438,12 +6442,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String,
         responseId: String,
         created: Int,
-        context: ChannelHandlerContext
+        context: ChannelHandlerContext,
+        tools: [Tool]? = nil
     ) {
         let callId: String = {
             if let preservedId = inv.toolCallId, !preservedId.isEmpty { return preservedId }
             return Self.shortId(prefix: "call_")
         }()
+        let argumentsJSON = Self.canonicalToolArgumentsJSON(
+            inv.jsonArguments,
+            schema: Self.toolSchema(named: inv.toolName, in: tools)
+        )
         writer.writeToolCallStart(
             callId: callId,
             functionName: inv.toolName,
@@ -6453,7 +6462,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             created: created,
             context: context
         )
-        Self.forEachStringChunk(inv.jsonArguments, size: 1024) { chunk in
+        Self.forEachStringChunk(argumentsJSON, size: 1024) { chunk in
             writer.writeToolCallArgumentsDelta(
                 callId: callId,
                 index: index,
@@ -6843,7 +6852,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return object
     }
 
-    private static func canonicalToolArgumentsJSON(_ json: String) -> String {
+    private static func canonicalToolArgumentsJSON(_ json: String, schema: JSONValue? = nil) -> String {
         let candidates = [
             json,
             json.replacingOccurrences(of: #"\""#, with: #"""#),
@@ -6855,8 +6864,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return json
         }
         let normalized = normalizeNestedJSONStringValues(object)
-        guard JSONSerialization.isValidJSONObject(normalized),
-            let encoded = try? JSONSerialization.data(withJSONObject: normalized, options: [.sortedKeys]),
+        let coerced: Any
+        if let schema {
+            let candidate = SchemaValidator.coerceArguments(normalized, against: schema)
+            let result = SchemaValidator.validate(arguments: candidate, against: schema)
+            coerced = result.isValid ? candidate : normalized
+        } else {
+            coerced = normalized
+        }
+        guard JSONSerialization.isValidJSONObject(coerced),
+            let encoded = try? JSONSerialization.data(withJSONObject: coerced, options: [.sortedKeys]),
             let string = String(data: encoded, encoding: .utf8)
         else {
             return json
@@ -6878,6 +6895,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return normalizeNestedJSONStringValues(nested)
         }
         return value
+    }
+
+    private static func toolSchema(named name: String, in tools: [Tool]?) -> JSONValue? {
+        tools?.first(where: { $0.function.name == name })?.function.parameters
     }
 
     /// Log a completed request to InsightsService

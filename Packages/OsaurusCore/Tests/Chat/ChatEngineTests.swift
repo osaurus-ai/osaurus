@@ -642,7 +642,7 @@ struct ChatEngineTests {
                 toolChoice: ToolChoiceOption?,
                 requestedModel: String?
             ) async throws -> String {
-                throw ServiceToolInvocation(toolName: "get_weather", jsonArguments: "{\"city\":\"SF\"}")
+                throw ServiceToolInvocation(toolName: "get_weather", jsonArguments: "{\"city\":\"SF\",\"count\":\"7\"}")
             }
             func streamWithTools(
                 messages: [ChatMessage],
@@ -656,7 +656,7 @@ struct ChatEngineTests {
                     continuation.finish(
                         throwing: ServiceToolInvocation(
                             toolName: "get_weather",
-                            jsonArguments: "{\"city\":\"SF\"}"
+                            jsonArguments: "{\"city\":\"SF\",\"count\":\"7\"}"
                         )
                     )
                 }
@@ -678,7 +678,18 @@ struct ChatEngineTests {
             tools: [
                 Tool(
                     type: "function",
-                    function: ToolFunction(name: "get_weather", description: nil, parameters: .object([:]))
+                    function: ToolFunction(
+                        name: "get_weather",
+                        description: nil,
+                        parameters: .object([
+                            "type": .string("object"),
+                            "properties": .object([
+                                "city": .object(["type": .string("string")]),
+                                "count": .object(["type": .string("integer")]),
+                            ]),
+                            "required": .array([.string("city"), .string("count")]),
+                        ])
+                    )
                 )
             ],
             tool_choice: .auto,
@@ -688,6 +699,12 @@ struct ChatEngineTests {
         #expect(resp.choices.first?.finish_reason == "tool_calls")
         let toolCalls = resp.choices.first?.message.tool_calls
         #expect(toolCalls?.first?.function.name == "get_weather")
+        let arguments = try #require(toolCalls?.first?.function.arguments)
+        let decoded = try #require(
+            JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any]
+        )
+        #expect(decoded["city"] as? String == "SF")
+        #expect(decoded["count"] as? Int == 7)
         let id = toolCalls?.first?.id ?? ""
         #expect(id.hasPrefix("call_"))
     }
