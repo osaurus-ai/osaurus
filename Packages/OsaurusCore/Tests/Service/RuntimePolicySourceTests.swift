@@ -122,6 +122,18 @@ struct RuntimePolicySourceTests {
 
         let apiKeys = try Self.source("Identity/APIKeyManager.swift")
         #expect(apiKeys.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
+
+        let server = try Self.source("Networking/OsaurusServer.swift")
+        #expect(server.contains("context.interactionNotAllowed = true"))
+
+        let agents = try Self.source("Managers/AgentManager.swift")
+        let migrationStart = try #require(agents.range(of: "private func migrateAgentAddressesIfNeeded()"))
+        let migrationEnd = try #require(
+            agents.range(of: "    }\n\n    /// One-time migration: read the legacy active.txt file", range: migrationStart.upperBound ..< agents.endIndex)
+        )
+        let migrationBody = String(agents[migrationStart.lowerBound ..< migrationEnd.upperBound])
+        #expect(!migrationBody.contains("assignAddress(to: agent)"))
+        #expect(!migrationBody.contains("MasterKey.getPrivateKey"))
     }
 
     @Test("plugin host inference carries agent memory like HTTP chat")
@@ -129,9 +141,11 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("Services/Plugin/PluginHostAPI.swift")
 
         #expect(source.contains("let memorySection: String?"))
-        #expect(source.contains("resolveAgentContext(agentId: activeAgentId, messages: request.messages)"))
+        #expect(source.contains("allowPreflight: options.wantsPreflight"))
+        #expect(source.contains("allowPreflight: Bool = true"))
         #expect(source.contains("query: extractPreflightQuery(from: messages)"))
         #expect(source.contains("messages: messages"))
+        #expect(source.contains("cachedPreflight: allowPreflight ? nil : .empty"))
         #expect(source.contains("memorySection: composed.memorySection"))
         #expect(source.contains("SystemPromptComposer.injectMemoryPrefix(ctx.memorySection, into: &messages)"))
     }

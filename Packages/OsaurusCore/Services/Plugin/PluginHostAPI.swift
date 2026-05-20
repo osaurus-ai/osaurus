@@ -720,7 +720,11 @@ final class PluginHostContext: @unchecked Sendable {
         activeAgentId: UUID? = nil
     ) async -> PreparedInference {
         let options = InferenceOptions(from: rawJSON)
-        let agentCtx = await resolveAgentContext(agentId: activeAgentId, messages: request.messages)
+        let agentCtx = await resolveAgentContext(
+            agentId: activeAgentId,
+            messages: request.messages,
+            allowPreflight: options.wantsPreflight
+        )
         let execMode = agentCtx?.executionMode ?? .none
         var enriched = enrichRequest(request, context: agentCtx, options: options)
         if let pid = pluginId {
@@ -775,7 +779,8 @@ final class PluginHostContext: @unchecked Sendable {
     /// Internal (not private) so unit tests can pin the resolution surface.
     static func resolveAgentContext(
         agentId: UUID?,
-        messages: [ChatMessage] = []
+        messages: [ChatMessage] = [],
+        allowPreflight: Bool = true
     ) async -> AgentContext? {
         guard let agentId else { return nil }
 
@@ -811,7 +816,8 @@ final class PluginHostContext: @unchecked Sendable {
             executionMode: execMode,
             model: agentModel,
             query: extractPreflightQuery(from: messages),
-            messages: messages
+            messages: messages,
+            cachedPreflight: allowPreflight ? nil : .empty
         )
         return await MainActor.run {
             let mgr = AgentManager.shared

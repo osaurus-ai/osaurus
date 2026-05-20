@@ -92,6 +92,7 @@ public actor OsaurusServer: Sendable {
 
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 300
+        context.interactionNotAllowed = true
 
         do {
             var masterKeyData = try MasterKey.getPrivateKey(context: context)
