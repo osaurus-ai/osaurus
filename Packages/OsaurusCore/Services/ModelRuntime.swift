@@ -774,18 +774,6 @@ public actor ModelRuntime {
             )
         }
 
-        // L2 disk cache: enabled when the disk dir is writable.
-        //
-        // The Metal `notifyExternalReferencesNonZeroOnDealloc` crash on the
-        // `Cache disk hit … prefilling 0 remaining` path is fixed upstream
-        // in vmlx-swift `0756dc0` ("close trim-path Metal lifecycle crash
-        // on full disk-cache hit") — the trimmed compiled-cache list is now
-        // forced to realize before its underlying Metal buffers go out of
-        // scope. Now wired in through the `0e22eba` pin. The
-        // `eval_http_stability.py` suite is the regression check; re-run on
-        // any future pin bump that touches the CacheCoordinator restore path.
-        let enableDiskCache = diskDirUsable
-
         // L2 disk-cache modelKey fingerprint includes the KV mode tag so a
         // mid-session change to `defaultKVMode` (or to a per-request override
         // via the OpenAI extension) cannot serve stale entries that were
@@ -796,55 +784,42 @@ public actor ModelRuntime {
         // encoder state and produce undefined behavior. The fingerprint is
         // a string (stable across processes) and is appended to the model
         // name so the L1 paged cache (per-model isolation) is unaffected.
-        let kvModeTag = "fp16"  // matches `defaultKVMode: .none` below
+        let settings = ServerRuntimeSettingsStore.snapshot()
+        let kvModeTag = cacheKVModeTag(for: settings.cache)
         let scopedKey = "\(modelName)|kv=\(kvModeTag)"
 
-        return CacheCoordinatorConfig(
-            usePagedCache: true,
-            enableDiskCache: enableDiskCache,
-            diskCacheDir: diskCacheDir,
-            // Disable the post-generation SSM re-derive pass for hybrid
-            // models. vmlx's default (`enableSSMReDerive: true`) runs a
-            // FULL second prefill at end-of-generation
-            // (`reDeriveAndStoreSSMStatesForPromptBoundaries`) so the
-            // next turn can land an SSM-state cache hit at the new
-            // prompt boundary.
-            //
-            // vmlx pin `b9da180` reordered this pass to run AFTER the
-            // generation yields completion `.info`, so the SSE stream
-            // no longer stays open while the re-derive runs (the old
-            // "greeting → freeze → end" UX symptom is gone upstream).
-            // The work is still serialized on the generation task —
-            // detached re-derive raced Metal command encoders, so vmlx
-            // kept it serial — which means the actor stays busy for the
-            // re-derive duration before the next request lands.
-            //
-            // We KEEP `enableSSMReDerive: false` regardless because the
-            // cost still doesn't amortize on osaurus's chat workload:
-            // the system prefix mutates every turn (memory injection,
-            // preflight capability search, dynamic skills) so the SSM
-            // cache rarely lands a boundary-matching hit on the next
-            // turn. Re-derive cost is paid without warm-cache payoff.
-            // Re-evaluate if osaurus ever exposes a chat surface with a
-            // stable system prefix across turns (or the SSM companion
-            // cache becomes prefix-keyed instead of boundary-keyed).
-            ssmMaxEntries: 50,
-            enableSSMReDerive: false,
+        // Delegate the full coordinator config to vmlx's spec'd builder
+        // so every cache field set in the Server → Settings panel
+        // (prefix, paged, block disk, legacy disk, SSM rederive, KV
+        // codec, defaultMaxKVSize, longPromptMultiplier) flows into
+        // BatchEngine. The diskCacheDirectory override is the writable
+        // Osaurus path; pass `nil` when the dir is unwritable so the
+        // coordinator falls back to memory-only without crashing.
+        return settings.cacheCoordinatorConfig(
             modelKey: scopedKey,
-            // `defaultKVMode: .none` (fp16) — see file-level comment for the
-            // 3-bit and 4-bit codebook KV degenerate-repetition trail.
-            // Vmlx's `OSAURUS-PRODUCTION-REFERENCE-2026-05-01.md` §6 shows a
-            // recommended `defaultKVMode: .turboQuant(3, 3)` example, but the
-            // bench coverage referenced (BENCH_STABILITY S8) does NOT include
-            // long thinking-mode preambles — the failure mode that drives
-            // `idea idea idea` repetition on Gemma 4 31B JANG_4M and the
-            // `!!!!!!!!!` spam on Qwen 3.6 27B MXFP4. Until vmlx's compile-
-            // path 7% per-step drift (`CompilableTurboQuantKVCache.swift`
-            // iter-10 measurement) is closed, fp16 is the only safe default.
-            defaultKVMode: .none,
-            defaultMaxKVSize: 65536,
-            longPromptMultiplier: 2.0
+            diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
+            ssmMaxEntries: 50
         )
+    }
+
+    /// Stable fingerprint for the live KV codec choice. Appended to
+    /// the L2 disk-cache model key so a mid-session change to the
+    /// codec doesn't serve stale entries.
+    private nonisolated static func cacheKVModeTag(
+        for cache: VMLXServerCacheSettings
+    ) -> String {
+        switch cache.liveKVCodec {
+        case .none:
+            return "fp16"
+        case .engineSelected:
+            return "engineSelected"
+        case .native:
+            return "native"
+        case .turboQuant:
+            let keyBits = cache.turboQuantKeyBits ?? 0
+            let valueBits = cache.turboQuantValueBits ?? 0
+            return "turbo(\(keyBits),\(valueBits))"
+        }
     }
 
     /// Best-effort writability probe for the disk cache directory. Uses a

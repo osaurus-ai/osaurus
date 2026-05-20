@@ -12,6 +12,7 @@
 //
 
 import Foundation
+@preconcurrency import MLXLMCommon
 
 public enum InferenceFeatureFlags {
     private enum Keys {
@@ -48,11 +49,31 @@ public enum InferenceFeatureFlags {
     /// Capped at 32 to match BatchEngine's documented per-engine slot
     /// ceiling. Values <=0 fall back to the compile-friendly 1.
     public static var mlxBatchEngineMaxBatchSize: Int {
-        mlxBatchEngineMaxBatchSize(in: .standard)
+        mlxBatchEngineMaxBatchSize(
+            in: .standard,
+            runtime: ServerRuntimeSettingsStore.snapshot()
+        )
     }
 
+    /// Legacy entry point used by tests that exercise the
+    /// UserDefaults fallback directly.
     static func mlxBatchEngineMaxBatchSize(in userDefaults: UserDefaults) -> Int {
         let raw = userDefaults.integer(forKey: Keys.mlxBatchEngineMaxSize)
         return raw > 0 ? min(raw, 32) : 1
+    }
+
+    /// Preferred entry point. The Server → Settings panel writes
+    /// `concurrency.maxConcurrentSequences`, which wins over the
+    /// legacy `UserDefaults` key. Tests that have a runtime override
+    /// pass it explicitly so we don't depend on `ServerRuntimeSettingsStore`'s
+    /// on-disk state.
+    static func mlxBatchEngineMaxBatchSize(
+        in userDefaults: UserDefaults,
+        runtime: VMLXServerRuntimeSettings
+    ) -> Int {
+        if let value = runtime.concurrency.maxConcurrentSequences, value > 0 {
+            return min(value, 32)
+        }
+        return mlxBatchEngineMaxBatchSize(in: userDefaults)
     }
 }
