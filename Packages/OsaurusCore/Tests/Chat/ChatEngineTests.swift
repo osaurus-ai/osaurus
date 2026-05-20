@@ -99,6 +99,27 @@ struct ChatEngineTests {
         )
     }
 
+    @Test func openResponsesResponse_populatesTopLevelOutputText() throws {
+        let chat = ChatCompletionResponse(
+            id: "chatcmpl-test",
+            created: 1,
+            model: "fake",
+            choices: [
+                ChatChoice(
+                    index: 0,
+                    message: ChatMessage(role: "assistant", content: "responses-api-ok"),
+                    finish_reason: "stop"
+                )
+            ],
+            usage: Usage(prompt_tokens: 2, completion_tokens: 3, total_tokens: 5),
+            system_fingerprint: nil
+        )
+
+        let response = chat.toOpenResponsesResponse(responseId: "resp-test")
+
+        #expect(response.output_text == "responses-api-ok")
+    }
+
     @Test func streamChat_yields_deltas_success() async throws {
         let svc = FakeModelService(deltas: ["a", "b", "c"])
         let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })

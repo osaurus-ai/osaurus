@@ -342,6 +342,33 @@ struct MLXBatchAdapterTests {
         )
     }
 
+    @Test func effectiveDraftStrategy_dropsNativeMTPForTinyPrompt() {
+        let greedy = GenerationParameters(
+            temperature: 0,
+            maxTokens: 32,
+            maxTokensExplicit: true,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+
+        #expect(
+            MLXBatchAdapter.effectiveDraftStrategy(
+                generation: greedy,
+                draftStrategy: .nativeMTP(depth: 3),
+                promptTokenCount: MLXBatchAdapter.nativeMTPTinyPromptMinimumTokens - 1
+            ) == nil
+        )
+
+        #expect(
+            MLXBatchAdapter.effectiveDraftStrategy(
+                generation: greedy,
+                draftStrategy: .nativeMTP(depth: 3),
+                promptTokenCount: MLXBatchAdapter.nativeMTPTinyPromptMinimumTokens
+            )?.usesNativeMTP == true
+        )
+    }
+
     @Test func effectiveGenerationSettings_doSampleFalseForcesGreedyOnlyWhenTemperatureOmitted() {
         let defaults = LocalGenerationDefaults.Defaults(
             maxTokens: nil,

@@ -31,6 +31,10 @@ import os.log
 private let batchAdapterLog = Logger(subsystem: "ai.osaurus", category: "BatchAdapter")
 
 struct MLXBatchAdapter {
+    /// Native MTP is tuned for real chat prefixes, not tiny cold-start
+    /// prompts. A 19-token cold user-only prompt reproduced a native-MTP loop
+    /// while the same request decoded correctly with AR greedy fallback.
+    static let nativeMTPTinyPromptMinimumTokens = 24
 
     /// Result handed back to `ModelRuntime`. The `Generation` stream is
     /// consumed by `GenerationEventMapper`, which translates the upstream
@@ -115,15 +119,41 @@ struct MLXBatchAdapter {
 
     static func effectiveDraftStrategy(
         generation: GenerationParameters,
-        draftStrategy: MLXLMCommon.DraftStrategy?
+        draftStrategy: MLXLMCommon.DraftStrategy?,
+        promptTokenCount: Int? = nil
     ) -> MLXLMCommon.DraftStrategy? {
         guard draftStrategy?.usesNativeMTP == true else {
             return draftStrategy
         }
-        return shouldApplyNativeMTPGreedyDefaults(
+        guard shouldApplyNativeMTPGreedyDefaults(
             generation: generation,
             draftStrategy: draftStrategy
-        ) ? draftStrategy : nil
+        ) else {
+            return nil
+        }
+        if let promptTokenCount,
+           promptTokenCount < nativeMTPTinyPromptMinimumTokens {
+            return nil
+        }
+        return draftStrategy
+    }
+
+    private static func nativeMTPFallbackReason(
+        generation: GenerationParameters,
+        draftStrategy: MLXLMCommon.DraftStrategy?,
+        promptTokenCount: Int
+    ) -> String? {
+        guard draftStrategy?.usesNativeMTP == true else { return nil }
+        if !shouldApplyNativeMTPGreedyDefaults(
+            generation: generation,
+            draftStrategy: draftStrategy
+        ) {
+            return "explicit_sampling"
+        }
+        if promptTokenCount < nativeMTPTinyPromptMinimumTokens {
+            return "tiny_prompt"
+        }
+        return nil
     }
 
     private static func shouldApplyNativeMTPGreedyDefaults(
@@ -671,7 +701,13 @@ struct MLXBatchAdapter {
         let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
         let effectiveDraftStrategy = Self.effectiveDraftStrategy(
             generation: generation,
-            draftStrategy: draftStrategy
+            draftStrategy: draftStrategy,
+            promptTokenCount: prepared.promptTokens.count
+        )
+        let nativeMTPFallbackReason = Self.nativeMTPFallbackReason(
+            generation: generation,
+            draftStrategy: draftStrategy,
+            promptTokenCount: prepared.promptTokens.count
         )
         let nativeMTPExplicitSamplingFallback =
             draftStrategy?.usesNativeMTP == true && effectiveDraftStrategy == nil
@@ -755,7 +791,7 @@ struct MLXBatchAdapter {
         }
 
         batchAdapterLog.info(
-            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
+            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) nativeMTPFallback=\(nativeMTPFallbackReason ?? "none", privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
         )
 
         return PreparedStream(
