@@ -129,11 +129,16 @@ public enum ToolSecretsKeychain {
     /// Per-agent secrets merged on top of `Agent.defaultId` (Plugins-tab
     /// writes act as global defaults; Agents-tab writes override per-key).
     public static func resolvedSecretsWithDefaults(pluginId: String, agentId: UUID) -> [String: String] {
-        let defaults = getAllSecrets(for: pluginId, agentId: Agent.defaultId)
-        if agentId == Agent.defaultId { return defaults }
-        let perAgent = getAllSecrets(for: pluginId, agentId: agentId)
-        var merged = defaults
-        for (k, v) in perAgent { merged[k] = v }
+        resolvedSecretsMerging(pluginId: pluginId, primary: agentId, defaults: Agent.defaultId)
+    }
+
+    /// Two-id merge primitive: `primary` agent's secrets overlaid on `defaults`.
+    public static func resolvedSecretsMerging(pluginId: String, primary: UUID, defaults: UUID) -> [String: String] {
+        let defaultDict = getAllSecrets(for: pluginId, agentId: defaults)
+        if primary == defaults { return defaultDict }
+        let primaryDict = getAllSecrets(for: pluginId, agentId: primary)
+        var merged = defaultDict
+        for (k, v) in primaryDict { merged[k] = v }
         return merged
     }
 
