@@ -13996,6 +13996,7 @@
 
     },
     "Others" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

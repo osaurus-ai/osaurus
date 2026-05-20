@@ -658,7 +658,7 @@ struct ModelDownloadView: View {
                     sortFilterBar
                         .padding(.horizontal, 24)
                         .padding(.top, 12)
-                        .padding(.bottom, 4)
+                        .padding(.bottom, 12)
 
                     ScrollView {
                         VStack(spacing: 12) {
@@ -671,20 +671,7 @@ struct ModelDownloadView: View {
                             } else {
                                 switch selectedTab {
                                 case .all:
-                                    if !lists.suggested.isEmpty {
-                                        modelGridSection(
-                                            title: L("Recommended"),
-                                            models: lists.suggested,
-                                            isFirst: true
-                                        )
-                                    }
-                                    if !lists.others.isEmpty {
-                                        modelGridSection(
-                                            title: L("Others"),
-                                            models: lists.others,
-                                            isFirst: lists.suggested.isEmpty
-                                        )
-                                    }
+                                    modelGrid(models: lists.displayed)
                                 case .downloaded:
                                     modelGrid(models: lists.downloaded)
                                 }
@@ -720,7 +707,7 @@ struct ModelDownloadView: View {
 
     private var sortFilterBar: some View {
         HStack(spacing: 12) {
-            SearchField(text: $searchText, placeholder: "Search models", width: 240)
+            SearchField(text: $searchText, placeholder: "Search models", width: 240, compact: true)
 
             Spacer()
 
@@ -730,15 +717,15 @@ struct ModelDownloadView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 13))
+                        .font(.system(size: 12))
                     if sortOption == .recommended {
                         Text("Sort", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                     } else {
                         Text("Sort: ", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             + Text(sortOption.displayName)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                     }
                 }
                 .lineLimit(1)
@@ -772,15 +759,15 @@ struct ModelDownloadView: View {
                         systemName: filterState.isActive
                             ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
                     )
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     if let active = activeFilterSummary {
                         Text("Filter: ", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             + Text(active)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                     } else {
                         Text("Filter", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                     }
                 }
                 .lineLimit(1)
