@@ -182,15 +182,16 @@ final class ServerController: ObservableObject {
     // Capture singleton pointer on init attach to UI
     init() {
         ServerControllerHolder.shared.controller = self
-        // Load persisted configuration if available
         if let saved = ServerConfigurationStore.load() {
             self.configuration = saved
         }
-        // Load (or one-time migrate) the canonical vmlx runtime
-        // settings. Migration uses the freshly-loaded
-        // `ServerConfiguration` above so the two stay aligned on first
-        // launch.
-        self.runtimeSettings = ServerRuntimeSettingsStore.loadOrMigrate()
+        // Read-only load. The legacy → vmlx migration (which writes to
+        // `~/.osaurus/config/`) is intentionally deferred to
+        // `bootstrapRuntimeSettings()` so a fresh install stays
+        // pristine until after the storage migrator's gate runs.
+        if let existing = ServerRuntimeSettingsStore.load() {
+            self.runtimeSettings = existing
+        }
         // Keep exposeToNetwork in sync with Bonjour-enabled agents
         agentsCancellable = AgentManager.shared.$agents
             .sink { agents in
@@ -209,6 +210,25 @@ final class ServerController: ObservableObject {
                     }
                 }
             }
+    }
+
+    /// Runs the one-shot legacy → vmlx runtime-settings migration and
+    /// publishes the result. Idempotent — on a non-fresh install
+    /// `loadOrMigrate()` just returns the on-disk value without
+    /// writing.
+    ///
+    /// Must be invoked from the AppDelegate immediately after
+    /// `StorageMigrationCoordinator.blockingAwaitReady()` returns.
+    /// `init()` skips this because `ServerController` is constructed
+    /// as a stored property of the AppDelegate (i.e. before
+    /// `applicationDidFinishLaunching`), and the migration's first-run
+    /// `save()` would otherwise create `config/server-runtime.json`
+    /// in `~/.osaurus/` *before* the storage migrator's
+    /// `isPristineInstall()` check, flipping a true fresh install
+    /// out of the pristine fast path and painting the "Securing your
+    /// data" overlay over onboarding.
+    func bootstrapRuntimeSettings() {
+        self.runtimeSettings = ServerRuntimeSettingsStore.loadOrMigrate()
     }
 
     /// Checks if the server is responsive

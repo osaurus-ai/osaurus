@@ -172,6 +172,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // updates keep painting.
         StorageMigrationCoordinator.blockingAwaitReady()
 
+        // Deferred from `ServerController.init()` to keep
+        // `~/.osaurus/` pristine until the storage gate has stamped
+        // `.storage-version`. See `bootstrapRuntimeSettings()`.
+        serverController.bootstrapRuntimeSettings()
+
         // Wire up the periodic SQLite maintenance ticker (PRAGMA
         // optimize / wal_checkpoint / VACUUM at sensible intervals).
         // Idempotent — safe even if some DBs aren't open yet, the

@@ -379,7 +379,7 @@ struct FloatingInputCard: View {
 
                 // Load voice config (cached after first load)
                 loadVoiceConfig()
-                
+
                 if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded
                     && !speechService.isLoadingModel
                     && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
@@ -576,8 +576,8 @@ struct FloatingInputCard: View {
                 primaryButton: .primary("Open System Settings") {
                     if let url = URL(
                         string:
-                            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
-                    {
+                            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+                    ) {
                         NSWorkspace.shared.open(url)
                     }
                 },

@@ -131,6 +131,46 @@ struct StorageMigrationGapTests {
         }
     }
 
+    /// Bootstrap files written by `ServerController` (or any future
+    /// pre-gate writer) into `config/` must not flip the install out
+    /// of the pristine fast path. Mirrors `themes/` above.
+    @Test
+    func freshInstall_ignoresServerRuntimeBootstrap() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpTempRoot()
+            defer { Self.tearDown(root) }
+
+            let configDir = root.appendingPathComponent("config", isDirectory: true)
+            try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: configDir.appendingPathComponent("server-runtime.json"))
+            try Data("{}".utf8).write(to: configDir.appendingPathComponent("server.json"))
+            try FileManager.default.createDirectory(
+                at: configDir.appendingPathComponent("voice", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+
+            let pristine = await StorageMigrator.shared.isPristineInstall()
+            #expect(pristine)
+        }
+    }
+
+    /// Any user-touched config file means the install is no longer
+    /// pristine and the migrator must run its full path.
+    @Test
+    func freshInstall_treatsUserConfigAsUserData() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpTempRoot()
+            defer { Self.tearDown(root) }
+
+            let configDir = root.appendingPathComponent("config", isDirectory: true)
+            try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: configDir.appendingPathComponent("chat.json"))
+
+            let pristine = await StorageMigrator.shared.isPristineInstall()
+            #expect(!pristine)
+        }
+    }
+
     // MARK: - Backup retention
 
     @Test
