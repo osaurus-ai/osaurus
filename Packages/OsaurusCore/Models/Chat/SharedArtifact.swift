@@ -615,7 +615,7 @@ extension SharedArtifact {
         let suffix = String(original[parsed.endRange.lowerBound...])
 
         var inner = ""
-        if let jsonData = try? JSONSerialization.data(withJSONObject: parsed.metadata),
+        if let jsonData = try? JSONSerialization.data(withJSONObject: parsed.metadata, options: .osaurusCanonical),
             let jsonStr = String(data: jsonData, encoding: .utf8)
         {
             inner = jsonStr

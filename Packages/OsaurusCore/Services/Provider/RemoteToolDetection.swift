@@ -115,10 +115,12 @@ enum RemoteToolDetection {
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
 
+        // Sorted keys: extracted args become next-turn
+        // `tool_calls[].function.arguments`. See `JSONDeterminism.swift`.
         if let function = obj["function"] as? [String: Any], let name = function["name"] as? String {
             if let argsString = function["arguments"] as? String { return (name, argsString) }
             if let argsObj = function["arguments"],
-                let argsData = try? JSONSerialization.data(withJSONObject: argsObj),
+                let argsData = try? JSONSerialization.data(withJSONObject: argsObj, options: .osaurusCanonical),
                 let argsJSON = String(data: argsData, encoding: .utf8)
             {
                 return (name, argsJSON)
@@ -127,7 +129,7 @@ enum RemoteToolDetection {
         if let name = obj["tool_name"] as? String {
             if let argsString = obj["arguments"] as? String { return (name, argsString) }
             if let argsObj = obj["arguments"],
-                let argsData = try? JSONSerialization.data(withJSONObject: argsObj),
+                let argsData = try? JSONSerialization.data(withJSONObject: argsObj, options: .osaurusCanonical),
                 let argsJSON = String(data: argsData, encoding: .utf8)
             {
                 return (name, argsJSON)
@@ -136,7 +138,7 @@ enum RemoteToolDetection {
         if let name = obj["name"] as? String {
             if let argsString = obj["arguments"] as? String { return (name, argsString) }
             if let argsObj = obj["arguments"],
-                let argsData = try? JSONSerialization.data(withJSONObject: argsObj),
+                let argsData = try? JSONSerialization.data(withJSONObject: argsObj, options: .osaurusCanonical),
                 let argsJSON = String(data: argsData, encoding: .utf8)
             {
                 return (name, argsJSON)

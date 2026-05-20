@@ -237,7 +237,7 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
                 env[envKey] = num.stringValue
             } else if let bool = value as? Bool {
                 env[envKey] = bool ? "true" : "false"
-            } else if let data = try? JSONSerialization.data(withJSONObject: value),
+            } else if let data = try? JSONSerialization.data(withJSONObject: value, options: .osaurusCanonical),
                 let str = String(data: data, encoding: .utf8)
             {
                 env[envKey] = str

@@ -310,7 +310,7 @@ final class PluginDatabase: @unchecked Sendable {
             case let boolVal as Bool:
                 sqlite3_bind_int(stmt, idx, boolVal ? 1 : 0)
             default:
-                if let jsonData = try? JSONSerialization.data(withJSONObject: param),
+                if let jsonData = try? JSONSerialization.data(withJSONObject: param, options: .osaurusCanonical),
                     let jsonStr = String(data: jsonData, encoding: .utf8)
                 {
                     sqlite3_bind_text(stmt, idx, (jsonStr as NSString).utf8String, -1, Self.sqliteTransient)

@@ -702,7 +702,8 @@ final class PluginHostContext: @unchecked Sendable {
         clean.removeValue(forKey: "preflight")
         if json["tools"] is Bool { clean.removeValue(forKey: "tools") }
 
-        guard let cleanData = try? JSONSerialization.data(withJSONObject: clean) else { return nil }
+        guard let cleanData = try? JSONSerialization.data(withJSONObject: clean, options: .osaurusCanonical)
+        else { return nil }
         return (json, cleanData)
     }
 
@@ -1345,7 +1346,7 @@ final class PluginHostContext: @unchecked Sendable {
                         model: prep.enriched.request.model
                     )
 
-                    guard let encoded = try? JSONEncoder().encode(response),
+                    guard let encoded = try? JSONEncoder.osaurusCanonical().encode(response),
                         var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
                     else {
                         return Self.jsonString([
@@ -1822,7 +1823,7 @@ final class PluginHostContext: @unchecked Sendable {
         userData: UnsafeMutableRawPointer?
     ) {
         guard let callback,
-            let data = try? JSONSerialization.data(withJSONObject: payload),
+            let data = try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical),
             let str = String(data: data, encoding: .utf8)
         else { return }
         str.withCString { callback($0, userData) }
@@ -2741,8 +2742,11 @@ extension PluginHostContext {
     }
 
     /// Serialize a dictionary to a JSON string. Falls back to "{}" on encoding failure.
+    /// Uses canonical (sorted-keys) output so plugin-side prompt prefixes and
+    /// chunk payloads stay byte-stable across calls.
     static func jsonString(_ dict: [String: Any]) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: []) else { return "{}" }
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical)
+        else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }
 

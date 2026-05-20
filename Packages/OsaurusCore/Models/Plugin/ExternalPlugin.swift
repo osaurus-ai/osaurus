@@ -391,7 +391,7 @@ public struct PluginManifest: Decodable, Sendable {
             case .bool(let b): return b ? "true" : "false"
             case .number(let n): return String(n)
             case .stringArray(let a):
-                let data = (try? JSONSerialization.data(withJSONObject: a)) ?? Data()
+                let data = (try? JSONSerialization.data(withJSONObject: a, options: .osaurusCanonical)) ?? Data()
                 return String(data: data, encoding: .utf8) ?? "[]"
             }
         }

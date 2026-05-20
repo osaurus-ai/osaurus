@@ -121,10 +121,43 @@ struct CSVAdapterTests {
         }
     }
 
+    @Test func formatAdapter_opensDocumentAndStreamsRows() async throws {
+        let url = try Self.write("name,age\nAda,37\n", filename: "people.csv")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let adapter = CSVAdapter(delimiter: .comma)
+        let reference = try adapter.openDocument(at: url)
+        let (stream, continuation) = Self.makeRecordStream()
+
+        let task = Task {
+            try await adapter.streamRecords(into: continuation)
+        }
+
+        var records: [Record] = []
+        for await record in stream {
+            records.append(record)
+        }
+        try await task.value
+
+        #expect(reference.formatIdentifier == "csv")
+        #expect(reference.displayName.hasSuffix("people.csv"))
+        #expect(records.map(\.fields) == [["name", "age"], ["Ada", "37"]])
+        #expect(records[1].text == "Ada\t37")
+        #expect(records[1].metadata["documentId"] == reference.id.uuidString)
+    }
+
     private static func write(_ content: String, filename: String) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-\(filename)")
         try content.write(to: url, atomically: true, encoding: .utf8)
         return url
+    }
+
+    private static func makeRecordStream() -> (
+        stream: AsyncStream<Record>,
+        continuation: AsyncStream<Record>.Continuation
+    ) {
+        var continuation: AsyncStream<Record>.Continuation?
+        let stream = AsyncStream<Record> { continuation = $0 }
+        return (stream, continuation!)
     }
 }

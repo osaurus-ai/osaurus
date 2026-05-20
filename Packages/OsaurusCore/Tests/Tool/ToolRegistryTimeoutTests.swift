@@ -93,10 +93,18 @@ struct ToolRegistryTimeoutTests {
     @Test
     func fastToolReturnsItsOwnResultBeforeTimeoutFires() async throws {
         let tool = FastEchoTool()
+        // 60s budget instead of 5s. The body returns in microseconds, so
+        // the only thing this value gates is "how long are we willing to
+        // wait for the cooperative thread pool to schedule the body Task
+        // before the GCD timer wins". Loaded macOS CI runners (1186)
+        // sometimes need >5s for that scheduling under contention; 60s
+        // keeps the race tilted firmly in the body's favour while still
+        // catching any regression where the timeout fires spuriously on
+        // a fast tool.
         let result = try await ToolRegistry.runToolBody(
             tool,
             argumentsJSON: "{}",
-            timeoutSeconds: 5
+            timeoutSeconds: 60
         )
         // Happy path — must NOT come back as a timeout envelope.
         #expect(!ToolEnvelope.isError(result))

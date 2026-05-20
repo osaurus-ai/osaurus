@@ -857,9 +857,13 @@ extension AnthropicMessagesRequest {
                     case .text(let textBlock):
                         textContent += textBlock.text
                     case .toolUse(let toolUse):
+                        // Sorted keys: replayed into next-turn
+                        // `tool_calls[].function.arguments`. See
+                        // `JSONDeterminism.swift`.
                         let argsData =
                             try? JSONSerialization.data(
-                                withJSONObject: toolUse.input.mapValues { $0.value }
+                                withJSONObject: toolUse.input.mapValues { $0.value },
+                                options: .osaurusCanonical
                             )
                         let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
                         toolCalls.append(
