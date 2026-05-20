@@ -79,7 +79,8 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
-        nativeMTPExplicitSamplingFallback: Bool = false
+        nativeMTPExplicitSamplingFallback: Bool = false,
+        nativeMTPGreedyFallback: Bool = false
     ) -> EffectiveGenerationSettings {
         let defaultTemperature: Float? = {
             if modelDefaults.doSample == false {
@@ -103,30 +104,30 @@ struct MLXBatchAdapter {
         let runtimeRepetitionPenalty: Float? = runtimeDefaults.repetitionPenalty.map { Float($0) }
 
         return EffectiveGenerationSettings(
-            temperature: useNativeMTPGreedyDefaults
+            temperature: useNativeMTPGreedyDefaults || nativeMTPGreedyFallback
                 ? 0
                 : (generation.temperature ?? defaultTemperature ?? runtimeTemperature ?? 0.7),
             maxTokens: generation.maxTokensExplicit
                 ? generation.maxTokens
                 : (modelDefaults.maxTokens ?? runtimeMaxTokens ?? generation.maxTokens),
-            topP: useNativeMTPGreedyDefaults
+            topP: useNativeMTPGreedyDefaults || nativeMTPGreedyFallback
                 ? (generation.topPOverride ?? 1)
                 : (generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? 1.0),
-            topK: useNativeMTPGreedyDefaults || nativeMTPExplicitSamplingFallback
+            topK: useNativeMTPGreedyDefaults || nativeMTPExplicitSamplingFallback || nativeMTPGreedyFallback
                 ? 0
                 : (modelDefaults.topK ?? runtimeTopK ?? 0),
-            minP: useNativeMTPGreedyDefaults
+            minP: useNativeMTPGreedyDefaults || nativeMTPGreedyFallback
                 ? (generation.minPOverride ?? 0)
                 : (generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? 0),
             repetitionPenalty: {
-                if nativeMTPExplicitSamplingFallback {
+                if nativeMTPExplicitSamplingFallback || nativeMTPGreedyFallback {
                     return nil
                 }
                 return useNativeMTPGreedyDefaults
                     ? generation.repetitionPenalty
                     : (generation.repetitionPenalty ?? modelDefaults.repetitionPenalty ?? runtimeRepetitionPenalty)
             }(),
-            compiledBatchDecode: nativeMTPExplicitSamplingFallback
+            compiledBatchDecode: nativeMTPExplicitSamplingFallback || nativeMTPGreedyFallback
                 ? false
                 : shouldEnableCompiledBatchDecode(
                     modelName: modelName,
@@ -138,10 +139,14 @@ struct MLXBatchAdapter {
     static func effectiveDraftStrategy(
         generation: GenerationParameters,
         draftStrategy: MLXLMCommon.DraftStrategy?,
-        promptTokenCount: Int? = nil
+        promptTokenCount: Int? = nil,
+        disableNativeMTP: Bool = false
     ) -> MLXLMCommon.DraftStrategy? {
         guard draftStrategy?.usesNativeMTP == true else {
             return draftStrategy
+        }
+        if disableNativeMTP {
+            return nil
         }
         guard shouldApplyNativeMTPGreedyDefaults(
             generation: generation,
@@ -159,9 +164,11 @@ struct MLXBatchAdapter {
     private static func nativeMTPFallbackReason(
         generation: GenerationParameters,
         draftStrategy: MLXLMCommon.DraftStrategy?,
-        promptTokenCount: Int
+        promptTokenCount: Int,
+        coldWarmup: Bool
     ) -> String? {
         guard draftStrategy?.usesNativeMTP == true else { return nil }
+        if coldWarmup { return "cold_warmup" }
         if !shouldApplyNativeMTPGreedyDefaults(
             generation: generation,
             draftStrategy: draftStrategy
@@ -257,6 +264,7 @@ struct MLXBatchAdapter {
         /// abort. See `TaskCoalescer` for the construction-order
         /// invariant the coalescer enforces.
         private let coalescer = TaskCoalescer<BatchEngine>()
+        private var nativeMTPWarmModels: Set<String> = []
 
         /// Returns the cached engine for `modelName`, creating it on first
         /// use from the supplied `ModelContainer`. The container's existing
@@ -457,6 +465,7 @@ struct MLXBatchAdapter {
         /// one `ModelContainer` (the Metal-abort scenario the registry
         /// exists to prevent).
         func shutdownEngine(for modelName: String) async {
+            nativeMTPWarmModels.remove(modelName)
             await coalescer.remove(modelName) { engine in
                 await engine.shutdown()
                 batchAdapterLog.info(
@@ -471,6 +480,7 @@ struct MLXBatchAdapter {
         /// across the per-engine `shutdown()` — same race protection as
         /// `shutdownEngine(for:)`, applied to every cached entry.
         func shutdownAll() async {
+            nativeMTPWarmModels.removeAll()
             await coalescer.removeAll { modelName, engine in
                 await engine.shutdown()
                 batchAdapterLog.info(
@@ -481,6 +491,18 @@ struct MLXBatchAdapter {
 
         func acquireSoloLease(for modelName: String) async -> SoloGenerationGate.Lease {
             await soloGate.acquire(modelName: modelName)
+        }
+
+        func consumeNativeMTPColdWarmup(modelName: String, requested: Bool) -> Bool {
+            guard requested else { return false }
+            if nativeMTPWarmModels.contains(modelName) {
+                return false
+            }
+            nativeMTPWarmModels.insert(modelName)
+            batchAdapterLog.info(
+                "native MTP cold warmup: first request for \(modelName, privacy: .public) uses AR before enabling native MTP"
+            )
+            return true
         }
 
     }
@@ -802,15 +824,21 @@ struct MLXBatchAdapter {
         // `GenerateParameters(generationConfig:fallback:)` behavior for the
         // local app path instead of inventing osaurus-specific defaults.
         let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
+        let nativeMTPColdWarmup = await Registry.shared.consumeNativeMTPColdWarmup(
+            modelName: modelName,
+            requested: draftStrategy?.usesNativeMTP == true
+        )
         let effectiveDraftStrategy = Self.effectiveDraftStrategy(
             generation: generation,
             draftStrategy: draftStrategy,
-            promptTokenCount: prepared.promptTokens.count
+            promptTokenCount: prepared.promptTokens.count,
+            disableNativeMTP: nativeMTPColdWarmup
         )
         let nativeMTPFallbackReason = Self.nativeMTPFallbackReason(
             generation: generation,
             draftStrategy: draftStrategy,
-            promptTokenCount: prepared.promptTokens.count
+            promptTokenCount: prepared.promptTokens.count,
+            coldWarmup: nativeMTPColdWarmup
         )
         let nativeMTPExplicitSamplingFallback =
             draftStrategy?.usesNativeMTP == true && effectiveDraftStrategy == nil
@@ -821,7 +849,8 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
-            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback
+            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
+            nativeMTPGreedyFallback: nativeMTPColdWarmup
         )
         let mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,

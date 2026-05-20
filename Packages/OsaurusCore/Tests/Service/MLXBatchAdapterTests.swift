@@ -411,6 +411,43 @@ struct MLXBatchAdapterTests {
         )
     }
 
+    @Test func effectiveDraftStrategy_dropsNativeMTPForColdWarmup() {
+        let greedy = GenerationParameters(
+            temperature: 0,
+            maxTokens: 32,
+            maxTokensExplicit: true,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+
+        #expect(
+            MLXBatchAdapter.effectiveDraftStrategy(
+                generation: greedy,
+                draftStrategy: .nativeMTP(depth: 3),
+                promptTokenCount: 128,
+                disableNativeMTP: true
+            ) == nil
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "JANGQ/Qwen3.6-35B-A3B-MXFP4-MTP",
+            generation: greedy,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            maxBatchSize: 1,
+            modelDefaults: .empty,
+            draftStrategy: nil,
+            nativeMTPGreedyFallback: true
+        )
+
+        #expect(effective.temperature == 0)
+        #expect(effective.topP == 1)
+        #expect(effective.topK == 0)
+        #expect(effective.minP == 0)
+        #expect(effective.repetitionPenalty == nil)
+        #expect(effective.compiledBatchDecode == false)
+    }
+
     @Test func effectiveGenerationSettings_doSampleFalseForcesGreedyOnlyWhenTemperatureOmitted() {
         let defaults = LocalGenerationDefaults.Defaults(
             maxTokens: nil,
