@@ -772,12 +772,31 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 }
             }
 
-            // Fallback to plain generation (no tools)
-            let text = try await service.generateOneShot(
-                messages: messages,
-                parameters: params,
-                requestedModel: request.model
-            )
+            // Fallback to plain generation (no tools). The single-shot service
+            // API predates text stop sequences, so route stop-bearing requests
+            // through the same streaming path used by `streamChat`.
+            let stopSequences = request.stop ?? []
+            let text: String
+            if stopSequences.isEmpty {
+                text = try await service.generateOneShot(
+                    messages: messages,
+                    parameters: params,
+                    requestedModel: request.model
+                )
+            } else {
+                let stream = try await service.streamDeltas(
+                    messages: messages,
+                    parameters: params,
+                    requestedModel: request.model,
+                    stopSequences: stopSequences
+                )
+                var collected = ""
+                for try await delta in stream {
+                    if StreamingToolHint.isSentinel(delta) { continue }
+                    collected += delta
+                }
+                text = collected
+            }
             let outputTokens = TokenEstimator.estimate(text)
             let choice = ChatChoice(
                 index: 0,

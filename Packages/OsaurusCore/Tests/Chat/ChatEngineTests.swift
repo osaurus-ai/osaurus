@@ -501,6 +501,65 @@ struct ChatEngineTests {
         #expect(params?.modelOptions["customFlag"]?.stringValue == "kept")
     }
 
+    @Test func completeChat_threadsStopSequencesIntoPlainModelServicePath() async throws {
+        actor Capture {
+            var generated = false
+            var stopSequences: [String]?
+            func markGenerated() { generated = true }
+            func setStops(_ stopSequences: [String]) { self.stopSequences = stopSequences }
+        }
+        struct CaptureService: ModelService {
+            let capture: Capture
+            var id: String { "fake" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { requestedModel == "fake" }
+            func generateOneShot(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?
+            ) async throws -> String {
+                await capture.markGenerated()
+                return "should-not-use-single-shot"
+            }
+            func streamDeltas(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?,
+                stopSequences: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                await capture.setStops(stopSequences)
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("alpha beta ")
+                    continuation.finish()
+                }
+            }
+        }
+
+        let capture = Capture()
+        let engine = ChatEngine(services: [CaptureService(capture: capture)], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: nil,
+            max_tokens: 32,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: ["gamma"],
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        let resp = try await engine.completeChat(request: req)
+
+        #expect(resp.choices.first?.message.content == "alpha beta ")
+        #expect(await capture.generated == false)
+        #expect(await capture.stopSequences == ["gamma"])
+    }
+
     @Test func completeChat_returns_tool_calls_when_tool_invoked() async throws {
         // Tool-capable fake that throws ServiceToolInvocation when tools are present
         struct FakeToolService: ToolCapableService {
