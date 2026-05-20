@@ -19,6 +19,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     case deepseek
     case venice
     case openrouter
+    case ollama
     case custom
 
     var id: String { rawValue }
@@ -34,6 +35,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .deepseek: return "DeepSeek"
         case .venice: return "Venice AI"
         case .openrouter: return "OpenRouter"
+        case .ollama: return "Ollama"
         case .custom: return "Custom"
         }
     }
@@ -49,6 +51,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .deepseek: return "deepseek-v4-pro / v4-flash"
         case .venice: return "Privacy-first AI"
         case .openrouter: return "Multi-provider"
+        case .ollama: return "Run models locally via Ollama"
         case .custom: return "Custom endpoint"
         }
     }
@@ -64,6 +67,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .deepseek: return "cpu"
         case .venice: return "lock.shield.fill"
         case .openrouter: return "arrow.triangle.branch"
+        case .ollama: return "shippingbox.fill"
         case .custom: return "slider.horizontal.3"
         }
     }
@@ -79,6 +83,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .deepseek: return [Color(red: 0.18, green: 0.36, blue: 0.95), Color(red: 0.34, green: 0.52, blue: 0.98)]
         case .venice: return [Color(red: 0.83, green: 0.66, blue: 0.33), Color(red: 0.72, green: 0.53, blue: 0.17)]
         case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
+        case .ollama: return [Color(red: 0.36, green: 0.36, blue: 0.4), Color(red: 0.22, green: 0.22, blue: 0.26)]
         case .custom: return [Color(red: 0.55, green: 0.55, blue: 0.6), Color(red: 0.4, green: 0.4, blue: 0.45)]
         }
     }
@@ -94,6 +99,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .deepseek: return "https://platform.deepseek.com/api_keys"
         case .venice: return "https://venice.ai/settings/api"
         case .openrouter: return "https://openrouter.ai/keys"
+        case .ollama: return "https://ollama.com/download"
         case .custom: return ""
         }
     }
@@ -103,6 +109,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .azureOpenAI: return "Azure"
         case .venice: return "Privacy"
+        case .ollama: return "Local"
         default: return nil
         }
     }
@@ -113,6 +120,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .azureOpenAI: return "https://learn.microsoft.com/azure/ai-foundry/openai/"
         case .deepseek: return "https://api-docs.deepseek.com/"
         case .venice: return "https://docs.venice.ai"
+        case .ollama: return "https://github.com/ollama/ollama"
         default: return nil
         }
     }
@@ -156,6 +164,13 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 "Sign in or create an account",
                 "Create a new API key",
                 "Copy and paste it here",
+            ]
+        case .ollama:
+            return [
+                "Install Ollama from ollama.com",
+                "Run `ollama serve` (or launch the app)",
+                "Pull a model — e.g. `ollama pull llama3.2`",
+                "Click Connect — no API key required",
             ]
         default:
             return [
@@ -258,6 +273,16 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 port: nil,
                 basePath: "/api/v1",
                 authType: .apiKey,
+                providerType: .openaiLegacy
+            )
+        case .ollama:
+            return ProviderPresetConfiguration(
+                name: "Ollama",
+                host: "localhost",
+                providerProtocol: .http,
+                port: 11434,
+                basePath: "/v1",
+                authType: .none,
                 providerType: .openaiLegacy
             )
         case .custom:
@@ -433,8 +458,13 @@ struct ProviderHelpLinks: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Text("Open \(preset.name) Console", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
+                    Text(
+                        preset.configuration.authType == .none
+                            ? "Install \(preset.name)"
+                            : "Open \(preset.name) Console",
+                        bundle: .module
+                    )
+                    .font(.system(size: 13, weight: .medium))
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 11, weight: .semibold))
                 }

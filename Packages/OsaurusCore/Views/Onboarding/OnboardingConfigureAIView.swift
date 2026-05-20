@@ -69,6 +69,7 @@ struct ResolvedProviderConfig {
     let basePath: String
     let providerType: RemoteProviderType
     let providerProtocol: RemoteProviderProtocol
+    let authType: RemoteProviderAuthType
 }
 
 struct CustomProviderForm {
@@ -87,14 +88,25 @@ struct CustomProviderForm {
         return url
     }
 
-    func resolved(displayName: String) -> ResolvedProviderConfig {
-        ResolvedProviderConfig(
+    /// Treat localhost-style hosts as "no auth required" — covers Ollama, LM
+    /// Studio, llama.cpp server, vLLM, etc. when the user wires them up via
+    /// the custom form.
+    var isLocalhost: Bool {
+        let h = host.lowercased().trimmingCharacters(in: .whitespaces)
+        return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "0.0.0.0"
+    }
+
+    func resolved(displayName: String, apiKey: String) -> ResolvedProviderConfig {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let authType: RemoteProviderAuthType = (isLocalhost && trimmedKey.isEmpty) ? .none : .apiKey
+        return ResolvedProviderConfig(
             name: name.isEmpty ? displayName : name,
             host: host,
             port: port.isEmpty ? nil : Int(port),
             basePath: basePath.isEmpty ? "/v1" : basePath,
             providerType: .openaiLegacy,
-            providerProtocol: protocolKind
+            providerProtocol: protocolKind,
+            authType: authType
         )
     }
 }
@@ -104,7 +116,7 @@ struct CustomProviderForm {
 @MainActor
 final class ConfigureAIState: ObservableObject {
     static let onboardingPresets: [ProviderPreset] = [
-        .anthropic, .deepseek, .google, .openai, .openrouter, .venice, .xai, .custom,
+        .ollama, .anthropic, .deepseek, .google, .openai, .openrouter, .venice, .xai, .custom,
     ]
 
     let foundationAvailable: Bool
@@ -279,12 +291,20 @@ final class ConfigureAIState: ObservableObject {
     var canTestAPI: Bool {
         guard let provider = currentAPIProvider else { return false }
         if provider == .custom {
-            return !customForm.host.isEmpty && apiKey.count > 5
+            guard !customForm.host.isEmpty else { return false }
+            // Localhost endpoints typically don't authenticate — let users
+            // press Connect with an empty key (Ollama, LM Studio, etc.).
+            return customForm.isLocalhost || apiKey.count > 5
         }
         if provider == .openai && openAIAuthMode == .chatGPTSubscription {
             return true
         }
         if provider == .openrouter && openRouterAuthMode == .oauthSignIn {
+            return true
+        }
+        // Presets that don't require auth (e.g. Ollama) are connectable as soon
+        // as they're selected.
+        if provider.configuration.authType == .none {
             return true
         }
         return apiKey.count > 10
@@ -340,7 +360,7 @@ final class ConfigureAIState: ObservableObject {
     func resolvedAPIConfig() -> ResolvedProviderConfig? {
         guard let provider = currentAPIProvider else { return nil }
         if provider == .custom {
-            return customForm.resolved(displayName: L("Custom Provider"))
+            return customForm.resolved(displayName: L("Custom Provider"), apiKey: apiKey)
         }
         let cfg = provider.configuration
         return ResolvedProviderConfig(
@@ -349,7 +369,8 @@ final class ConfigureAIState: ObservableObject {
             port: cfg.port,
             basePath: cfg.basePath,
             providerType: cfg.providerType,
-            providerProtocol: cfg.providerProtocol
+            providerProtocol: cfg.providerProtocol,
+            authType: cfg.authType
         )
     }
 
@@ -377,9 +398,9 @@ final class ConfigureAIState: ObservableObject {
                         providerProtocol: config.providerProtocol,
                         port: config.port,
                         basePath: config.basePath,
-                        authType: .apiKey,
+                        authType: config.authType,
                         providerType: config.providerType,
-                        apiKey: self.apiKey,
+                        apiKey: config.authType == .apiKey ? self.apiKey : nil,
                         headers: [:]
                     )
                 }
@@ -411,13 +432,16 @@ final class ConfigureAIState: ObservableObject {
             port: config.port,
             basePath: config.basePath,
             customHeaders: [:],
-            authType: .apiKey,
+            authType: config.authType,
             providerType: config.providerType,
             enabled: true,
             autoConnect: true,
             timeout: 60
         )
-        RemoteProviderManager.shared.addProvider(provider, apiKey: apiKey)
+        RemoteProviderManager.shared.addProvider(
+            provider,
+            apiKey: config.authType == .apiKey ? apiKey : nil
+        )
         isSaving = false
         onComplete()
     }
@@ -1087,14 +1111,52 @@ struct ConfigureAIBody: View {
                     if provider == .openrouter {
                         openRouterAuthChoiceSection
                     }
+                    if provider.configuration.authType == .none {
+                        noAuthEndpointBanner(for: provider)
+                    }
                     if shouldShowKeyField(for: provider) {
                         apiKeyField(provider: provider)
                     }
-                    if shouldShowKeyField(for: provider) {
+                    if shouldShowKeyField(for: provider)
+                        || provider.configuration.authType == .none
+                    {
                         helpSection(for: provider)
                     }
                 }
             }
+        }
+    }
+
+    /// Replaces the API key field for presets that authenticate locally (no
+    /// key required — Ollama, etc.). Shows the resolved endpoint so the user
+    /// can confirm where Osaurus will look.
+    private func noAuthEndpointBanner(for preset: ProviderPreset) -> some View {
+        let cfg = preset.configuration
+        var url = cfg.providerProtocol.rawValue + "://" + cfg.host
+        if let port = cfg.port { url += ":\(port)" }
+        url += cfg.basePath
+        return OnboardingGlassCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.successColor)
+                    Text("No API key required", bundle: .module)
+                        .font(theme.font(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "link")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.accentColor)
+                    Text(url)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
         }
     }
 
@@ -1108,7 +1170,7 @@ struct ConfigureAIBody: View {
         case .openrouter:
             return state.openRouterAuthMode == .apiKey
         default:
-            return true
+            return provider.configuration.authType == .apiKey
         }
     }
 
@@ -1118,6 +1180,20 @@ struct ConfigureAIBody: View {
                 customProviderForm.padding(14)
             }
             apiKeyField(provider: .custom)
+            if state.customForm.isLocalhost {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11))
+                    Text(
+                        "Local endpoints don't usually need a key — leave blank to skip auth.",
+                        bundle: .module
+                    )
+                    .font(theme.font(size: 11))
+                    Spacer(minLength: 0)
+                }
+                .foregroundColor(theme.tertiaryText)
+                .padding(.horizontal, 4)
+            }
         }
     }
 
@@ -1316,9 +1392,13 @@ struct ConfigureAIBody: View {
     }
 
     private func helpSection(for preset: ProviderPreset) -> some View {
-        OnboardingGlassCard {
+        let heading: LocalizedStringKey =
+            preset.configuration.authType == .none
+            ? "Don't have it set up yet?"
+            : "Don't have a key?"
+        return OnboardingGlassCard {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Don't have a key?", bundle: .module)
+                Text(heading, bundle: .module)
                     .font(theme.font(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
