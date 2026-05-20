@@ -167,7 +167,9 @@ public actor SkillSearchService {
             )
 
             let matchedSkillIds = results.compactMap { reverseIdMap[$0.id.uuidString] }
-            guard !matchedSkillIds.isEmpty else { return [] }
+            guard !matchedSkillIds.isEmpty else {
+                return await searchLiveSkillsLexically(query: query, topK: topK, threshold: effectiveThreshold)
+            }
 
             let allSkills = await MainActor.run { SkillManager.shared.skills }
             let skillById = Dictionary(allSkills.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
