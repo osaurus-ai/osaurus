@@ -18,6 +18,7 @@
 //  the missing/empty/wrong-type rows.
 //
 
+import AppKit
 import Foundation
 import Testing
 
@@ -69,6 +70,95 @@ struct FolderToolsResilienceTests {
         let result = try await tool.execute(argumentsJSON: #"{"path": ""}"#)
         #expect(ToolEnvelope.isError(result))
         #expect(failureField(result) == "path")
+    }
+
+    /// Pins the `.docx` / `.pdf` / `.rtf` fix: rich-document extensions
+    /// route through `DocumentParser` instead of the raw UTF-8 decode
+    /// that used to surface `NSCocoaErrorDomain` code 264 ("isn't in
+    /// the correct format"). We use RTF here because `NSAttributedString`
+    /// can synthesise it inline without checking in a binary fixture.
+    @Test @MainActor func fileRead_richDocumentExtractsText() async throws {
+        let root = tmpRoot()
+        let body = "Hello rich world — extracted via DocumentParser."
+        let attributed = NSAttributedString(string: body)
+        guard
+            let rtfData = attributed.rtf(
+                from: NSRange(location: 0, length: attributed.length)
+            )
+        else {
+            Issue.record("Could not synthesise RTF fixture via NSAttributedString")
+            return
+        }
+        let path = root.appendingPathComponent("note.rtf")
+        try rtfData.write(to: path)
+
+        let tool = FileReadTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "note.rtf"}"#
+        )
+        #expect(ToolEnvelope.isSuccess(result))
+        let text = EnvelopeAssertions.successText(result) ?? ""
+        #expect(text.contains(body), "extracted text missing the body: \(text)")
+    }
+
+    /// Pins the binary-sniff branch: a non-rich file whose first 4KB
+    /// contains a NUL byte must surface as
+    /// `kind: execution_error, retryable: false` so the agent loop
+    /// pivots instead of retrying. Previously the raw NSCocoa text
+    /// flowed through `retryable: true`.
+    ///
+    /// `FileReadTool` throws `FolderToolError.binaryContent` (matching
+    /// the `fileNotFound` convention); `ToolRegistry` wraps that into
+    /// the canonical envelope via `ToolEnvelope.fromError`. We mirror
+    /// the registry's wrap-on-catch here so the assertion runs against
+    /// the exact bytes the model would see.
+    @Test func fileRead_binaryReturnsNonRetryable() async throws {
+        let root = tmpRoot()
+        var bytes = Data(count: 4096)
+        bytes[7] = 0xFF
+        bytes[13] = 0x00  // NUL byte well inside the sniff window
+        bytes[19] = 0xAB
+        let path = root.appendingPathComponent("blob.bin")
+        try bytes.write(to: path)
+
+        let tool = FileReadTool(rootPath: root)
+        let envelope: String
+        do {
+            envelope = try await tool.execute(
+                argumentsJSON: #"{"path": "blob.bin"}"#
+            )
+        } catch {
+            envelope = ToolEnvelope.fromError(error, tool: tool.name)
+        }
+        #expect(ToolEnvelope.isError(envelope))
+        #expect(failureKind(envelope) == "execution_error")
+        #expect(EnvelopeAssertions.failureRetryable(envelope) == false)
+        let message = EnvelopeAssertions.failureMessage(envelope) ?? ""
+        #expect(
+            message.contains("binary"),
+            "binary envelope missing the explanatory hint: \(message)"
+        )
+    }
+
+    /// Regression for the `(empty file)` raw-string leak at the bottom
+    /// of `FileReadTool.execute`. The branch is reachable when the
+    /// first line alone exceeds `maxOutputChars` — output stays empty
+    /// after the truncation break and the tool returned the bare
+    /// `"(empty file)"` string instead of an envelope. Pinned via a
+    /// 16k-character line so the truncation fires deterministically.
+    @Test func fileRead_oversizedFirstLineWrappedInEnvelope() async throws {
+        let root = tmpRoot()
+        let path = root.appendingPathComponent("wide.txt")
+        let oversized = String(repeating: "a", count: 16_000)
+        try oversized.write(to: path, atomically: true, encoding: .utf8)
+
+        let tool = FileReadTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "wide.txt"}"#
+        )
+        #expect(ToolEnvelope.isSuccess(result))
+        let text = EnvelopeAssertions.successText(result) ?? ""
+        #expect(text == "(empty file)", "got: \(text)")
     }
 
     // MARK: - file_write

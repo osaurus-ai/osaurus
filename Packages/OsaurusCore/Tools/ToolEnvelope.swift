@@ -174,6 +174,16 @@ public enum ToolEnvelope {
                     message: msg,
                     tool: tool
                 )
+            case .binaryContent(let path, let ext, let detail):
+                let extLabel = ext.map { " (.\($0))" } ?? ""
+                let pivotTail = detail.pivotHint.map { " \($0)" } ?? ""
+                return failure(
+                    kind: .executionError,
+                    message:
+                        "file_read only supports text. '\(path)' looks like a binary file\(extLabel) — pivot to shell_run with an appropriate tool (e.g. `unzip`, `pdftotext`, `file`) instead of retrying.\(pivotTail)",
+                    tool: tool,
+                    retryable: false
+                )
             }
         }
 
