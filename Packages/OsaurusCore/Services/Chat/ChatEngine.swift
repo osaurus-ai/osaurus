@@ -268,6 +268,43 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return accumulated.isEmpty ? nil : accumulated
     }
 
+    private static func canonicalToolArgumentsJSON(_ json: String) -> String {
+        let candidates = [
+            json,
+            json.replacingOccurrences(of: #"\""#, with: #"""#),
+        ]
+        guard let object = candidates.lazy.compactMap({ candidate -> Any? in
+            guard let data = candidate.data(using: .utf8) else { return nil }
+            return try? JSONSerialization.jsonObject(with: data)
+        }).first else {
+            return json
+        }
+        let normalized = normalizeNestedJSONStringValues(object)
+        guard JSONSerialization.isValidJSONObject(normalized),
+            let data = try? JSONSerialization.data(withJSONObject: normalized, options: [.sortedKeys]),
+            let string = String(data: data, encoding: .utf8)
+        else {
+            return json
+        }
+        return string
+    }
+
+    private static func normalizeNestedJSONStringValues(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.mapValues(normalizeNestedJSONStringValues(_:))
+        }
+        if let array = value as? [Any] {
+            return array.map(normalizeNestedJSONStringValues(_:))
+        }
+        if let string = value as? String,
+            let data = string.data(using: .utf8),
+            let nested = try? JSONSerialization.jsonObject(with: data)
+        {
+            return normalizeNestedJSONStringValues(nested)
+        }
+        return value
+    }
+
     /// Build a non-stream OpenAI-style response from one or more tool
     /// invocations parsed out of a single completion. Local models can emit
     /// multiple `<tool_call>` blocks per response; OpenAI clients expect a
@@ -291,7 +328,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             return ToolCall(
                 id: callId,
                 type: "function",
-                function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments),
+                function: ToolCallFunction(
+                    name: inv.toolName,
+                    arguments: canonicalToolArgumentsJSON(inv.jsonArguments)
+                ),
                 geminiThoughtSignature: inv.geminiThoughtSignature
             )
         }

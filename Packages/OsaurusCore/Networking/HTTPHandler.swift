@@ -1787,7 +1787,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
         SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
-        return enriched
+        let mergedTools = mergeAgentContextTools(composed.tools, clientTools: request.tools)
+        let resolvedToolChoice: ToolChoiceOption? = {
+            guard let mergedTools, !mergedTools.isEmpty else { return nil }
+            return request.tool_choice ?? .auto
+        }()
+        return enriched.withContext(
+            messages: enriched.messages,
+            tools: mergedTools,
+            toolChoice: resolvedToolChoice
+        )
+    }
+
+    private static func mergeAgentContextTools(
+        _ agentTools: [Tool],
+        clientTools: [Tool]?
+    ) -> [Tool]? {
+        let clientTools = clientTools ?? []
+        guard !agentTools.isEmpty || !clientTools.isEmpty else { return nil }
+        let clientNames = Set(clientTools.map(\.function.name))
+        let contextTools = agentTools.filter { !clientNames.contains($0.function.name) }
+        return contextTools + clientTools
     }
 
     // MARK: - Memory Ingestion
@@ -3911,11 +3931,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             model: model
                         )
                     }
-                    let json = try JSONEncoder().encode(resp)
+                    let body = try Self.chatCompletionResponseBody(resp)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]
                     headers.append(contentsOf: cors)
                     let headersCopy = headers
-                    let body = String(decoding: json, as: UTF8.self)
                     hop {
                         var responseHead = HTTPResponseHead(version: head.version, status: .ok)
                         var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
@@ -6661,6 +6680,121 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - Request Logging
+
+    /// Encode an OpenAI chat-completions response and verify the bytes before
+    /// putting them on the wire. Tool-call arguments are model-authored JSON
+    /// strings and can contain nested backslash/quote sequences; if Codable
+    /// ever produces bytes a client parser rejects, fall back to a
+    /// JSONSerialization envelope that treats those arguments as opaque
+    /// strings and escapes them at the transport boundary.
+    private static func chatCompletionResponseBody(_ response: ChatCompletionResponse) throws -> String {
+        let encoded = try JSONEncoder().encode(response)
+        if (try? JSONSerialization.jsonObject(with: encoded)) != nil {
+            return String(decoding: encoded, as: UTF8.self)
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: chatCompletionResponseJSONObject(response))
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func chatCompletionResponseJSONObject(_ response: ChatCompletionResponse) -> [String: Any] {
+        var object: [String: Any] = [
+            "id": response.id,
+            "object": response.object,
+            "created": response.created,
+            "model": response.model,
+            "choices": response.choices.map(chatChoiceJSONObject(_:)),
+            "usage": [
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+            ],
+        ]
+        if let fingerprint = response.system_fingerprint {
+            object["system_fingerprint"] = fingerprint
+        }
+        if let prefixHash = response.prefix_hash {
+            object["prefix_hash"] = prefixHash
+        }
+        return object
+    }
+
+    private static func chatChoiceJSONObject(_ choice: ChatChoice) -> [String: Any] {
+        [
+            "index": choice.index,
+            "finish_reason": choice.finish_reason,
+            "message": chatMessageJSONObject(choice.message),
+        ]
+    }
+
+    private static func chatMessageJSONObject(_ message: ChatMessage) -> [String: Any] {
+        var object: [String: Any] = ["role": message.role]
+        if let content = message.content {
+            object["content"] = content
+        }
+        if let toolCalls = message.tool_calls {
+            object["tool_calls"] = toolCalls.map(toolCallJSONObject(_:))
+        }
+        if let toolCallId = message.tool_call_id {
+            object["tool_call_id"] = toolCallId
+        }
+        if let reasoning = message.reasoning_content {
+            object["reasoning_content"] = reasoning
+        }
+        return object
+    }
+
+    private static func toolCallJSONObject(_ call: ToolCall) -> [String: Any] {
+        var object: [String: Any] = [
+            "id": call.id,
+            "type": call.type,
+            "function": [
+                "name": call.function.name,
+                "arguments": canonicalToolArgumentsJSON(call.function.arguments),
+            ],
+        ]
+        if let signature = call.geminiThoughtSignature {
+            object["geminiThoughtSignature"] = signature
+        }
+        return object
+    }
+
+    private static func canonicalToolArgumentsJSON(_ json: String) -> String {
+        let candidates = [
+            json,
+            json.replacingOccurrences(of: #"\""#, with: #"""#),
+        ]
+        guard let object = candidates.lazy.compactMap({ candidate -> Any? in
+            guard let data = candidate.data(using: .utf8) else { return nil }
+            return try? JSONSerialization.jsonObject(with: data)
+        }).first else {
+            return json
+        }
+        let normalized = normalizeNestedJSONStringValues(object)
+        guard JSONSerialization.isValidJSONObject(normalized),
+            let encoded = try? JSONSerialization.data(withJSONObject: normalized, options: [.sortedKeys]),
+            let string = String(data: encoded, encoding: .utf8)
+        else {
+            return json
+        }
+        return string
+    }
+
+    private static func normalizeNestedJSONStringValues(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.mapValues(normalizeNestedJSONStringValues(_:))
+        }
+        if let array = value as? [Any] {
+            return array.map(normalizeNestedJSONStringValues(_:))
+        }
+        if let string = value as? String,
+            let nestedData = string.data(using: .utf8),
+            let nested = try? JSONSerialization.jsonObject(with: nestedData)
+        {
+            return normalizeNestedJSONStringValues(nested)
+        }
+        return value
+    }
 
     /// Log a completed request to InsightsService
     private func logRequest(
