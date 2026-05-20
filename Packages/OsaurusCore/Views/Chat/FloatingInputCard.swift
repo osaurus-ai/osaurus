@@ -5,6 +5,7 @@
 //  Premium floating input card with model chip and smooth animations
 //
 
+import AVFoundation
 import AppKit
 import Combine
 import SwiftUI
@@ -183,6 +184,8 @@ struct FloatingInputCard: View {
     @State private var lastSpeechTime: Date = .distantFuture
     @State private var hasDetectedSpeechThisTurn: Bool = false
 
+    @State private var showMicPermissionAlert: Bool = false
+
     /// Tracks last voice activity time for silence timeout
     @State private var lastVoiceActivityTime: Date = Date()
 
@@ -269,11 +272,8 @@ struct FloatingInputCard: View {
         return nil
     }
 
-    /// Whether voice button should be visible: voice is enabled + mic permission granted + a model is downloaded.
-    /// Does NOT require the model to be loaded into memory yet — loading happens on demand.
     private var isVoiceConfigured: Bool {
         voiceConfig.voiceInputEnabled
-            && speechService.microphonePermissionGranted
             && speechModelManager.downloadedModelsCount > 0
     }
 
@@ -379,9 +379,11 @@ struct FloatingInputCard: View {
 
                 // Load voice config (cached after first load)
                 loadVoiceConfig()
-
-                // Ensure voice model is loaded if enabled and not already loaded
-                if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded && !speechService.isLoadingModel {
+                
+                if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded
+                    && !speechService.isLoadingModel
+                    && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                {
                     if let model = SpeechModelManager.shared.selectedModel {
                         print("[VoiceDebug] Kicking off model load for: \(model.id)")
                         Task {
@@ -425,8 +427,10 @@ struct FloatingInputCard: View {
                 // Reload voice config when settings change
                 loadVoiceConfig()
 
-                // If voice was just enabled, ensure model is loaded
-                if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded && !speechService.isLoadingModel {
+                if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded
+                    && !speechService.isLoadingModel
+                    && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                {
                     if let model = SpeechModelManager.shared.selectedModel {
                         Task { try? await speechService.loadModel(model.id) }
                     }
@@ -564,6 +568,21 @@ struct FloatingInputCard: View {
                 }
             }
             .modifier(VoiceDebugObservers())
+            .themedAlert(
+                "Microphone access is off",
+                isPresented: $showMicPermissionAlert,
+                message:
+                    "Osaurus needs microphone access to transcribe speech. Enable it in System Settings → Privacy & Security → Microphone, then try again.",
+                primaryButton: .primary("Open System Settings") {
+                    if let url = URL(
+                        string:
+                            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+                    {
+                        NSWorkspace.shared.open(url)
+                    }
+                },
+                secondaryButton: .cancel("Cancel")
+            )
             .task {
                 // log full voice state once the view has settled (deferred to avoid type-checker load in body)
                 // 100ms
@@ -681,11 +700,35 @@ private struct VoiceDebugObservers: ViewModifier {
 extension FloatingInputCard {
 
     fileprivate func startVoiceInput() {
+        // Branch on TCC up front:
+        //   .denied / .restricted → themed "enable in Settings" alert
+        //   .notDetermined        → trigger the system permission prompt
+        //                           and prime the model load on grant
+        //   .authorized           → fall through to the existing flow
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .denied, .restricted:
+            showMicPermissionAlert = true
+            return
+        case .notDetermined:
+            Task { @MainActor in
+                let granted = await speechService.requestMicrophonePermission()
+                if granted, let model = SpeechModelManager.shared.selectedModel,
+                    !speechService.isModelLoaded, !speechService.isLoadingModel
+                {
+                    Task { try? await speechService.loadModel(model.id) }
+                }
+            }
+            return
+        case .authorized:
+            break
+        @unknown default:
+            return
+        }
+
         guard isVoiceAvailable else {
             print(
                 "[VoiceDebug] startVoiceInput called but isVoiceAvailable=false — triggering emergency load if possible"
             )
-            // Model may not be loaded yet — kick off load and bail; once loaded the button will become tappable.
             if let model = SpeechModelManager.shared.selectedModel, !speechService.isLoadingModel {
                 Task { try? await speechService.loadModel(model.id) }
             }
@@ -740,6 +783,9 @@ extension FloatingInputCard {
                 await MainActor.run {
                     voiceInputState = .idle
                     showVoiceOverlay = false
+                    if case SpeechError.microphonePermissionDenied = error {
+                        showMicPermissionAlert = true
+                    }
                 }
             }
         }
@@ -2354,9 +2400,19 @@ extension FloatingInputCard {
     // MARK: - Voice Input Button
 
     private var voiceInputButton: some View {
-        Group {
-            if speechService.isLoadingModel {
-                // model is loading — show a small spinner in place of the mic icon
+        // Only render the disabled "loading…" state when mic access has
+        // actually been granted. For `.notDetermined`/`.denied` the model
+        // can't be used yet, and a background autoload (e.g.
+        // `SpeechService.autoLoadIfNeeded` at launch) would otherwise
+        // freeze the button and swallow the tap that needs to surface
+        // either the system mic prompt or the denied alert.
+        let micAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        return Group {
+            if speechService.isLoadingModel && micAuthorized {
+                // Original disabled-spinner state — only when mic is
+                // already authorized, since otherwise no model load is
+                // running and the tap must remain free to surface either
+                // the system prompt or the denied alert.
                 InputActionButton(
                     icon: "mic.fill",
                     help: "Loading voice model…",
