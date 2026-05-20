@@ -1205,6 +1205,9 @@
         }
       }
     },
+    "active" : {
+
+    },
     "Add" : {
       "localizations" : {
         "de" : {
@@ -13216,6 +13219,9 @@
           }
         }
       }
+    },
+    "Not active" : {
+
     },
     "Not downloaded — about 700 MB" : {
       "localizations" : {
