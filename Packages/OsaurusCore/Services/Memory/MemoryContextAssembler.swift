@@ -44,7 +44,7 @@ public actor MemoryContextAssembler {
         query: String
     ) async -> String {
         guard config.enabled else { return "" }
-        guard MemoryDatabase.shared.isOpen else { return "" }
+        guard await MemoryDatabase.waitForSharedOpen(timeoutSeconds: 0.5) else { return "" }
 
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let cacheKey = "\(agentId)|\(trimmedQuery.prefix(120))"

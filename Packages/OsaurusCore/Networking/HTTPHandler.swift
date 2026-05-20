@@ -1877,49 +1877,116 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             let db = MemoryDatabase.shared
+            guard await MemoryDatabase.waitForSharedOpen(timeoutSeconds: 8) else {
+                let responseBody = #"{"error":"memory_database_unavailable","message":"Memory database is not ready"}"#
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                hop {
+                    var responseHead = HTTPResponseHead(version: head.version, status: .serviceUnavailable)
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: responseBody.utf8.count)
+                    buffer.writeString(responseBody)
+                    var nioHeaders = HTTPHeaders()
+                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                    nioHeaders.add(name: "Connection", value: "close")
+                    responseHead.headers = nioHeaders
+                    let c = ctx.value
+                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        ctx.value.close(promise: nil)
+                    }
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/memory/ingest",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: responseBody,
+                    responseStatus: 503,
+                    startTime: logStartTime,
+                    errorMessage: "memory database not ready"
+                )
+                return
+            }
 
             let skipExtraction = req.skip_extraction ?? false
 
-            try? db.deleteTranscriptForConversation(req.conversation_id)
+            do {
+                try db.deleteTranscriptForConversation(req.conversation_id)
 
-            for (i, turn) in req.turns.enumerated() {
-                let turnDate = turn.date ?? req.session_date
+                for (i, turn) in req.turns.enumerated() {
+                    let turnDate = turn.date ?? req.session_date
 
-                let pairs: [(role: String, content: String, index: Int)] = [
-                    ("user", turn.user, i * 2),
-                    ("assistant", turn.assistant, i * 2 + 1),
-                ]
-                for (role, content, chunkIndex) in pairs {
-                    let tokens = TokenEstimator.estimate(content)
-                    let storedTurn = TranscriptTurn(
-                        conversationId: req.conversation_id,
-                        chunkIndex: chunkIndex,
-                        role: role,
-                        content: content,
-                        tokenCount: tokens,
-                        agentId: req.agent_id
-                    )
-                    try? db.insertTranscriptTurn(
-                        agentId: req.agent_id,
-                        conversationId: req.conversation_id,
-                        chunkIndex: chunkIndex,
-                        role: role,
-                        content: content,
-                        tokenCount: tokens,
-                        createdAt: turnDate
-                    )
-                    await MemorySearchService.shared.indexTranscriptTurn(storedTurn)
+                    let pairs: [(role: String, content: String, index: Int)] = [
+                        ("user", turn.user, i * 2),
+                        ("assistant", turn.assistant, i * 2 + 1),
+                    ]
+                    for (role, content, chunkIndex) in pairs {
+                        let tokens = TokenEstimator.estimate(content)
+                        let storedTurn = TranscriptTurn(
+                            conversationId: req.conversation_id,
+                            chunkIndex: chunkIndex,
+                            role: role,
+                            content: content,
+                            tokenCount: tokens,
+                            agentId: req.agent_id
+                        )
+                        try db.insertTranscriptTurn(
+                            agentId: req.agent_id,
+                            conversationId: req.conversation_id,
+                            chunkIndex: chunkIndex,
+                            role: role,
+                            content: content,
+                            tokenCount: tokens,
+                            createdAt: turnDate
+                        )
+                        await MemorySearchService.shared.indexTranscriptTurn(storedTurn)
+                    }
+
+                    if !skipExtraction {
+                        await MemoryService.shared.bufferTurn(
+                            userMessage: turn.user,
+                            assistantMessage: turn.assistant,
+                            agentId: req.agent_id,
+                            conversationId: req.conversation_id,
+                            sessionDate: turnDate
+                        )
+                    }
                 }
-
-                if !skipExtraction {
-                    await MemoryService.shared.bufferTurn(
-                        userMessage: turn.user,
-                        assistantMessage: turn.assistant,
-                        agentId: req.agent_id,
-                        conversationId: req.conversation_id,
-                        sessionDate: turnDate
-                    )
+            } catch {
+                let responseBody = #"{"error":"memory_ingest_failed","message":"Memory transcript write failed"}"#
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                hop {
+                    var responseHead = HTTPResponseHead(version: head.version, status: .internalServerError)
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: responseBody.utf8.count)
+                    buffer.writeString(responseBody)
+                    var nioHeaders = HTTPHeaders()
+                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                    nioHeaders.add(name: "Connection", value: "close")
+                    responseHead.headers = nioHeaders
+                    let c = ctx.value
+                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        ctx.value.close(promise: nil)
+                    }
                 }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/memory/ingest",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: responseBody,
+                    responseStatus: 500,
+                    startTime: logStartTime,
+                    errorMessage: "\(error)"
+                )
+                return
             }
 
             // Ingestion always implies "I'm done with this conversation
@@ -4662,6 +4729,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return row
             }
 
+            let memoryConfig = MemoryConfigurationStore.load()
             let obj: [String: Any] = [
                 "status": "healthy",
                 "timestamp": Date().ISO8601Format(),
@@ -4669,6 +4737,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "current_model": current,
                 "inflight": inflightObj,
                 "resident_models": residentModels,
+                "memory_enabled": memoryConfig.enabled,
+                "memory_database_open": MemoryDatabase.shared.isOpen,
             ]
             let data = try? JSONSerialization.data(withJSONObject: obj)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"

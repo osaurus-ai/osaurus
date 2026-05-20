@@ -149,6 +149,42 @@ struct ChatEngineTests {
         #expect(resp.choices.first?.message.content == "hello")
     }
 
+    @Test func completeChat_usesStreamingStatsForPlainNonStreamingCompletion() async throws {
+        let svc = FakeModelService(
+            deltas: [
+                "partial answer",
+                StreamingStatsHint.encode(
+                    tokenCount: 180,
+                    tokensPerSecond: 52.5,
+                    stopReason: "length"
+                ),
+            ]
+        )
+        let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 32,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        let resp = try await engine.completeChat(request: req)
+
+        #expect(resp.choices.first?.message.content == "partial answer")
+        #expect(resp.choices.first?.finish_reason == "length")
+        #expect(resp.usage.completion_tokens == 180)
+        #expect(resp.usage.total_tokens == resp.usage.prompt_tokens + 180)
+    }
+
     @Test func completeChat_omittedMaxTokensPreservesModelDefaultContract() async throws {
         actor Capture {
             var params: GenerationParameters?

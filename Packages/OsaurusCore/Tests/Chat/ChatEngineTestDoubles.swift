@@ -80,7 +80,11 @@ struct FakeModelService: ModelService {
         stopSequences: [String]
     ) async throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            for d in deltas { continuation.yield(d) }
+            if deltas.isEmpty {
+                continuation.yield(completeText)
+            } else {
+                for d in deltas { continuation.yield(d) }
+            }
             continuation.finish()
         }
     }

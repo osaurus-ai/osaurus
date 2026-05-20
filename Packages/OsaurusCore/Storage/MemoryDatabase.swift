@@ -65,6 +65,22 @@ public final class MemoryDatabase: @unchecked Sendable {
         queue.sync { db != nil }
     }
 
+    public static func waitForSharedOpen(
+        timeoutSeconds: TimeInterval,
+        pollInterval: TimeInterval = 0.1
+    ) async -> Bool {
+        if shared.isOpen { return true }
+
+        let deadline = Date().addingTimeInterval(max(0, timeoutSeconds))
+        while Date() < deadline {
+            let nanos = UInt64(max(0.01, pollInterval) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanos)
+            if shared.isOpen { return true }
+        }
+
+        return shared.isOpen
+    }
+
     init() {}
 
     deinit { close() }
@@ -1872,7 +1888,9 @@ public final class MemoryDatabase: @unchecked Sendable {
                     }
                 }
             )
-            return turns
+            if !turns.isEmpty {
+                return turns
+            }
         }
 
         var sql = """
@@ -1898,8 +1916,61 @@ public final class MemoryDatabase: @unchecked Sendable {
                 }
             }
         )
-        return turns
+        if !turns.isEmpty {
+            return turns
+        }
+
+        return try searchTranscriptLooseText(query: trimmed, agentId: agentId, days: days, limit: limit)
     }
+
+    private func searchTranscriptLooseText(
+        query: String,
+        agentId: String?,
+        days: Int,
+        limit: Int
+    ) throws -> [TranscriptTurn] {
+        let terms = Self.looseSearchTerms(query)
+        guard !terms.isEmpty else { return [] }
+
+        let recent = try loadTranscript(
+            agentId: agentId,
+            days: days,
+            limit: max(limit * 50, 250)
+        )
+        let scored = recent.compactMap { turn -> (turn: TranscriptTurn, score: Int)? in
+            let content = turn.content.lowercased()
+            let score = terms.reduce(0) { partial, term in
+                partial + (content.contains(term) ? 1 : 0)
+            }
+            guard score > 0 else { return nil }
+            return (turn, score)
+        }
+        return scored
+            .sorted {
+                if $0.score != $1.score { return $0.score > $1.score }
+                return $0.turn.createdAt > $1.turn.createdAt
+            }
+            .prefix(limit)
+            .map(\.turn)
+    }
+
+    private static func looseSearchTerms(_ raw: String) -> [String] {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let terms =
+            raw.lowercased().unicodeScalars
+            .map { allowed.contains($0) ? Character($0) : " " }
+            .reduce(into: "") { $0.append($1) }
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+            .filter { $0.count >= 4 && !Self.looseSearchStopWords.contains($0) }
+        return Array(NSOrderedSet(array: terms).compactMap { $0 as? String })
+    }
+
+    private static let looseSearchStopWords: Set<String> = [
+        "what", "when", "where", "which", "with", "this", "that", "these", "those",
+        "reply", "only", "codeword", "please", "about", "into", "from", "have",
+        "were", "your", "mine", "typed", "type"
+    ]
 
     /// Returns true when `name` exists as a virtual table — used to
     /// detect whether the v6 FTS5 indexes have been created (handles

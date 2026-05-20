@@ -825,36 +825,37 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 }
             }
 
-            // Fallback to plain generation (no tools). The single-shot service
-            // API predates text stop sequences, so route stop-bearing requests
-            // through the same streaming path used by `streamChat`.
+            // Fallback to plain generation (no tools). Use the streaming
+            // service path even for non-streaming HTTP so the terminal stats
+            // sentinel preserves vmlx's authoritative token count and stop
+            // reason (`length` vs natural `stop`).
             let stopSequences = request.stop ?? []
-            let text: String
-            if stopSequences.isEmpty {
-                text = try await service.generateOneShot(
-                    messages: messages,
-                    parameters: params,
-                    requestedModel: request.model
-                )
-            } else {
-                let stream = try await service.streamDeltas(
-                    messages: messages,
-                    parameters: params,
-                    requestedModel: request.model,
-                    stopSequences: stopSequences
-                )
-                var collected = ""
-                for try await delta in stream {
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    collected += delta
+            let stream = try await service.streamDeltas(
+                messages: messages,
+                parameters: params,
+                requestedModel: request.model,
+                stopSequences: stopSequences
+            )
+            var text = ""
+            var terminalStopReason = "stop"
+            var authoritativeOutputTokens: Int?
+            for try await delta in stream {
+                if let stats = StreamingStatsHint.decode(delta) {
+                    authoritativeOutputTokens = stats.tokenCount
+                    if let stopReason = stats.stopReason, !stopReason.isEmpty {
+                        terminalStopReason = stopReason
+                    }
+                    continue
                 }
-                text = collected
+                if StreamingToolHint.isSentinel(delta) { continue }
+                if StreamingReasoningHint.decode(delta) != nil { continue }
+                text += delta
             }
-            let outputTokens = TokenEstimator.estimate(text)
+            let outputTokens = authoritativeOutputTokens ?? TokenEstimator.estimate(text)
             let choice = ChatChoice(
                 index: 0,
                 message: ChatMessage(role: "assistant", content: text, tool_calls: nil, tool_call_id: nil),
-                finish_reason: "stop"
+                finish_reason: terminalStopReason
             )
             let usage = Usage(
                 prompt_tokens: inputTokens,
@@ -882,7 +883,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     durationMs: durationMs,
                     temperature: temperature,
                     maxTokens: maxTokens,
-                    finishReason: .stop,
+                    finishReason: RequestLog.FinishReason(rawValue: terminalStopReason) ?? .stop,
                     requestBody: requestBodyJSON,
                     responseBody: Self.serializeResponseForLog(response)
                 )
