@@ -852,6 +852,11 @@ struct RuntimePolicySourceTests {
         #expect(health.contains("\"idle_seconds_remaining\""))
         #expect(windows.contains("modelIdleResidencyPolicy"))
         #expect(windows.contains("if idlePolicy == .immediately"))
+        #expect(
+            windows.contains("let found = ModelManager.findInstalledModel(named: model)")
+                && windows.contains("return found.name"),
+            "Chat UI active-model cleanup must use ModelRuntime's canonical repo-tail cache key, not the raw picker id."
+        )
     }
 
     @Test("Resident same-model turns do not flash model-loading UI")

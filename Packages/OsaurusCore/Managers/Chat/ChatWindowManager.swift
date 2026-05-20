@@ -327,9 +327,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         Set(
             windowStates.values.compactMap { state in
                 guard let model = state.session.selectedModel,
-                    ModelManager.findInstalledModel(named: model) != nil
+                    let found = ModelManager.findInstalledModel(named: model)
                 else { return nil }
-                return model
+                return found.name
             }
         )
     }
