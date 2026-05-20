@@ -331,9 +331,7 @@ struct ModelDownloadView: View {
                 ],
                 badges: modelManager.activeDownloadsCount > 0
                     ? [.downloaded: modelManager.activeDownloadsCount]
-                    : nil,
-                searchText: $searchText,
-                searchPlaceholder: "Search models"
+                    : nil
             )
         }
     }
@@ -427,7 +425,10 @@ struct ModelDownloadView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Text("Filters", bundle: .module)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(0.6)
+                        .foregroundColor(theme.tertiaryText)
+                        .textCase(.uppercase)
                     Spacer()
                     if filterState.isActive {
                         Button {
@@ -719,6 +720,8 @@ struct ModelDownloadView: View {
 
     private var sortFilterBar: some View {
         HStack(spacing: 12) {
+            SearchField(text: $searchText, placeholder: "Search models", width: 240)
+
             Spacer()
 
             // Sort button
@@ -1353,6 +1356,8 @@ private struct DownloadStatusIndicator: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)
             }
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(
