@@ -3,6 +3,27 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.32</title>
+            <pubDate>Wed, 20 May 2026 18:57:36 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.32</sparkle:version>
+            <sparkle:shortVersionString>0.18.32</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.32/Osaurus-0.18.32.dmg" length="48586411" type="application/octet-stream" sparkle:edSignature="e71oYLR8CNi5gdKXM5XkTpYqnzvX7Rf6GPZuPQrRkTtO+uo1W/y/CxfDWluEMbs//eif7+fBhlhgo+R2xvQPCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🧰 Maintenance
+
+- minor updates (#1188) by @RaajeevChandran
+- updated remote provider for deepseek kv cache (#1189) by @tpae
+- improved read\_file tool (#1187) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.31...0.18.32
+]]></description>
+        </item>
+        <item>
             <title>0.18.31</title>
             <pubDate>Wed, 20 May 2026 17:23:35 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
