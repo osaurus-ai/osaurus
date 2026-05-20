@@ -789,6 +789,75 @@ struct HTTPHandlerChatStreamingTests {
         #expect(stopCount == 1)
     }
 
+    // MARK: - OpenResponses context + streaming (`/responses`)
+
+    @Test func openresponses_previous_response_id_prepends_stored_context() async throws {
+        final class ContextEchoEngine: ChatEngineProtocol, @unchecked Sendable {
+            private let lock = NSLock()
+            private var callCount = 0
+            private let codeword = "PR1173-PREVCTX-UNIT"
+
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                fatalError("not used")
+            }
+
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                let output: String = lock.withLock {
+                    defer { callCount += 1 }
+                    if callCount == 0 {
+                        return "ACK"
+                    }
+                    let joined = request.messages.compactMap(\.content).joined(separator: "\n")
+                    return joined.contains(codeword) ? codeword : "NO_CONTEXT"
+                }
+                let choice = ChatChoice(
+                    index: 0,
+                    message: ChatMessage(role: "assistant", content: output),
+                    finish_reason: "stop"
+                )
+                return ChatCompletionResponse(
+                    id: "chatcmpl-test",
+                    created: 1,
+                    model: "fake",
+                    choices: [choice],
+                    usage: Usage(prompt_tokens: 1, completion_tokens: 1, total_tokens: 2),
+                    system_fingerprint: nil
+                )
+            }
+        }
+
+        let server = try await startTestServer(with: ContextEchoEngine())
+        defer { Task { await server.shutdown() } }
+
+        func post(_ json: String) async throws -> OpenResponsesResponse {
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/responses")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.authenticate()
+            request.disablePersistenceForTests()
+            request.httpBody = json.data(using: .utf8)
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            return try JSONDecoder().decode(OpenResponsesResponse.self, from: data)
+        }
+
+        let first = try await post(
+            #"""
+            {"model":"fake","input":"Remember PR1173-PREVCTX-UNIT. Reply ACK.","stream":false}
+            """#
+        )
+        #expect(first.output_text == "ACK")
+
+        let second = try await post(
+            """
+            {"model":"fake","previous_response_id":"\(first.id)","input":"What was the codeword?","stream":false}
+            """
+        )
+        #expect(second.output_text == "PR1173-PREVCTX-UNIT")
+    }
+
     // MARK: - OpenResponses streaming (`/responses?stream=true`)
 
     @Test func openresponses_sse_emits_reasoning_summary_text_events() async throws {

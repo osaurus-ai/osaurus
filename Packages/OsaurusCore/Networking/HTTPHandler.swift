@@ -20,6 +20,58 @@ private final class SendableBool: @unchecked Sendable {
     }
 }
 
+private final class LockedStringAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = ""
+
+    func append(_ value: String) {
+        lock.withLock {
+            storage += value
+        }
+    }
+
+    var value: String {
+        lock.withLock { storage }
+    }
+}
+
+private final class OpenResponsesContextStore: @unchecked Sendable {
+    private struct Entry {
+        let model: String
+        let messages: [ChatMessage]
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+    private var insertionOrder: [String] = []
+    private let maxEntries = 128
+    private let maxMessagesPerEntry = 40
+
+    func transcript(for responseId: String?, model: String) -> [ChatMessage] {
+        guard let responseId, !responseId.isEmpty else { return [] }
+        return lock.withLock {
+            guard let entry = entries[responseId], entry.model == model else { return [] }
+            return entry.messages
+        }
+    }
+
+    func store(responseId: String, model: String, messages: [ChatMessage]) {
+        guard !responseId.isEmpty, !messages.isEmpty else { return }
+        let clipped = Array(messages.suffix(maxMessagesPerEntry))
+        lock.withLock {
+            if entries[responseId] == nil {
+                insertionOrder.append(responseId)
+            }
+            entries[responseId] = Entry(model: model, messages: clipped)
+
+            while insertionOrder.count > maxEntries {
+                let evicted = insertionOrder.removeFirst()
+                entries.removeValue(forKey: evicted)
+            }
+        }
+    }
+}
+
 private final class OneShotContinuation<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var didResume = false
@@ -98,6 +150,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private let chatEngine: ChatEngineProtocol
     private let trustLoopback: Bool
     private let _isChannelActive = SendableBool(false)
+    private static let openResponsesContextStore = OpenResponsesContextStore()
     /// Per-request scratch state. `internal` so peer-file helpers (e.g.
     /// `HTTPRequestParse.readRequestBody()`) can drain the buffered body
     /// without going through a private accessor.
@@ -6292,6 +6345,79 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Open Responses API
 
+    private static func applyOpenResponsesContext(
+        to request: ChatCompletionRequest,
+        previousResponseId: String?
+    ) -> ChatCompletionRequest {
+        let previous = openResponsesContextStore.transcript(
+            for: previousResponseId,
+            model: request.model
+        )
+        guard !previous.isEmpty else { return request }
+
+        var copy = request
+        let currentSystem = request.messages.filter { $0.role.lowercased() == "system" }
+        let currentNonSystem = request.messages.filter { $0.role.lowercased() != "system" }
+        copy.messages = currentSystem + previous + currentNonSystem
+        return copy
+    }
+
+    private static func assistantMessages(from response: ChatCompletionResponse) -> [ChatMessage] {
+        response.choices.compactMap { choice in
+            let message = choice.message
+            if let content = message.content, !content.isEmpty {
+                return ChatMessage(
+                    role: "assistant",
+                    content: content,
+                    tool_calls: message.tool_calls,
+                    tool_call_id: nil,
+                    reasoning_content: message.reasoning_content
+                )
+            }
+            if let toolCalls = message.tool_calls, !toolCalls.isEmpty {
+                return ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: toolCalls,
+                    tool_call_id: nil,
+                    reasoning_content: message.reasoning_content
+                )
+            }
+            return nil
+        }
+    }
+
+    private static func assistantMessage(from invocations: [ServiceToolInvocation]) -> ChatMessage? {
+        let toolCalls = invocations.map { inv in
+            ToolCall(
+                id: inv.toolCallId ?? Self.shortId(prefix: "call_"),
+                type: "function",
+                function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments)
+            )
+        }
+        guard !toolCalls.isEmpty else { return nil }
+        return ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: toolCalls,
+            tool_call_id: nil
+        )
+    }
+
+    private static func storeOpenResponsesContext(
+        responseId: String,
+        model: String,
+        request: ChatCompletionRequest,
+        assistantMessages: [ChatMessage]
+    ) {
+        guard !assistantMessages.isEmpty else { return }
+        openResponsesContextStore.store(
+            responseId: responseId,
+            model: model,
+            messages: request.messages + assistantMessages
+        )
+    }
+
     private func handleOpenResponses(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -6337,12 +6463,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        // Convert to internal format
-        let internalReq = openResponsesReq.toChatCompletionRequest()
-
         // Generate response ID
         let responseId = Self.shortId(prefix: "resp_")
         let model = openResponsesReq.model
+
+        // Convert to internal format, preserving local Responses API
+        // context when clients chain turns with `previous_response_id`.
+        let internalReq = Self.applyOpenResponsesContext(
+            to: openResponsesReq.toChatCompletionRequest(),
+            previousResponseId: openResponsesReq.previous_response_id
+        )
 
         // Determine if streaming
         let wantsStream = openResponsesReq.stream ?? false
@@ -6438,6 +6568,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // streaming and catch closures. A heap box satisfies Sendable for
         // the concurrent closures that read/mutate the flag.
         let messageItemOpen = AtomicBoolBox()
+        let outputText = LockedStringAccumulator()
 
         Task(priority: .userInitiated) {
             do {
@@ -6464,6 +6595,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         continue
                     }
                     if StreamingToolHint.isSentinel(delta) { continue }
+                    outputText.append(delta)
                     hop {
                         // First non-reasoning chunk: close the reasoning
                         // item (if any) then open the message item so the
@@ -6487,6 +6619,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     writerBound.value.writeResponseCompleted(context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
+                }
+                let text = outputText.value
+                if !text.isEmpty {
+                    Self.storeOpenResponsesContext(
+                        responseId: responseId,
+                        model: model,
+                        request: internalReq,
+                        assistantMessages: [ChatMessage(role: "assistant", content: text)]
+                    )
                 }
                 logSelf.logRequest(
                     method: "POST",
@@ -6514,6 +6655,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     writerBound.value.writeResponseCompleted(context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
+                if let assistant = Self.assistantMessage(from: invs.invocations) {
+                    Self.storeOpenResponsesContext(
+                        responseId: responseId,
+                        model: model,
+                        request: internalReq,
+                        assistantMessages: [assistant]
+                    )
+                }
                 let toolLogs = invs.invocations.map {
                     ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
                 }
@@ -6539,6 +6688,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     self.writeOpenResponsesFunctionCall(inv, writer: writerBound.value, context: ctx.value)
                     writerBound.value.writeResponseCompleted(context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
+                }
+                if let assistant = Self.assistantMessage(from: [inv]) {
+                    Self.storeOpenResponsesContext(
+                        responseId: responseId,
+                        model: model,
+                        request: internalReq,
+                        assistantMessages: [assistant]
+                    )
                 }
 
                 let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
@@ -6777,6 +6934,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 // Convert to Open Responses format
                 let openResponsesResp = resp.toOpenResponsesResponse(responseId: responseId)
+                Self.storeOpenResponsesContext(
+                    responseId: responseId,
+                    model: model,
+                    request: internalReq,
+                    assistantMessages: Self.assistantMessages(from: resp)
+                )
 
                 let json = try JSONEncoder.osaurusCanonical().encode(openResponsesResp)
                 var headers: [(String, String)] = [("Content-Type", "application/json")]
@@ -6820,6 +6983,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     invocations: invs.invocations
                 )
+                if let assistant = Self.assistantMessage(from: invs.invocations) {
+                    Self.storeOpenResponsesContext(
+                        responseId: responseId,
+                        model: model,
+                        request: internalReq,
+                        assistantMessages: [assistant]
+                    )
+                }
                 Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
                 let toolLogs = invs.invocations.map {
                     ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
@@ -6842,6 +7013,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     invocations: [inv]
                 )
+                if let assistant = Self.assistantMessage(from: [inv]) {
+                    Self.storeOpenResponsesContext(
+                        responseId: responseId,
+                        model: model,
+                        request: internalReq,
+                        assistantMessages: [assistant]
+                    )
+                }
                 Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
                 let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
                 logSelf.logRequest(
