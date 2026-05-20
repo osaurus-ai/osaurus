@@ -373,6 +373,7 @@ struct ChatEngineTests {
             func isAvailable() -> Bool { true }
             func handles(requestedModel: String?) -> Bool {
                 requestedModel == "qwen3.6-27b-mxfp4-mtp"
+                    || requestedModel == "gemma-4-26b-a4b-it-jang_4m-crack"
             }
             func generateOneShot(
                 messages: [ChatMessage],
@@ -428,6 +429,38 @@ struct ChatEngineTests {
         #expect(
             explicitParams?.modelOptions["disableThinking"]?.boolValue == false,
             "Explicit API enable_thinking=true must override the profile default; the default is not a hidden thinking clamp."
+        )
+
+        let gemmaReq = ChatCompletionRequest(
+            model: "gemma-4-26b-a4b-it-jang_4m-crack",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: nil,
+            max_tokens: 32,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        _ = try await engine.completeChat(request: gemmaReq)
+        let gemmaParams = await capture.params
+        #expect(
+            gemmaParams?.modelOptions["disableThinking"]?.boolValue == true,
+            "Bare HTTP/API Gemma-4 requests must default thinking off; otherwise short non-streaming responses can spend the full budget in hidden reasoning and return empty visible content."
+        )
+
+        var gemmaExplicitThinking = gemmaReq
+        gemmaExplicitThinking.enable_thinking = true
+        _ = try await engine.completeChat(request: gemmaExplicitThinking)
+        let gemmaExplicitParams = await capture.params
+        #expect(
+            gemmaExplicitParams?.modelOptions["disableThinking"]?.boolValue == false,
+            "Explicit API enable_thinking=true must still opt Gemma-4 into thinking."
         )
     }
 
