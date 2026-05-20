@@ -93,7 +93,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     typealias OutboundOut = HTTPServerResponsePart
 
     private let configuration: ServerConfiguration
-    private let apiKeyValidator: APIKeyValidator
+    private let apiKeyValidatorProvider: @Sendable () -> APIKeyValidator
+    private var apiKeyValidator: APIKeyValidator { apiKeyValidatorProvider() }
     private let chatEngine: ChatEngineProtocol
     private let trustLoopback: Bool
     private let _isChannelActive = SendableBool(false)
@@ -123,12 +124,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     init(
         configuration: ServerConfiguration,
         apiKeyValidator: APIKeyValidator = .empty,
+        apiKeyValidatorProvider: (@Sendable () -> APIKeyValidator)? = nil,
         eventLoop: EventLoop,
         chatEngine: ChatEngineProtocol = ChatEngine(),
         trustLoopback: Bool = true
     ) {
         self.configuration = configuration
-        self.apiKeyValidator = apiKeyValidator
+        self.apiKeyValidatorProvider = apiKeyValidatorProvider ?? { apiKeyValidator }
         self.chatEngine = chatEngine
         self.trustLoopback = trustLoopback
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)

@@ -158,6 +158,9 @@ struct RuntimePolicySourceTests {
 
         let apiKeys = try Self.source("Identity/APIKeyManager.swift")
         #expect(apiKeys.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
+        #expect(apiKeys.contains("private init() {}"))
+        #expect(apiKeys.contains("private func ensureLoadedFromKeychain()"))
+        #expect(!apiKeys.contains("private init() {\n        keys = Self.loadFromKeychain()"))
 
         let masterKey = try Self.source("Identity/MasterKey.swift")
         #expect(masterKey.contains("if context.interactionNotAllowed"))
@@ -165,6 +168,9 @@ struct RuntimePolicySourceTests {
 
         let server = try Self.source("Networking/OsaurusServer.swift")
         #expect(server.contains("context.interactionNotAllowed = true"))
+        #expect(server.contains("LazyAPIKeyValidatorSnapshot"))
+        #expect(server.contains("apiKeyValidatorProvider: { validatorSnapshot.value() }"))
+        #expect(!server.contains("let validator = Self.buildValidator"))
 
         let agents = try Self.source("Managers/AgentManager.swift")
         let migrationStart = try #require(agents.range(of: "private func migrateAgentAddressesIfNeeded()"))
@@ -174,6 +180,15 @@ struct RuntimePolicySourceTests {
         let migrationBody = String(agents[migrationStart.lowerBound ..< migrationEnd.upperBound])
         #expect(!migrationBody.contains("assignAddress(to: agent)"))
         #expect(!migrationBody.contains("MasterKey.getPrivateKey"))
+
+        let managementBadges = try Self.source("Managers/ManagementBadgeStore.swift")
+        #expect(!managementBadges.contains("MasterKey.exists()"))
+        #expect(managementBadges.contains("startup badges must not trigger"))
+
+        let serverView = try Self.source("Views/Settings/ServerView.swift")
+        #expect(!serverView.contains("if OsaurusIdentity.exists()"))
+        #expect(!serverView.contains(".onAppear {\n            reloadAccessKeys()"))
+        #expect(serverView.contains("reloadAccessKeys(readKeychain: true)"))
     }
 
     @Test("plugin host inference carries agent memory like HTTP chat")
