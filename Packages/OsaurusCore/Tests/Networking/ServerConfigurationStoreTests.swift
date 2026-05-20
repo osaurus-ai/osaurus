@@ -96,6 +96,46 @@ struct ServerConfigurationStoreTests {
         #expect(decoded.modelIdleResidencyPolicy == .afterSeconds(900))
     }
 
+    @Test func modelIdleResidencyPolicy_defaultsWarmForMultiTurnChat() async throws {
+        #expect(ServerConfiguration.default.modelIdleResidencyPolicy == .afterSeconds(900))
+        #expect(ModelIdleResidencyPolicy.presets.first == .afterSeconds(300))
+        #expect(ModelIdleResidencyPolicy.presets.contains(.immediately))
+    }
+
+    @Test @MainActor func modelIdleResidencyPolicy_migratesLegacyImmediateOnce() async throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let dir = base.appendingPathComponent(
+            "osaurus-config-tests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        ServerConfigurationStore.overrideDirectory = dir
+        defer {
+            ServerConfigurationStore.overrideDirectory = nil
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        let legacyJSON = """
+            {
+                "port": 1337,
+                "modelIdleResidencyPolicy": {
+                    "mode": "immediately"
+                }
+            }
+            """
+        try Data(legacyJSON.utf8).write(to: dir.appendingPathComponent("server.json"))
+
+        let migrated = try #require(ServerConfigurationStore.load())
+        #expect(migrated.modelIdleResidencyPolicy == .defaultWarm)
+
+        var explicitImmediate = migrated
+        explicitImmediate.modelIdleResidencyPolicy = .immediately
+        ServerConfigurationStore.save(explicitImmediate)
+
+        let reloaded = try #require(ServerConfigurationStore.load())
+        #expect(reloaded.modelIdleResidencyPolicy == .immediately)
+    }
+
     @Test func modelIdleResidencyPolicy_defaultsWhenMalformed() async throws {
         let json = """
             {
