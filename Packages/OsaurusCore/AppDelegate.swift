@@ -260,20 +260,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await serverController.startServer()
         }
 
-        let storageKeyPrewarmTask = Task.detached(priority: .utility) { () -> Bool in
-            do {
-                try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
-                return true
-            } catch {
-                NSLog("[Osaurus] Storage key prewarm failed: \(error)")
-                return false
-            }
-        }
-
-        // Auto-connect to enabled providers, then update model cache with remote models
+        // Do not auto-connect keychain-backed providers at launch. Explicit
+        // provider connect actions may read credentials; startup must not.
         Task { @MainActor in
-            await MCPProviderManager.shared.connectEnabledProviders()
-            await RemoteProviderManager.shared.connectEnabledProviders()
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
@@ -289,10 +278,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // defensively (no-op fast path) for the plugin/HTTP entry
         // points that don't go through this Task.
         let embeddingInitTask = Task.detached(priority: .utility) {
-            let storageKeyReady = await storageKeyPrewarmTask.value
-            guard storageKeyReady else {
+            guard StorageKeyManager.shared.hasCachedKey else {
                 MemoryLogger.database.error(
-                    "Storage-dependent search/index services disabled — storage key unavailable without user interaction"
+                    "Storage-dependent search/index services disabled — storage key is not already unlocked"
                 )
                 return
             }
@@ -362,14 +350,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
 
-        // Start the self-scheduling loop (spec §9). The scheduler reads from
-        // `~/.osaurus/scheduler.sqlite`, so it also needs the storage key.
-        // Waiting for the prewarm here prevents a launch-time scheduler open
-        // from pinning a cooperative-executor thread behind synchronous
-        // Keychain IO while the first local model request is trying to load.
+        // Start the self-scheduling loop only if encrypted storage is already
+        // unlocked. Startup must not trigger a Keychain/password prompt.
         Task { @MainActor in
-            guard await storageKeyPrewarmTask.value else {
-                NSLog("[Osaurus] Scheduler disabled: storage key unavailable without user interaction")
+            guard StorageKeyManager.shared.hasCachedKey else {
+                NSLog("[Osaurus] Scheduler disabled: storage key is not already unlocked")
                 return
             }
             NextRunScheduler.shared.start()

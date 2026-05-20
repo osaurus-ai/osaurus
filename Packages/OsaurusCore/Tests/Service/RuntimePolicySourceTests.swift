@@ -66,59 +66,84 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("AppDelegate.swift")
         let serverTask = try #require(source.range(of: "let serverStartupTask = Task { @MainActor in"))
         let serverStart = try #require(source.range(of: "await serverController.startServer()"))
-        let providerConnect = try #require(
-            source.range(of: "await MCPProviderManager.shared.connectEnabledProviders()")
-        )
+        let modelCachePrewarm = try #require(source.range(of: "await ModelPickerItemCache.shared.prewarmModelCache()"))
         let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
         let speechAutoload = try #require(source.range(of: "await SpeechService.shared.autoLoadIfNeeded()"))
 
-        #expect(serverTask.lowerBound < providerConnect.lowerBound)
+        #expect(serverTask.lowerBound < modelCachePrewarm.lowerBound)
         #expect(serverStart.lowerBound < schedulerStart.lowerBound)
         #expect(serverStart.lowerBound < speechAutoload.lowerBound)
         #expect(source.contains("await serverStartupTask.value"))
+        #expect(!source.contains("MCPProviderManager.shared.connectEnabledProviders()"))
+        #expect(!source.contains("RemoteProviderManager.shared.connectEnabledProviders()"))
     }
 
-    @Test("AppDelegate prewarms the storage key before database opens")
-    func appDelegatePrewarmsStorageKeyBeforeDatabaseOpen() throws {
+    @Test("AppDelegate does not read the storage key before database opens")
+    func appDelegateDoesNotReadStorageKeyBeforeDatabaseOpen() throws {
         let source = try Self.source("AppDelegate.swift")
-        let prewarmTask = try #require(source.range(of: "let storageKeyPrewarmTask = Task.detached"))
-        let prewarmCall = try #require(
-            source.range(of: "try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()")
-        )
-        let awaitPrewarm = try #require(source.range(of: "await storageKeyPrewarmTask.value"))
         let firstDatabaseOpen = try #require(source.range(of: "try MemoryDatabase.shared.open()"))
+        let storageGate = try #require(source.range(of: "StorageKeyManager.shared.hasCachedKey"))
 
-        #expect(prewarmTask.lowerBound < firstDatabaseOpen.lowerBound)
-        #expect(prewarmCall.lowerBound < firstDatabaseOpen.lowerBound)
-        #expect(awaitPrewarm.lowerBound < firstDatabaseOpen.lowerBound)
+        #expect(storageGate.lowerBound < firstDatabaseOpen.lowerBound)
+        #expect(!source.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
+        #expect(!source.contains("let storageKeyPrewarmTask"))
     }
 
-    @Test("scheduler startup waits for storage-key prewarm")
-    func schedulerStartupWaitsForStorageKeyPrewarm() throws {
+    @Test("chat session list does not unlock storage key on init")
+    func chatSessionListDoesNotUnlockStorageKeyOnInit() throws {
+        let manager = try Self.source("Managers/Chat/ChatSessionsManager.swift")
+        let initStart = try #require(manager.range(of: "private init() {"))
+        let initEnd = try #require(
+            manager.range(of: "    }\n\n    // MARK: - Public API", range: initStart.upperBound ..< manager.endIndex)
+        )
+        let initBody = String(manager[initStart.lowerBound ..< initEnd.upperBound])
+        #expect(!initBody.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
+
+        let store = try Self.source("Models/Chat/ChatSessionStore.swift")
+        #expect(store.contains("StorageKeyManager.shared.hasCachedKey"))
+        #expect(store.contains("Chat history unavailable: storage key is not already unlocked"))
+    }
+
+    @Test("chat history writer skips persistence unless storage key is already unlocked")
+    func chatHistoryWriterSkipsPersistenceUnlessStorageKeyCached() throws {
+        let source = try Self.source("Storage/ChatHistoryWriter.swift")
+        let gate = try #require(source.range(of: "StorageKeyManager.shared.hasCachedKey"))
+        let open = try #require(source.range(of: "try db.open()"))
+
+        #expect(gate.lowerBound < open.lowerBound)
+        #expect(source.contains("Skipping chat history persistence: storage key is not already unlocked"))
+    }
+
+    @Test("scheduler startup does not unlock storage key")
+    func schedulerStartupDoesNotUnlockStorageKey() throws {
         let source = try Self.source("AppDelegate.swift")
-        let schedulerBlock = try #require(source.range(of: "Task { @MainActor in\n            guard await storageKeyPrewarmTask.value else"))
-        let prewarmTask = try #require(source.range(of: "let storageKeyPrewarmTask = Task.detached"))
+        let schedulerBlock = try #require(
+            source.range(of: "Task { @MainActor in\n            guard StorageKeyManager.shared.hasCachedKey else")
+        )
+        let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
 
-        #expect(prewarmTask.lowerBound < schedulerBlock.lowerBound)
-        #expect(source.contains("NextRunScheduler.shared.start()"))
-        #expect(source.contains("Scheduler disabled: storage key unavailable without user interaction"))
+        #expect(schedulerBlock.lowerBound < schedulerStart.lowerBound)
+        #expect(!source.contains("storageKeyPrewarmTask"))
+        #expect(source.contains("Scheduler disabled: storage key is not already unlocked"))
     }
 
-    @Test("startup Keychain reads do not trigger authentication UI loops")
-    func startupKeychainReadsSkipAuthenticationUI() throws {
+    @Test("startup avoids storage-key reads and background Keychain queries skip authentication UI")
+    func startupAvoidsStorageKeyReadsAndBackgroundKeychainsSkipAuthenticationUI() throws {
         let storageKey = try Self.source("Identity/StorageKeyManager.swift")
         #expect(storageKey.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
         #expect(storageKey.contains("cachedReadFailureStatus"))
         #expect(storageKey.contains("errSecInteractionNotAllowed"))
+        #expect(storageKey.contains("public var hasCachedKey: Bool"))
 
         let appDelegate = try Self.source("AppDelegate.swift")
-        #expect(appDelegate.contains("let storageKeyPrewarmTask = Task.detached(priority: .utility) { () -> Bool in"))
+        #expect(!appDelegate.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
+        #expect(!appDelegate.contains("let storageKeyPrewarmTask"))
         #expect(appDelegate.contains("Storage-dependent search/index services disabled"))
-        #expect(appDelegate.contains("guard storageKeyReady else"))
+        #expect(appDelegate.contains("guard StorageKeyManager.shared.hasCachedKey else"))
 
         let chatSessions = try Self.source("Managers/Chat/ChatSessionsManager.swift")
-        #expect(chatSessions.contains("Storage key prewarm failed before session refresh"))
-        #expect(chatSessions.contains("return\n            }\n            self?.refresh()"))
+        #expect(!chatSessions.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
+        #expect(chatSessions.contains("self?.refresh()"))
 
         let apiKeys = try Self.source("Identity/APIKeyManager.swift")
         #expect(apiKeys.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
@@ -169,10 +194,10 @@ struct RuntimePolicySourceTests {
         let initEnd = try #require(source.range(of: "    }\n\n    // MARK: - Public API", range: initStart.upperBound ..< source.endIndex))
         let initBody = source[initStart.lowerBound ..< initEnd.upperBound]
 
-        #expect(initBody.contains("Task { [weak self] in"))
-        #expect(initBody.contains("try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()"))
+        #expect(initBody.contains("Task { @MainActor [weak self] in"))
         #expect(initBody.contains("self?.refresh()"))
         #expect(!initBody.contains("\n        refresh()\n"))
+        #expect(!initBody.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
     }
 
     @Test("remote provider autoconnect keeps Keychain reads off MainActor")
@@ -236,7 +261,6 @@ struct RuntimePolicySourceTests {
         #expect(helper.contains("context.interactionNotAllowed = true"))
 
         for path in [
-            "Identity/StorageKeyManager.swift",
             "Services/Provider/RemoteProviderKeychain.swift",
             "Services/Keychain/AgentSecretsKeychain.swift",
             "Services/Keychain/ToolSecretsKeychain.swift",
@@ -247,6 +271,10 @@ struct RuntimePolicySourceTests {
             let contextCount = source.components(separatedBy: "kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext()").count - 1
             #expect(contextCount >= queryCount)
         }
+
+        let storageKey = try Self.source("Identity/StorageKeyManager.swift")
+        #expect(storageKey.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
+        #expect(!storageKey.contains("KeychainQueryHelpers.nonInteractiveContext()"))
     }
 
     @Test("ServerController relies on NIO bind instead of a startup port probe")

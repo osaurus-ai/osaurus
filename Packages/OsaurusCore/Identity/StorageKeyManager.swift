@@ -124,6 +124,15 @@ public final class StorageKeyManager: @unchecked Sendable {
         }
     }
 
+    /// True only when the key is already resident in this process. This never
+    /// touches Keychain, so startup/UI code can fail closed without prompting.
+    public var hasCachedKey: Bool {
+        os_unfair_lock_lock(&lock)
+        let cached = cachedKey != nil
+        os_unfair_lock_unlock(&lock)
+        return cached
+    }
+
     /// Populate the in-process key cache before storage database queues start
     /// opening. This keeps later `currentKey()` calls off the slow Keychain path.
     public func prewarmCurrentKey() throws {
@@ -154,7 +163,6 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecAttrAccount as String: Self.keyAccount,
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
@@ -354,7 +362,6 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -397,7 +404,6 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
