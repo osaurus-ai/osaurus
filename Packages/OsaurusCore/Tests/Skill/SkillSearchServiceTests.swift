@@ -13,9 +13,12 @@ import Testing
 
 struct SkillSearchServiceTests {
 
-    @Test func searchReturnsEmptyWhenUninitialized() async {
-        let results = await SkillSearchService.shared.search(query: "build a gradio app")
-        #expect(results.isEmpty)
+    @Test func searchFallsBackToBuiltInSkillsWhenUninitialized() async {
+        let results = await SkillSearchService.shared.search(
+            query: "sandbox plugin creator integration tools",
+            threshold: 0.25
+        )
+        #expect(results.contains { $0.skill.name == "Sandbox Plugin Creator" })
     }
 
     @Test func indexSkillDoesNotCrashWhenUninitialized() async {
