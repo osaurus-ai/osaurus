@@ -146,16 +146,25 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     /// Whether the target provider requires `reasoning_content` to be echoed
-    /// back on assistant messages in multi-round conversations. DeepSeek's
-    /// thinking mode 400s otherwise (issue #959). Other OpenAI-compat hosts
-    /// get the field stripped to avoid unknown-field rejections.
+    /// back on assistant messages in multi-round conversations.
+    ///
+    /// DeepSeek-family models inline the previous turn's `reasoning_content`
+    /// between `<think>…</think>` in their prompt template; dropping it
+    /// busts the server's KV cache at the first reasoning token (issue #959,
+    /// reproduced against a local ds4 server with `deepseek-v4-flash`).
+    /// Matched by host or model id so this works for the hosted API, local
+    /// ds4-style servers (`localhost:PORT`), and OpenAI-compat aggregators
+    /// serving a DeepSeek model. Everything else gets stripped to avoid
+    /// unknown-field rejections on strict schemas.
     static func echoesReasoningContent(
         providerType: RemoteProviderType,
-        host: String
+        host: String,
+        model: String
     ) -> Bool {
         switch providerType {
         case .openaiLegacy, .azureOpenAI:
-            return host.lowercased().contains("deepseek")
+            return host.range(of: "deepseek", options: .caseInsensitive) != nil
+                || model.range(of: "deepseek", options: .caseInsensitive) != nil
         case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
             return false
         }
@@ -2031,12 +2040,13 @@ public actor RemoteProviderService: ToolCapableService {
             let geminiRequest = request.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
         case .openaiLegacy, .azureOpenAI, .osaurus:
-            // OpenAI-compat wire format. Strip `reasoning_content` unless
-            // the target needs it echoed back (DeepSeek — see #959).
+            // OpenAI-compat wire. DeepSeek-family models need `reasoning_content`
+            // echoed back (see `echoesReasoningContent`); strip elsewhere.
             var outbound = request
             if !Self.echoesReasoningContent(
                 providerType: requestProviderType,
-                host: provider.host
+                host: provider.host,
+                model: request.model
             ) {
                 outbound.messages = Self.strippingReasoningContent(from: outbound.messages)
             }
