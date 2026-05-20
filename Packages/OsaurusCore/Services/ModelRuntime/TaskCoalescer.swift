@@ -282,4 +282,11 @@ public actor TaskCoalescer<Value: Sendable> {
     public func snapshot() -> (resolved: Int, inFlight: Int, draining: Int) {
         (values.count, creating.count, draining.count)
     }
+
+    /// Returns the currently-resolved values. Read-only diagnostic
+    /// helper for the Server → Settings panel; safe to enumerate
+    /// because the underlying actor serializes against mutations.
+    public func resolvedValues() -> [Value] {
+        Array(values.values)
+    }
 }

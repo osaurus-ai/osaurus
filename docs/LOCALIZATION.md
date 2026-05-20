@@ -65,7 +65,7 @@ python3 scripts/i18n/merge-locale.py \
 bash scripts/i18n/check.sh
 ```
 
-CI runs this on every pull request. It validates catalog coverage, checks that Swift localization literals exist in the catalog, runs a Swift literal lint, and dry-runs the catalog pruner. Keys with **no** `de`/`zh-Hans` yet (including Xcode `en`-only auto-extractions) are ignored by the coverage check until you add a required locale, but the pruner check fails if those generated stubs are committed.
+CI runs this on every pull request. It validates catalog coverage, checks that Swift localization literals exist in the catalog, and runs a Swift literal lint. Keys with **no** `de`/`zh-Hans` yet (including Xcode `en`-only auto-extractions and empty stubs the catalog editor injects for raw `Text("…")` literals) are ignored — the catalog is allowed to grow without breaking CI. Run the pruner manually when you want to clean it up (see `scripts/i18n/prune-catalog.py` below).
 
 ## Export for external translators
 
@@ -76,43 +76,23 @@ In Xcode: **Product → Export Localizations…** / **Import Localizations…** 
 - **OsaurusCLI** is English-only.
 - **User-generated content** (chat, model output) is not localized.
 
-## First-time setup
-
-Opt in to the repo-tracked git hooks so committing a `.xcstrings` change automatically re-prunes Xcode's auto-extracted stubs before they're staged:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-The hook is idempotent — it's a no-op when nothing needs pruning. The pruner also skips the write entirely when the catalog content is byte-identical to disk, so Xcode's String Catalog editor doesn't see spurious file changes.
-
 ## Maintainer scripts
 
 | Script | Purpose |
 | ------ | ------- |
-| `scripts/i18n/check.sh` | Validate core + InfoPlist catalogs, lint risky Swift literals, and dry-run pruning. On failure, prints a remediation hint pointing at `format.sh`. |
-| `scripts/i18n/format.sh` | One-command write-mode prune of the core catalog. Run this if `check.sh` fails locally, or rely on the pre-commit hook to invoke it automatically. |
+| `scripts/i18n/check.sh` | Validate core + InfoPlist catalogs, lint risky Swift literals, and dry-run pruning |
 | `scripts/i18n/check-swift-catalog-keys.py` | Ensure Swift localization references exist in the core catalog |
 | `scripts/i18n/lint-swift-literals.py` | Flag Swift literals that bypass package-bundle localization |
 | `scripts/i18n/merge-locale.py` | Copy one locale from another catalog (existing keys only) |
 | `scripts/i18n/fill-zh-hans.py` | Optional machine-translation backfill (`pip install deep-translator`) |
-| `scripts/i18n/prune-catalog.py` | Remove en-only / empty Xcode auto-extraction stubs and stale keys. Pass `--swift-root` so keys still referenced from Swift source survive even if Xcode flagged them stale. |
+| `scripts/i18n/prune-catalog.py` | Remove en-only / empty Xcode auto-extraction stubs and stale keys |
 
-Shared logic: `scripts/i18n/xcstrings_util.py`. Shared paths/locales for shell scripts: `scripts/i18n/_paths.sh`.
+Shared logic: `scripts/i18n/xcstrings_util.py`.
 
-If you installed the pre-commit hook, committing an Xcode-modified `.xcstrings` re-prunes it automatically. Otherwise run the formatter manually before committing — it drops auto-extracted stubs and stale keys while keeping entries that still have `de`, `zh-Hans`, or a live Swift reference:
+Xcode's indexer will occasionally inject empty stubs into the catalog for raw `Text("…")` literals (emoji, single-char UI elements, interpolations the indexer canonicalizes). This is harmless — empty stubs resolve to English fallback at runtime exactly as if they weren't in the catalog — and CI no longer fails on them. Run the pruner manually when you want to drop them:
 
 ```bash
-bash scripts/i18n/format.sh
+python3 scripts/i18n/prune-catalog.py \
+  Packages/OsaurusCore/Resources/Localizable.xcstrings \
+  --remove-stale
 ```
-
-On PRs from this repo (not forks), the `i18n autofix` workflow runs the same formatter and pushes a fixup commit if the catalog drifted, so contributors without the hook installed are still covered. Fork PRs see the actionable error from `scripts/i18n/check.sh` in the main CI job and need to run `format.sh` locally.
-
-## Xcode build-setting contract
-
-The `osaurus` app target sets `SWIFT_EMIT_LOC_STRINGS = NO` in **both Debug and Release**. Do **not** flip this back to `YES`. With `LOCALIZATION_PREFERS_STRING_CATALOGS = YES` at the project level, every build (and every indexer pass that runs the Swift compiler) would otherwise emit `.stringsdata` and merge auto-extracted stubs back into `Localizable.xcstrings`. Symptoms:
-
-- The catalog file gets mutated on disk during every build, fighting the pre-commit hook and the `i18n-autofix` workflow.
-- Xcode's String Catalog editor re-renders the full 1000+ row × 3-locale grid on every change, retaining the previous view state. Memory grows unboundedly (we saw 228 GB resident on a single Xcode session before the system OOM-killed it).
-
-Source of truth is the explicit `L("…")` / `Text(localized: "…")` markers — `scripts/i18n/check-swift-catalog-keys.py` enforces that every Swift reference exists in the catalog, so auto-extraction would be redundant even if it were safe.

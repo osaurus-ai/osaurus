@@ -36,6 +36,14 @@ struct MLXBatchAdapter {
     /// while the same request decoded correctly with AR greedy fallback.
     static let nativeMTPTinyPromptMinimumTokens = 24
 
+    /// Aggregate live diagnostics across every resolved
+    /// `BatchEngine`. Used by the Server → Settings panel to render
+    /// the concurrency live readout without exposing
+    /// `BatchEngine`/`Registry` to UI code.
+    static func snapshotDiagnostics() async -> BatchDiagnosticsSnapshot? {
+        await Registry.shared.snapshotDiagnostics()
+    }
+
     /// Result handed back to `ModelRuntime`. The `Generation` stream is
     /// consumed by `GenerationEventMapper`, which translates the upstream
     /// events into `ModelRuntimeEvent`. The producer task exists so callers
@@ -67,7 +75,7 @@ struct MLXBatchAdapter {
     static func effectiveGenerationSettings(
         modelName: String,
         generation: GenerationParameters,
-        runtimeTopP: Float,
+        runtimeDefaults: VMLXServerGenerationDefaults,
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
@@ -84,29 +92,39 @@ struct MLXBatchAdapter {
             draftStrategy: draftStrategy
         )
 
+        // Merge order (per-request always wins): per-request →
+        // model-shipped defaults → server runtime defaults → static
+        // engine fallback.
+        let runtimeTopP: Float? = runtimeDefaults.topP.map { Float($0) }
+        let runtimeMinP: Float? = runtimeDefaults.minP.map { Float($0) }
+        let runtimeTopK: Int? = runtimeDefaults.topK
+        let runtimeTemperature: Float? = runtimeDefaults.temperature.map { Float($0) }
+        let runtimeMaxTokens: Int? = runtimeDefaults.maxTokens
+        let runtimeRepetitionPenalty: Float? = runtimeDefaults.repetitionPenalty.map { Float($0) }
+
         return EffectiveGenerationSettings(
             temperature: useNativeMTPGreedyDefaults
                 ? 0
-                : (generation.temperature ?? defaultTemperature ?? 0.7),
+                : (generation.temperature ?? defaultTemperature ?? runtimeTemperature ?? 0.7),
             maxTokens: generation.maxTokensExplicit
                 ? generation.maxTokens
-                : (modelDefaults.maxTokens ?? generation.maxTokens),
+                : (modelDefaults.maxTokens ?? runtimeMaxTokens ?? generation.maxTokens),
             topP: useNativeMTPGreedyDefaults
                 ? (generation.topPOverride ?? 1)
-                : (generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP),
+                : (generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? 1.0),
             topK: useNativeMTPGreedyDefaults || nativeMTPExplicitSamplingFallback
                 ? 0
-                : (modelDefaults.topK ?? 0),
+                : (modelDefaults.topK ?? runtimeTopK ?? 0),
             minP: useNativeMTPGreedyDefaults
                 ? (generation.minPOverride ?? 0)
-                : (generation.minPOverride ?? modelDefaults.minP ?? 0),
+                : (generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? 0),
             repetitionPenalty: {
                 if nativeMTPExplicitSamplingFallback {
                     return nil
                 }
                 return useNativeMTPGreedyDefaults
                     ? generation.repetitionPenalty
-                    : (generation.repetitionPenalty ?? modelDefaults.repetitionPenalty)
+                    : (generation.repetitionPenalty ?? modelDefaults.repetitionPenalty ?? runtimeRepetitionPenalty)
             }(),
             compiledBatchDecode: nativeMTPExplicitSamplingFallback
                 ? false
@@ -340,6 +358,41 @@ struct MLXBatchAdapter {
         /// has not yet completed.
         internal func registrySnapshot() async -> (resolved: Int, inFlight: Int, draining: Int) {
             await coalescer.snapshot()
+        }
+
+        /// Aggregate live BatchEngine diagnostics across every resolved
+        /// engine in the registry. Used by the Server → Settings panel
+        /// to render the "Live Diagnostics" subsection. Returns `nil`
+        /// when no engine has been created yet.
+        func snapshotDiagnostics() async -> BatchDiagnosticsSnapshot? {
+            let engines = await coalescer.resolvedValues()
+            guard !engines.isEmpty else { return nil }
+
+            var pending = 0
+            var active = 0
+            var highWatermark = 0
+            var decodeSplit = 0
+            var turbo = 0
+            var accepting = true
+            for engine in engines {
+                pending += await engine.pendingCount
+                active += await engine.activeCount
+                let watermark = await engine.activeCountHighWatermarkForDiagnostics
+                highWatermark = max(highWatermark, watermark)
+                decodeSplit += await engine.decodeCompatibilitySplitCountForDiagnostics
+                turbo += await engine.turboQuantCompressionCountForDiagnostics
+                if !(await engine.isAcceptingRequests) {
+                    accepting = false
+                }
+            }
+            return BatchDiagnosticsSnapshot(
+                pendingCount: pending,
+                activeCount: active,
+                activeHighWatermark: highWatermark,
+                decodeSplitCount: decodeSplit,
+                turboQuantCompressions: turbo,
+                isAcceptingRequests: accepting
+            )
         }
 
         /// Shut down and remove the engine for `modelName`. Safe to call
@@ -714,7 +767,7 @@ struct MLXBatchAdapter {
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
-            runtimeTopP: runtime.topP,
+            runtimeDefaults: runtime.generation,
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
