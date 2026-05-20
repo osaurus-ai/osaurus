@@ -894,6 +894,38 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Chat UI sends accumulated history and keeps implicit native MTP sampling")
+    func chatUISendsAccumulatedHistoryAndImplicitNativeMTPSampling() throws {
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+
+        let buildMessages = try #require(chatView.range(of: "func buildMessages() -> [ChatMessage]"))
+        let streamRequest = try #require(chatView.range(of: "var req = ChatCompletionRequest("))
+        let implicitSampling = try #require(chatView.range(of: "req.samplingParametersAreImplicit = true"))
+
+        #expect(
+            chatView.contains("for (index, t) in turns.enumerated()"),
+            "Chat UI must build requests from accumulated turns, not just the newest user text."
+        )
+        #expect(
+            chatView.contains("if !sys.isEmpty { msgs.append(ChatMessage(role: \"system\", content: sys)) }"),
+            "Chat UI request history must retain the composed system/context prefix."
+        )
+        #expect(
+            chatView.contains("if let msg = turnToMessage(t, isLastTurn: isLastTurn) {\n                            msgs.append(msg)\n                        }"),
+            "Every non-empty prior user/assistant/tool turn should be converted into ChatMessage history."
+        )
+        #expect(buildMessages.lowerBound < streamRequest.lowerBound)
+        #expect(streamRequest.lowerBound < implicitSampling.lowerBound)
+        #expect(
+            chatView.contains("temperature: effectiveTemp"),
+            "The UI may pass the agent/profile temperature, but it must also mark sampling implicit so native MTP can force greedy defaults."
+        )
+        #expect(
+            chatView.contains("finalReq.samplingParametersAreImplicit = true"),
+            "Tool-budget wrap-up calls use the same implicit-sampling contract as normal UI turns."
+        )
+    }
+
     @Test("ModelRuntime does not block model-ready on hidden Hy3 warmup generation")
     func modelRuntimeDoesNotBlockModelReadyOnHy3WarmupGeneration() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
