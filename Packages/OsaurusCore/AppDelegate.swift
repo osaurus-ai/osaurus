@@ -5,6 +5,7 @@
 //  Created by Terence on 8/17/25.
 //
 
+import AVFoundation
 import AppKit
 import Combine
 import QuartzCore
@@ -471,28 +472,34 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     // MARK: - VAD Service
 
     private func initializeVADService() {
-        // Auto-start VAD if enabled (with delay to wait for model loading)
         let vadConfig = VADConfigurationStore.load()
-        if vadConfig.vadModeEnabled && !vadConfig.enabledAgentIds.isEmpty {
-            Task { @MainActor in
-                // Wait for speech model to be loaded (up to 30 seconds)
-                let speechService = SpeechService.shared
-                var attempts = 0
-                while !speechService.isModelLoaded && attempts < 60 {
-                    try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
-                    attempts += 1
-                }
+        guard vadConfig.vadModeEnabled, !vadConfig.enabledAgentIds.isEmpty else { return }
 
-                if speechService.isModelLoaded {
-                    do {
-                        try await VADService.shared.start()
-                        log.info("VAD service started successfully on app launch")
-                    } catch {
-                        log.error("Failed to start VAD service: \(error.localizedDescription, privacy: .public)")
-                    }
-                } else {
-                    log.error("VAD service not started — speech model not loaded after 30s")
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            log.info(
+                "VAD auto-start skipped — microphone permission not yet authorized; user must re-enable from Voice settings"
+            )
+            return
+        }
+
+        Task { @MainActor in
+            // wait for speech model to be loaded (up to 30 seconds)
+            let speechService = SpeechService.shared
+            var attempts = 0
+            while !speechService.isModelLoaded && attempts < 60 {
+                try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+                attempts += 1
+            }
+
+            if speechService.isModelLoaded {
+                do {
+                    try await VADService.shared.start()
+                    log.info("VAD service started successfully on app launch")
+                } catch {
+                    log.error("Failed to start VAD service: \(error.localizedDescription, privacy: .public)")
                 }
+            } else {
+                log.error("VAD service not started — speech model not loaded after 30s")
             }
         }
     }
