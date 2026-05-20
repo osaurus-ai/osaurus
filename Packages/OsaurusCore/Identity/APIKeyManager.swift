@@ -209,6 +209,7 @@ public final class APIKeyManager: @unchecked Sendable {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
 
         let existing = SecItemCopyMatching(query as CFDictionary, nil)
@@ -229,6 +230,7 @@ public final class APIKeyManager: @unchecked Sendable {
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
             kSecReturnData as String: true,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
 
         var result: AnyObject?

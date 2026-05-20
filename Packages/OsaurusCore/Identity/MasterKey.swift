@@ -102,6 +102,7 @@ public struct MasterKey: Sendable {
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: false,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }

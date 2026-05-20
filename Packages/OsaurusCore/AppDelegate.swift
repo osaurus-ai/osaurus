@@ -260,11 +260,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await serverController.startServer()
         }
 
-        let storageKeyPrewarmTask = Task.detached(priority: .utility) {
+        let storageKeyPrewarmTask = Task.detached(priority: .utility) { () -> Bool in
             do {
                 try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+                return true
             } catch {
                 NSLog("[Osaurus] Storage key prewarm failed: \(error)")
+                return false
             }
         }
 
@@ -287,7 +289,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // defensively (no-op fast path) for the plugin/HTTP entry
         // points that don't go through this Task.
         let embeddingInitTask = Task.detached(priority: .utility) {
-            await storageKeyPrewarmTask.value
+            let storageKeyReady = await storageKeyPrewarmTask.value
+            guard storageKeyReady else {
+                MemoryLogger.database.error(
+                    "Storage-dependent search/index services disabled — storage key unavailable without user interaction"
+                )
+                return
+            }
             var memoryDBOpened = false
             for attempt in 1 ... 3 {
                 do {
@@ -360,7 +368,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // from pinning a cooperative-executor thread behind synchronous
         // Keychain IO while the first local model request is trying to load.
         Task { @MainActor in
-            await storageKeyPrewarmTask.value
+            guard await storageKeyPrewarmTask.value else {
+                NSLog("[Osaurus] Scheduler disabled: storage key unavailable without user interaction")
+                return
+            }
             NextRunScheduler.shared.start()
         }
 

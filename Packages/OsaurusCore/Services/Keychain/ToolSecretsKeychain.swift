@@ -43,6 +43,7 @@ public enum ToolSecretsKeychain {
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
 
         var result: AnyObject?
@@ -223,6 +224,7 @@ public enum ToolSecretsKeychain {
             kSecAttrService as String: service,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
         if !attributesOnly {
             query[kSecReturnData as String] = true

@@ -96,10 +96,32 @@ struct RuntimePolicySourceTests {
     @Test("scheduler startup waits for storage-key prewarm")
     func schedulerStartupWaitsForStorageKeyPrewarm() throws {
         let source = try Self.source("AppDelegate.swift")
-        let schedulerBlock = try #require(source.range(of: "Task { @MainActor in\n            await storageKeyPrewarmTask.value\n            NextRunScheduler.shared.start()\n        }"))
+        let schedulerBlock = try #require(source.range(of: "Task { @MainActor in\n            guard await storageKeyPrewarmTask.value else"))
         let prewarmTask = try #require(source.range(of: "let storageKeyPrewarmTask = Task.detached"))
 
         #expect(prewarmTask.lowerBound < schedulerBlock.lowerBound)
+        #expect(source.contains("NextRunScheduler.shared.start()"))
+        #expect(source.contains("Scheduler disabled: storage key unavailable without user interaction"))
+    }
+
+    @Test("startup Keychain reads do not trigger authentication UI loops")
+    func startupKeychainReadsSkipAuthenticationUI() throws {
+        let storageKey = try Self.source("Identity/StorageKeyManager.swift")
+        #expect(storageKey.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
+        #expect(storageKey.contains("cachedReadFailureStatus"))
+        #expect(storageKey.contains("errSecInteractionNotAllowed"))
+
+        let appDelegate = try Self.source("AppDelegate.swift")
+        #expect(appDelegate.contains("let storageKeyPrewarmTask = Task.detached(priority: .utility) { () -> Bool in"))
+        #expect(appDelegate.contains("Storage-dependent search/index services disabled"))
+        #expect(appDelegate.contains("guard storageKeyReady else"))
+
+        let chatSessions = try Self.source("Managers/Chat/ChatSessionsManager.swift")
+        #expect(chatSessions.contains("Storage key prewarm failed before session refresh"))
+        #expect(chatSessions.contains("return\n            }\n            self?.refresh()"))
+
+        let apiKeys = try Self.source("Identity/APIKeyManager.swift")
+        #expect(apiKeys.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
     }
 
     @Test("HTTP chat persistence runs after response path")

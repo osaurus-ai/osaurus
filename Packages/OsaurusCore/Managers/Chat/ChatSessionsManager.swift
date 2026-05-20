@@ -26,6 +26,7 @@ final class ChatSessionsManager: ObservableObject {
                 try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
             } catch {
                 print("[ChatSessionsManager] Storage key prewarm failed before session refresh: \(error)")
+                return
             }
             self?.refresh()
         }
