@@ -3,6 +3,37 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.31</title>
+            <pubDate>Wed, 20 May 2026 17:23:35 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.31</sparkle:version>
+            <sparkle:shortVersionString>0.18.31</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.31/Osaurus-0.18.31.dmg" length="48583678" type="application/octet-stream" sparkle:edSignature="hk7GvdCKu/l3a6UtR/Mh3yuxqq7wJixLj6uMz/Fj/9swTSdcOxXQRmrc6cuNo9gghI8EahwN4eU36XvfwpBoCw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- [codex] Add plugin adapter ABI (#1175) by @mimeding
+
+## 🚀 Features
+
+- Added Extended Server Settings (#1180) by @tpae
+
+## 🐛 Bug Fixes
+
+- fixed major issues with json key ordering breaking kv cache (#1186) by @tpae
+- fix plugin secrets not flowing from plugins tab to non default agents (#1179) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- add Ollama template to onboarding (#1184) by @RaajeevChandran
+- localization cleanup for xcode (#1174) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.30...0.18.31
+]]></description>
+        </item>
+        <item>
             <title>0.18.30</title>
             <pubDate>Wed, 20 May 2026 00:05:08 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
