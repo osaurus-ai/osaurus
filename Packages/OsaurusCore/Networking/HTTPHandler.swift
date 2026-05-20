@@ -2965,34 +2965,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 for outcome in outcomes {
                     let invocation = outcome.invocation
                     let callId = outcome.callId
-                    hop {
-                        writerBound.value.writeContent(
-                            StreamingToolHint.encode(invocation.toolName),
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                        writerBound.value.writeContent(
-                            StreamingToolHint.encodeArgs(invocation.jsonArguments),
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                        writerBound.value.writeContent(
-                            StreamingToolHint.encodeDone(
-                                callId: callId,
-                                name: invocation.toolName,
-                                arguments: invocation.jsonArguments,
-                                result: outcome.result
-                            ),
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                    }
                     assistantToolCalls.append(
                         ToolCall(
                             id: callId,

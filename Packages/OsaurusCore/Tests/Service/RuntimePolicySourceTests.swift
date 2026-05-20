@@ -676,6 +676,28 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("Agent run endpoint does not stream internal tool sentinels to clients")
+    func agentRunEndpointDoesNotStreamInternalToolSentinels() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        guard let start = handler.range(of: "private func handleAgentRunEndpoint("),
+            let end = handler.range(of: "// MARK: - Dispatch & Task Endpoints", range: start.lowerBound..<handler.endIndex)
+        else {
+            Issue.record("Could not locate handleAgentRunEndpoint in HTTPHandler.swift")
+            return
+        }
+
+        let agentRun = handler[start.lowerBound..<end.lowerBound]
+        #expect(agentRun.contains("runToolBatchInParallel"))
+        #expect(
+            !agentRun.contains("StreamingToolHint.encode(")
+                && !agentRun.contains("StreamingToolHint.encodeArgs")
+                && !agentRun.contains("StreamingToolHint.encodeDone"),
+            "/agents/{id}/run should execute tools server-side and stream only final assistant text, not internal U+FFFE tool sentinels."
+        )
+        #expect(agentRun.contains("assistantToolCalls.append"))
+        #expect(agentRun.contains("ChatMessage(role: \"tool\""))
+    }
+
     /// Lock the removal of the `activeGenerationTask?.value` gate at
     /// the entry of `generateEventStream`. The gate was serializing
     /// every same-model overlapping request before vmlx's `BatchEngine`
