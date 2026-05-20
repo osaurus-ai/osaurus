@@ -108,6 +108,9 @@ struct MLXBatchAdapter {
         draftStrategy: MLXLMCommon.DraftStrategy?
     ) -> Bool {
         guard draftStrategy?.usesNativeMTP == true else { return false }
+        if generation.samplingParametersAreImplicit {
+            return true
+        }
         if let temperature = generation.temperature, temperature != 0 { return false }
         if let topP = generation.topPOverride, topP < 1 { return false }
         if let minP = generation.minPOverride, minP != 0 { return false }

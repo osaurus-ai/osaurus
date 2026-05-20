@@ -229,6 +229,41 @@ struct MLXBatchAdapterTests {
         #expect(effective.repetitionPenalty == nil)
     }
 
+    @Test func effectiveGenerationSettings_nativeMTPForcesGreedyForImplicitChatDefaults() {
+        let generation = GenerationParameters(
+            temperature: 0.7,
+            maxTokens: 128,
+            maxTokensExplicit: true,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil,
+            samplingParametersAreImplicit: true
+        )
+        let mtpBundleDefaults = LocalGenerationDefaults.Defaults(
+            maxTokens: nil,
+            temperature: 1.0,
+            topP: 0.95,
+            topK: 20,
+            minP: nil,
+            repetitionPenalty: nil,
+            doSample: true
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "JANGQ/Qwen3.6-35B-A3B-MXFP4-MTP",
+            generation: generation,
+            runtimeTopP: 1,
+            maxBatchSize: 1,
+            modelDefaults: mtpBundleDefaults,
+            draftStrategy: .nativeMTP(depth: 3)
+        )
+
+        #expect(effective.temperature == 0)
+        #expect(effective.topP == 1)
+        #expect(effective.topK == 0)
+        #expect(effective.minP == 0)
+    }
+
     @Test func effectiveGenerationSettings_nativeMTPDoesNotOverrideExplicitSampling() {
         let generation = GenerationParameters(
             temperature: 0.7,

@@ -565,6 +565,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// `reasoning_effort` chat-template kwarg; remote providers forward it
     /// natively where supported.
     var reasoning_effort: String? = nil
+    /// Local-only marker for app/UI requests whose sampling values came from
+    /// profile defaults. Not decoded from OpenAI JSON and not forwarded to
+    /// remote providers.
+    var samplingParametersAreImplicit: Bool = false
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -600,6 +604,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.ttftTrace = ttftTrace
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
+        copy.samplingParametersAreImplicit = samplingParametersAreImplicit
         return copy
     }
 }

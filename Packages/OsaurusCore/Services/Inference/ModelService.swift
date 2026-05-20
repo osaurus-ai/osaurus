@@ -24,6 +24,11 @@ struct GenerationParameters: Sendable {
     /// struct so remote services that natively support both can forward
     /// them straight through.
     let repetitionPenalty: Float?
+    /// True when sampling fields were filled from app/UI defaults rather than
+    /// an explicit client request. Native MTP is lossless only for greedy
+    /// generation, so local MLX may override implicit defaults while still
+    /// preserving explicit API sampling as an AR fallback.
+    let samplingParametersAreImplicit: Bool
     /// Raw OpenAI `frequency_penalty`, forwarded as-is to remote services
     /// that support it (most OpenAI-compatible upstreams).
     let frequencyPenalty: Float?
@@ -55,6 +60,7 @@ struct GenerationParameters: Sendable {
         topPOverride: Float? = nil,
         minPOverride: Float? = nil,
         repetitionPenalty: Float? = nil,
+        samplingParametersAreImplicit: Bool = false,
         frequencyPenalty: Float? = nil,
         presencePenalty: Float? = nil,
         seed: UInt64? = nil,
@@ -69,6 +75,7 @@ struct GenerationParameters: Sendable {
         self.topPOverride = topPOverride
         self.minPOverride = minPOverride
         self.repetitionPenalty = repetitionPenalty
+        self.samplingParametersAreImplicit = samplingParametersAreImplicit
         self.frequencyPenalty = frequencyPenalty
         self.presencePenalty = presencePenalty
         self.seed = seed
