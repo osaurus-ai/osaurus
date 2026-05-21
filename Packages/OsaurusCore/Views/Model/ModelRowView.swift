@@ -127,7 +127,7 @@ struct ModelRowView: View {
                 endRadius: 240
             )
 
-            Text(ModelMetadataParser.simpleName(from: model.name))
+            Text(model.name)
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(2)

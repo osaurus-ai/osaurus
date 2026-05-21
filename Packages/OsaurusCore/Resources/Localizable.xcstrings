@@ -1075,6 +1075,9 @@
     "Accepting will replace the existing pairing (added %@)." : {
 
     },
+    "Access key metadata is loaded on demand so startup never reads Keychain. Refresh to inspect existing keys." : {
+
+    },
     "Access Keys" : {
       "localizations" : {
         "de" : {
@@ -1189,6 +1192,9 @@
         }
       }
     },
+    "active" : {
+
+    },
     "Active" : {
       "localizations" : {
         "de" : {
@@ -1204,9 +1210,6 @@
           }
         }
       }
-    },
-    "active" : {
-
     },
     "Add" : {
       "localizations" : {
@@ -13204,6 +13207,9 @@
         }
       }
     },
+    "Not active" : {
+
+    },
     "Not Connected" : {
       "localizations" : {
         "de" : {
@@ -13219,9 +13225,6 @@
           }
         }
       }
-    },
-    "Not active" : {
-
     },
     "Not downloaded — about 700 MB" : {
       "localizations" : {
