@@ -2973,6 +2973,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 iterationReq.reasoning_effort = req.reasoning_effort
 
                 var responseContent = ""
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 // Local models can emit multiple tool calls in a single
                 // completion; ServiceToolInvocations carries the full batch.
                 var pendingInvocations: [ServiceToolInvocation] = []
@@ -2985,6 +2988,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         // OpenAI extended `reasoning_content` channel
                         // and do NOT mix it into `responseContent`.
                         if let reasoning = StreamingReasoningHint.decode(delta) {
+                            if let pending = contentCoalescer.flush() {
+                                hop {
+                                    writerBound.value.writeContent(
+                                        pending,
+                                        model: model,
+                                        responseId: responseId,
+                                        created: created,
+                                        context: ctx.value
+                                    )
+                                }
+                            }
                             hop {
                                 writerBound.value.writeReasoning(
                                     reasoning,
@@ -2999,9 +3013,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if StreamingStatsHint.decode(delta) != nil { continue }
                         if StreamingToolHint.isSentinel(delta) { continue }
                         responseContent += delta
+                        if let chunk = contentCoalescer.append(delta) {
+                            hop {
+                                writerBound.value.writeContent(
+                                    chunk,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
+                    }
+                    if let pending = contentCoalescer.flush() {
                         hop {
                             writerBound.value.writeContent(
-                                delta,
+                                pending,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
@@ -3803,11 +3830,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let stream = try await chatEngine.streamChat(request: enrichedReq)
                     httpTrace.mark("http_stream_chat_ready")
                     var accumulatedContent = ""
+                    var contentCoalescer = Self.StreamDeltaCoalescer(
+                        interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                    )
                     var authoritativeCompletionTokens: Int?
                     var streamFinishReason = "stop"
                     for try await delta in stream {
                         if let reasoning = StreamingReasoningHint.decode(delta) {
                             httpTrace.markFirstSemanticDelta("reasoning")
+                            if let pending = contentCoalescer.flush() {
+                                hop {
+                                    writerBound.value.writeContent(
+                                        pending,
+                                        model: model,
+                                        responseId: responseId,
+                                        created: created,
+                                        context: ctx.value
+                                    )
+                                }
+                            }
                             hop {
                                 writerBound.value.writeReasoning(
                                     reasoning,
@@ -3829,9 +3870,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if StreamingToolHint.isSentinel(delta) { continue }
                         httpTrace.markFirstSemanticDelta("content")
                         accumulatedContent += delta
+                        if let chunk = contentCoalescer.append(delta) {
+                            hop {
+                                writerBound.value.writeContent(
+                                    chunk,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
+                    }
+                    if let pending = contentCoalescer.flush() {
                         hop {
                             writerBound.value.writeContent(
-                                delta,
+                                pending,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
@@ -4276,6 +4330,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: req)
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 for try await delta in stream {
                     // Ollama-style NDJSON has no `reasoning` / `thinking`
                     // field today — `StreamingReasoningHint`, along with
@@ -4287,9 +4344,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if StreamingReasoningHint.decode(delta) != nil { continue }
                     if StreamingStatsHint.decode(delta) != nil { continue }
                     if StreamingToolHint.isSentinel(delta) { continue }
+                    if let chunk = contentCoalescer.append(delta) {
+                        hop {
+                            writerBound.value.writeContent(
+                                chunk,
+                                model: req.model,
+                                responseId: "",
+                                created: Int(Date().timeIntervalSince1970),
+                                context: ctx.value
+                            )
+                        }
+                    }
+                }
+                if let pending = contentCoalescer.flush() {
                     hop {
                         writerBound.value.writeContent(
-                            delta,
+                            pending,
                             model: req.model,
                             responseId: "",
                             created: Int(Date().timeIntervalSince1970),
@@ -4635,13 +4705,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         Task(priority: .userInitiated) {
             do {
                 let stream = try await self.chatEngine.streamChat(request: chatRequest)
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 for try await delta in stream {
                     if StreamingReasoningHint.decode(delta) != nil { continue }
                     if StreamingStatsHint.decode(delta) != nil { continue }
                     if StreamingToolHint.isSentinel(delta) { continue }
+                    if let chunk = contentCoalescer.append(delta) {
+                        hop {
+                            writerBound.value.writeContent(
+                                chunk,
+                                model: chatRequest.model,
+                                created: Int(Date().timeIntervalSince1970),
+                                context: ctx.value
+                            )
+                        }
+                    }
+                }
+                if let pending = contentCoalescer.flush() {
                     hop {
                         writerBound.value.writeContent(
-                            delta,
+                            pending,
                             model: chatRequest.model,
                             created: Int(Date().timeIntervalSince1970),
                             context: ctx.value
@@ -5875,11 +5960,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: internalReq)
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 for try await delta in stream {
                     // Reasoning sentinel must be decoded BEFORE the
                     // generic `isSentinel` filter, otherwise it gets
                     // dropped together with tool/stats hints.
                     if let reasoning = StreamingReasoningHint.decode(delta) {
+                        if let pending = contentCoalescer.flush() {
+                            hop {
+                                writerBound.value.writeTextDelta(pending, context: ctx.value)
+                            }
+                        }
                         hop {
                             writerBound.value.writeThinkingDelta(reasoning, context: ctx.value)
                         }
@@ -5892,8 +5985,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         continue
                     }
                     if StreamingToolHint.isSentinel(delta) { continue }
+                    if let chunk = contentCoalescer.append(delta) {
+                        hop {
+                            writerBound.value.writeTextDelta(chunk, context: ctx.value)
+                        }
+                    }
+                }
+                if let pending = contentCoalescer.flush() {
                     hop {
-                        writerBound.value.writeTextDelta(delta, context: ctx.value)
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
                     }
                 }
                 hop {
@@ -6604,11 +6704,30 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: internalReq)
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 for try await delta in stream {
                     // Reasoning sentinel must be decoded BEFORE the
                     // generic `isSentinel` filter, otherwise it gets
                     // dropped together with tool/stats hints.
                     if let reasoning = StreamingReasoningHint.decode(delta) {
+                        if let pending = contentCoalescer.flush() {
+                            outputText.append(pending)
+                            hop {
+                                // First non-reasoning chunk: close the
+                                // reasoning item (if any) then open the
+                                // message item so the text deltas land on
+                                // the message item.
+                                writerBound.value.writeReasoningItemDone(context: ctx.value)
+                                if !messageItemOpen.value {
+                                    messageItemOpen.value = true
+                                    writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                                    writerBound.value.writeContentPartAdded(context: ctx.value)
+                                }
+                                writerBound.value.writeTextDelta(pending, context: ctx.value)
+                            }
+                        }
                         hop {
                             writerBound.value.writeReasoningDelta(
                                 reasoning,
@@ -6625,7 +6744,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         continue
                     }
                     if StreamingToolHint.isSentinel(delta) { continue }
-                    outputText.append(delta)
+                    if let chunk = contentCoalescer.append(delta) {
+                        outputText.append(chunk)
+                        hop {
+                            // First non-reasoning chunk: close the reasoning
+                            // item (if any) then open the message item so the
+                            // text deltas land on the message item.
+                            writerBound.value.writeReasoningItemDone(context: ctx.value)
+                            if !messageItemOpen.value {
+                                messageItemOpen.value = true
+                                writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                                writerBound.value.writeContentPartAdded(context: ctx.value)
+                            }
+                            writerBound.value.writeTextDelta(chunk, context: ctx.value)
+                        }
+                    }
+                }
+                if let pending = contentCoalescer.flush() {
+                    outputText.append(pending)
                     hop {
                         // First non-reasoning chunk: close the reasoning
                         // item (if any) then open the message item so the
@@ -6636,7 +6772,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
                             writerBound.value.writeContentPartAdded(context: ctx.value)
                         }
-                        writerBound.value.writeTextDelta(delta, context: ctx.value)
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
                     }
                 }
                 hop {

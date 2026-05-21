@@ -13,6 +13,25 @@ import Testing
 
 struct HTTPStreamingWriterTests {
 
+    @Test func stream_delta_coalescer_respects_runtime_interval_and_flushes_tail() {
+        var coalescer = HTTPHandler.StreamDeltaCoalescer(interval: 3)
+
+        #expect(coalescer.append("a") == nil)
+        #expect(coalescer.append("b") == nil)
+        #expect(coalescer.append("c") == "abc")
+        #expect(coalescer.append("d") == nil)
+        #expect(coalescer.flush() == "d")
+        #expect(coalescer.flush() == nil)
+    }
+
+    @Test func stream_delta_coalescer_preserves_legacy_per_delta_streaming_for_interval_one() {
+        var coalescer = HTTPHandler.StreamDeltaCoalescer(interval: 1)
+
+        #expect(coalescer.append("a") == "a")
+        #expect(coalescer.append("b") == "b")
+        #expect(coalescer.flush() == nil)
+    }
+
     @Test func sse_writer_emits_done_and_headers() async throws {
         let channel = EmbeddedChannel()
         let writer = SSEResponseWriter()

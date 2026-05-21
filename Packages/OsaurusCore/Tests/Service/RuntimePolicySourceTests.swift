@@ -855,6 +855,23 @@ struct RuntimePolicySourceTests {
         #expect(!chatCompletions.contains("mergeAgentContextTools("))
     }
 
+    @Test("server streaming endpoints honor runtime stream interval")
+    func serverStreamingEndpointsHonorRuntimeStreamInterval() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        let helper = try Self.source("Networking/HTTPLoopHelpers.swift")
+
+        #expect(helper.contains("struct StreamDeltaCoalescer"))
+        #expect(helper.contains("TokenEstimator.estimate(delta)"))
+
+        let bridge = "ServerRuntimeSettingsStore.snapshot().generation.streamInterval"
+        #expect(
+            handler.components(separatedBy: bridge).count == 7,
+            "Expected six streaming server paths to bridge generation.streamInterval through StreamDeltaCoalescer"
+        )
+        #expect(handler.contains("writerBound.value.writeContent(\n                                    chunk"))
+        #expect(handler.contains("writerBound.value.writeTextDelta(chunk"))
+    }
+
     /// Lock the removal of the `activeGenerationTask?.value` gate at
     /// the entry of `generateEventStream`. The gate was serializing
     /// every same-model overlapping request before vmlx's `BatchEngine`
