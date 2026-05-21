@@ -24,8 +24,7 @@ import SwiftUI
 
         var body: some View {
             if let verifyStep = sandboxState.journey?.step(.verifyPlugins),
-                verifyStep.status == .inProgress
-            {
+                verifyStep.status == .inProgress {
                 content(verifyStep: verifyStep)
             }
         }

@@ -431,8 +431,9 @@
         /// step. Lightweight; avoids a full registry walk on every boot.
         @MainActor
         private static func installedPluginsRequireVerify() -> Bool {
-            for (_, plugins) in SandboxPluginManager.shared.installedPlugins {
-                if plugins.contains(where: { $0.status == .ready }) { return true }
+            for (_, plugins) in SandboxPluginManager.shared.installedPlugins
+                where plugins.contains(where: { $0.status == .ready }) {
+                return true
             }
             return false
         }
@@ -447,8 +448,7 @@
             guard var journey = State.shared.journey else { return }
             let target = journey.currentStepID
             if let target,
-                let index = journey.steps.firstIndex(where: { $0.id == target })
-            {
+                let index = journey.steps.firstIndex(where: { $0.id == target }) {
                 journey.steps[index].status = .failed
                 journey.steps[index].finishedAt = Date()
                 State.shared.journey = journey
@@ -2080,8 +2080,7 @@
         static func syncLegacyPhase(from journey: ProvisioningJourney) {
             let activeStep: ProvisioningStepState? = {
                 if let current = journey.currentStepID,
-                    let step = journey.steps.first(where: { $0.id == current })
-                {
+                    let step = journey.steps.first(where: { $0.id == current }) {
                     return step
                 }
                 return journey.steps.first { $0.status == .inProgress }
@@ -2230,15 +2229,15 @@
             var stableEmptyTicks = 0
 
             while !Task.isCancelled, Date() < deadline {
-                let snapshot: (count: Int, activity: String?) = await MainActor.run {
+                let snapshot: (hasWork: Bool, activity: String?) = await MainActor.run {
                     let progress = SandboxPluginManager.shared.installProgress
                     if let first = progress.values.first {
-                        return (progress.count, "\(first.pluginName) · \(first.phase)")
+                        return (true, "\(first.pluginName) · \(first.phase)")
                     }
-                    return (0, nil)
+                    return (false, nil)
                 }
 
-                if snapshot.count > 0 {
+                if snapshot.hasWork {
                     sawActivity = true
                     stableEmptyTicks = 0
                     await updateStep(.verifyPlugins) { step in

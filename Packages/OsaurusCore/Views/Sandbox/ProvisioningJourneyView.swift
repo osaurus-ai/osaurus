@@ -60,8 +60,7 @@ import SwiftUI
                     .foregroundColor(theme.primaryText)
 
                 if let startedAt = sandboxState.journey?.startedAt,
-                    sandboxState.journey?.finishedAt == nil
-                {
+                    sandboxState.journey?.finishedAt == nil {
                     HStack(spacing: 6) {
                         Image(systemName: "clock")
                             .font(.system(size: 11))
@@ -241,8 +240,7 @@ import SwiftUI
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                     } else if step.status == .completed,
-                        let elapsed = stepElapsed
-                    {
+                        let elapsed = stepElapsed {
                         Text(ProvisioningJourneyView.formatEta(elapsed))
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
