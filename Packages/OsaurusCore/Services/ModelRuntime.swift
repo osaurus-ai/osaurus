@@ -791,7 +791,8 @@ public actor ModelRuntime {
     /// sizing) plus osaurus's per-environment disk-path config. See the
     /// file-level comment for rationale on each knob.
     private nonisolated static func buildCacheCoordinatorConfig(
-        modelName: String
+        modelName: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> CacheCoordinatorConfig {
         let settings = ServerRuntimeSettingsStore.snapshot()
         let diskCacheDir = Self.cacheDiskDirectoryOverride(for: settings.cache)
@@ -823,7 +824,8 @@ public actor ModelRuntime {
         let kvModeTag = cacheKVModeTag(for: settings.cache)
         let scopedKey = Self.cacheCoordinatorModelKey(
             modelName: modelName,
-            kvModeTag: kvModeTag
+            kvModeTag: kvModeTag,
+            cacheTopology: cacheTopology
         )
 
         // Delegate the full coordinator config to vmlx's spec'd builder
@@ -896,7 +898,8 @@ public actor ModelRuntime {
 
     nonisolated static func cacheCoordinatorModelKey(
         modelName: String,
-        kvModeTag: String
+        kvModeTag: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> String {
         var tags = [
             modelName,
@@ -910,6 +913,11 @@ public actor ModelRuntime {
             // the one-token seed forward on the B=1 TokenIterator path.
             "restore=fullhit-trim-eval1",
         ]
+
+        if let cacheTopology {
+            tags.append("topology=real")
+            tags.append(contentsOf: cacheTopology.topologyTags)
+        }
 
         if ModelFamilyNames.isDSV4Family(modelName) {
             tags.append("layers=deepseekV4")
@@ -944,35 +952,17 @@ public actor ModelRuntime {
     }
 
     /// Installs the cache coordinator on a freshly-loaded holder.
-    ///
-    /// `enableCaching(config:)` constructs the coordinator with our
-    /// recommended knobs (paged + L2 disk, fp16 KV by default, 64K rotating
-    /// cap for callers that do not provide `maxKVSize`).
-    /// vmlx's `BatchEngine.admitPendingRequests` auto-flips
-    /// `coordinator.isHybrid` on first slot admission for any model whose
-    /// per-layer cache list contains a `MambaCache` or `ArraysCache` — that
-    /// covers the BatchEngine path osaurus uses today.
-    ///
-    /// **Eager `setHybrid(true)` for known hybrid families**: per
-    /// `OMNI-OSAURUS-HOOKUP.md` §5.1 the eager-set is harmless on any
-    /// admission path and avoids a one-frame stale-flag window if a request
-    /// ever lands via the single-slot `Evaluate` path before BatchEngine
-    /// has had a chance to flip it. We tag known hybrid model_types here
-    /// instead of inspecting the model's cache list (which would require an
-    /// async `context.read` round-trip just to check for an `is MambaCache`
-    /// match) — the family list is short, drift is caught by tests, and
-    /// the auto-flip remains the source of truth for any model_type the
-    /// list misses.
     private func installCacheCoordinator(on holder: SessionHolder) async {
-        let cacheConfig = Self.buildCacheCoordinatorConfig(modelName: holder.name)
-        holder.container.enableCaching(config: cacheConfig)
-
-        if Self.isKnownHybridModel(name: holder.name) {
-            holder.container.cacheCoordinator?.setHybrid(true)
-        }
+        let cacheTopology = await holder.container.cacheTopologySnapshot()
+        let cacheConfig = Self.buildCacheCoordinatorConfig(
+            modelName: holder.name,
+            cacheTopology: cacheTopology
+        )
+        await holder.container.enableCachingAsync(config: cacheConfig)
+        let topologyTags = cacheTopology.topologyTags.joined(separator: ",")
 
         genLog.info(
-            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(Self.isKnownHybridModel(name: holder.name), privacy: .public) (sizing left to vmlx defaults)"
+            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(cacheTopology.requiresSSMCompanionState, privacy: .public) topology=\(topologyTags, privacy: .public) (sizing left to vmlx defaults)"
         )
     }
 
@@ -999,8 +989,10 @@ public actor ModelRuntime {
         // Qwen 3.5 / 3.6 MoE family (qwen3_5_moe model_type) covers Holo3 too.
         // vmlx `Models/Qwen35.swift` + `Qwen35JANGTQ.swift` allocate
         // `ArraysCache` for the linear-attention slots.
-        if lower.contains("qwen3.5") || lower.contains("qwen3.6") || lower.contains("holo3")
-            || lower.contains("holo-3")
+        if lower.contains("qwen3.5") || lower.contains("qwen3.6")
+            || lower.contains("qwen3_5") || lower.contains("qwen3_6")
+            || lower.contains("qwen35") || lower.contains("qwen36")
+            || lower.contains("holo3") || lower.contains("holo-3")
         {
             return true
         }

@@ -597,6 +597,9 @@ struct MLXBatchAdapterTests {
     @Test func cacheCoordinatorModelKey_alignsWithKnownHybridFamilies() {
         for name in [
             "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
+            "qwen3_5_moe",
+            "qwen3_6_moe",
+            "qwen36_moe",
             "qwen3-next-80b-jangtq",
             "ibm-granite/granite-3.0-moe-hybrid-7b",
             "tiiuae/falcon-h1-34b",
@@ -627,6 +630,32 @@ struct MLXBatchAdapterTests {
         )
         #expect(zaya.contains("layers=zayaCCA"))
         #expect(!zaya.contains("layers=hybrid-ssm"))
+    }
+
+    @Test func cacheCoordinatorModelKeyIncludesLoadedCacheTopologyWhenAvailable() {
+        let topology = ModelCacheTopologySnapshot(
+            layerCount: 4,
+            kvLayerCount: 1,
+            rotatingKVLayerCount: 1,
+            mambaLayerCount: 1,
+            arraysLayerCount: 1
+        )
+
+        let key = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "unrecognized-local-bundle",
+            kvModeTag: "turbo(4,3)",
+            cacheTopology: topology
+        )
+
+        #expect(key.contains("topology=real"))
+        #expect(key.contains("layers=4"))
+        #expect(key.contains("kv=1"))
+        #expect(key.contains("rotating=1"))
+        #expect(key.contains("mamba=1"))
+        #expect(key.contains("arrays=1"))
+        #expect(key.contains("companion=ssm"))
+        #expect(key.contains("kv=turbo(4,3)"))
+        #expect(!key.contains("layers=hybrid-ssm"))
     }
 
     @Test func cacheDiskDirectoryOverrideHonorsBlockDiskDirectory() {

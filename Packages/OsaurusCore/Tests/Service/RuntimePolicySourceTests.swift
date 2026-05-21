@@ -354,12 +354,13 @@ struct RuntimePolicySourceTests {
         // VMLX-prefixed products, plus the Qwen3.6 MXFP affine metadata,
         // MoE router-gate load hardening, native-MTP speedup proof gate,
         // parser override load bridge, complete SSM companion-cache guard,
-        // and Qwen3.6 native-MTP alias recognition.
+        // Qwen3.6 native-MTP alias recognition, and loaded cache-topology
+        // snapshotting for server-side cache autodetect.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "7650619fb18974fcb86a8769ecc644b93c3ed8b9"
+        let currentVmlxRevision = "0d2b97e4b3652ab0def02fa2beb81192d89ca474"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
@@ -637,6 +638,17 @@ struct RuntimePolicySourceTests {
 
         #expect(runtime.contains("resolvedModelConfiguration("))
         #expect(runtime.contains("ServerRuntimeSettingsStore.snapshot()"))
+    }
+
+    @Test("Server model-load cache setup uses loaded vmlx topology, not only name heuristics")
+    func modelLoadCacheSetupUsesLoadedVMLXTopologySnapshot() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(runtime.contains("await holder.container.cacheTopologySnapshot()"))
+        #expect(runtime.contains("cacheTopology: cacheTopology"))
+        #expect(runtime.contains("await holder.container.enableCachingAsync(config: cacheConfig)"))
+        #expect(!runtime.contains("holder.container.enableCaching(config: cacheConfig)"))
+        #expect(!runtime.contains("holder.container.cacheCoordinator?.setHybrid(true)"))
     }
 
     @Test("Flexible model residency respects load-time memory budget")
