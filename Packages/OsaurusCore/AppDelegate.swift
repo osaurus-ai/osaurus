@@ -266,9 +266,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await serverController.startServer()
         }
 
-        // Do not auto-connect keychain-backed providers at launch. Explicit
-        // provider connect actions may read credentials; startup must not.
         Task { @MainActor in
+            await MCPProviderManager.shared.connectEnabledProviders()
+            await RemoteProviderManager.shared.connectEnabledProviders()
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
