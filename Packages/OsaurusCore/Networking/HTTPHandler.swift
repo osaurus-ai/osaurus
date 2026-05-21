@@ -1837,14 +1837,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Chat handlers
 
-    /// Enrich a chat request with the agent's system prompt and memory context
-    /// when an agent ID is provided via the `X-Osaurus-Agent-Id` header.
+    /// Enrich an agent-loop request with the agent's system prompt and memory context.
     ///
-    /// Goes through `composeChatContext` (the same entry point the chat UI
-    /// uses) and then injects the rendered prompt + memory snippet into the
-    /// outgoing message array. `executionMode: .none` matches the original
-    /// HTTP-path semantics — sandbox / folder modes are chat-window-only;
-    /// HTTP requests don't have one of those bound.
+    /// Goes through `composeChatContext` and injects the rendered prompt +
+    /// memory snippet into the outgoing message array. Do not call this from
+    /// the strict OpenAI-compatible `/chat/completions` path; that endpoint
+    /// passes client messages/tools through unchanged.
     private static func enrichWithAgentContext(
         _ request: ChatCompletionRequest,
         agentId: String?
@@ -3757,7 +3755,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logRequestBody = requestBodyString
             let logModel = model
             let logTemperature = req.temperature ?? 0.7
-            let logMaxTokens = req.max_tokens ?? 1024
+            let logMaxTokens = req.resolvedMaxTokens ?? 1024
             let logSelf = self
             // SSE keepalive: emit a `: ping` comment line every 15s so
             // intermediate proxies / load balancers do not idle out long
@@ -3774,12 +3772,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
-                    let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
-                    httpTrace.mark("http_enrich_done")
+                    let enrichedReq = req
+                    httpTrace.mark("http_context_passthrough_done")
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
 
-                    // Compute prefix evidence after enrichment so it tracks
-                    // the actual system prompt + tool schema payload sent.
+                    // Compute prefix evidence from the exact request sent to
+                    // the OpenAI-compatible server path. Agent context is
+                    // intentionally not injected here; the app chat and
+                    // /agents/{id}/run paths own composed context.
                     let prefixHash: String = {
                         let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
                         return ModelRuntime.computePrefixHash(
@@ -4053,20 +4053,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logRequestBody = requestBodyString
             let logModel = model
             let logTemperature = req.temperature ?? 0.7
-            let logMaxTokens = req.max_tokens ?? 1024
+            let logMaxTokens = req.resolvedMaxTokens ?? 1024
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
-                    let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
-                    httpTrace.mark("http_enrich_done")
+                    let enrichedReq = req
+                    httpTrace.mark("http_context_passthrough_done")
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
                     httpTrace.mark("http_complete_chat_start")
                     var resp = try await chatEngine.completeChat(request: enrichedReq)
                     httpTrace.mark("http_complete_chat_done")
-                    // Compute prefix evidence after enrichment so it tracks
-                    // the actual system prompt + tool schema payload sent.
+                    // Compute prefix evidence from the exact request sent to
+                    // the OpenAI-compatible server path. Agent context is
+                    // intentionally not injected here; the app chat and
+                    // /agents/{id}/run paths own composed context.
                     let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
                     resp.prefix_hash = ModelRuntime.computePrefixHash(
                         systemContent: sysContent,
@@ -4264,7 +4266,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logRequestBody = requestBodyString
         let logModel = req.model
         let logTemperature = req.temperature ?? 0.7
-        let logMaxTokens = req.max_tokens ?? 1024
+        let logMaxTokens = req.resolvedMaxTokens ?? 1024
         let logSelf = self
         Task(priority: .userInitiated) {
             do {

@@ -72,6 +72,8 @@ struct MLXBatchAdapter {
         let compiledBatchDecode: Bool
     }
 
+    private static let dsv4MaxReasoningRepetitionPenalty: Float = 1.10
+
     static func effectiveGenerationSettings(
         modelName: String,
         generation: GenerationParameters,
@@ -102,6 +104,12 @@ struct MLXBatchAdapter {
         let runtimeTemperature: Float? = runtimeDefaults.temperature.map { Float($0) }
         let runtimeMaxTokens: Int? = runtimeDefaults.maxTokens
         let runtimeRepetitionPenalty: Float? = runtimeDefaults.repetitionPenalty.map { Float($0) }
+        let repetitionPenalty = Self.effectiveRepetitionPenalty(
+            modelName: modelName,
+            generation: generation,
+            modelDefault: modelDefaults.repetitionPenalty,
+            runtimeDefault: runtimeRepetitionPenalty
+        )
 
         return EffectiveGenerationSettings(
             temperature: useNativeMTPGreedyDefaults || nativeMTPGreedyFallback
@@ -125,7 +133,7 @@ struct MLXBatchAdapter {
                 }
                 return useNativeMTPGreedyDefaults
                     ? generation.repetitionPenalty
-                    : (generation.repetitionPenalty ?? modelDefaults.repetitionPenalty ?? runtimeRepetitionPenalty)
+                    : repetitionPenalty
             }(),
             compiledBatchDecode: nativeMTPExplicitSamplingFallback || nativeMTPGreedyFallback
                 ? false
@@ -202,6 +210,33 @@ struct MLXBatchAdapter {
             return false
         }
         return true
+    }
+
+    private static func effectiveRepetitionPenalty(
+        modelName: String,
+        generation: GenerationParameters,
+        modelDefault: Float?,
+        runtimeDefault: Float?
+    ) -> Float? {
+        if let explicit = generation.repetitionPenalty {
+            return explicit
+        }
+
+        let resolved = modelDefault ?? runtimeDefault
+        guard
+            DSV4ReasoningProfile.matches(modelId: modelName),
+            let effort = generation.modelOptions["reasoningEffort"]?.stringValue,
+            DSV4ReasoningProfile.normalizedEffort(effort) == "max",
+            (resolved ?? 1.0) <= 1.0
+        else {
+            return resolved
+        }
+
+        // DSV4 Flash max-reasoning can enter a repeated "thinking" token loop
+        // under the model's shipped no-op penalty. Keep this as a decode policy,
+        // not a parser or stop-condition guard: explicit request penalties still
+        // win, and high/instruct modes keep the bundle defaults.
+        return dsv4MaxReasoningRepetitionPenalty
     }
 
     /// Same-model gate for the single-slot runtime path. With

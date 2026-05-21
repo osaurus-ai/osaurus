@@ -796,19 +796,30 @@ public actor ModelRuntime {
             )
         }
 
-        // L2 disk-cache modelKey fingerprint includes the KV mode tag so a
-        // mid-session change to `defaultKVMode` (or to a per-request override
-        // via the OpenAI extension) cannot serve stale entries that were
-        // encoded under a different mode. Without this, a user who switches
-        // from `.none` (fp16) to `.turboQuant(4,4)` would hit a `.miss` on
-        // disk for fresh entries but a `.hit` on the OLD fp16 entries —
-        // attention would receive the wrong KV layout for the codebook
-        // encoder state and produce undefined behavior. The fingerprint is
-        // a string (stable across processes) and is appended to the model
-        // name so the L1 paged cache (per-model isolation) is unaffected.
+        // L2 disk cache: enabled when the disk dir is writable.
+        //
+        // The Metal `notifyExternalReferencesNonZeroOnDealloc` crash on the
+        // `Cache disk hit … prefilling 0 remaining` path is fixed upstream
+        // in vmlx-swift-lm `0756dc0` ("close trim-path Metal lifecycle crash
+        // on full disk-cache hit") — the trimmed compiled-cache list is now
+        // forced to realize before its underlying Metal buffers go out of
+        // scope. Now wired in through the `0e22eba` pin. The
+        // `eval_http_stability.py` suite is the regression check; re-run on
+        // any future pin bump that touches the CacheCoordinator restore path.
+        let enableDiskCache = diskDirUsable
+
+        // L2 disk-cache modelKey fingerprint includes the KV mode tag and
+        // native cache-topology tags so runtime upgrades cannot serve stale
+        // entries encoded under a different serializer contract. This matters
+        // for path-dependent caches such as DSV4's SWA+CSA+HSA pool and
+        // ZAYA's CCA state: a content hash alone proves prompt identity, not
+        // cache-layout compatibility.
         let settings = ServerRuntimeSettingsStore.snapshot()
         let kvModeTag = cacheKVModeTag(for: settings.cache)
-        let scopedKey = "\(modelName)|kv=\(kvModeTag)"
+        let scopedKey = Self.cacheCoordinatorModelKey(
+            modelName: modelName,
+            kvModeTag: kvModeTag
+        )
 
         // Delegate the full coordinator config to vmlx's spec'd builder
         // so every cache field set in the Server → Settings panel
@@ -827,7 +838,7 @@ public actor ModelRuntime {
     /// Stable fingerprint for the live KV codec choice. Appended to
     /// the L2 disk-cache model key so a mid-session change to the
     /// codec doesn't serve stale entries.
-    private nonisolated static func cacheKVModeTag(
+    nonisolated static func cacheKVModeTag(
         for cache: VMLXServerCacheSettings
     ) -> String {
         switch cache.liveKVCodec {
@@ -842,6 +853,41 @@ public actor ModelRuntime {
             let valueBits = cache.turboQuantValueBits ?? 0
             return "turbo(\(keyBits),\(valueBits))"
         }
+    }
+
+    nonisolated static func cacheCoordinatorModelKey(
+        modelName: String,
+        kvModeTag: String
+    ) -> String {
+        var tags = [
+            modelName,
+            "kv=\(kvModeTag)",
+            // vmlx `TQDiskSerializer.currentFormatVersion == 2` at the
+            // pinned runtime. Keep this in the host key so older L2 records
+            // cannot cross serializer generations after an app update.
+            "cachefmt=2",
+            // Restore semantics are part of the cache contract too. The
+            // paired vmlx fix materializes full-hit trim mutations before
+            // the one-token seed forward on the B=1 TokenIterator path.
+            "restore=fullhit-trim-eval1",
+        ]
+
+        if ModelFamilyNames.isDSV4Family(modelName) {
+            tags.append("layers=deepseekV4")
+            tags.append("prefix=hybrid-pool-disk")
+            tags.append("decode=max-rp110")
+        } else if ModelFamilyNames.isZayaFamily(modelName) {
+            tags.append("layers=zayaCCA")
+            tags.append("prefix=path-dependent-disk")
+        } else if Self.isKnownHybridModel(name: modelName) {
+            tags.append("layers=hybrid-ssm")
+        }
+
+        if ModelFamilyNames.isNemotronOmniFamily(modelName) {
+            tags.append("media=omni-audio-video")
+        }
+
+        return tags.joined(separator: "|")
     }
 
     /// Best-effort writability probe for the disk cache directory. Uses a

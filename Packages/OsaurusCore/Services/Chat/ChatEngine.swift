@@ -96,7 +96,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         trace: TTFTTrace?
     ) async -> Dispatch {
         let temperature = request.temperature
-        let maxTokens = request.max_tokens ?? 16384
+        let maxTokens = request.resolvedMaxTokens ?? 16384
         // Map only OpenAI `frequency_penalty` to repetition_penalty here.
         // `presence_penalty` has no MLX analog — leaving the previous
         // "either-or" mapping in place silently collapsed two distinct
@@ -145,7 +145,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let params = GenerationParameters(
             temperature: temperature,
             maxTokens: maxTokens,
-            maxTokensExplicit: request.max_tokens != nil,
+            maxTokensExplicit: request.resolvedMaxTokens != nil,
             topPOverride: request.top_p,
             repetitionPenalty: repPenalty,
             samplingParametersAreImplicit: request.samplingParametersAreImplicit,
@@ -412,7 +412,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // Pulled out for logging convenience; the actual dispatch values
         // (incl. these two) live on `dispatch.params`.
         let temperature = request.temperature
-        let maxTokens = request.max_tokens ?? 16384
+        let maxTokens = request.resolvedMaxTokens ?? 16384
 
         let dispatch = await prepareDispatch(request: request, trace: trace)
         let params = dispatch.params
@@ -718,7 +718,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let messages = request.messages
         let inputTokens = estimateInputTokens(messages)
         let temperature = request.temperature
-        let maxTokens = request.max_tokens ?? 16384
+        let maxTokens = request.resolvedMaxTokens ?? 16384
         // Capture the request body once so all four downstream log paths
         // (text-only, text-with-tools, tool-calls batch, tool-calls single)
         // surface the same prompt + tools in the Insights detail pane.

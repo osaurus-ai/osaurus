@@ -448,6 +448,121 @@ struct MLXBatchAdapterTests {
         #expect(effective.compiledBatchDecode == false)
     }
 
+    @Test func effectiveGenerationSettings_dsv4MaxReasoningUsesStableDecodePenalty() {
+        let generation = GenerationParameters(
+            temperature: nil,
+            maxTokens: 384,
+            maxTokensExplicit: true,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil,
+            modelOptions: ["reasoningEffort": .string("max")]
+        )
+        let defaults = LocalGenerationDefaults.Defaults(
+            maxTokens: nil,
+            temperature: 0.6,
+            topP: 0.95,
+            topK: nil,
+            minP: nil,
+            repetitionPenalty: 1.0,
+            doSample: true
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "deepseek-v4-flash-jangtq-k",
+            generation: generation,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            maxBatchSize: 1,
+            modelDefaults: defaults
+        )
+
+        #expect(effective.repetitionPenalty == 1.10)
+    }
+
+    @Test func effectiveGenerationSettings_dsv4HighAndExplicitPenaltyKeepRequestedValue() {
+        let defaults = LocalGenerationDefaults.Defaults(
+            maxTokens: nil,
+            temperature: 0.6,
+            topP: 0.95,
+            topK: nil,
+            minP: nil,
+            repetitionPenalty: 1.0,
+            doSample: true
+        )
+        let high = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "deepseek-v4-flash-jangtq-k",
+            generation: GenerationParameters(
+                temperature: nil,
+                maxTokens: 384,
+                maxTokensExplicit: true,
+                repetitionPenalty: nil,
+                modelOptions: ["reasoningEffort": .string("high")]
+            ),
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            maxBatchSize: 1,
+            modelDefaults: defaults
+        )
+        let explicit = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "deepseek-v4-flash-jangtq-k",
+            generation: GenerationParameters(
+                temperature: nil,
+                maxTokens: 384,
+                maxTokensExplicit: true,
+                repetitionPenalty: 1.03,
+                modelOptions: ["reasoningEffort": .string("max")]
+            ),
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            maxBatchSize: 1,
+            modelDefaults: defaults
+        )
+
+        #expect(high.repetitionPenalty == 1.0)
+        #expect(explicit.repetitionPenalty == 1.03)
+    }
+
+    @Test func cacheCoordinatorModelKey_namespacesPathDependentCacheTopologies() {
+        let dsv4 = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "deepseek-v4-flash-jangtq-k",
+            kvModeTag: "fp16"
+        )
+        let zaya = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "ZAYA1-8B-JANGTQ4",
+            kvModeTag: "fp16"
+        )
+        let ling = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Ling-2.6-flash-JANGTQ2-CRACK",
+            kvModeTag: "fp16"
+        )
+        let omni = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Nemotron-Omni-Nano-JANGTQ4-CRACK",
+            kvModeTag: "fp16"
+        )
+        let generic = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Qwen3.6-27B-MXFP4-MTP",
+            kvModeTag: "fp16"
+        )
+
+        #expect(dsv4.contains("kv=fp16"))
+        #expect(dsv4.contains("cachefmt=2"))
+        #expect(dsv4.contains("restore=fullhit-trim-eval1"))
+        #expect(dsv4.contains("layers=deepseekV4"))
+        #expect(dsv4.contains("prefix=hybrid-pool-disk"))
+        #expect(dsv4.contains("decode=max-rp110"))
+
+        #expect(zaya.contains("layers=zayaCCA"))
+        #expect(zaya.contains("prefix=path-dependent-disk"))
+
+        #expect(ling.contains("layers=hybrid-ssm"))
+        #expect(omni.contains("media=omni-audio-video"))
+
+        #expect(!generic.contains("layers=deepseekV4"))
+        #expect(!generic.contains("layers=zayaCCA"))
+        #expect(!generic.contains("layers=hybrid-ssm"))
+        #expect(!generic.contains("media=omni-audio-video"))
+
+        #expect(Set([dsv4, zaya, ling, omni, generic]).count == 5)
+    }
+
     @Test func effectiveGenerationSettings_doSampleFalseForcesGreedyOnlyWhenTemperatureOmitted() {
         let defaults = LocalGenerationDefaults.Defaults(
             maxTokens: nil,

@@ -19,6 +19,113 @@ fileprivate extension URLRequest {
 
 struct HTTPHandlerChatStreamingTests {
 
+    @Test func chatCompletions_agentHeaderDoesNotInjectAgentContext() async throws {
+        actor Capture {
+            var request: ChatCompletionRequest?
+            func record(_ request: ChatCompletionRequest) { self.request = request }
+        }
+
+        struct CaptureEngine: ChatEngineProtocol {
+            let capture: Capture
+
+            func streamChat(request _: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+                fatalError("not used")
+            }
+
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                await capture.record(request)
+                let choice = ChatChoice(
+                    index: 0,
+                    message: ChatMessage(role: "assistant", content: "ok"),
+                    finish_reason: "stop"
+                )
+                return ChatCompletionResponse(
+                    id: "chatcmpl-test",
+                    created: 0,
+                    model: request.model,
+                    choices: [choice],
+                    usage: Usage(prompt_tokens: 0, completion_tokens: 0, total_tokens: 0),
+                    system_fingerprint: nil
+                )
+            }
+        }
+
+        try await SandboxTestLock.runWithStoragePaths {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-http-strict-context-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                AgentManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            let agent = Agent(
+                name: "HTTPStrictContext-\(UUID().uuidString.prefix(6))",
+                systemPrompt: "DO-NOT-INJECT-HTTP-CONTEXT",
+                agentAddress: "http-strict-\(UUID().uuidString)",
+                manualToolNames: ["capabilities_search"]
+            )
+            AgentManager.shared.add(agent)
+
+            let capture = Capture()
+            let server = try await startTestServer(with: CaptureEngine(capture: capture))
+            defer { Task { await server.shutdown() } }
+
+            let clientTool = Tool(
+                type: "function",
+                function: ToolFunction(
+                    name: "client_only_tool",
+                    description: "Client supplied tool",
+                    parameters: .object(["type": .string("object")])
+                )
+            )
+            var request = URLRequest(
+                url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!
+            )
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(agent.id.uuidString, forHTTPHeaderField: "X-Osaurus-Agent-Id")
+            request.authenticate()
+            request.disablePersistenceForTests()
+            let reqBody = ChatCompletionRequest(
+                model: "fake",
+                messages: [ChatMessage(role: "user", content: "plain API request")],
+                temperature: 0.5,
+                max_tokens: 16,
+                stream: false,
+                top_p: nil,
+                frequency_penalty: nil,
+                presence_penalty: nil,
+                stop: nil,
+                n: nil,
+                tools: [clientTool],
+                tool_choice: nil,
+                session_id: nil
+            )
+            request.httpBody = try JSONEncoder().encode(reqBody)
+
+            let (_, resp) = try await URLSession.shared.data(for: request)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+
+            let captured = await capture.request
+            #expect(captured?.messages.count == 1)
+            #expect(captured?.messages.first?.role == "user")
+            #expect(captured?.messages.first?.content == "plain API request")
+            #expect(captured?.messages.contains { $0.role == "system" } == false)
+            #expect(captured?.messages.first?.content?.contains("[Memory]") == false)
+            #expect(captured?.messages.first?.content?.contains("DO-NOT-INJECT-HTTP-CONTEXT") == false)
+            #expect(captured?.tools?.map(\.function.name) == ["client_only_tool"])
+            #expect(captured?.tool_choice == nil)
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
     @Test func sse_path_writes_role_content_finish_done() async throws {
         let server = try await startTestServer(
             with: MockChatEngine(deltas: ["a", "b", "c"], completeText: "", model: "fake")
