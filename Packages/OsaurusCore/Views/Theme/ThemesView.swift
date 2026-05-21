@@ -29,7 +29,6 @@ struct ThemesView: View {
     @State private var hasAppeared = false
     @State private var isLoading = true
     @State private var loadError: String?
-    @State private var selectedThemeId: UUID?
     @State private var editingTheme: IdentifiableTheme?
     @State private var showingImporter = false
     @State private var showingExporter = false
@@ -42,17 +41,13 @@ struct ThemesView: View {
     @State private var showingImportByIdSheet = false
     @State private var importByIdInitialHash: String?
 
-    private var installedThemes: [CustomTheme] {
-        themeManager.installedThemes.sorted { $0.metadata.name < $1.metadata.name }
-    }
-
-    private var builtInThemes: [CustomTheme] {
-        installedThemes.filter { $0.isBuiltIn }
-    }
-
-    private var customThemes: [CustomTheme] {
-        installedThemes.filter { !$0.isBuiltIn }
-    }
+    /// Cached partitions of `themeManager.installedThemes`. Recomputed only
+    /// when the publisher fires, not on every parent body redraw, so
+    /// scroll-induced re-evaluations no longer re-sort + re-filter the
+    /// full theme list.
+    @State private var installedThemes: [CustomTheme] = []
+    @State private var builtInThemes: [CustomTheme] = []
+    @State private var customThemes: [CustomTheme] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -167,6 +162,9 @@ struct ThemesView: View {
         }
         .onReceive(managementState.$pendingThemeInstallHash) { _ in
             applyPendingThemeInstall()
+        }
+        .onReceive(themeManager.$installedThemes) { latest in
+            refreshPartitions(from: latest)
         }
         .themedAlert(
             "Delete Theme",
@@ -390,6 +388,7 @@ struct ThemesView: View {
         // Small delay for visual feedback
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             themeManager.refreshInstalledThemes()
+            refreshPartitions(from: themeManager.installedThemes)
 
             withAnimation(.easeOut(duration: 0.2)) {
                 isLoading = false
@@ -398,6 +397,15 @@ struct ThemesView: View {
                 }
             }
         }
+    }
+
+    /// Sort once, partition once. Called on initial load and whenever
+    /// `ThemeManager` republishes its installed list.
+    private func refreshPartitions(from themes: [CustomTheme]) {
+        let sorted = themes.sorted { $0.metadata.name < $1.metadata.name }
+        installedThemes = sorted
+        builtInThemes = sorted.filter { $0.isBuiltIn }
+        customThemes = sorted.filter { !$0.isBuiltIn }
     }
 
     // MARK: - Active Theme Section
@@ -600,35 +608,21 @@ struct ThemesView: View {
     // MARK: - Actions
 
     private func createNewTheme() {
-        // Generate unique name
-        let baseName = "My Theme"
-        let existingNames = Set(installedThemes.map { $0.metadata.name })
-        var newName = baseName
-        var counter = 1
-
-        while existingNames.contains(newName) {
-            counter += 1
-            newName = "\(baseName) \(counter)"
-        }
-
-        // Start with dark theme as base with unique ID and name
         var newTheme = CustomTheme.darkDefault
         newTheme.metadata = ThemeMetadata(
             id: UUID(),
-            name: newName,
+            name: uniqueThemeName(base: "My Theme"),
             author: "User"
         )
         newTheme.isBuiltIn = false
-
-        // Dismiss any existing editor first, then open new one
-        editingTheme = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            editingTheme = IdentifiableTheme(newTheme)
-        }
+        openEditor(for: newTheme)
     }
 
+    /// Dismiss any open editor, then re-present with the requested theme on
+    /// the next runloop tick. The brief detour avoids a SwiftUI glitch where
+    /// presenting a new sheet while an old one is still tearing down can
+    /// leave the editor hidden behind the parent.
     private func openEditor(for theme: CustomTheme) {
-        // Dismiss any existing editor first
         editingTheme = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             editingTheme = IdentifiableTheme(theme)
@@ -655,17 +649,7 @@ struct ThemesView: View {
     }
 
     private func duplicateTheme(_ themeItem: CustomTheme) {
-        // Generate unique copy name
-        let baseName = "\(themeItem.metadata.name) Copy"
-        let existingNames = Set(installedThemes.map { $0.metadata.name })
-        var newName = baseName
-        var counter = 1
-
-        while existingNames.contains(newName) {
-            counter += 1
-            newName = "\(themeItem.metadata.name) Copy \(counter)"
-        }
-
+        let newName = uniqueThemeName(base: "\(themeItem.metadata.name) Copy")
         let duplicated = ThemeConfigurationStore.duplicateTheme(themeItem, newName: newName)
         themeManager.refreshInstalledThemes()
         showToast(L("Duplicated as \"\(newName)\""))
@@ -673,13 +657,22 @@ struct ThemesView: View {
     }
 
     private func confirmDelete(_ theme: CustomTheme) {
-        // Don't allow deleting built-in themes
         guard !theme.isBuiltIn else {
             print("[Osaurus] Cannot delete built-in theme: \(theme.metadata.name)")
             return
         }
         themeToDelete = theme
         showDeleteConfirmation = true
+    }
+
+    /// Returns `base` if it isn't already in use, otherwise `<base> N` where
+    /// N is the smallest integer ≥ 2 yielding an unused name.
+    private func uniqueThemeName(base: String) -> String {
+        let existing = Set(installedThemes.map { $0.metadata.name })
+        if !existing.contains(base) { return base }
+        var counter = 2
+        while existing.contains("\(base) \(counter)") { counter += 1 }
+        return "\(base) \(counter)"
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {
@@ -727,262 +720,279 @@ struct ThemePreviewCard: View {
 
     @Environment(\.theme) private var currentTheme
     @State private var isHovered = false
+    @State private var cachedImage: NSImage?
+
+    /// Pre-resolved `Color` values for the previewed theme. Built once per
+    /// card construction so the heavy preview body doesn't re-parse hex
+    /// strings (15+ per render) on every scroll-induced re-evaluation.
+    private let resolved: ResolvedThemePreviewColors
+    private let backgroundDescriptor: ThemePreviewArt.BackgroundDescriptor
+
+    init(
+        theme: CustomTheme,
+        isActive: Bool,
+        onApply: @escaping () -> Void,
+        onEdit: @escaping () -> Void,
+        onExport: @escaping () -> Void,
+        onShare: @escaping () -> Void,
+        onDuplicate: @escaping () -> Void,
+        onDelete: (() -> Void)?
+    ) {
+        self.theme = theme
+        self.isActive = isActive
+        self.onApply = onApply
+        self.onEdit = onEdit
+        self.onExport = onExport
+        self.onShare = onShare
+        self.onDuplicate = onDuplicate
+        self.onDelete = onDelete
+        self.resolved = ResolvedThemePreviewColors(theme)
+        self.backgroundDescriptor = ThemePreviewArt.BackgroundDescriptor(theme: theme)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Preview area - clickable to apply theme
-            previewArea
-                .frame(height: 120)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if !isActive {
-                        onApply()
-                    }
-                }
-
-            // Info and actions
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(theme.metadata.name)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(currentTheme.primaryText)
-                                .lineLimit(1)
-
-                            if isActive {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(currentTheme.successColor)
-                            }
-
-                            if theme.isBuiltIn {
-                                Text("Built-in", bundle: .module)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(currentTheme.secondaryText)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(
-                                        Capsule()
-                                            .fill(currentTheme.tertiaryBackground)
-                                    )
-                            }
-                        }
-
-                        Text("by \(theme.metadata.author)", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(currentTheme.tertiaryText)
-                            .lineLimit(1)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    // Context menu
-                    Menu {
-                        if !isActive {
-                            Button(action: onApply) {
-                                Label {
-                                    Text("Apply Theme", bundle: .module)
-                                } icon: {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                        Button(action: onEdit) {
-                            Label {
-                                Text("Edit", bundle: .module)
-                            } icon: {
-                                Image(systemName: "pencil")
-                            }
-                        }
-                        Button(action: onDuplicate) {
-                            Label {
-                                Text("Duplicate", bundle: .module)
-                            } icon: {
-                                Image(systemName: "doc.on.doc")
-                            }
-                        }
-                        Button(action: onExport) {
-                            Label {
-                                Text("Export", bundle: .module)
-                            } icon: {
-                                Image(systemName: "square.and.arrow.up")
-                            }
-                        }
-                        Button(action: onShare) {
-                            Label {
-                                Text("Share", bundle: .module)
-                            } icon: {
-                                Image(systemName: "square.and.arrow.up.on.square")
-                            }
-                        }
-                        if let onDelete = onDelete {
-                            Divider()
-                            Button(role: .destructive, action: onDelete) {
-                                Label {
-                                    Text("Delete", bundle: .module)
-                                } icon: {
-                                    Image(systemName: "trash")
-                                }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 16))
-                            .foregroundColor(currentTheme.secondaryText)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                }
-
-                // Color palette preview
-                HStack(spacing: 4) {
-                    colorSwatch(theme.colors.primaryBackground)
-                    colorSwatch(theme.colors.accentColor)
-                    colorSwatch(theme.colors.successColor)
-                    colorSwatch(theme.colors.warningColor)
-                    colorSwatch(theme.colors.errorColor)
-                }
-            }
-            .padding(12)
-            .background(currentTheme.cardBackground)
+            previewArt
+            cardInfo
         }
         .background(currentTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(
-                    isActive ? currentTheme.accentColor : currentTheme.cardBorder,
-                    lineWidth: isActive ? 2 : 1
-                )
+                .stroke(borderColor, lineWidth: isActive ? 2 : 1)
         )
-        .shadow(
-            color: Color.black.opacity(isHovered ? 0.15 : 0.08),
-            radius: isHovered ? 12 : 6,
-            x: 0,
-            y: isHovered ? 4 : 2
-        )
-        .scaleEffect(isHovered ? 1.02 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
-        .onHover { hovering in
-            isHovered = hovering
+        // Static shadow (no hover-driven radius/offset). Dynamic shadow
+        // forces an offscreen render pass per state change and was a
+        // significant scroll cost when `onHover` fires while the cursor
+        // crosses cells.
+        .shadow(color: Color.black.opacity(0.08), radius: 6, x: 0, y: 2)
+        .onHover { isHovered = $0 }
+        .task(id: theme.metadata.id) {
+            cachedImage = await ThemePreviewImageCache.shared.image(for: theme)
         }
     }
 
-    private var previewArea: some View {
+    /// The chat-mockup hero area. Wrapped in `.equatable()` so SwiftUI can
+    /// skip re-rendering its heavy subtree when only hover state changes.
+    private var previewArt: some View {
+        ThemePreviewArt(
+            themeID: theme.metadata.id,
+            resolved: resolved,
+            background: backgroundDescriptor,
+            cachedImage: cachedImage
+        )
+        .equatable()
+        .frame(height: 120)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !isActive { onApply() }
+        }
+    }
+
+    private var cardInfo: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                titleBlock
+                Spacer(minLength: 8)
+                cardActionMenu
+            }
+            swatchRow
+        }
+        .padding(12)
+        .background(currentTheme.cardBackground)
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(theme.metadata.name)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(currentTheme.primaryText)
+                    .lineLimit(1)
+
+                if isActive {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(currentTheme.successColor)
+                }
+
+                if theme.isBuiltIn {
+                    Text("Built-in", bundle: .module)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(currentTheme.secondaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(currentTheme.tertiaryBackground)
+                        )
+                }
+            }
+
+            Text("by \(theme.metadata.author)", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(currentTheme.tertiaryText)
+                .lineLimit(1)
+        }
+    }
+
+    private var cardActionMenu: some View {
+        Menu {
+            if !isActive {
+                Button(action: onApply) {
+                    Label {
+                        Text("Apply Theme", bundle: .module)
+                    } icon: {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+            Button(action: onEdit) {
+                Label {
+                    Text("Edit", bundle: .module)
+                } icon: {
+                    Image(systemName: "pencil")
+                }
+            }
+            Button(action: onDuplicate) {
+                Label {
+                    Text("Duplicate", bundle: .module)
+                } icon: {
+                    Image(systemName: "doc.on.doc")
+                }
+            }
+            Button(action: onExport) {
+                Label {
+                    Text("Export", bundle: .module)
+                } icon: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+            }
+            Button(action: onShare) {
+                Label {
+                    Text("Share", bundle: .module)
+                } icon: {
+                    Image(systemName: "square.and.arrow.up.on.square")
+                }
+            }
+            if let onDelete {
+                Divider()
+                Button(role: .destructive, action: onDelete) {
+                    Label {
+                        Text("Delete", bundle: .module)
+                    } icon: {
+                        Image(systemName: "trash")
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 16))
+                .foregroundColor(currentTheme.secondaryText)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private var swatchRow: some View {
+        HStack(spacing: 4) {
+            colorSwatch(resolved.primaryBackground)
+            colorSwatch(resolved.accent)
+            colorSwatch(resolved.success)
+            colorSwatch(resolved.warning)
+            colorSwatch(resolved.error)
+        }
+    }
+
+    private var borderColor: Color {
+        if isActive { return currentTheme.accentColor }
+        if isHovered { return currentTheme.accentColor.opacity(0.5) }
+        return currentTheme.cardBorder
+    }
+
+    private func colorSwatch(_ color: Color) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: 16, height: 16)
+            .overlay(
+                Circle()
+                    .stroke(currentTheme.primaryBorder, lineWidth: 1)
+            )
+    }
+}
+
+// MARK: - Resolved Preview Colors
+
+/// Pre-resolved `Color` values used by `ThemePreviewArt` and the swatch
+/// row. Building this once per card construction avoids re-parsing the
+/// same hex strings on every body re-evaluation. `Color` is `Equatable`,
+/// so this struct is trivially `Equatable` and cheap to compare.
+private struct ResolvedThemePreviewColors: Equatable {
+    let primaryBackground: Color
+    let secondaryBackground: Color
+    let inputBackground: Color
+    let primaryText: Color
+    let secondaryText: Color
+    let tertiaryText: Color
+    let accent: Color
+    let success: Color
+    let warning: Color
+    let error: Color
+    let glassEdgeLight: Color
+
+    init(_ theme: CustomTheme) {
+        self.primaryBackground = Color(themeHex: theme.colors.primaryBackground)
+        self.secondaryBackground = Color(themeHex: theme.colors.secondaryBackground)
+        self.inputBackground = Color(themeHex: theme.colors.inputBackground)
+        self.primaryText = Color(themeHex: theme.colors.primaryText)
+        self.secondaryText = Color(themeHex: theme.colors.secondaryText)
+        self.tertiaryText = Color(themeHex: theme.colors.tertiaryText)
+        self.accent = Color(themeHex: theme.colors.accentColor)
+        self.success = Color(themeHex: theme.colors.successColor)
+        self.warning = Color(themeHex: theme.colors.warningColor)
+        self.error = Color(themeHex: theme.colors.errorColor)
+        self.glassEdgeLight = Color(themeHex: theme.glass.edgeLight)
+    }
+}
+
+// MARK: - Theme Preview Art
+
+/// The heavy chat-mockup preview rendered above each card. Conforms to
+/// `Equatable` so a parent `.equatable()` wrapper can short-circuit
+/// re-rendering when only the card's hover state changes.
+private struct ThemePreviewArt: View, Equatable {
+    let themeID: UUID
+    let resolved: ResolvedThemePreviewColors
+    let background: BackgroundDescriptor
+    let cachedImage: NSImage?
+
+    nonisolated static func == (lhs: ThemePreviewArt, rhs: ThemePreviewArt) -> Bool {
+        lhs.themeID == rhs.themeID
+            && lhs.resolved == rhs.resolved
+            && lhs.background == rhs.background
+            && lhs.cachedImage === rhs.cachedImage
+    }
+
+    var body: some View {
         ZStack {
-            // Background layer - properly shows solid/gradient/image
             previewBackground
 
-            // Glass overlay simulation
-            RoundedRectangle(cornerRadius: 0)
-                .fill(.ultraThinMaterial.opacity(0.3))
+            // Static, cheap sheen replacing the previous `.ultraThinMaterial`
+            // overlay. The material forced a per-frame backdrop blur on
+            // every visible card, which dominated scroll cost.
+            LinearGradient(
+                colors: [Color.white.opacity(0.04), Color.black.opacity(0.06)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
 
-            // Mock chat UI preview
             VStack(spacing: 6) {
-                // Mock header bar
-                HStack(spacing: 8) {
-                    // Model chip
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(Color(themeHex: theme.colors.successColor))
-                            .frame(width: 5, height: 5)
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Color(themeHex: theme.colors.secondaryText).opacity(0.3))
-                            .frame(width: 40, height: 8)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(Color(themeHex: theme.colors.secondaryBackground).opacity(0.8))
-                    )
-
-                    Spacer()
-
-                    // Close button
-                    Circle()
-                        .fill(Color(themeHex: theme.colors.secondaryBackground).opacity(0.8))
-                        .frame(width: 16, height: 16)
-                        .overlay(
-                            Image(systemName: "xmark")
-                                .font(.system(size: 7, weight: .bold))
-                                .foregroundColor(Color(themeHex: theme.colors.secondaryText))
-                        )
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 8)
-
-                // Mock messages with accent bar style
-                VStack(spacing: 4) {
-                    // User message
-                    HStack(spacing: 0) {
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(Color(themeHex: theme.colors.accentColor))
-                            .frame(width: 2, height: 20)
-
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color(themeHex: theme.colors.secondaryBackground).opacity(0.5))
-                            .frame(width: 70, height: 20)
-                            .padding(.leading, 6)
-
-                        Spacer()
-                    }
-
-                    // Assistant message
-                    HStack(spacing: 0) {
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(Color(themeHex: theme.colors.tertiaryText).opacity(0.4))
-                            .frame(width: 2, height: 28)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color(themeHex: theme.colors.primaryText).opacity(0.2))
-                                .frame(width: 90, height: 8)
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color(themeHex: theme.colors.primaryText).opacity(0.15))
-                                .frame(width: 60, height: 8)
-                        }
-                        .padding(.leading, 6)
-
-                        Spacer()
-                    }
-                }
-                .padding(.horizontal, 10)
-
+                headerBar
+                messageStack
                 Spacer()
-
-                // Mock input card
-                HStack(spacing: 6) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(themeHex: theme.colors.tertiaryText).opacity(0.3))
-                        .frame(width: 60, height: 8)
-
-                    Spacer()
-
-                    Circle()
-                        .fill(Color(themeHex: theme.colors.accentColor))
-                        .frame(width: 18, height: 18)
-                        .overlay(
-                            Image(systemName: "arrow.up")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(.white)
-                        )
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color(themeHex: theme.colors.inputBackground).opacity(0.9))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color(themeHex: theme.glass.edgeLight).opacity(0.3), lineWidth: 0.5)
-                        )
-                )
-                .padding(.horizontal, 10)
-                .padding(.bottom, 8)
+                inputCard
             }
         }
         .clipShape(
@@ -995,45 +1005,154 @@ struct ThemePreviewCard: View {
         )
     }
 
-    @ViewBuilder
-    private var previewBackground: some View {
-        switch theme.background.type {
-        case .solid:
-            Color(themeHex: theme.background.solidColor ?? theme.colors.primaryBackground)
-
-        case .gradient:
-            let colors =
-                (theme.background.gradientColors ?? [theme.colors.primaryBackground, theme.colors.secondaryBackground])
-                .map { Color(themeHex: $0) }
-            LinearGradient(
-                colors: colors,
-                startPoint: .top,
-                endPoint: .bottom
+    private var headerBar: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(resolved.success)
+                    .frame(width: 5, height: 5)
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(resolved.secondaryText.opacity(0.3))
+                    .frame(width: 40, height: 8)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(resolved.secondaryBackground.opacity(0.8))
             )
 
+            Spacer()
+
+            Circle()
+                .fill(resolved.secondaryBackground.opacity(0.8))
+                .frame(width: 16, height: 16)
+                .overlay(
+                    Image(systemName: "xmark")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(resolved.secondaryText)
+                )
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+    }
+
+    private var messageStack: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 0) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(resolved.accent)
+                    .frame(width: 2, height: 20)
+
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(resolved.secondaryBackground.opacity(0.5))
+                    .frame(width: 70, height: 20)
+                    .padding(.leading, 6)
+
+                Spacer()
+            }
+
+            HStack(spacing: 0) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(resolved.tertiaryText.opacity(0.4))
+                    .frame(width: 2, height: 28)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(resolved.primaryText.opacity(0.2))
+                        .frame(width: 90, height: 8)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(resolved.primaryText.opacity(0.15))
+                        .frame(width: 60, height: 8)
+                }
+                .padding(.leading, 6)
+
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 10)
+    }
+
+    private var inputCard: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(resolved.tertiaryText.opacity(0.3))
+                .frame(width: 60, height: 8)
+
+            Spacer()
+
+            Circle()
+                .fill(resolved.accent)
+                .frame(width: 18, height: 18)
+                .overlay(
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(.white)
+                )
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(resolved.inputBackground.opacity(0.9))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(resolved.glassEdgeLight.opacity(0.3), lineWidth: 0.5)
+                )
+        )
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private var previewBackground: some View {
+        switch background.kind {
+        case .solid(let color):
+            color
+        case .gradient(let colors):
+            LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
         case .image:
-            if let imageData = theme.background.imageData,
-                let data = Data(base64Encoded: imageData),
-                let nsImage = NSImage(data: data)
-            {
-                Image(nsImage: nsImage)
+            if let cachedImage {
+                Image(nsImage: cachedImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .opacity(theme.background.imageOpacity ?? 1.0)
+                    .opacity(background.imageOpacity)
             } else {
-                Color(themeHex: theme.colors.primaryBackground)
+                resolved.primaryBackground
             }
         }
     }
 
-    private func colorSwatch(_ hex: String) -> some View {
-        Circle()
-            .fill(Color(themeHex: hex))
-            .frame(width: 16, height: 16)
-            .overlay(
-                Circle()
-                    .stroke(currentTheme.primaryBorder, lineWidth: 1)
-            )
+    /// Stable, small description of the theme background. We pre-resolve
+    /// the color cases here so the body never re-parses hex strings, and
+    /// we avoid storing the (potentially huge) base64 image payload in
+    /// the view's identity – the decoded `NSImage` is delivered out-of-band
+    /// via `cachedImage`.
+    struct BackgroundDescriptor: Equatable {
+        enum Kind: Equatable {
+            case solid(Color)
+            case gradient([Color])
+            case image
+        }
+
+        let kind: Kind
+        let imageOpacity: Double
+
+        init(theme: CustomTheme) {
+            self.imageOpacity = theme.background.imageOpacity ?? 1.0
+            switch theme.background.type {
+            case .solid:
+                let hex = theme.background.solidColor ?? theme.colors.primaryBackground
+                self.kind = .solid(Color(themeHex: hex))
+            case .gradient:
+                let hexes =
+                    theme.background.gradientColors
+                    ?? [theme.colors.primaryBackground, theme.colors.secondaryBackground]
+                self.kind = .gradient(hexes.map { Color(themeHex: $0) })
+            case .image:
+                self.kind = .image
+            }
+        }
     }
 }
 
