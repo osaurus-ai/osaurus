@@ -798,7 +798,7 @@ public actor ModelRuntime {
 
         // The Metal `notifyExternalReferencesNonZeroOnDealloc` crash on the
         // `Cache disk hit … prefilling 0 remaining` path is fixed upstream
-        // in vmlx-swift-lm `0756dc0` ("close trim-path Metal lifecycle crash
+        // in vmlx-swift `0756dc0` ("close trim-path Metal lifecycle crash
         // on full disk-cache hit") — the trimmed compiled-cache list is now
         // forced to realize before its underlying Metal buffers go out of
         // scope. Now wired in through the `0e22eba` pin. The
@@ -1423,8 +1423,7 @@ public actor ModelRuntime {
             )
         }
 
-        var settings = VMLXServerRuntimeSettings()
-        settings.mtp.mode = .auto
+        let settings = ServerRuntimeSettingsStore.snapshot()
         let launch = settings.resolvedMTPLaunch(
             configData: configData,
             jangConfig: jangConfig,

@@ -916,8 +916,8 @@ struct RuntimePolicySourceTests {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
         #expect(runtime.contains("MTPBundleInspector.inspect("))
-        #expect(runtime.contains("VMLXServerRuntimeSettings()"))
-        #expect(runtime.contains("settings.mtp.mode = .auto"))
+        #expect(runtime.contains("let settings = ServerRuntimeSettingsStore.snapshot()"))
+        #expect(!runtime.contains("settings.mtp.mode = .auto"))
         #expect(runtime.contains("resolvedMTPLaunch("))
         #expect(runtime.contains("resolvedLoadConfiguration("))
         #expect(runtime.contains("resolvedMTPDraftStrategy("))
