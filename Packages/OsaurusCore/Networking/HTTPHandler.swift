@@ -666,8 +666,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     aggregate["disk_l2_hits", default: 0] += diskStats.hits
                     aggregate["disk_l2_misses", default: 0] += diskStats.misses
                     aggregate["disk_l2_stores", default: 0] += diskStats.stores
-                    aggregate["prefix_hits", default: 0] += diskStats.hits
-                    aggregate["prefix_misses", default: 0] += diskStats.misses
                 }
                 row["block_disk_store"] = disk
 

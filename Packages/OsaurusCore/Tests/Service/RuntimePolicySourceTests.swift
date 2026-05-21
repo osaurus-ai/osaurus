@@ -599,6 +599,24 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Runtime cache telemetry keeps paged-prefix and disk-L2 counters separate")
+    func cacheTelemetryDoesNotFoldDiskL2IntoPrefixCounters() throws {
+        let httpHandler = try Self.source("Networking/HTTPHandler.swift")
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+
+        #expect(httpHandler.contains(#""paged_cache""#))
+        #expect(httpHandler.contains(#""block_disk_store""#))
+        #expect(httpHandler.contains(#""disk_l2_hits""#))
+        #expect(httpHandler.contains(#""prefix_hits""#))
+        #expect(!httpHandler.contains(#"aggregate["prefix_hits", default: 0] += diskStats.hits"#))
+        #expect(!httpHandler.contains(#"aggregate["prefix_misses", default: 0] += diskStats.misses"#))
+
+        #expect(adapter.contains("diskL2Hits += diskStats.hits"))
+        #expect(adapter.contains("diskL2Misses += diskStats.misses"))
+        #expect(!adapter.contains("prefixHits += diskStats.hits"))
+        #expect(!adapter.contains("prefixMisses += diskStats.misses"))
+    }
+
     @Test("Flexible model residency respects load-time memory budget")
     func flexibleModelResidencyEvictsBeforeOversizedLoads() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")

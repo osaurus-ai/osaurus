@@ -447,8 +447,6 @@ struct MLXBatchAdapter {
                     prefixMisses += pagedStats.cacheMisses
                 }
                 if let diskStats = stats.diskStats {
-                    prefixHits += diskStats.hits
-                    prefixMisses += diskStats.misses
                     diskL2Hits += diskStats.hits
                     diskL2Misses += diskStats.misses
                     diskL2Stores += diskStats.stores
