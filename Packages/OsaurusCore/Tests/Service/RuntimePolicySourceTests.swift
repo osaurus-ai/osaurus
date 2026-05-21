@@ -831,6 +831,30 @@ struct RuntimePolicySourceTests {
         #expect(agentRun.contains("ChatMessage(role: \"tool\""))
     }
 
+    @Test("OpenAI chat completions endpoint does not inject agent context")
+    func openAIChatCompletionsEndpointDoesNotInjectAgentContext() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        guard let start = handler.range(of: "private func handleChatCompletions("),
+            let end = handler.range(
+                of: "private func handleChatNDJSON(",
+                range: start.lowerBound ..< handler.endIndex
+            )
+        else {
+            Issue.record("Could not locate handleChatCompletions in HTTPHandler.swift")
+            return
+        }
+
+        let chatCompletions = handler[start.lowerBound ..< end.lowerBound]
+        #expect(chatCompletions.contains("let enrichedReq = req"))
+        #expect(chatCompletions.contains("http_context_passthrough_done"))
+        #expect(chatCompletions.contains("X-Osaurus-Agent-Id"))
+        #expect(chatCompletions.contains("agentId: resolvedAgentUUID"))
+        #expect(!chatCompletions.contains("enrichWithAgentContext("))
+        #expect(!chatCompletions.contains("composeChatContext("))
+        #expect(!chatCompletions.contains("injectMemoryPrefix("))
+        #expect(!chatCompletions.contains("mergeAgentContextTools("))
+    }
+
     /// Lock the removal of the `activeGenerationTask?.value` gate at
     /// the entry of `generateEventStream`. The gate was serializing
     /// every same-model overlapping request before vmlx's `BatchEngine`
