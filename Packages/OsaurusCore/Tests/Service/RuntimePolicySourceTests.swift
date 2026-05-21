@@ -621,6 +621,22 @@ struct RuntimePolicySourceTests {
         #expect(cacheSection.contains(#"value: $draft.cache.legacyDisk.directory"#))
     }
 
+    @Test("Tools settings panel separates wired parser overrides from planned host bridges")
+    func toolsSettingsPanelSeparatesWiredParserOverridesFromPlannedHostBridges() throws {
+        let toolsSection = try Self.source("Views/Settings/ServerSettings/ToolsTemplatesSection.swift")
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(toolsSection.contains("status: .engineReady"))
+        #expect(toolsSection.contains("Parser overrides are applied at model load"))
+        #expect(toolsSection.contains("Applied by vmlx at local model load"))
+        #expect(toolsSection.contains("Implicit tool-choice policy is persisted only"))
+        #expect(toolsSection.contains("MCP config-file override is persisted only"))
+        #expect(toolsSection.contains("Custom chat templates are persisted only"))
+
+        #expect(runtime.contains("resolvedModelConfiguration("))
+        #expect(runtime.contains("ServerRuntimeSettingsStore.snapshot()"))
+    }
+
     @Test("Flexible model residency respects load-time memory budget")
     func flexibleModelResidencyEvictsBeforeOversizedLoads() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
