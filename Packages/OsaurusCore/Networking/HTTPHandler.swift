@@ -465,7 +465,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleAnthropicMessages(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/audio/transcriptions" {
                 handleAudioTranscriptions(head: head, context: context, startTime: startTime, userAgent: userAgent)
-            } else if head.method == .POST, path == "/responses" {
+            } else if head.method == .POST, path == "/responses" || path == "/v1/responses" {
                 handleOpenResponses(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/memory/ingest" {
                 handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)

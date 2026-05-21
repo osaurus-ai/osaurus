@@ -1296,7 +1296,7 @@ struct APIEndpoint {
             ),
             APIEndpoint(
                 method: "POST",
-                path: "/responses",
+                path: "/v1/responses",
                 description: "Responses endpoint with streaming support",
                 compatibility: "Open Responses",
                 category: .chat,

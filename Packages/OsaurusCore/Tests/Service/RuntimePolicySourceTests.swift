@@ -894,6 +894,32 @@ struct RuntimePolicySourceTests {
         #expect(!chatCompletions.contains("mergeAgentContextTools("))
     }
 
+    @Test("Open Responses endpoint has v1 alias and does not inject agent context")
+    func openResponsesEndpointHasV1AliasAndDoesNotInjectAgentContext() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        let serverView = try Self.source("Views/Settings/ServerView.swift")
+
+        #expect(handler.contains(#"path == "/responses" || path == "/v1/responses""#))
+        #expect(serverView.contains(#"path: "/v1/responses""#))
+
+        guard let start = handler.range(of: "private func handleOpenResponses("),
+            let end = handler.range(
+                of: "private func handleOpenResponsesStreaming(",
+                range: start.lowerBound ..< handler.endIndex
+            )
+        else {
+            Issue.record("Could not locate handleOpenResponses in HTTPHandler.swift")
+            return
+        }
+
+        let responses = handler[start.lowerBound ..< end.lowerBound]
+        #expect(responses.contains("toChatCompletionRequest()"))
+        #expect(!responses.contains("enrichWithAgentContext("))
+        #expect(!responses.contains("composeChatContext("))
+        #expect(!responses.contains("injectMemoryPrefix("))
+        #expect(!responses.contains("mergeAgentContextTools("))
+    }
+
     @Test("server streaming endpoints honor runtime stream interval")
     func serverStreamingEndpointsHonorRuntimeStreamInterval() throws {
         let handler = try Self.source("Networking/HTTPHandler.swift")
