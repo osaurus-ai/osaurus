@@ -61,13 +61,50 @@ struct HTTPHandlerChatStreamingTests {
         #expect(body.contains("c"))
     }
 
-    @Test func ndjson_path_writes_content_and_done() async throws {
+    @Test func ndjson_path_writes_content_and_done_when_streaming() async throws {
         let server = try await startTestServer(
             with: MockChatEngine(deltas: ["x", "y"], completeText: "", model: "fake")
         )
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/chat")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        let reqBody = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.2,
+            max_tokens: 8,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+        request.httpBody = try JSONEncoder().encode(reqBody)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(body.contains("\"content\":\"x\""))
+        #expect(body.contains("\"content\":\"y\""))
+        #expect(body.contains("\"done\":true") || body.contains("\"done\": true"))
+    }
+
+    @Test func ollama_chat_non_streaming_returns_single_message_object() async throws {
+        let server = try await startTestServer(
+            with: MockChatEngine(deltas: [], completeText: "hello", model: "fake")
+        )
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/api/chat")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.authenticate()
@@ -90,10 +127,14 @@ struct HTTPHandlerChatStreamingTests {
         request.httpBody = try JSONEncoder().encode(reqBody)
 
         let (data, resp) = try await URLSession.shared.data(for: request)
-        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let http = resp as? HTTPURLResponse
         let body = String(decoding: data, as: UTF8.self)
-        #expect(status == 200)
+        #expect(http?.statusCode == 200)
+        #expect(http?.value(forHTTPHeaderField: "Content-Type")?.contains("application/json") == true)
+        #expect(body.contains("\"message\""))
+        #expect(body.contains("\"content\":\"hello\""))
         #expect(body.contains("\"done\":true") || body.contains("\"done\": true"))
+        #expect(body.split(separator: "\n").count <= 1)
     }
 
     @Test func ollama_generate_streaming_writes_response_chunks_and_done() async throws {
@@ -194,7 +235,7 @@ struct HTTPHandlerChatStreamingTests {
                     continuation.finish(
                         throwing: ServiceToolInvocation(
                             toolName: "get_weather",
-                            jsonArguments: "{\"city\":\"SF\"}"
+                            jsonArguments: "{\"city\":\"SF\",\"count\":\"7\"}"
                         )
                     )
                 }
@@ -229,7 +270,14 @@ struct HTTPHandlerChatStreamingTests {
                     function: ToolFunction(
                         name: "get_weather",
                         description: nil,
-                        parameters: .object(["city": .string("")])
+                        parameters: .object([
+                            "type": .string("object"),
+                            "properties": .object([
+                                "city": .object(["type": .string("string")]),
+                                "count": .object(["type": .string("integer")]),
+                            ]),
+                            "required": .array([.string("city"), .string("count")]),
+                        ])
                     )
                 )
             ],
@@ -260,7 +308,7 @@ struct HTTPHandlerChatStreamingTests {
                     continuation.finish(
                         throwing: ServiceToolInvocation(
                             toolName: "get_weather",
-                            jsonArguments: "{\"city\":\"SF\"}"
+                            jsonArguments: "{\"city\":\"SF\",\"count\":\"7\"}"
                         )
                     )
                 }
@@ -298,7 +346,14 @@ struct HTTPHandlerChatStreamingTests {
                     function: ToolFunction(
                         name: "get_weather",
                         description: nil,
-                        parameters: .object(["city": .string("")])
+                        parameters: .object([
+                            "type": .string("object"),
+                            "properties": .object([
+                                "city": .object(["type": .string("string")]),
+                                "count": .object(["type": .string("integer")]),
+                            ]),
+                            "required": .array([.string("city"), .string("count")]),
+                        ])
                     )
                 )
             ],
@@ -313,6 +368,8 @@ struct HTTPHandlerChatStreamingTests {
         #expect(status == 200)
         #expect(body.contains("\"tool_calls\""))
         #expect(body.contains("\"function\":{\"name\":\"get_weather\""))
+        #expect(body.contains("\\\"count\\\":7"))
+        #expect(!body.contains("\\\"count\\\":\\\"7\\\""))
         #expect(body.contains("\"finish_reason\":\"tool_calls\""))
     }
     @Test func sse_path_emits_reasoning_content_field() async throws {
@@ -514,6 +571,94 @@ struct HTTPHandlerChatStreamingTests {
         #expect(finishCount == 1)
     }
 
+    @Test func agent_run_executes_tool_without_streaming_internal_sentinels() async throws {
+        actor AgentToolLoopEngine: ChatEngineProtocol {
+            private var calls = 0
+            private(set) var sawToolMessage = false
+
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+                calls += 1
+                if calls == 1 {
+                    return AsyncThrowingStream { continuation in
+                        continuation.finish(
+                            throwing: ServiceToolInvocation(
+                                toolName: "complete",
+                                jsonArguments: #"{"summary":"agent-run sentinel test"}"#
+                            )
+                        )
+                    }
+                }
+
+                sawToolMessage = request.messages.contains { $0.role == "tool" && ($0.content?.isEmpty == false) }
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("TOOLLOOP-FINAL")
+                    continuation.finish()
+                }
+            }
+
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        let engine = AgentToolLoopEngine()
+        let server = try await startTestServer(with: engine)
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(
+                string:
+                    "http://\(server.host):\(server.port)/agents/00000000-0000-0000-0000-000000000001/run"
+            )!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        let reqBody = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "call complete then answer")],
+            temperature: 0,
+            max_tokens: 64,
+            stream: true,
+            top_p: 1,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: [
+                Tool(
+                    type: "function",
+                    function: ToolFunction(
+                        name: "complete",
+                        description: "Mark the agent task complete.",
+                        parameters: .object(["summary": .string("")])
+                    )
+                ),
+            ],
+            tool_choice: .function(
+                ToolChoiceOption.FunctionName(
+                    type: "function",
+                    function: ToolChoiceOption.Name(name: "complete")
+                )
+            ),
+            session_id: nil
+        )
+        request.httpBody = try JSONEncoder().encode(reqBody)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(body.contains("TOOLLOOP-FINAL"))
+        #expect(await engine.sawToolMessage)
+        #expect(!body.contains("\u{FFFE}tool:"))
+        #expect(!body.contains("\u{FFFE}args:"))
+        #expect(!body.contains("\u{FFFE}done:"))
+        #expect(!body.contains("agent-run sentinel test"))
+    }
+
     // MARK: - Anthropic streaming (`/messages?stream=true`)
 
     @Test func anthropic_sse_emits_thinking_delta_for_reasoning_sentinel() async throws {
@@ -642,6 +787,75 @@ struct HTTPHandlerChatStreamingTests {
         #expect(body.contains("\"name\":\"get_time\""))
         let stopCount = body.components(separatedBy: "\"stop_reason\":\"tool_use\"").count - 1
         #expect(stopCount == 1)
+    }
+
+    // MARK: - OpenResponses context + streaming (`/responses`)
+
+    @Test func openresponses_previous_response_id_prepends_stored_context() async throws {
+        final class ContextEchoEngine: ChatEngineProtocol, @unchecked Sendable {
+            private let lock = NSLock()
+            private var callCount = 0
+            private let codeword = "PR1173-PREVCTX-UNIT"
+
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                fatalError("not used")
+            }
+
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                let output: String = lock.withLock {
+                    defer { callCount += 1 }
+                    if callCount == 0 {
+                        return "ACK"
+                    }
+                    let joined = request.messages.compactMap(\.content).joined(separator: "\n")
+                    return joined.contains(codeword) ? codeword : "NO_CONTEXT"
+                }
+                let choice = ChatChoice(
+                    index: 0,
+                    message: ChatMessage(role: "assistant", content: output),
+                    finish_reason: "stop"
+                )
+                return ChatCompletionResponse(
+                    id: "chatcmpl-test",
+                    created: 1,
+                    model: "fake",
+                    choices: [choice],
+                    usage: Usage(prompt_tokens: 1, completion_tokens: 1, total_tokens: 2),
+                    system_fingerprint: nil
+                )
+            }
+        }
+
+        let server = try await startTestServer(with: ContextEchoEngine())
+        defer { Task { await server.shutdown() } }
+
+        func post(_ json: String) async throws -> OpenResponsesResponse {
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/responses")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.authenticate()
+            request.disablePersistenceForTests()
+            request.httpBody = json.data(using: .utf8)
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            return try JSONDecoder().decode(OpenResponsesResponse.self, from: data)
+        }
+
+        let first = try await post(
+            #"""
+            {"model":"fake","input":"Remember PR1173-PREVCTX-UNIT. Reply ACK.","stream":false}
+            """#
+        )
+        #expect(first.output_text == "ACK")
+
+        let second = try await post(
+            """
+            {"model":"fake","previous_response_id":"\(first.id)","input":"What was the codeword?","stream":false}
+            """
+        )
+        #expect(second.output_text == "PR1173-PREVCTX-UNIT")
     }
 
     // MARK: - OpenResponses streaming (`/responses?stream=true`)

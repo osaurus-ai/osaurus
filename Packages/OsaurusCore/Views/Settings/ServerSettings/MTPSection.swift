@@ -16,7 +16,7 @@ struct MTPSection: View {
     var body: some View {
         ServerSettingsCard(
             section: .speculative,
-            status: .needsBridge,
+            status: .engineReady,
             blurb:
                 "Draft tokens with a fast helper model and verify with the main model in a single step. Engaged per request when the model supports it."
         ) {

@@ -214,7 +214,12 @@ public struct SystemPromptComposer: Sendable {
         // Memory and SOUL are independent — overlap their reads. Memory
         // does DB work; SOUL is a tiny file read; running them in
         // parallel keeps SOUL effectively free behind the memory hop.
-        async let memoryAsync = resolveMemory(snapshot: snapshot, agentId: agentId, trace: trace)
+        async let memoryAsync = resolveMemory(
+            snapshot: snapshot,
+            agentId: agentId,
+            query: query,
+            trace: trace
+        )
         async let soulAsync = resolveSoul(
             snapshot: snapshot,
             agentId: agentId,
@@ -273,20 +278,23 @@ public struct SystemPromptComposer: Sendable {
     }
 
     /// Per-turn memory snippet, or nil when memory is disabled (either
-    /// at the agent level or auto-off via the size-class). We deliberately
-    /// do NOT pass `query` to the assembler so the cached memory snapshot
-    /// can be reused even when the user's wording shifts.
+    /// at the agent level or auto-off via the size-class). Pass the latest
+    /// query through so the relevance gate can select pinned, episode, or
+    /// transcript memory. The memory block is injected into the user message
+    /// instead of the system prompt, so query-specific recall does not
+    /// destabilize the static system/tool cache prefix.
     @MainActor
     private static func resolveMemory(
         snapshot: AgentConfigSnapshot,
         agentId: UUID,
+        query: String,
         trace: TTFTTrace?
     ) async -> String? {
         let window = ContextSizeResolver.resolve(modelId: snapshot.model)
         let memoryOff = snapshot.memoryDisabled || window.sizeClass.disablesMemory
         guard !memoryOff else { return nil }
         trace?.mark("memory_start")
-        let section = await assembleMemorySection(agentId: agentId.uuidString)
+        let section = await assembleMemorySection(agentId: agentId.uuidString, query: query)
         trace?.mark("memory_done")
         return section
     }
@@ -692,7 +700,7 @@ public struct SystemPromptComposer: Sendable {
         // tools are active, working-directory framing when chat is mounted
         // on a host folder. Static so it joins the cached prefix.
         if executionMode.usesSandboxTools {
-            let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
+            let secretNames = AgentSecretsKeychain.secretIDs(agentId: agentId)
             composer.append(
                 .static(
                     id: "sandbox",

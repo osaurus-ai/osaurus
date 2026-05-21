@@ -29,11 +29,20 @@ struct RuntimeConfig: Sendable {
         // new panel and persist via the new store.
         var generation = runtime.generation
         if generation.topP == nil,
-            let legacy = await ServerController.sharedConfiguration(),
+            let legacy = diskBackedServerConfiguration(),
             legacy.genTopP != ServerConfiguration.default.genTopP
         {
             generation.topP = Double(legacy.genTopP)
         }
         return RuntimeConfig(generation: generation)
+    }
+
+    private static func diskBackedServerConfiguration() -> ServerConfiguration? {
+        let url = OsaurusPaths.resolvePath(
+            new: OsaurusPaths.serverConfigFile(),
+            legacy: "ServerConfiguration.json"
+        )
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try? JSONDecoder().decode(ServerConfiguration.self, from: Data(contentsOf: url))
     }
 }

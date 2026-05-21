@@ -11,6 +11,25 @@
 import Foundation
 
 enum ChatHistoryWriter {
+    static func persistInBackground(
+        source: SessionSource,
+        sourcePluginId: String?,
+        agentId: UUID?,
+        externalKey: String?,
+        finalMessages: [ChatMessage],
+        model: String
+    ) {
+        Task.detached(priority: .utility) {
+            persist(
+                source: source,
+                sourcePluginId: sourcePluginId,
+                agentId: agentId,
+                externalKey: externalKey,
+                finalMessages: finalMessages,
+                model: model
+            )
+        }
+    }
 
     /// Persist a completed inference round.
     /// - Parameters:
@@ -34,6 +53,10 @@ enum ChatHistoryWriter {
     ) {
         let conversational = finalMessages.filter { $0.role != "system" }
         guard !conversational.isEmpty else { return }
+        guard StorageKeyManager.shared.hasCachedKey else {
+            print("[ChatHistoryWriter] Skipping chat history persistence: storage key is not already unlocked")
+            return
+        }
 
         // Gate on the storage migration before opening SQLCipher.
         // No-op fast-path once the AppDelegate has awaited it; this

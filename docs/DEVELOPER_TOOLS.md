@@ -297,7 +297,9 @@ Currently env-gated:
 ### Document runtime discovery
 
 Structured document parsing runs in-process for the built-in CSV/TSV, XLSX,
-PPTX/POTX, PDF, and rich-document adapters. The optional office runtime
+PPTX/POTX, PDF, and rich-document adapters. PDF table extraction uses the
+text-layer glyph geometry already exposed by PDFKit; it does not add OCR or a
+third-party PDF engine. The optional office runtime
 detector exists only to discover a local LibreOffice/OpenOffice-compatible
 `soffice` binary for future conversion flows; it probes version metadata and
 never sends document bytes to the runtime.

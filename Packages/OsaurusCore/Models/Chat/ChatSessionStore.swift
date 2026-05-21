@@ -64,6 +64,10 @@ enum ChatSessionStore {
     /// already awaited the migrator before any UI accepted clicks.
     private static func ensureOpenAndImported() {
         guard !didOpen else { return }
+        guard StorageKeyManager.shared.hasCachedKey else {
+            print("[ChatSessionStore] Chat history unavailable: storage key is not already unlocked")
+            return
+        }
         StorageMigrationCoordinator.blockingAwaitReady()
         didOpen = true
         do {

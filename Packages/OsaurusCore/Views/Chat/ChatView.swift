@@ -2142,6 +2142,7 @@ final class ChatSession: ObservableObject {
                         tool_choice: toolSpecs.isEmpty ? nil : .auto,
                         session_id: sessionId?.uuidString
                     )
+                    req.samplingParametersAreImplicit = true
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                     req.ttftTrace = ttftTrace
                     debugLog(
@@ -2513,6 +2514,7 @@ final class ChatSession: ObservableObject {
                             tool_choice: nil,
                             session_id: sessionId?.uuidString
                         )
+                        finalReq.samplingParametersAreImplicit = true
                         finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
 
                         let processor = StreamingDeltaProcessor(

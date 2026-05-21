@@ -12,24 +12,30 @@ struct SearchField: View {
     @Binding var text: String
     var placeholder: LocalizedStringKey
     var width: CGFloat = 240
+    /// When `true`, matches the metrics of adjacent 13pt control buttons
+    /// (Sort/Filter pills) so the field lines up visually next to them.
+    var compact: Bool = false
+
+    private var fontSize: CGFloat { compact ? 12 : 14 }
+    private var verticalPadding: CGFloat { compact ? 7 : 8 }
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 14))
+                .font(.system(size: fontSize))
                 .foregroundColor(theme.tertiaryText)
 
             ZStack(alignment: .leading) {
                 // Custom placeholder for better visibility in light mode
                 if text.isEmpty {
                     Text(localized: placeholder)
-                        .font(.system(size: 14))
+                        .font(.system(size: fontSize))
                         .foregroundColor(theme.placeholderText)
                         .allowsHitTesting(false)
                 }
                 TextField("", text: $text)
                     .textFieldStyle(PlainTextFieldStyle())
-                    .font(.system(size: 14))
+                    .font(.system(size: fontSize))
                     .foregroundColor(theme.primaryText)
             }
 
@@ -43,7 +49,7 @@ struct SearchField: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, verticalPadding)
         .frame(width: width)
         .background(
             RoundedRectangle(cornerRadius: 6)

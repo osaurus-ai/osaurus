@@ -21,7 +21,9 @@ final class ChatSessionsManager: ObservableObject {
     @Published var currentSessionId: UUID?
 
     private init() {
-        refresh()
+        Task { @MainActor [weak self] in
+            self?.refresh()
+        }
     }
 
     // MARK: - Public API

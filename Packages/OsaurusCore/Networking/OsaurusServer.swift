@@ -12,6 +12,25 @@ import NIOHTTP1
 import NIOPosix
 
 public actor OsaurusServer: Sendable {
+    private final class LazyAPIKeyValidatorSnapshot: @unchecked Sendable {
+        private let lock = NSLock()
+        private let build: @Sendable () -> APIKeyValidator
+        private var cached: APIKeyValidator?
+
+        init(_ build: @escaping @Sendable () -> APIKeyValidator) {
+            self.build = build
+        }
+
+        func value() -> APIKeyValidator {
+            lock.lock()
+            defer { lock.unlock() }
+            if let cached { return cached }
+            let validator = build()
+            cached = validator
+            return validator
+        }
+    }
+
     public struct Config: Sendable {
         public var host: String
         public var port: Int
@@ -40,7 +59,9 @@ public actor OsaurusServer: Sendable {
         let threads = ProcessInfo.processInfo.activeProcessorCount
         let group = MultiThreadedEventLoopGroup(numberOfThreads: threads)
 
-        let validator = Self.buildValidator(agentIndex: config.agentIndex)
+        let validatorSnapshot = LazyAPIKeyValidatorSnapshot {
+            Self.buildValidator(agentIndex: config.agentIndex)
+        }
         let trustLoopback = config.trustLoopback
 
         let bootstrap = ServerBootstrap(group: group)
@@ -51,7 +72,7 @@ public actor OsaurusServer: Sendable {
                     channel.pipeline.addHandler(
                         HTTPHandler(
                             configuration: serverConfiguration,
-                            apiKeyValidator: validator,
+                            apiKeyValidatorProvider: { validatorSnapshot.value() },
                             eventLoop: channel.eventLoop,
                             trustLoopback: trustLoopback
                         )
@@ -92,6 +113,7 @@ public actor OsaurusServer: Sendable {
 
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 300
+        context.interactionNotAllowed = true
 
         do {
             var masterKeyData = try MasterKey.getPrivateKey(context: context)
@@ -104,6 +126,7 @@ public actor OsaurusServer: Sendable {
                 } else {
                     masterAddress
                 }
+            APIKeyManager.shared.reload()
 
             return APIKeyValidator(
                 agentAddress: agentAddress,

@@ -299,13 +299,14 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 
 - `Managers/Documents/DocumentAdaptersBootstrap.swift` — registers built-in document adapters.
 - `Models/Documents/Workbook.swift` — typed workbook, sheet, row, and cell representation.
+- `Models/Documents/PDFDocumentRepresentation.swift` — typed PDF pages and heuristic table detections with source anchors.
 - `Models/Documents/PresentationDocument.swift` — typed deck, slide, note, and relationship representation.
 - `Models/Documents/RichDocumentRepresentation.swift` — sections, headings, links, and metadata for rich text sources.
 - `Services/Documents/CSVAdapter.swift` — CSV and TSV table parsing with bounded input handling.
 - `Services/Documents/XLSXAdapter.swift` — XLSX workbook parsing from Office Open XML packages.
 - `Services/Documents/XLSXEmitter.swift` — XLSX workbook emission for round-trip workflows.
 - `Services/Documents/PPTXAdapter.swift` — PPTX/POTX deck parsing from Office Open XML packages.
-- `Services/Documents/PDFAdapter.swift` — PDF extraction with page-level anchors.
+- `Services/Documents/PDFAdapter.swift` — PDF extraction with page-level anchors and layout-aware text-layer table detection.
 - `Services/Documents/RichDocumentAdapter.swift` — DOCX/RTF/HTML-style rich document structure extraction.
 - `Services/Documents/ExternalOfficeRuntimeDetector.swift` — optional LibreOffice/OpenOffice discovery for future conversion flows; detection reads version metadata only and does not send document bytes to a runtime.
 
@@ -314,7 +315,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 - CSV and TSV tables preserve headers, rows, delimiters, and source metadata.
 - XLSX workbooks preserve sheets, cells, shared strings, relationships, and can emit a minimal valid `.xlsx` package.
 - PPTX/POTX decks preserve slide grouping, text runs, notes, and relationships.
-- PDFs preserve page boundaries and anchors so citations can point back to pages.
+- PDFs preserve page boundaries, anchors, and simple text-layer tables so citations can point back to pages and detected table cells.
 - Rich documents preserve section boundaries, headings, links, and metadata.
 
 ---

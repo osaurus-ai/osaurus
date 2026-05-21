@@ -108,6 +108,7 @@ public final class WhitelistStore: @unchecked Sendable {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.keychainService,
             kSecAttrAccount as String: Self.keychainAccount,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
 
         let existing = SecItemCopyMatching(query as CFDictionary, nil)
@@ -128,6 +129,7 @@ public final class WhitelistStore: @unchecked Sendable {
             kSecAttrService as String: Self.keychainService,
             kSecAttrAccount as String: Self.keychainAccount,
             kSecReturnData as String: true,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
 
         var result: AnyObject?

@@ -73,4 +73,53 @@ struct MemoryUserPrefixTests {
         #expect(msgs[0].tool_call_id == "call_abc")
         #expect(msgs[0].content?.contains("memory") == true)
     }
+
+    @Test
+    func composeChatContext_passesQueryToMemoryRecallGate() async throws {
+        try await SandboxTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-memory-query-compose-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+
+            OsaurusPaths.overrideRoot = root
+            MemoryConfigurationStore.invalidateCache()
+            MemoryDatabase.shared.close()
+            try MemoryDatabase.shared.openInMemory()
+            defer {
+                MemoryDatabase.shared.close()
+                MemoryConfigurationStore.invalidateCache()
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            var config = MemoryConfiguration.default
+            config.enabled = true
+            config.relevanceGateMode = .heuristic
+            MemoryConfigurationStore.save(config)
+
+            let agentId = Agent.defaultId.uuidString
+            try MemoryDatabase.shared.insertTranscriptTurn(
+                agentId: agentId,
+                conversationId: "memory-query-forwarding",
+                chunkIndex: 0,
+                role: "user",
+                content: "Memory live fixture exact words: ultramarine prism-441",
+                tokenCount: 8
+            )
+
+            let query = "exact words ultramarine prism-441"
+            let context = await SystemPromptComposer.composeChatContext(
+                agentId: Agent.defaultId,
+                executionMode: .none,
+                query: query,
+                messages: [ChatMessage(role: "user", content: query)],
+                toolsDisabled: true
+            )
+
+            #expect(context.memorySection?.contains("ultramarine prism-441") == true)
+        }
+    }
 }

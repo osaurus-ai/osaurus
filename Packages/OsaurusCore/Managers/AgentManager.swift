@@ -516,16 +516,12 @@ public final class AgentManager: ObservableObject {
         UserDefaults.standard.set(id.uuidString, forKey: Self.activeAgentKey)
     }
 
-    /// One-time migration: assign cryptographic addresses to existing agents that don't have one.
-    /// Retries on each launch until a master key is available.
+    /// One-time migration marker for pre-identity installs. Address assignment
+    /// requires the master key and can prompt for Keychain/biometric access, so
+    /// launch must not run it automatically. Explicit UI paths still call
+    /// `assignAddress(to:)` when the user chooses an identity action.
     private func migrateAgentAddressesIfNeeded() {
         guard !UserDefaults.standard.bool(forKey: Self.agentAddressesMigratedKey) else { return }
-        guard MasterKey.exists() else { return }
-
-        for agent in agents where !agent.isBuiltIn && agent.agentAddress == nil {
-            try? assignAddress(to: agent)
-        }
-
         UserDefaults.standard.set(true, forKey: Self.agentAddressesMigratedKey)
     }
 

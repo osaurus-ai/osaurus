@@ -49,6 +49,38 @@ struct FTS5MemorySearchTests {
     }
 
     @Test
+    func transcriptSearchFallsBackToLooseNaturalRecallTerms() throws {
+        let db = try openInMemory()
+        defer { db.close() }
+
+        try db.insertTranscriptTurn(
+            agentId: "a",
+            conversationId: "c1",
+            chunkIndex: 0,
+            role: "user",
+            content: "Memory fixture exact words: sapphire-memory-8842",
+            tokenCount: 8
+        )
+        try db.insertTranscriptTurn(
+            agentId: "a",
+            conversationId: "c2",
+            chunkIndex: 0,
+            role: "user",
+            content: "unrelated deployment note",
+            tokenCount: 4
+        )
+
+        let hits = try db.searchTranscriptText(
+            query: "What exact words did I type for the memory fixture? Reply only the sapphire-memory codeword.",
+            agentId: "a",
+            days: 365,
+            limit: 5
+        )
+
+        #expect(hits.first?.content == "Memory fixture exact words: sapphire-memory-8842")
+    }
+
+    @Test
     func emptyQueryReturnsNoHits() throws {
         let db = try openInMemory()
         defer { db.close() }

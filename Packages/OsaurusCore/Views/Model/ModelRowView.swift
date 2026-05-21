@@ -308,7 +308,9 @@ struct ModelRowView: View {
                 MetadataPill(text: size, icon: "internaldrive")
             }
             compatibilityBadge
-            modelTypeBadge
+            if model.useCase != .vision {
+                modelTypeBadge
+            }
             if let quant = model.quantization {
                 MetadataPill(text: quant, icon: "gauge.with.dots.needle.bottom.50percent")
             }

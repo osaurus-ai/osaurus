@@ -66,29 +66,164 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("AppDelegate.swift")
         let serverTask = try #require(source.range(of: "let serverStartupTask = Task { @MainActor in"))
         let serverStart = try #require(source.range(of: "await serverController.startServer()"))
-        let providerConnect = try #require(
-            source.range(of: "await MCPProviderManager.shared.connectEnabledProviders()")
-        )
+        let modelCachePrewarm = try #require(source.range(of: "await ModelPickerItemCache.shared.prewarmModelCache()"))
         let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
         let speechAutoload = try #require(source.range(of: "await SpeechService.shared.autoLoadIfNeeded()"))
 
-        #expect(serverTask.lowerBound < providerConnect.lowerBound)
+        #expect(serverTask.lowerBound < modelCachePrewarm.lowerBound)
         #expect(serverStart.lowerBound < schedulerStart.lowerBound)
         #expect(serverStart.lowerBound < speechAutoload.lowerBound)
         #expect(source.contains("await serverStartupTask.value"))
+        #expect(!source.contains("MCPProviderManager.shared.connectEnabledProviders()"))
+        #expect(!source.contains("RemoteProviderManager.shared.connectEnabledProviders()"))
     }
 
-    @Test("AppDelegate prewarms the storage key before database opens")
-    func appDelegatePrewarmsStorageKeyBeforeDatabaseOpen() throws {
+    @Test("AppDelegate does not read the storage key before database opens")
+    func appDelegateDoesNotReadStorageKeyBeforeDatabaseOpen() throws {
         let source = try Self.source("AppDelegate.swift")
-        let prewarmTask = try #require(source.range(of: "let storageKeyPrewarmTask = Task.detached"))
-        let prewarmCall = try #require(source.range(of: "try StorageKeyManager.shared.prewarmCurrentKey()"))
-        let awaitPrewarm = try #require(source.range(of: "await storageKeyPrewarmTask.value"))
         let firstDatabaseOpen = try #require(source.range(of: "try MemoryDatabase.shared.open()"))
+        let storageGate = try #require(source.range(of: "StorageKeyManager.shared.hasCachedKey"))
 
-        #expect(prewarmTask.lowerBound < firstDatabaseOpen.lowerBound)
-        #expect(prewarmCall.lowerBound < firstDatabaseOpen.lowerBound)
-        #expect(awaitPrewarm.lowerBound < firstDatabaseOpen.lowerBound)
+        #expect(storageGate.lowerBound < firstDatabaseOpen.lowerBound)
+        #expect(!source.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
+        #expect(!source.contains("let storageKeyPrewarmTask"))
+    }
+
+    @Test("chat session list does not unlock storage key on init")
+    func chatSessionListDoesNotUnlockStorageKeyOnInit() throws {
+        let manager = try Self.source("Managers/Chat/ChatSessionsManager.swift")
+        let initStart = try #require(manager.range(of: "private init() {"))
+        let initEnd = try #require(
+            manager.range(of: "    }\n\n    // MARK: - Public API", range: initStart.upperBound ..< manager.endIndex)
+        )
+        let initBody = String(manager[initStart.lowerBound ..< initEnd.upperBound])
+        #expect(!initBody.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
+
+        let store = try Self.source("Models/Chat/ChatSessionStore.swift")
+        #expect(store.contains("StorageKeyManager.shared.hasCachedKey"))
+        #expect(store.contains("Chat history unavailable: storage key is not already unlocked"))
+    }
+
+    @Test("chat history writer skips persistence unless storage key is already unlocked")
+    func chatHistoryWriterSkipsPersistenceUnlessStorageKeyCached() throws {
+        let source = try Self.source("Storage/ChatHistoryWriter.swift")
+        let gate = try #require(source.range(of: "StorageKeyManager.shared.hasCachedKey"))
+        let open = try #require(source.range(of: "try db.open()"))
+
+        #expect(gate.lowerBound < open.lowerBound)
+        #expect(source.contains("Skipping chat history persistence: storage key is not already unlocked"))
+    }
+
+    @Test("memory ingest fails fast when memory is disabled")
+    func memoryIngestFailsFastWhenMemoryDisabled() throws {
+        let source = try Self.source("Networking/HTTPHandler.swift")
+        let disabledGate = try #require(source.range(of: "guard MemoryConfigurationStore.load().enabled else"))
+        let waitForOpen = try #require(source.range(of: "MemoryDatabase.waitForSharedOpen(timeoutSeconds: 8)"))
+
+        #expect(disabledGate.lowerBound < waitForOpen.lowerBound)
+        #expect(source.contains(#""error":"memory_disabled""#))
+        #expect(source.contains(#"errorMessage: "memory disabled""#))
+    }
+
+    @Test("scheduler startup does not unlock storage key")
+    func schedulerStartupDoesNotUnlockStorageKey() throws {
+        let source = try Self.source("AppDelegate.swift")
+        let schedulerBlock = try #require(
+            source.range(of: "Task { @MainActor in\n            guard StorageKeyManager.shared.hasCachedKey else")
+        )
+        let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
+
+        #expect(schedulerBlock.lowerBound < schedulerStart.lowerBound)
+        #expect(!source.contains("storageKeyPrewarmTask"))
+        #expect(source.contains("Scheduler disabled: storage key is not already unlocked"))
+    }
+
+    @Test("startup avoids storage-key reads and background Keychain queries skip authentication UI")
+    func startupAvoidsStorageKeyReadsAndBackgroundKeychainsSkipAuthenticationUI() throws {
+        let storageKey = try Self.source("Identity/StorageKeyManager.swift")
+        #expect(storageKey.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
+        #expect(storageKey.contains("cachedReadFailureStatus"))
+        #expect(storageKey.contains("errSecInteractionNotAllowed"))
+        #expect(storageKey.contains("public var hasCachedKey: Bool"))
+
+        let appDelegate = try Self.source("AppDelegate.swift")
+        #expect(!appDelegate.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
+        #expect(!appDelegate.contains("let storageKeyPrewarmTask"))
+        #expect(appDelegate.contains("Storage-dependent search/index services disabled"))
+        #expect(appDelegate.contains("guard StorageKeyManager.shared.hasCachedKey else"))
+
+        let chatSessions = try Self.source("Managers/Chat/ChatSessionsManager.swift")
+        #expect(!chatSessions.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
+        #expect(chatSessions.contains("self?.refresh()"))
+
+        let apiKeys = try Self.source("Identity/APIKeyManager.swift")
+        #expect(apiKeys.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
+        #expect(apiKeys.contains("private init() {}"))
+        #expect(apiKeys.contains("private func ensureLoadedFromKeychain()"))
+        #expect(!apiKeys.contains("private init() {\n        keys = Self.loadFromKeychain()"))
+
+        let masterKey = try Self.source("Identity/MasterKey.swift")
+        #expect(masterKey.contains("if context.interactionNotAllowed"))
+        #expect(masterKey.contains("query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip"))
+
+        let server = try Self.source("Networking/OsaurusServer.swift")
+        #expect(server.contains("context.interactionNotAllowed = true"))
+        #expect(server.contains("LazyAPIKeyValidatorSnapshot"))
+        #expect(server.contains("apiKeyValidatorProvider: { validatorSnapshot.value() }"))
+        #expect(!server.contains("let validator = Self.buildValidator"))
+
+        let agents = try Self.source("Managers/AgentManager.swift")
+        let migrationStart = try #require(agents.range(of: "private func migrateAgentAddressesIfNeeded()"))
+        let migrationEnd = try #require(
+            agents.range(of: "    }\n\n    /// One-time migration: read the legacy active.txt file", range: migrationStart.upperBound ..< agents.endIndex)
+        )
+        let migrationBody = String(agents[migrationStart.lowerBound ..< migrationEnd.upperBound])
+        #expect(!migrationBody.contains("assignAddress(to: agent)"))
+        #expect(!migrationBody.contains("MasterKey.getPrivateKey"))
+
+        let managementBadges = try Self.source("Managers/ManagementBadgeStore.swift")
+        #expect(!managementBadges.contains("MasterKey.exists()"))
+        #expect(managementBadges.contains("startup badges must not trigger"))
+
+        let serverView = try Self.source("Views/Settings/ServerView.swift")
+        #expect(!serverView.contains("if OsaurusIdentity.exists()"))
+        #expect(!serverView.contains(".onAppear {\n            reloadAccessKeys()"))
+        #expect(serverView.contains("reloadAccessKeys(readKeychain: true)"))
+    }
+
+    @Test("plugin host inference carries agent memory like HTTP chat")
+    func pluginHostInferenceInjectsAgentMemoryPrefix() throws {
+        let source = try Self.source("Services/Plugin/PluginHostAPI.swift")
+
+        #expect(source.contains("let memorySection: String?"))
+        #expect(source.contains("allowPreflight: options.wantsPreflight"))
+        #expect(source.contains("allowPreflight: Bool = true"))
+        #expect(source.contains("query: extractPreflightQuery(from: messages)"))
+        #expect(source.contains("messages: messages"))
+        #expect(source.contains("cachedPreflight: allowPreflight ? nil : .empty"))
+        #expect(source.contains("memorySection: composed.memorySection"))
+        #expect(source.contains("SystemPromptComposer.injectMemoryPrefix(ctx.memorySection, into: &messages)"))
+    }
+
+    @Test("HTTP chat persistence runs after response path")
+    func httpChatPersistenceRunsAfterResponsePath() throws {
+        let source = try Self.source("Networking/HTTPHandler.swift")
+
+        #expect(source.contains("ChatHistoryWriter.persistInBackground("))
+        #expect(!source.contains("ChatHistoryWriter.persist(\n                            source: .http"))
+    }
+
+    @Test("chat session manager refresh does not synchronously open history on init")
+    func chatSessionManagerRefreshDoesNotSynchronouslyOpenHistoryOnInit() throws {
+        let source = try Self.source("Managers/Chat/ChatSessionsManager.swift")
+        let initStart = try #require(source.range(of: "private init() {"))
+        let initEnd = try #require(source.range(of: "    }\n\n    // MARK: - Public API", range: initStart.upperBound ..< source.endIndex))
+        let initBody = source[initStart.lowerBound ..< initEnd.upperBound]
+
+        #expect(initBody.contains("Task { @MainActor [weak self] in"))
+        #expect(initBody.contains("self?.refresh()"))
+        #expect(!initBody.contains("\n        refresh()\n"))
+        #expect(!initBody.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
     }
 
     @Test("remote provider autoconnect keeps Keychain reads off MainActor")
@@ -130,6 +265,44 @@ struct RuntimePolicySourceTests {
         #expect(body.contains("CheckedContinuation"))
     }
 
+    @Test("sandbox prompt lists secret IDs without decrypting secret values")
+    func sandboxPromptListsSecretIDsWithoutDecryptingValues() throws {
+        let keychain = try Self.source("Services/Keychain/AgentSecretsKeychain.swift")
+        #expect(keychain.contains("public static func secretIDs(agentId: UUID) -> [String]"))
+
+        let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
+        let sandboxStart = try #require(composer.range(of: "if executionMode.usesSandboxTools"))
+        let sandboxEnd = try #require(
+            composer.range(of: "} else if let folder = executionMode.folderContext", range: sandboxStart.upperBound ..< composer.endIndex)
+        )
+        let sandboxBody = String(composer[sandboxStart.lowerBound ..< sandboxEnd.lowerBound])
+
+        #expect(sandboxBody.contains("AgentSecretsKeychain.secretIDs(agentId: agentId)"))
+        #expect(!sandboxBody.contains("AgentSecretsKeychain.getAllSecrets"))
+    }
+
+    @Test("background Keychain reads use noninteractive authentication contexts")
+    func keychainReadsUseNonInteractiveAuthenticationContexts() throws {
+        let helper = try Self.source("Services/Keychain/KeychainQueryHelpers.swift")
+        #expect(helper.contains("context.interactionNotAllowed = true"))
+
+        for path in [
+            "Services/Provider/RemoteProviderKeychain.swift",
+            "Services/Keychain/AgentSecretsKeychain.swift",
+            "Services/Keychain/ToolSecretsKeychain.swift",
+            "Services/MCP/MCPProviderKeychain.swift",
+        ] {
+            let source = try Self.source(path)
+            let queryCount = source.components(separatedBy: "kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip").count - 1
+            let contextCount = source.components(separatedBy: "kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext()").count - 1
+            #expect(contextCount >= queryCount)
+        }
+
+        let storageKey = try Self.source("Identity/StorageKeyManager.swift")
+        #expect(storageKey.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
+        #expect(!storageKey.contains("KeychainQueryHelpers.nonInteractiveContext()"))
+    }
+
     @Test("ServerController relies on NIO bind instead of a startup port probe")
     func serverControllerDoesNotPreflightPortWithNetworkConnection() throws {
         let source = try Self.source("Networking/ServerController.swift")
@@ -160,7 +333,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "8534b64686571f64f8609878b58533e00b60c911"
+        let currentVmlxRevision = "3cdd9f38ef4a57b53cbac434261b6bac8e038b31"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
@@ -592,6 +765,28 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("Agent run endpoint does not stream internal tool sentinels to clients")
+    func agentRunEndpointDoesNotStreamInternalToolSentinels() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        guard let start = handler.range(of: "private func handleAgentRunEndpoint("),
+            let end = handler.range(of: "// MARK: - Dispatch & Task Endpoints", range: start.lowerBound..<handler.endIndex)
+        else {
+            Issue.record("Could not locate handleAgentRunEndpoint in HTTPHandler.swift")
+            return
+        }
+
+        let agentRun = handler[start.lowerBound..<end.lowerBound]
+        #expect(agentRun.contains("runToolBatchInParallel"))
+        #expect(
+            !agentRun.contains("StreamingToolHint.encode(")
+                && !agentRun.contains("StreamingToolHint.encodeArgs")
+                && !agentRun.contains("StreamingToolHint.encodeDone"),
+            "/agents/{id}/run should execute tools server-side and stream only final assistant text, not internal U+FFFE tool sentinels."
+        )
+        #expect(agentRun.contains("assistantToolCalls.append"))
+        #expect(agentRun.contains("ChatMessage(role: \"tool\""))
+    }
+
     /// Lock the removal of the `activeGenerationTask?.value` gate at
     /// the entry of `generateEventStream`. The gate was serializing
     /// every same-model overlapping request before vmlx's `BatchEngine`
@@ -661,13 +856,52 @@ struct RuntimePolicySourceTests {
     func modelRuntimeUsesTypedVMLXLoadConfiguration() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        #expect(runtime.contains("loadConfiguration: .default"))
+        #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
+        #expect(runtime.contains("resolvedLoadConfiguration("))
         #expect(
             !runtime.contains(
                 "loadModelContainer(\n                from: localURL,\n                using: tokenizerLoader\n            )"
             ),
             "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.default, including load-time memory caps, mmap safetensors, and JANGTQ prestack/alignment"
         )
+    }
+
+    @Test("MTP bundles auto-resolve vmlx tuning into load and generation")
+    func mtpBundlesAutoResolveVMLXTuningIntoLoadAndGeneration() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+
+        #expect(runtime.contains("MTPBundleInspector.inspect("))
+        #expect(runtime.contains("VMLXServerRuntimeSettings()"))
+        #expect(runtime.contains("settings.mtp.mode = .auto"))
+        #expect(runtime.contains("resolvedMTPLaunch("))
+        #expect(runtime.contains("resolvedLoadConfiguration("))
+        #expect(runtime.contains("resolvedMTPDraftStrategy("))
+        #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
+        #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
+        #expect(runtime.contains("draftStrategy: holder.draftStrategy"))
+        #expect(runtime.contains("params.draftStrategy = draftStrategy"))
+        #expect(adapter.contains("draftStrategy: MLXLMCommon.DraftStrategy?"))
+        #expect(adapter.contains("draftStrategy: draftStrategy"))
+
+        let mtpSection = try Self.source("Views/Settings/ServerSettings/MTPSection.swift")
+        #expect(mtpSection.contains("status: .engineReady"))
+        #expect(!mtpSection.contains("status: .needsBridge"))
+
+        let diagnosticsSnapshot = try Self.source("Services/ModelRuntime/BatchDiagnosticsSnapshot.swift")
+        #expect(diagnosticsSnapshot.contains("nativeMTPDepthSummary"))
+        #expect(diagnosticsSnapshot.contains("prefixHits"))
+        #expect(diagnosticsSnapshot.contains("ssmCompanionReDerives"))
+
+        let diagnosticsView = try Self.source("Views/Settings/ServerSettings/BatchDiagnosticsView.swift")
+        #expect(diagnosticsView.contains("\"Native MTP\""))
+        #expect(diagnosticsView.contains("\"Prefix hits / misses\""))
+        #expect(diagnosticsView.contains("\"SSM hits / misses / re-derives\""))
+
+        let httpHandler = try Self.source("Networking/HTTPHandler.swift")
+        #expect(httpHandler.contains("\"draft_strategy\""))
+        #expect(httpHandler.contains("\"native_mtp_depth\""))
+        #expect(httpHandler.contains("\"mlx_press\""))
     }
 
     @Test("ModelRuntime does not repair reasoning parser output")
@@ -702,6 +936,16 @@ struct RuntimePolicySourceTests {
         #expect(manager.contains("guard await isResident(modelName)"))
     }
 
+    @Test("RuntimeConfig snapshot does not hop to MainActor before model load")
+    func runtimeConfigSnapshotAvoidsMainActorPreLoadHop() throws {
+        let config = try Self.source("Services/ModelRuntime/RuntimeConfig.swift")
+
+        #expect(!config.contains("ServerController.sharedConfiguration()"))
+        #expect(!config.contains("MainActor.run"))
+        #expect(config.contains("diskBackedServerConfiguration()"))
+        #expect(config.contains("OsaurusPaths.serverConfigFile()"))
+    }
+
     @Test("UI and health expose model idle residency")
     func uiAndHealthExposeModelIdleResidency() throws {
         let settings = try Self.source(
@@ -720,6 +964,56 @@ struct RuntimePolicySourceTests {
         #expect(health.contains("\"idle_seconds_remaining\""))
         #expect(windows.contains("modelIdleResidencyPolicy"))
         #expect(windows.contains("if idlePolicy == .immediately"))
+        #expect(
+            windows.contains("let found = ModelManager.findInstalledModel(named: model)")
+                && windows.contains("return found.name"),
+            "Chat UI active-model cleanup must use ModelRuntime's canonical repo-tail cache key, not the raw picker id."
+        )
+    }
+
+    @Test("Resident same-model turns do not flash model-loading UI")
+    func residentSameModelTurnsDoNotFlashModelLoadingUI() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(runtime.contains("let shouldReportModelLoad = modelCache[modelName] == nil"))
+        #expect(runtime.contains("if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadWillStartAsync()"))
+        #expect(runtime.contains("if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadDidFinishAsync()"))
+        #expect(
+            runtime.contains("must not flash the UI back to\n        // \"Loading Model...\" on every message"),
+            "Hot resident chat turns must not emit the model-loading phase; users read that as a reload."
+        )
+    }
+
+    @Test("Chat UI sends accumulated history and keeps implicit native MTP sampling")
+    func chatUISendsAccumulatedHistoryAndImplicitNativeMTPSampling() throws {
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+
+        let buildMessages = try #require(chatView.range(of: "func buildMessages() -> [ChatMessage]"))
+        let streamRequest = try #require(chatView.range(of: "var req = ChatCompletionRequest("))
+        let implicitSampling = try #require(chatView.range(of: "req.samplingParametersAreImplicit = true"))
+
+        #expect(
+            chatView.contains("for (index, t) in turns.enumerated()"),
+            "Chat UI must build requests from accumulated turns, not just the newest user text."
+        )
+        #expect(
+            chatView.contains("if !sys.isEmpty { msgs.append(ChatMessage(role: \"system\", content: sys)) }"),
+            "Chat UI request history must retain the composed system/context prefix."
+        )
+        #expect(
+            chatView.contains("if let msg = turnToMessage(t, isLastTurn: isLastTurn) {\n                            msgs.append(msg)\n                        }"),
+            "Every non-empty prior user/assistant/tool turn should be converted into ChatMessage history."
+        )
+        #expect(buildMessages.lowerBound < streamRequest.lowerBound)
+        #expect(streamRequest.lowerBound < implicitSampling.lowerBound)
+        #expect(
+            chatView.contains("temperature: effectiveTemp"),
+            "The UI may pass the agent/profile temperature, but it must also mark sampling implicit so native MTP can force greedy defaults."
+        )
+        #expect(
+            chatView.contains("finalReq.samplingParametersAreImplicit = true"),
+            "Tool-budget wrap-up calls use the same implicit-sampling contract as normal UI turns."
+        )
     }
 
     @Test("ModelRuntime does not block model-ready on hidden Hy3 warmup generation")

@@ -76,6 +76,8 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     private var lock = os_unfair_lock_s()
     private var cachedKey: SymmetricKey?
+    private var cachedReadFailureStatus: OSStatus?
+    private let keychainQueue = DispatchQueue(label: "ai.osaurus.storage-key.keychain")
 
     private init() {}
 
@@ -89,25 +91,67 @@ public final class StorageKeyManager: @unchecked Sendable {
             os_unfair_lock_unlock(&lock)
             return cached
         }
-        os_unfair_lock_unlock(&lock)
-
-        let key: SymmetricKey
-        if let existing = try readKeychainKey() {
-            key = SymmetricKey(data: existing)
-        } else {
-            key = try generateAndPersistKey()
+        if let cachedFailure = cachedReadFailureStatus {
+            os_unfair_lock_unlock(&lock)
+            throw StorageKeyError.keychainReadFailed(cachedFailure)
         }
-
-        os_unfair_lock_lock(&lock)
-        cachedKey = key
         os_unfair_lock_unlock(&lock)
-        return key
+
+        return try keychainQueue.sync {
+            os_unfair_lock_lock(&lock)
+            if let cached = cachedKey {
+                os_unfair_lock_unlock(&lock)
+                return cached
+            }
+            if let cachedFailure = cachedReadFailureStatus {
+                os_unfair_lock_unlock(&lock)
+                throw StorageKeyError.keychainReadFailed(cachedFailure)
+            }
+            os_unfair_lock_unlock(&lock)
+
+            let key: SymmetricKey
+            if let existing = try readKeychainKey() {
+                key = SymmetricKey(data: existing)
+            } else {
+                key = try generateAndPersistKey()
+            }
+
+            os_unfair_lock_lock(&lock)
+            cachedKey = key
+            cachedReadFailureStatus = nil
+            os_unfair_lock_unlock(&lock)
+            return key
+        }
+    }
+
+    /// True only when the key is already resident in this process. This never
+    /// touches Keychain, so startup/UI code can fail closed without prompting.
+    public var hasCachedKey: Bool {
+        os_unfair_lock_lock(&lock)
+        let cached = cachedKey != nil
+        os_unfair_lock_unlock(&lock)
+        return cached
     }
 
     /// Populate the in-process key cache before storage database queues start
     /// opening. This keeps later `currentKey()` calls off the slow Keychain path.
     public func prewarmCurrentKey() throws {
         _ = try currentKey()
+    }
+
+    /// Prewarm from a libdispatch worker instead of pinning a Swift
+    /// cooperative-executor thread inside synchronous Keychain APIs.
+    public func prewarmCurrentKeyOffCooperativeExecutor() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    try self.prewarmCurrentKey()
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     /// Returns true when a persisted key exists in Keychain. Cheap; no
@@ -118,6 +162,7 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: Self.keyAccount,
             kSecReturnData as String: false,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
@@ -129,6 +174,7 @@ public final class StorageKeyManager: @unchecked Sendable {
         let key = try generateAndPersistKey(forceFresh: true)
         os_unfair_lock_lock(&lock)
         cachedKey = key
+        cachedReadFailureStatus = nil
         os_unfair_lock_unlock(&lock)
         return key
     }
@@ -143,6 +189,7 @@ public final class StorageKeyManager: @unchecked Sendable {
         try persistKeychain(data: bytes)
         os_unfair_lock_lock(&lock)
         cachedKey = key
+        cachedReadFailureStatus = nil
         os_unfair_lock_unlock(&lock)
     }
 
@@ -178,6 +225,7 @@ public final class StorageKeyManager: @unchecked Sendable {
         let key = SymmetricKey(data: derivedBytes)
         os_unfair_lock_lock(&lock)
         cachedKey = key
+        cachedReadFailureStatus = nil
         os_unfair_lock_unlock(&lock)
         log.info("Storage key re-derived from master key (HKDF-SHA256)")
         return key
@@ -187,6 +235,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     public func wipeCache() {
         os_unfair_lock_lock(&lock)
         cachedKey = nil
+        cachedReadFailureStatus = nil
         os_unfair_lock_unlock(&lock)
     }
 
@@ -215,6 +264,19 @@ public final class StorageKeyManager: @unchecked Sendable {
     }
 
     // MARK: - Internal helpers
+
+    private static func requiresUserInteraction(_ status: OSStatus) -> Bool {
+        status == errSecInteractionNotAllowed
+            || status == errSecAuthFailed
+            || status == errSecUserCanceled
+    }
+
+    private func cacheReadFailureIfNonInteractiveBlocked(_ status: OSStatus) {
+        guard Self.requiresUserInteraction(status) else { return }
+        os_unfair_lock_lock(&lock)
+        cachedReadFailureStatus = status
+        os_unfair_lock_unlock(&lock)
+    }
 
     private func generateAndPersistKey(forceFresh: Bool = false) throws -> SymmetricKey {
         var raw = [UInt8](repeating: 0, count: 32)
@@ -299,11 +361,15 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecAttrAccount as String: Self.keyAccount,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
-        if status != errSecSuccess { throw StorageKeyError.keychainReadFailed(status) }
+        if status != errSecSuccess {
+            cacheReadFailureIfNonInteractiveBlocked(status)
+            throw StorageKeyError.keychainReadFailed(status)
+        }
         return result as? Data
     }
 
@@ -337,11 +403,15 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecAttrAccount as String: Self.saltAccount,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
-        if status != errSecSuccess { throw StorageKeyError.keychainReadFailed(status) }
+        if status != errSecSuccess {
+            cacheReadFailureIfNonInteractiveBlocked(status)
+            throw StorageKeyError.keychainReadFailed(status)
+        }
         return result as? Data
     }
 }

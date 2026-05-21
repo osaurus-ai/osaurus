@@ -615,10 +615,17 @@ struct ResolvedSecretsMergingTests {
         }
 
         ToolSecretsKeychain.saveSecret(
-            "tav-default", id: "TAVILY_API_KEY", for: pluginId, agentId: defaults)
+            "tav-default",
+            id: "TAVILY_API_KEY",
+            for: pluginId,
+            agentId: defaults
+        )
 
         let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
-            pluginId: pluginId, primary: primary, defaults: defaults)
+            pluginId: pluginId,
+            primary: primary,
+            defaults: defaults
+        )
         #expect(resolved["TAVILY_API_KEY"] == "tav-default")
     }
 
@@ -632,12 +639,23 @@ struct ResolvedSecretsMergingTests {
         }
 
         ToolSecretsKeychain.saveSecret(
-            "tav-default", id: "TAVILY_API_KEY", for: pluginId, agentId: defaults)
+            "tav-default",
+            id: "TAVILY_API_KEY",
+            for: pluginId,
+            agentId: defaults
+        )
         ToolSecretsKeychain.saveSecret(
-            "tav-primary", id: "TAVILY_API_KEY", for: pluginId, agentId: primary)
+            "tav-primary",
+            id: "TAVILY_API_KEY",
+            for: pluginId,
+            agentId: primary
+        )
 
         let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
-            pluginId: pluginId, primary: primary, defaults: defaults)
+            pluginId: pluginId,
+            primary: primary,
+            defaults: defaults
+        )
         #expect(resolved["TAVILY_API_KEY"] == "tav-primary")
     }
 
@@ -651,12 +669,23 @@ struct ResolvedSecretsMergingTests {
         }
 
         ToolSecretsKeychain.saveSecret(
-            "tav-default", id: "TAVILY_API_KEY", for: pluginId, agentId: defaults)
+            "tav-default",
+            id: "TAVILY_API_KEY",
+            for: pluginId,
+            agentId: defaults
+        )
         ToolSecretsKeychain.saveSecret(
-            "brave-primary", id: "BRAVE_SEARCH_API_KEY", for: pluginId, agentId: primary)
+            "brave-primary",
+            id: "BRAVE_SEARCH_API_KEY",
+            for: pluginId,
+            agentId: primary
+        )
 
         let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
-            pluginId: pluginId, primary: primary, defaults: defaults)
+            pluginId: pluginId,
+            primary: primary,
+            defaults: defaults
+        )
         #expect(resolved["TAVILY_API_KEY"] == "tav-default")
         #expect(resolved["BRAVE_SEARCH_API_KEY"] == "brave-primary")
     }
@@ -671,13 +700,24 @@ struct ResolvedSecretsMergingTests {
         }
 
         ToolSecretsKeychain.saveSecret(
-            "tav-default", id: "TAVILY_API_KEY", for: pluginId, agentId: id)
+            "tav-default",
+            id: "TAVILY_API_KEY",
+            for: pluginId,
+            agentId: id
+        )
         // Bystander agent's value must not leak into the read.
         ToolSecretsKeychain.saveSecret(
-            "leak", id: "BRAVE_SEARCH_API_KEY", for: pluginId, agentId: unrelated)
+            "leak",
+            id: "BRAVE_SEARCH_API_KEY",
+            for: pluginId,
+            agentId: unrelated
+        )
 
         let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
-            pluginId: pluginId, primary: id, defaults: id)
+            pluginId: pluginId,
+            primary: id,
+            defaults: id
+        )
         #expect(resolved["TAVILY_API_KEY"] == "tav-default")
         #expect(resolved["BRAVE_SEARCH_API_KEY"] == nil)
     }

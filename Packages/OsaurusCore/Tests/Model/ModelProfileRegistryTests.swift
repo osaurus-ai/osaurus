@@ -91,6 +91,20 @@ struct ModelProfileRegistryTests {
         #expect(profile?.thinkingOption == nil)
     }
 
+    @Test("Gemma 4 defaults thinking off so short API replies are visible")
+    func gemma4_defaultsThinkingOff() {
+        for id in [
+            "gemma-4-26b-a4b-it-jang_4m-crack",
+            "dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK",
+            "OsaurusAI/gemma4-it-26b-a4b",
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(profile?.displayName == Gemma4ThinkingProfile.displayName)
+            #expect(profile?.thinkingOption?.id == "disableThinking")
+            #expect(profile?.defaults["disableThinking"]?.boolValue == true)
+        }
+    }
+
     /// Nemotron-3 Reasoning bundles (model_type=nemotron_h, hybrid Mamba+Attn+MoE)
     /// must match `NemotronThinkingProfile`, NOT the generic
     /// `AutoThinkingProfile`. The two have different `disableThinking`

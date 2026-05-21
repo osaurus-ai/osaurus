@@ -148,6 +148,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             maxTokensExplicit: request.max_tokens != nil,
             topPOverride: request.top_p,
             repetitionPenalty: repPenalty,
+            samplingParametersAreImplicit: request.samplingParametersAreImplicit,
             frequencyPenalty: request.frequency_penalty,
             presencePenalty: request.presence_penalty,
             seed: seedBits,
@@ -267,6 +268,51 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return accumulated.isEmpty ? nil : accumulated
     }
 
+    private static func canonicalToolArgumentsJSON(_ json: String, schema: JSONValue? = nil) -> String {
+        let candidates = [
+            json,
+            json.replacingOccurrences(of: #"\""#, with: #"""#),
+        ]
+        guard let object = candidates.lazy.compactMap({ candidate -> Any? in
+            guard let data = candidate.data(using: .utf8) else { return nil }
+            return try? JSONSerialization.jsonObject(with: data)
+        }).first else {
+            return json
+        }
+        let normalized = normalizeNestedJSONStringValues(object)
+        let coerced: Any
+        if let schema {
+            let candidate = SchemaValidator.coerceArguments(normalized, against: schema)
+            let result = SchemaValidator.validate(arguments: candidate, against: schema)
+            coerced = result.isValid ? candidate : normalized
+        } else {
+            coerced = normalized
+        }
+        guard JSONSerialization.isValidJSONObject(coerced),
+            let data = try? JSONSerialization.data(withJSONObject: coerced, options: [.sortedKeys]),
+            let string = String(data: data, encoding: .utf8)
+        else {
+            return json
+        }
+        return string
+    }
+
+    private static func normalizeNestedJSONStringValues(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.mapValues(normalizeNestedJSONStringValues(_:))
+        }
+        if let array = value as? [Any] {
+            return array.map(normalizeNestedJSONStringValues(_:))
+        }
+        if let string = value as? String,
+            let data = string.data(using: .utf8),
+            let nested = try? JSONSerialization.jsonObject(with: data)
+        {
+            return normalizeNestedJSONStringValues(nested)
+        }
+        return value
+    }
+
     /// Build a non-stream OpenAI-style response from one or more tool
     /// invocations parsed out of a single completion. Local models can emit
     /// multiple `<tool_call>` blocks per response; OpenAI clients expect a
@@ -282,15 +328,25 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         inferenceSource: InferenceSource,
         temperature: Float?,
         maxTokens: Int,
-        requestBodyJSON: String? = nil
+        requestBodyJSON: String? = nil,
+        tools: [Tool]? = nil
     ) -> ChatCompletionResponse {
+        let schemasByName = Dictionary(
+            uniqueKeysWithValues: (tools ?? []).map { ($0.function.name, $0.function.parameters) }
+        )
         let toolCalls: [ToolCall] = invocations.map { inv in
             let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
             let callId = inv.toolCallId ?? "call_" + String(raw.prefix(24))
             return ToolCall(
                 id: callId,
                 type: "function",
-                function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments),
+                function: ToolCallFunction(
+                    name: inv.toolName,
+                    arguments: canonicalToolArgumentsJSON(
+                        inv.jsonArguments,
+                        schema: schemasByName[inv.toolName] ?? nil
+                    )
+                ),
                 geminiThoughtSignature: inv.geminiThoughtSignature
             )
         }
@@ -690,7 +746,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
                 let stopSequences = request.stop ?? []
                 do {
-                    let text = try await toolSvc.respondWithTools(
+                    let stream = try await toolSvc.streamWithTools(
                         messages: messages,
                         parameters: params,
                         stopSequences: stopSequences,
@@ -698,6 +754,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         toolChoice: request.tool_choice,
                         requestedModel: request.model
                     )
+                    var text = ""
+                    var terminalStopReason = "stop"
+                    for try await delta in stream {
+                        if let stats = StreamingStatsHint.decode(delta) {
+                            if let stopReason = stats.stopReason, !stopReason.isEmpty {
+                                terminalStopReason = stopReason
+                            }
+                            continue
+                        }
+                        if StreamingToolHint.isSentinel(delta) { continue }
+                        if StreamingReasoningHint.decode(delta) != nil { continue }
+                        text += delta
+                    }
                     let outputTokens = TokenEstimator.estimate(text)
                     let choice = ChatChoice(
                         index: 0,
@@ -707,7 +776,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             tool_calls: nil,
                             tool_call_id: nil
                         ),
-                        finish_reason: "stop"
+                        finish_reason: terminalStopReason
                     )
                     let usage = Usage(
                         prompt_tokens: inputTokens,
@@ -735,7 +804,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             durationMs: durationMs,
                             temperature: temperature,
                             maxTokens: maxTokens,
-                            finishReason: .stop,
+                            finishReason: RequestLog.FinishReason(rawValue: terminalStopReason) ?? .stop,
                             requestBody: requestBodyJSON,
                             responseBody: Self.serializeResponseForLog(response)
                         )
@@ -753,7 +822,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         inferenceSource: inferenceSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
-                        requestBodyJSON: requestBodyJSON
+                        requestBodyJSON: requestBodyJSON,
+                        tools: tools
                     )
                 } catch let inv as ServiceToolInvocation {
                     return Self.makeToolCallResponse(
@@ -766,22 +836,43 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         inferenceSource: inferenceSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
-                        requestBodyJSON: requestBodyJSON
+                        requestBodyJSON: requestBodyJSON,
+                        tools: tools
                     )
                 }
             }
 
-            // Fallback to plain generation (no tools)
-            let text = try await service.generateOneShot(
+            // Fallback to plain generation (no tools). Use the streaming
+            // service path even for non-streaming HTTP so the terminal stats
+            // sentinel preserves vmlx's authoritative token count and stop
+            // reason (`length` vs natural `stop`).
+            let stopSequences = request.stop ?? []
+            let stream = try await service.streamDeltas(
                 messages: messages,
                 parameters: params,
-                requestedModel: request.model
+                requestedModel: request.model,
+                stopSequences: stopSequences
             )
-            let outputTokens = TokenEstimator.estimate(text)
+            var text = ""
+            var terminalStopReason = "stop"
+            var authoritativeOutputTokens: Int?
+            for try await delta in stream {
+                if let stats = StreamingStatsHint.decode(delta) {
+                    authoritativeOutputTokens = stats.tokenCount
+                    if let stopReason = stats.stopReason, !stopReason.isEmpty {
+                        terminalStopReason = stopReason
+                    }
+                    continue
+                }
+                if StreamingToolHint.isSentinel(delta) { continue }
+                if StreamingReasoningHint.decode(delta) != nil { continue }
+                text += delta
+            }
+            let outputTokens = authoritativeOutputTokens ?? TokenEstimator.estimate(text)
             let choice = ChatChoice(
                 index: 0,
                 message: ChatMessage(role: "assistant", content: text, tool_calls: nil, tool_call_id: nil),
-                finish_reason: "stop"
+                finish_reason: terminalStopReason
             )
             let usage = Usage(
                 prompt_tokens: inputTokens,
@@ -809,7 +900,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     durationMs: durationMs,
                     temperature: temperature,
                     maxTokens: maxTokens,
-                    finishReason: .stop,
+                    finishReason: RequestLog.FinishReason(rawValue: terminalStopReason) ?? .stop,
                     requestBody: requestBodyJSON,
                     responseBody: Self.serializeResponseForLog(response)
                 )

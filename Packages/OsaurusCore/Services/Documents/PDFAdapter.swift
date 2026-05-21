@@ -6,9 +6,7 @@
 //  Intentionally does NOT cover the image-rendering fallback — when a PDF has
 //  no extractable text, this adapter throws `.emptyContent` and the
 //  `DocumentParser` shim falls through to the legacy switch, which still
-//  renders each page as PNG. Moving that path onto the adapter surface is
-//  deferred to stage-4 PR 8 (layout-aware table extraction), where the
-//  typed `PDFDocument` representation gets introduced.
+//  renders each page as PNG.
 //
 
 import Foundation
@@ -33,7 +31,7 @@ public struct PDFAdapter: DocumentFormatAdapter {
             throw DocumentAdapterError.readFailed(underlying: "PDFKit could not open document")
         }
 
-        let pages = Self.extractTextPages(from: document)
+        let pages = Self.extractPages(from: document)
         let extracted = pages.map(\.text).joined(separator: "\n\n")
         guard !extracted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             // No text layer — let the shim fall through to the legacy image-
@@ -42,11 +40,14 @@ public struct PDFAdapter: DocumentFormatAdapter {
         }
 
         let truncated = PlainTextAdapter.applyCharacterCap(extracted)
-        let pageTexts = pages.map { DocumentPageText(pageIndex: $0.pageIndex, text: $0.text) }
-        let structure = Self.structureForTextFallback(
-            filename: url.lastPathComponent,
-            pages: pageTexts,
+        let pdfPages = Self.pageRepresentations(
+            pages: pages,
             extractedText: extracted,
+            textFallback: truncated
+        )
+        let structure = Self.structureForPDFPages(
+            filename: url.lastPathComponent,
+            pages: pdfPages,
             textFallback: truncated
         )
         let securitySignals = Self.securitySignals(for: document)
@@ -68,7 +69,7 @@ public struct PDFAdapter: DocumentFormatAdapter {
             fileSize: fileSize,
             representation: AnyStructuredRepresentation(
                 formatId: formatId,
-                underlying: PlainTextRepresentation(text: truncated)
+                underlying: PDFDocumentRepresentation(pages: pdfPages)
             ),
             structure: structure,
             security: security,
@@ -76,16 +77,365 @@ public struct PDFAdapter: DocumentFormatAdapter {
         )
     }
 
-    private static func extractTextPages(from document: PDFDocument) -> [ExtractedPageText] {
-        var pages: [ExtractedPageText] = []
+    private static func extractPages(from document: PDFDocument) -> [ExtractedPDFPage] {
+        var pages: [ExtractedPDFPage] = []
         for index in 0 ..< document.pageCount {
             guard let page = document.page(at: index),
                 let text = page.string,
                 !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { continue }
-            pages.append(ExtractedPageText(pageIndex: index, text: text))
+            let glyphs = Self.glyphs(from: page, pageIndex: index, text: text)
+            pages.append(
+                ExtractedPDFPage(
+                    pageIndex: index,
+                    text: text,
+                    bounds: page.bounds(for: .cropBox),
+                    tables: PDFTableDetector.detectTables(glyphs: glyphs, pageText: text)
+                )
+            )
         }
         return pages
+    }
+
+    private static func glyphs(
+        from page: PDFPage,
+        pageIndex: Int,
+        text: String
+    ) -> [PDFTableDetector.Glyph] {
+        let nsText = text as NSString
+        let count = min(page.numberOfCharacters, nsText.length)
+        guard count > 0 else { return [] }
+
+        return (0 ..< count).compactMap { index in
+            let character = nsText.substring(with: NSRange(location: index, length: 1))
+            let bounds = page.characterBounds(at: index)
+            guard bounds.width.isFinite, bounds.height.isFinite else { return nil }
+            return PDFTableDetector.Glyph(
+                pageIndex: pageIndex,
+                characterIndex: index,
+                text: character,
+                bounds: bounds
+            )
+        }
+    }
+
+    private static func pageRepresentations(
+        pages: [ExtractedPDFPage],
+        extractedText: String,
+        textFallback: String
+    ) -> [PDFPageRepresentation] {
+        let visiblePrefixLength = Self.visibleExtractedPrefixUTF16Length(
+            extractedText: extractedText,
+            textFallback: textFallback
+        )
+        var extractedOffset = 0
+        var representations: [PDFPageRepresentation] = []
+
+        for (order, page) in pages.enumerated() {
+            if order > 0 {
+                extractedOffset += Self.pageSeparatorUTF16Length
+            }
+
+            let sourceLength = page.text.utf16.count
+            let visibleLength = min(sourceLength, max(0, visiblePrefixLength - extractedOffset))
+            let fallbackStart = min(extractedOffset, visiblePrefixLength)
+            let pageAnchor = Self.pageAnchor(
+                pageIndex: page.pageIndex,
+                order: order,
+                sourceLength: sourceLength,
+                visibleLength: visibleLength,
+                fallbackStart: fallbackStart
+            )
+            let tables = page.tables.map { table in
+                Self.pdfTable(
+                    table,
+                    pageIndex: page.pageIndex,
+                    fallbackStart: fallbackStart,
+                    visibleLength: visibleLength
+                )
+            }
+
+            representations.append(
+                PDFPageRepresentation(
+                    pageIndex: page.pageIndex,
+                    text: page.text,
+                    bounds: Self.documentBoundingBox(page.bounds),
+                    tables: tables,
+                    anchor: pageAnchor
+                )
+            )
+            extractedOffset += sourceLength
+        }
+
+        return representations
+    }
+
+    private static func pageAnchor(
+        pageIndex: Int,
+        order: Int,
+        sourceLength: Int,
+        visibleLength: Int,
+        fallbackStart: Int
+    ) -> DocumentAnchor {
+        let range = DocumentTextRange(startUTF16Offset: fallbackStart, length: visibleLength)
+        let metadata = Self.pageMetadata(
+            pageIndex: pageIndex,
+            order: order,
+            sourceLength: sourceLength,
+            visibleLength: visibleLength,
+            range: range,
+            wasClipped: visibleLength < sourceLength
+        )
+        return DocumentAnchor(
+            kind: .page,
+            path: [
+                .init(kind: .document),
+                .init(kind: .page, index: pageIndex),
+            ],
+            textRange: range,
+            sourceRange: .init(
+                start: .init(pageIndex: pageIndex, characterOffset: 0),
+                end: .init(pageIndex: pageIndex, characterOffset: visibleLength)
+            ),
+            label: "Page \(pageIndex + 1)",
+            metadata: metadata
+        )
+    }
+
+    private static func pdfTable(
+        _ table: PDFTableDetector.Table,
+        pageIndex: Int,
+        fallbackStart: Int,
+        visibleLength: Int
+    ) -> PDFTable {
+        let rows = table.rows.map { row in
+            Self.pdfTableRow(
+                row,
+                pageIndex: pageIndex,
+                tableIndex: table.index,
+                fallbackStart: fallbackStart,
+                visibleLength: visibleLength
+            )
+        }
+        let anchor = Self.anchor(
+            kind: .table,
+            pageIndex: pageIndex,
+            path: Self.path(pageIndex: pageIndex, tableIndex: table.index),
+            sourceRange: table.characterRange,
+            bounds: table.bounds,
+            fallbackStart: fallbackStart,
+            visibleLength: visibleLength,
+            label: "Page \(pageIndex + 1) Table \(table.index + 1)",
+            metadata: [
+                "pageIndex": "\(pageIndex)",
+                "pageNumber": "\(pageIndex + 1)",
+                "tableIndex": "\(table.index)",
+                "rowCount": "\(rows.count)",
+                "columnCount": "\(rows.map(\.cells.count).max() ?? 0)",
+                "detector": "glyph-geometry",
+            ]
+        )
+        return PDFTable(
+            pageIndex: pageIndex,
+            index: table.index,
+            rows: rows,
+            bounds: Self.documentBoundingBox(table.bounds) ?? .zeroPage,
+            anchor: anchor
+        )
+    }
+
+    private static func pdfTableRow(
+        _ row: PDFTableDetector.Row,
+        pageIndex: Int,
+        tableIndex: Int,
+        fallbackStart: Int,
+        visibleLength: Int
+    ) -> PDFTableRow {
+        let cells = row.cells.map { cell in
+            Self.pdfTableCell(
+                cell,
+                pageIndex: pageIndex,
+                tableIndex: tableIndex,
+                fallbackStart: fallbackStart,
+                visibleLength: visibleLength
+            )
+        }
+        let anchor = Self.anchor(
+            kind: .row,
+            pageIndex: pageIndex,
+            path: Self.path(pageIndex: pageIndex, tableIndex: tableIndex, rowIndex: row.cells.first?.rowIndex ?? 0),
+            sourceRange: row.characterRange,
+            bounds: row.bounds,
+            fallbackStart: fallbackStart,
+            visibleLength: visibleLength,
+            label: "Row \((row.cells.first?.rowIndex ?? 0) + 1)",
+            metadata: [
+                "pageIndex": "\(pageIndex)",
+                "tableIndex": "\(tableIndex)",
+                "rowIndex": "\(row.cells.first?.rowIndex ?? 0)",
+                "cellCount": "\(cells.count)",
+            ]
+        )
+        return PDFTableRow(
+            index: row.cells.first?.rowIndex ?? 0,
+            cells: cells,
+            bounds: Self.documentBoundingBox(row.bounds) ?? .zeroPage,
+            anchor: anchor
+        )
+    }
+
+    private static func pdfTableCell(
+        _ cell: PDFTableDetector.Cell,
+        pageIndex: Int,
+        tableIndex: Int,
+        fallbackStart: Int,
+        visibleLength: Int
+    ) -> PDFTableCell {
+        let anchor = Self.anchor(
+            kind: .cell,
+            pageIndex: pageIndex,
+            path: Self.path(
+                pageIndex: pageIndex,
+                tableIndex: tableIndex,
+                rowIndex: cell.rowIndex,
+                columnIndex: cell.columnIndex
+            ),
+            sourceRange: cell.characterRange,
+            bounds: cell.bounds,
+            fallbackStart: fallbackStart,
+            visibleLength: visibleLength,
+            label: "R\(cell.rowIndex + 1)C\(cell.columnIndex + 1)",
+            metadata: [
+                "pageIndex": "\(pageIndex)",
+                "tableIndex": "\(tableIndex)",
+                "rowIndex": "\(cell.rowIndex)",
+                "columnIndex": "\(cell.columnIndex)",
+            ]
+        )
+        return PDFTableCell(
+            rowIndex: cell.rowIndex,
+            columnIndex: cell.columnIndex,
+            text: cell.text,
+            bounds: Self.documentBoundingBox(cell.bounds) ?? .zeroPage,
+            anchor: anchor
+        )
+    }
+
+    private static func anchor(
+        kind: DocumentAnchor.Kind,
+        pageIndex: Int,
+        path: [DocumentAnchor.PathComponent],
+        sourceRange: Range<Int>,
+        bounds: CGRect,
+        fallbackStart: Int,
+        visibleLength: Int,
+        label: String,
+        metadata: [String: String]
+    ) -> DocumentAnchor {
+        let visibleStart = min(max(sourceRange.lowerBound, 0), visibleLength)
+        let visibleEnd = min(max(sourceRange.upperBound, visibleStart), visibleLength)
+        return DocumentAnchor(
+            kind: kind,
+            path: path,
+            textRange: DocumentTextRange(
+                startUTF16Offset: fallbackStart + visibleStart,
+                length: visibleEnd - visibleStart
+            ),
+            sourceRange: .init(
+                start: .init(pageIndex: pageIndex, characterOffset: sourceRange.lowerBound),
+                end: .init(pageIndex: pageIndex, characterOffset: sourceRange.upperBound),
+                boundingBox: Self.documentBoundingBox(bounds)
+            ),
+            label: label,
+            metadata: metadata
+        )
+    }
+
+    private static func path(
+        pageIndex: Int,
+        tableIndex: Int,
+        rowIndex: Int? = nil,
+        columnIndex: Int? = nil
+    ) -> [DocumentAnchor.PathComponent] {
+        var path: [DocumentAnchor.PathComponent] = [
+            .init(kind: .document),
+            .init(kind: .page, index: pageIndex),
+            .init(kind: .table, index: tableIndex),
+        ]
+        if let rowIndex {
+            path.append(.init(kind: .row, index: rowIndex))
+        }
+        if let columnIndex {
+            path.append(.init(kind: .cell, index: columnIndex))
+        }
+        return path
+    }
+
+    private static func documentBoundingBox(_ rect: CGRect) -> DocumentBoundingBox? {
+        guard !rect.isNull, !rect.isEmpty else { return nil }
+        return DocumentBoundingBox(
+            x: Double(rect.origin.x),
+            y: Double(rect.origin.y),
+            width: Double(rect.width),
+            height: Double(rect.height),
+            coordinateSpace: .page
+        )
+    }
+
+    private static func structureForPDFPages(
+        filename: String,
+        pages: [PDFPageRepresentation],
+        textFallback: String
+    ) -> DocumentStructure {
+        guard !pages.isEmpty else {
+            return DocumentStructure.plainText(filename: filename, text: textFallback)
+        }
+
+        let rootAnchor = DocumentAnchor.root(label: filename)
+        let pageElements = pages.map { page in
+            DocumentElement(
+                kind: .page,
+                anchor: page.anchor,
+                text: page.anchor.textRange?.isEmpty == true ? nil : clippedPageText(page),
+                attributes: .init(metadata: page.anchor.metadata),
+                children: page.tables.map(Self.tableElement)
+            )
+        }
+        let root = DocumentElement(
+            id: rootAnchor.id,
+            kind: .document,
+            anchor: rootAnchor,
+            children: pageElements
+        )
+        return DocumentStructure(root: root, textLengthUTF16: textFallback.utf16.count)
+    }
+
+    private static func tableElement(_ table: PDFTable) -> DocumentElement {
+        DocumentElement(
+            kind: .table,
+            anchor: table.anchor,
+            attributes: .init(metadata: table.anchor.metadata),
+            children: table.rows.map { row in
+                DocumentElement(
+                    kind: .tableRow,
+                    anchor: row.anchor,
+                    attributes: .init(metadata: row.anchor.metadata),
+                    children: row.cells.map { cell in
+                        DocumentElement(
+                            kind: .tableCell,
+                            anchor: cell.anchor,
+                            text: cell.text,
+                            attributes: .init(metadata: cell.anchor.metadata)
+                        )
+                    }
+                )
+            }
+        )
+    }
+
+    private static func clippedPageText(_ page: PDFPageRepresentation) -> String? {
+        guard let range = page.anchor.textRange, range.length > 0 else { return nil }
+        return Self.prefix(page.text, maxUTF16Length: range.length)
     }
 
     static func structureForTextFallback(
@@ -185,10 +535,8 @@ public struct PDFAdapter: DocumentFormatAdapter {
         var extractedIndex = extractedText.startIndex
         var fallbackIndex = textFallback.startIndex
         var length = 0
-        while extractedIndex < extractedText.endIndex,
-            fallbackIndex < textFallback.endIndex,
-            extractedText[extractedIndex] == textFallback[fallbackIndex]
-        {
+        while extractedIndex < extractedText.endIndex && fallbackIndex < textFallback.endIndex {
+            guard extractedText[extractedIndex] == textFallback[fallbackIndex] else { break }
             let nextExtractedIndex = extractedText.index(after: extractedIndex)
             length += extractedText[extractedIndex ..< nextExtractedIndex].utf16.count
             extractedIndex = nextExtractedIndex
@@ -287,10 +635,22 @@ public struct PDFAdapter: DocumentFormatAdapter {
         ]
     }
 
-    private struct ExtractedPageText {
+    private struct ExtractedPDFPage {
         let pageIndex: Int
         let text: String
+        let bounds: CGRect
+        let tables: [PDFTableDetector.Table]
     }
 
     private static let pageSeparatorUTF16Length = "\n\n".utf16.count
+}
+
+private extension DocumentBoundingBox {
+    static let zeroPage = DocumentBoundingBox(
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        coordinateSpace: .page
+    )
 }

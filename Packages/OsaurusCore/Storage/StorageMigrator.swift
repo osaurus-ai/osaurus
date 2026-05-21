@@ -233,6 +233,15 @@ public actor StorageMigrator {
             return containsOnlyBuiltInThemeJSON(url)
         }
 
+        // Belt-and-suspenders for `config/`: the primary fix defers
+        // every pre-gate write into `~/.osaurus/config/`, but allow a
+        // future regression to land without re-flashing the overlay
+        // by accepting a directory that holds only the known bootstrap
+        // files. Anything user-touched falls through.
+        if entry == "config" {
+            return containsOnlyBootstrapConfigFiles(url)
+        }
+
         return false
     }
 
@@ -261,6 +270,40 @@ public actor StorageMigrator {
                 let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 object["isBuiltIn"] as? Bool == true
             else {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Files the app can write into `~/.osaurus/config/` automatically
+    /// on first launch, before the user has touched any setting. Any
+    /// other JSON (chat, tools, memory, populated voice/*.json, …)
+    /// counts as user data.
+    private static let bootstrapConfigFileNames: Set<String> = [
+        "server-runtime.json",
+        "server.json",
+    ]
+
+    private func containsOnlyBootstrapConfigFiles(_ url: URL) -> Bool {
+        let entries =
+            (try? FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+
+        for entry in entries {
+            let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDir {
+                // `voice/` may be eagerly created by speech services
+                // even before any save lands. Tolerate it iff empty.
+                if entry.lastPathComponent == "voice", isDirectoryEmpty(entry) {
+                    continue
+                }
+                return false
+            }
+            if !Self.bootstrapConfigFileNames.contains(entry.lastPathComponent) {
                 return false
             }
         }

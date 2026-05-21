@@ -16,13 +16,12 @@ public final class APIKeyManager: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "com.osaurus.api-keys", attributes: .concurrent)
     private var keys: [AccessKeyInfo] = []
+    private var didLoadFromKeychain = false
 
     private static let keychainService = "com.osaurus.access-keys"
     private static let keychainAccount = "key-metadata"
 
-    private init() {
-        keys = Self.loadFromKeychain()
-    }
+    private init() {}
 
     // MARK: - Generate
 
@@ -37,6 +36,8 @@ public final class APIKeyManager: @unchecked Sendable {
         expiration: AccessKeyExpiration,
         agentIndex: UInt32? = nil
     ) throws -> (fullKey: String, info: AccessKeyInfo) {
+        ensureLoadedFromKeychain()
+
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 300
 
@@ -110,6 +111,8 @@ public final class APIKeyManager: @unchecked Sendable {
     /// Revoke an access key by its ID. Adds (address, nonce) to the revocation store
     /// and marks the metadata as revoked.
     public func revoke(id: UUID) {
+        ensureLoadedFromKeychain()
+
         queue.sync(flags: .barrier) {
             guard let index = keys.firstIndex(where: { $0.id == id }) else { return }
             let key = keys[index]
@@ -121,6 +124,8 @@ public final class APIKeyManager: @unchecked Sendable {
 
     /// Revoke all keys from a given address with counter <= current counter.
     public func revokeAll(forAddress address: OsaurusID) {
+        ensureLoadedFromKeychain()
+
         queue.sync(flags: .barrier) {
             let currentCounter = CounterStore.shared.current
             RevocationStore.shared.revokeAllBefore(address: address, counter: currentCounter)
@@ -135,6 +140,8 @@ public final class APIKeyManager: @unchecked Sendable {
     /// Revoke an access key and remove it from the key list entirely.
     /// Use this for temporary keys that should leave no trace after deletion.
     public func delete(id: UUID) {
+        ensureLoadedFromKeychain()
+
         queue.sync(flags: .barrier) {
             guard let index = keys.firstIndex(where: { $0.id == id }) else { return }
             let key = keys[index]
@@ -209,6 +216,7 @@ public final class APIKeyManager: @unchecked Sendable {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
 
         let existing = SecItemCopyMatching(query as CFDictionary, nil)
@@ -229,6 +237,7 @@ public final class APIKeyManager: @unchecked Sendable {
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
             kSecReturnData as String: true,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
 
         var result: AnyObject?
@@ -247,6 +256,15 @@ public final class APIKeyManager: @unchecked Sendable {
     public func reload() {
         queue.sync(flags: .barrier) {
             keys = Self.loadFromKeychain()
+            didLoadFromKeychain = true
+        }
+    }
+
+    private func ensureLoadedFromKeychain() {
+        queue.sync(flags: .barrier) {
+            guard !didLoadFromKeychain else { return }
+            keys = Self.loadFromKeychain()
+            didLoadFromKeychain = true
         }
     }
 }

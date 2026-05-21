@@ -5,6 +5,7 @@
 //  Created by Terence on 8/17/25.
 //
 
+import AVFoundation
 import AppKit
 import Combine
 import QuartzCore
@@ -171,6 +172,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // updates keep painting.
         StorageMigrationCoordinator.blockingAwaitReady()
 
+        // Deferred from `ServerController.init()` to keep
+        // `~/.osaurus/` pristine until the storage gate has stamped
+        // `.storage-version`. See `bootstrapRuntimeSettings()`.
+        serverController.bootstrapRuntimeSettings()
+
         // Wire up the periodic SQLite maintenance ticker (PRAGMA
         // optimize / wal_checkpoint / VACUUM at sensible intervals).
         // Idempotent — safe even if some DBs aren't open yet, the
@@ -260,18 +266,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await serverController.startServer()
         }
 
-        let storageKeyPrewarmTask = Task.detached(priority: .utility) {
-            do {
-                try StorageKeyManager.shared.prewarmCurrentKey()
-            } catch {
-                NSLog("[Osaurus] Storage key prewarm failed: \(error)")
-            }
-        }
-
-        // Auto-connect to enabled providers, then update model cache with remote models
+        // Do not auto-connect keychain-backed providers at launch. Explicit
+        // provider connect actions may read credentials; startup must not.
         Task { @MainActor in
-            await MCPProviderManager.shared.connectEnabledProviders()
-            await RemoteProviderManager.shared.connectEnabledProviders()
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
@@ -287,7 +284,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // defensively (no-op fast path) for the plugin/HTTP entry
         // points that don't go through this Task.
         let embeddingInitTask = Task.detached(priority: .utility) {
-            await storageKeyPrewarmTask.value
+            guard StorageKeyManager.shared.hasCachedKey else {
+                MemoryLogger.database.error(
+                    "Storage-dependent search/index services disabled — storage key is not already unlocked"
+                )
+                return
+            }
             var memoryDBOpened = false
             for attempt in 1 ... 3 {
                 do {
@@ -354,12 +356,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
 
-        // Start the self-scheduling loop (spec §9). The scheduler reads
-        // from `~/.osaurus/scheduler.sqlite` so the storage migrator
-        // must already be ready by this point — and it is, because
-        // `StorageMigrationCoordinator.blockingAwaitReady` ran at the
-        // top of `applicationDidFinishLaunching`.
-        NextRunScheduler.shared.start()
+        // Start the self-scheduling loop only if encrypted storage is already
+        // unlocked. Startup must not trigger a Keychain/password prompt.
+        Task { @MainActor in
+            guard StorageKeyManager.shared.hasCachedKey else {
+                NSLog("[Osaurus] Scheduler disabled: storage key is not already unlocked")
+                return
+            }
+            NextRunScheduler.shared.start()
+        }
 
         // Start sandbox tool registrar. Internally awaits container
         // auto-start before the initial `registerTools` call, so the first
@@ -471,28 +476,34 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     // MARK: - VAD Service
 
     private func initializeVADService() {
-        // Auto-start VAD if enabled (with delay to wait for model loading)
         let vadConfig = VADConfigurationStore.load()
-        if vadConfig.vadModeEnabled && !vadConfig.enabledAgentIds.isEmpty {
-            Task { @MainActor in
-                // Wait for speech model to be loaded (up to 30 seconds)
-                let speechService = SpeechService.shared
-                var attempts = 0
-                while !speechService.isModelLoaded && attempts < 60 {
-                    try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
-                    attempts += 1
-                }
+        guard vadConfig.vadModeEnabled, !vadConfig.enabledAgentIds.isEmpty else { return }
 
-                if speechService.isModelLoaded {
-                    do {
-                        try await VADService.shared.start()
-                        log.info("VAD service started successfully on app launch")
-                    } catch {
-                        log.error("Failed to start VAD service: \(error.localizedDescription, privacy: .public)")
-                    }
-                } else {
-                    log.error("VAD service not started — speech model not loaded after 30s")
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            log.info(
+                "VAD auto-start skipped — microphone permission not yet authorized; user must re-enable from Voice settings"
+            )
+            return
+        }
+
+        Task { @MainActor in
+            // wait for speech model to be loaded (up to 30 seconds)
+            let speechService = SpeechService.shared
+            var attempts = 0
+            while !speechService.isModelLoaded && attempts < 60 {
+                try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+                attempts += 1
+            }
+
+            if speechService.isModelLoaded {
+                do {
+                    try await VADService.shared.start()
+                    log.info("VAD service started successfully on app launch")
+                } catch {
+                    log.error("Failed to start VAD service: \(error.localizedDescription, privacy: .public)")
                 }
+            } else {
+                log.error("VAD service not started — speech model not loaded after 30s")
             }
         }
     }

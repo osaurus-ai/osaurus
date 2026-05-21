@@ -16,7 +16,11 @@ enum ServerConfigurationStore {
         let url = configurationFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
-            return try JSONDecoder().decode(ServerConfiguration.self, from: Data(contentsOf: url))
+            var configuration = try JSONDecoder().decode(ServerConfiguration.self, from: Data(contentsOf: url))
+            if migrateLegacyImmediateIdleResidencyIfNeeded(&configuration) {
+                save(configuration)
+            }
+            return configuration
         } catch {
             print("[Osaurus] Failed to load ServerConfiguration: \(error)")
             return nil
@@ -40,5 +44,27 @@ enum ServerConfigurationStore {
             return dir.appendingPathComponent("server.json")
         }
         return OsaurusPaths.resolvePath(new: OsaurusPaths.serverConfigFile(), legacy: "ServerConfiguration.json")
+    }
+
+    private static func migrateLegacyImmediateIdleResidencyIfNeeded(
+        _ configuration: inout ServerConfiguration
+    ) -> Bool {
+        let markerURL = idleResidencyWarmDefaultMigrationMarkerURL()
+        guard configuration.modelIdleResidencyPolicy == .immediately,
+              !FileManager.default.fileExists(atPath: markerURL.path)
+        else {
+            return false
+        }
+
+        configuration.modelIdleResidencyPolicy = .defaultWarm
+        OsaurusPaths.ensureExistsSilent(markerURL.deletingLastPathComponent())
+        try? Data().write(to: markerURL, options: [.atomic])
+        return true
+    }
+
+    private static func idleResidencyWarmDefaultMigrationMarkerURL() -> URL {
+        configurationFileURL()
+            .deletingLastPathComponent()
+            .appendingPathComponent(".model-idle-residency-warm-default-migrated")
     }
 }

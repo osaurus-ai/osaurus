@@ -85,6 +85,7 @@ enum ModelProfileRegistry {
         Hy3ReasoningProfile.self,
         LingRuntimeProfile.self,
         ZayaThinkingProfile.self,
+        Gemma4ThinkingProfile.self,
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
@@ -423,6 +424,36 @@ struct ZayaThinkingProfile: ModelProfile {
     static func matches(modelId: String) -> Bool {
         ModelFamilyNames.isZayaFamily(modelId)
             && !ModelFamilyNames.isZayaVLFamily(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "disableThinking",
+            label: "Disable Thinking",
+            icon: "brain.head.profile",
+            kind: .toggle(default: true)
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "disableThinking": .bool(true)
+    ]
+
+    static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
+}
+
+// MARK: - Gemma 4 Thinking Profile
+
+/// Gemma-4 chat templates expose an `enable_thinking` kwarg. Leaving the
+/// generic auto-thinking default ON can spend short API responses entirely in
+/// the hidden reasoning rail, producing an empty visible assistant message.
+/// Default to direct/no-thinking chat while preserving explicit opt-in.
+struct Gemma4ThinkingProfile: ModelProfile {
+    static let displayName = "Gemma 4 Thinking"
+
+    static func matches(modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.contains("gemma-4") || lower.contains("gemma4")
     }
 
     static let options: [ModelOptionDefinition] = [

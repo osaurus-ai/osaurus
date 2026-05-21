@@ -102,6 +102,7 @@ public struct MasterKey: Sendable {
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: false,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
@@ -117,7 +118,7 @@ public struct MasterKey: Sendable {
 
     /// Retrieve the raw Master Key bytes from Keychain (triggers biometric auth).
     static func getPrivateKey(context: LAContext) throws -> Data {
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
@@ -125,6 +126,9 @@ public struct MasterKey: Sendable {
             kSecReturnData as String: true,
             kSecUseAuthenticationContext as String: context,
         ]
+        if context.interactionNotAllowed {
+            query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
+        }
 
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,

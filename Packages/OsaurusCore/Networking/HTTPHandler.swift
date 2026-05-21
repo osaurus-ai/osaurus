@@ -20,6 +20,58 @@ private final class SendableBool: @unchecked Sendable {
     }
 }
 
+private final class LockedStringAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = ""
+
+    func append(_ value: String) {
+        lock.withLock {
+            storage += value
+        }
+    }
+
+    var value: String {
+        lock.withLock { storage }
+    }
+}
+
+private final class OpenResponsesContextStore: @unchecked Sendable {
+    private struct Entry {
+        let model: String
+        let messages: [ChatMessage]
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+    private var insertionOrder: [String] = []
+    private let maxEntries = 128
+    private let maxMessagesPerEntry = 40
+
+    func transcript(for responseId: String?, model: String) -> [ChatMessage] {
+        guard let responseId, !responseId.isEmpty else { return [] }
+        return lock.withLock {
+            guard let entry = entries[responseId], entry.model == model else { return [] }
+            return entry.messages
+        }
+    }
+
+    func store(responseId: String, model: String, messages: [ChatMessage]) {
+        guard !responseId.isEmpty, !messages.isEmpty else { return }
+        let clipped = Array(messages.suffix(maxMessagesPerEntry))
+        lock.withLock {
+            if entries[responseId] == nil {
+                insertionOrder.append(responseId)
+            }
+            entries[responseId] = Entry(model: model, messages: clipped)
+
+            while insertionOrder.count > maxEntries {
+                let evicted = insertionOrder.removeFirst()
+                entries.removeValue(forKey: evicted)
+            }
+        }
+    }
+}
+
 private final class OneShotContinuation<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var didResume = false
@@ -93,10 +145,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     typealias OutboundOut = HTTPServerResponsePart
 
     private let configuration: ServerConfiguration
-    private let apiKeyValidator: APIKeyValidator
+    private let apiKeyValidatorProvider: @Sendable () -> APIKeyValidator
+    private var apiKeyValidator: APIKeyValidator { apiKeyValidatorProvider() }
     private let chatEngine: ChatEngineProtocol
     private let trustLoopback: Bool
     private let _isChannelActive = SendableBool(false)
+    private static let openResponsesContextStore = OpenResponsesContextStore()
     /// Per-request scratch state. `internal` so peer-file helpers (e.g.
     /// `HTTPRequestParse.readRequestBody()`) can drain the buffered body
     /// without going through a private accessor.
@@ -123,12 +177,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     init(
         configuration: ServerConfiguration,
         apiKeyValidator: APIKeyValidator = .empty,
+        apiKeyValidatorProvider: (@Sendable () -> APIKeyValidator)? = nil,
         eventLoop: EventLoop,
         chatEngine: ChatEngineProtocol = ChatEngine(),
         trustLoopback: Bool = true
     ) {
         self.configuration = configuration
-        self.apiKeyValidator = apiKeyValidator
+        self.apiKeyValidatorProvider = apiKeyValidatorProvider ?? { apiKeyValidator }
         self.chatEngine = chatEngine
         self.trustLoopback = trustLoopback
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
@@ -555,6 +610,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     "is_current": summary.isCurrent,
                     "weights_bytes": summary.bytes,
                 ]
+                if let draftStrategy = summary.draftStrategyDescription {
+                    row["draft_strategy"] = draftStrategy
+                } else {
+                    row["draft_strategy"] = NSNull()
+                }
+                if let nativeMTPDepth = summary.nativeMTPDepth {
+                    row["native_mtp_depth"] = nativeMTPDepth
+                } else {
+                    row["native_mtp_depth"] = NSNull()
+                }
+                let mlxPress = summary.mlxPressStatus
+                var mlxPressStatus: [String: Any] = [
+                    "enabled": mlxPress.enabled,
+                    "backend": mlxPress.backend.rawValue,
+                    "tiles_under_management": mlxPress.tilesUnderManagement,
+                    "total_routed_bytes": mlxPress.totalRoutedBytes,
+                ]
+                if let coldFraction = mlxPress.coldFraction {
+                    mlxPressStatus["cold_fraction"] = coldFraction
+                } else {
+                    mlxPressStatus["cold_fraction"] = NSNull()
+                }
+                row["mlx_press"] = mlxPressStatus
                 guard let stats = summary.cacheStats else {
                     row["cache_enabled"] = false
                     return row
@@ -1787,7 +1865,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
         SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
-        return enriched
+        let mergedTools = mergeAgentContextTools(composed.tools, clientTools: request.tools)
+        let resolvedToolChoice: ToolChoiceOption? = {
+            guard let mergedTools, !mergedTools.isEmpty else { return nil }
+            return request.tool_choice ?? .auto
+        }()
+        return enriched.withContext(
+            messages: enriched.messages,
+            tools: mergedTools,
+            toolChoice: resolvedToolChoice
+        )
+    }
+
+    private static func mergeAgentContextTools(
+        _ agentTools: [Tool],
+        clientTools: [Tool]?
+    ) -> [Tool]? {
+        let clientTools = clientTools ?? []
+        guard !agentTools.isEmpty || !clientTools.isEmpty else { return nil }
+        let clientNames = Set(clientTools.map(\.function.name))
+        let contextTools = agentTools.filter { !clientNames.contains($0.function.name) }
+        return contextTools + clientTools
     }
 
     // MARK: - Memory Ingestion
@@ -1847,6 +1945,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         let cors = stateRef.value.corsHeaders
+        guard MemoryConfigurationStore.load().enabled else {
+            let responseBody = #"{"error":"memory_disabled","message":"Memory is disabled"}"#
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .serviceUnavailable,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + cors,
+                body: responseBody
+            )
+            logRequest(
+                method: "POST",
+                path: "/memory/ingest",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseBody: responseBody,
+                responseStatus: 503,
+                startTime: startTime,
+                errorMessage: "memory disabled"
+            )
+            return
+        }
+
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
@@ -1857,49 +1977,116 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             let db = MemoryDatabase.shared
+            guard await MemoryDatabase.waitForSharedOpen(timeoutSeconds: 8) else {
+                let responseBody = #"{"error":"memory_database_unavailable","message":"Memory database is not ready"}"#
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                hop {
+                    var responseHead = HTTPResponseHead(version: head.version, status: .serviceUnavailable)
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: responseBody.utf8.count)
+                    buffer.writeString(responseBody)
+                    var nioHeaders = HTTPHeaders()
+                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                    nioHeaders.add(name: "Connection", value: "close")
+                    responseHead.headers = nioHeaders
+                    let c = ctx.value
+                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        ctx.value.close(promise: nil)
+                    }
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/memory/ingest",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: responseBody,
+                    responseStatus: 503,
+                    startTime: logStartTime,
+                    errorMessage: "memory database not ready"
+                )
+                return
+            }
 
             let skipExtraction = req.skip_extraction ?? false
 
-            try? db.deleteTranscriptForConversation(req.conversation_id)
+            do {
+                try db.deleteTranscriptForConversation(req.conversation_id)
 
-            for (i, turn) in req.turns.enumerated() {
-                let turnDate = turn.date ?? req.session_date
+                for (i, turn) in req.turns.enumerated() {
+                    let turnDate = turn.date ?? req.session_date
 
-                let pairs: [(role: String, content: String, index: Int)] = [
-                    ("user", turn.user, i * 2),
-                    ("assistant", turn.assistant, i * 2 + 1),
-                ]
-                for (role, content, chunkIndex) in pairs {
-                    let tokens = TokenEstimator.estimate(content)
-                    let storedTurn = TranscriptTurn(
-                        conversationId: req.conversation_id,
-                        chunkIndex: chunkIndex,
-                        role: role,
-                        content: content,
-                        tokenCount: tokens,
-                        agentId: req.agent_id
-                    )
-                    try? db.insertTranscriptTurn(
-                        agentId: req.agent_id,
-                        conversationId: req.conversation_id,
-                        chunkIndex: chunkIndex,
-                        role: role,
-                        content: content,
-                        tokenCount: tokens,
-                        createdAt: turnDate
-                    )
-                    await MemorySearchService.shared.indexTranscriptTurn(storedTurn)
+                    let pairs: [(role: String, content: String, index: Int)] = [
+                        ("user", turn.user, i * 2),
+                        ("assistant", turn.assistant, i * 2 + 1),
+                    ]
+                    for (role, content, chunkIndex) in pairs {
+                        let tokens = TokenEstimator.estimate(content)
+                        let storedTurn = TranscriptTurn(
+                            conversationId: req.conversation_id,
+                            chunkIndex: chunkIndex,
+                            role: role,
+                            content: content,
+                            tokenCount: tokens,
+                            agentId: req.agent_id
+                        )
+                        try db.insertTranscriptTurn(
+                            agentId: req.agent_id,
+                            conversationId: req.conversation_id,
+                            chunkIndex: chunkIndex,
+                            role: role,
+                            content: content,
+                            tokenCount: tokens,
+                            createdAt: turnDate
+                        )
+                        await MemorySearchService.shared.indexTranscriptTurn(storedTurn)
+                    }
+
+                    if !skipExtraction {
+                        await MemoryService.shared.bufferTurn(
+                            userMessage: turn.user,
+                            assistantMessage: turn.assistant,
+                            agentId: req.agent_id,
+                            conversationId: req.conversation_id,
+                            sessionDate: turnDate
+                        )
+                    }
                 }
-
-                if !skipExtraction {
-                    await MemoryService.shared.bufferTurn(
-                        userMessage: turn.user,
-                        assistantMessage: turn.assistant,
-                        agentId: req.agent_id,
-                        conversationId: req.conversation_id,
-                        sessionDate: turnDate
-                    )
+            } catch {
+                let responseBody = #"{"error":"memory_ingest_failed","message":"Memory transcript write failed"}"#
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                hop {
+                    var responseHead = HTTPResponseHead(version: head.version, status: .internalServerError)
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: responseBody.utf8.count)
+                    buffer.writeString(responseBody)
+                    var nioHeaders = HTTPHeaders()
+                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                    nioHeaders.add(name: "Connection", value: "close")
+                    responseHead.headers = nioHeaders
+                    let c = ctx.value
+                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        ctx.value.close(promise: nil)
+                    }
                 }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/memory/ingest",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: responseBody,
+                    responseStatus: 500,
+                    startTime: logStartTime,
+                    errorMessage: "\(error)"
+                )
+                return
             }
 
             // Ingestion always implies "I'm done with this conversation
@@ -2871,34 +3058,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 for outcome in outcomes {
                     let invocation = outcome.invocation
                     let callId = outcome.callId
-                    hop {
-                        writerBound.value.writeContent(
-                            StreamingToolHint.encode(invocation.toolName),
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                        writerBound.value.writeContent(
-                            StreamingToolHint.encodeArgs(invocation.jsonArguments),
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                        writerBound.value.writeContent(
-                            StreamingToolHint.encodeDone(
-                                callId: callId,
-                                name: invocation.toolName,
-                                arguments: invocation.jsonArguments,
-                                result: outcome.result
-                            ),
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                    }
                     assistantToolCalls.append(
                         ToolCall(
                             id: callId,
@@ -3716,7 +3875,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 ChatMessage(role: "assistant", content: accumulatedContent)
                             )
                         }
-                        ChatHistoryWriter.persist(
+                        ChatHistoryWriter.persistInBackground(
                             source: .http,
                             sourcePluginId: nil,
                             agentId: resolvedAgentUUID,
@@ -3749,6 +3908,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // and unavailable in this catch — at worst we under-
                     // count by the agent system-prompt fragment.
                     let promptTokens = Self.estimatePromptTokens(req.messages)
+                    let requestTools = req.tools
                     hop {
                         for (idx, inv) in invs.invocations.enumerated() {
                             self.writeOpenAIToolCallSSE(
@@ -3758,7 +3918,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 model: model,
                                 responseId: responseId,
                                 created: created,
-                                context: ctx.value
+                                context: ctx.value,
+                                tools: requestTools
                             )
                         }
                         writerBound.value.writeFinishWithReason(
@@ -3804,6 +3965,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.set("http_tool_call_count", 1)
                     let includeUsage = req.stream_options?.include_usage == true
                     let promptTokens = Self.estimatePromptTokens(req.messages)
+                    let requestTools = req.tools
                     hop {
                         self.writeOpenAIToolCallSSE(
                             inv,
@@ -3812,7 +3974,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             model: model,
                             responseId: responseId,
                             created: created,
-                            context: ctx.value
+                            context: ctx.value,
+                            tools: requestTools
                         )
                         writerBound.value.writeFinishWithReason(
                             "tool_calls",
@@ -3912,7 +4075,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if persistOnSuccess, let assistantMsg = resp.choices.first?.message {
                         var finalMessages = priorMessages
                         finalMessages.append(assistantMsg)
-                        ChatHistoryWriter.persist(
+                        ChatHistoryWriter.persistInBackground(
                             source: .http,
                             sourcePluginId: nil,
                             agentId: resolvedAgentUUID,
@@ -3921,11 +4084,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             model: model
                         )
                     }
-                    let json = try JSONEncoder.osaurusCanonical().encode(resp)
+                    let body = try Self.chatCompletionResponseBody(resp)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]
                     headers.append(contentsOf: cors)
                     let headersCopy = headers
-                    let body = String(decoding: json, as: UTF8.self)
                     hop {
                         var responseHead = HTTPResponseHead(version: head.version, status: .ok)
                         var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
@@ -4074,6 +4236,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        let shouldStream = req.stream ?? true
+        if !shouldStream {
+            handleOllamaChatNonStreaming(
+                head: head,
+                context: context,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBodyString: requestBodyString,
+                request: req
+            )
+            return
+        }
+
         let writer = NDJSONResponseWriter()
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -4195,6 +4370,136 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     temperature: logTemperature,
                     maxTokens: logMaxTokens,
                     finishReason: .error,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func handleOllamaChatNonStreaming(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        requestBodyString: String?,
+        request: ChatCompletionRequest
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        Task(priority: .userInitiated) {
+            do {
+                let response = try await self.chatEngine.completeChat(request: request)
+                let message = response.choices.first?.message
+                let body = Self.ollamaChatJSON(
+                    model: request.model,
+                    content: message?.content ?? "",
+                    toolCalls: message?.tool_calls,
+                    done: true
+                )
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: request.model,
+                    tokensInput: response.usage.prompt_tokens,
+                    tokensOutput: response.usage.completion_tokens,
+                    temperature: request.temperature ?? 0.7,
+                    maxTokens: request.max_tokens ?? 1024,
+                    finishReason: message?.tool_calls?.isEmpty == false ? .toolCalls : .stop
+                )
+            } catch let invs as ServiceToolInvocations {
+                let body = Self.ollamaChatToolCallsJSON(model: request.model, invocations: invs.invocations)
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                let toolLogs = invs.invocations.map {
+                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: request.model,
+                    toolCalls: toolLogs,
+                    temperature: request.temperature ?? 0.7,
+                    maxTokens: request.max_tokens ?? 1024,
+                    finishReason: .toolCalls
+                )
+            } catch let inv as ServiceToolInvocation {
+                let body = Self.ollamaChatToolCallsJSON(model: request.model, invocations: [inv])
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: request.model,
+                    toolCalls: [toolLog],
+                    temperature: request.temperature ?? 0.7,
+                    maxTokens: request.max_tokens ?? 1024,
+                    finishReason: .toolCalls
+                )
+            } catch {
+                let body = Self.ollamaGenerateErrorJSON(error.localizedDescription)
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .internalServerError,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseStatus: 500,
+                    startTime: startTime,
+                    model: request.model,
                     errorMessage: error.localizedDescription
                 )
             }
@@ -4463,6 +4768,73 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
+    private static func ollamaChatJSON(
+        model: String,
+        content: String,
+        toolCalls: [ToolCall]? = nil,
+        done: Bool
+    ) -> String {
+        var message: [String: Any] = [
+            "role": "assistant",
+            "content": content,
+        ]
+        if let toolCalls, !toolCalls.isEmpty {
+            message["tool_calls"] = toolCalls.map { call in
+                [
+                    "function": [
+                        "name": call.function.name,
+                        "arguments": ollamaArguments(from: call.function.arguments),
+                    ]
+                ]
+            }
+        }
+        let object: [String: Any] = [
+            "model": model,
+            "created_at": Date().ISO8601Format(),
+            "message": message,
+            "done": done,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return #"{"message":{"role":"assistant","content":""},"done":true}"#
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func ollamaChatToolCallsJSON(
+        model: String,
+        invocations: [ServiceToolInvocation]
+    ) -> String {
+        let toolCalls = invocations.map { inv in
+            [
+                "function": [
+                    "name": inv.toolName,
+                    "arguments": ollamaArguments(from: inv.jsonArguments),
+                ]
+            ]
+        }
+        let object: [String: Any] = [
+            "model": model,
+            "created_at": Date().ISO8601Format(),
+            "message": [
+                "role": "assistant",
+                "content": "",
+                "tool_calls": toolCalls,
+            ],
+            "done": true,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return #"{"message":{"role":"assistant","content":"","tool_calls":[]},"done":true}"#
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func ollamaArguments(from json: String) -> Any {
+        guard let data = json.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data)
+        else { return json }
+        return object
+    }
+
     private static func ollamaGenerateErrorJSON(_ message: String) -> String {
         let object: [String: Any] = [
             "error": [
@@ -4642,6 +5014,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     "is_current": summary.isCurrent,
                     "inflight": inflight[summary.name] ?? 0,
                 ]
+                if let draftStrategy = summary.draftStrategyDescription {
+                    row["draft_strategy"] = draftStrategy
+                } else {
+                    row["draft_strategy"] = NSNull()
+                }
+                if let nativeMTPDepth = summary.nativeMTPDepth {
+                    row["native_mtp_depth"] = nativeMTPDepth
+                } else {
+                    row["native_mtp_depth"] = NSNull()
+                }
                 if let unloadAt = residencyByName[summary.name]?.unloadAt {
                     row["idle_unload_at"] = unloadAt.ISO8601Format()
                     row["idle_seconds_remaining"] =
@@ -4653,6 +5035,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return row
             }
 
+            let memoryConfig = MemoryConfigurationStore.load()
             let obj: [String: Any] = [
                 "status": "healthy",
                 "timestamp": Date().ISO8601Format(),
@@ -4660,6 +5043,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "current_model": current,
                 "inflight": inflightObj,
                 "resident_models": residentModels,
+                "memory_enabled": memoryConfig.enabled,
+                "memory_database_open": MemoryDatabase.shared.isOpen,
             ]
             let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
@@ -5973,6 +6358,79 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Open Responses API
 
+    private static func applyOpenResponsesContext(
+        to request: ChatCompletionRequest,
+        previousResponseId: String?
+    ) -> ChatCompletionRequest {
+        let previous = openResponsesContextStore.transcript(
+            for: previousResponseId,
+            model: request.model
+        )
+        guard !previous.isEmpty else { return request }
+
+        var copy = request
+        let currentSystem = request.messages.filter { $0.role.lowercased() == "system" }
+        let currentNonSystem = request.messages.filter { $0.role.lowercased() != "system" }
+        copy.messages = currentSystem + previous + currentNonSystem
+        return copy
+    }
+
+    private static func assistantMessages(from response: ChatCompletionResponse) -> [ChatMessage] {
+        response.choices.compactMap { choice in
+            let message = choice.message
+            if let content = message.content, !content.isEmpty {
+                return ChatMessage(
+                    role: "assistant",
+                    content: content,
+                    tool_calls: message.tool_calls,
+                    tool_call_id: nil,
+                    reasoning_content: message.reasoning_content
+                )
+            }
+            if let toolCalls = message.tool_calls, !toolCalls.isEmpty {
+                return ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: toolCalls,
+                    tool_call_id: nil,
+                    reasoning_content: message.reasoning_content
+                )
+            }
+            return nil
+        }
+    }
+
+    private static func assistantMessage(from invocations: [ServiceToolInvocation]) -> ChatMessage? {
+        let toolCalls = invocations.map { inv in
+            ToolCall(
+                id: inv.toolCallId ?? Self.shortId(prefix: "call_"),
+                type: "function",
+                function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments)
+            )
+        }
+        guard !toolCalls.isEmpty else { return nil }
+        return ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: toolCalls,
+            tool_call_id: nil
+        )
+    }
+
+    private static func storeOpenResponsesContext(
+        responseId: String,
+        model: String,
+        request: ChatCompletionRequest,
+        assistantMessages: [ChatMessage]
+    ) {
+        guard !assistantMessages.isEmpty else { return }
+        openResponsesContextStore.store(
+            responseId: responseId,
+            model: model,
+            messages: request.messages + assistantMessages
+        )
+    }
+
     private func handleOpenResponses(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -6018,12 +6476,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        // Convert to internal format
-        let internalReq = openResponsesReq.toChatCompletionRequest()
-
         // Generate response ID
         let responseId = Self.shortId(prefix: "resp_")
         let model = openResponsesReq.model
+
+        // Convert to internal format, preserving local Responses API
+        // context when clients chain turns with `previous_response_id`.
+        let internalReq = Self.applyOpenResponsesContext(
+            to: openResponsesReq.toChatCompletionRequest(),
+            previousResponseId: openResponsesReq.previous_response_id
+        )
 
         // Determine if streaming
         let wantsStream = openResponsesReq.stream ?? false
@@ -6119,6 +6581,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // streaming and catch closures. A heap box satisfies Sendable for
         // the concurrent closures that read/mutate the flag.
         let messageItemOpen = AtomicBoolBox()
+        let outputText = LockedStringAccumulator()
 
         Task(priority: .userInitiated) {
             do {
@@ -6145,6 +6608,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         continue
                     }
                     if StreamingToolHint.isSentinel(delta) { continue }
+                    outputText.append(delta)
                     hop {
                         // First non-reasoning chunk: close the reasoning
                         // item (if any) then open the message item so the
@@ -6168,6 +6632,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     writerBound.value.writeResponseCompleted(context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
+                }
+                let text = outputText.value
+                if !text.isEmpty {
+                    Self.storeOpenResponsesContext(
+                        responseId: responseId,
+                        model: model,
+                        request: internalReq,
+                        assistantMessages: [ChatMessage(role: "assistant", content: text)]
+                    )
                 }
                 logSelf.logRequest(
                     method: "POST",
@@ -6195,6 +6668,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     writerBound.value.writeResponseCompleted(context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
+                if let assistant = Self.assistantMessage(from: invs.invocations) {
+                    Self.storeOpenResponsesContext(
+                        responseId: responseId,
+                        model: model,
+                        request: internalReq,
+                        assistantMessages: [assistant]
+                    )
+                }
                 let toolLogs = invs.invocations.map {
                     ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
                 }
@@ -6220,6 +6701,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     self.writeOpenResponsesFunctionCall(inv, writer: writerBound.value, context: ctx.value)
                     writerBound.value.writeResponseCompleted(context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
+                }
+                if let assistant = Self.assistantMessage(from: [inv]) {
+                    Self.storeOpenResponsesContext(
+                        responseId: responseId,
+                        model: model,
+                        request: internalReq,
+                        assistantMessages: [assistant]
+                    )
                 }
 
                 let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
@@ -6361,12 +6850,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String,
         responseId: String,
         created: Int,
-        context: ChannelHandlerContext
+        context: ChannelHandlerContext,
+        tools: [Tool]? = nil
     ) {
         let callId: String = {
             if let preservedId = inv.toolCallId, !preservedId.isEmpty { return preservedId }
             return Self.shortId(prefix: "call_")
         }()
+        let argumentsJSON = Self.canonicalToolArgumentsJSON(
+            inv.jsonArguments,
+            schema: Self.toolSchema(named: inv.toolName, in: tools)
+        )
         writer.writeToolCallStart(
             callId: callId,
             functionName: inv.toolName,
@@ -6376,7 +6870,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             created: created,
             context: context
         )
-        Self.forEachStringChunk(inv.jsonArguments, size: 1024) { chunk in
+        Self.forEachStringChunk(argumentsJSON, size: 1024) { chunk in
             writer.writeToolCallArgumentsDelta(
                 callId: callId,
                 index: index,
@@ -6453,6 +6947,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 // Convert to Open Responses format
                 let openResponsesResp = resp.toOpenResponsesResponse(responseId: responseId)
+                Self.storeOpenResponsesContext(
+                    responseId: responseId,
+                    model: model,
+                    request: internalReq,
+                    assistantMessages: Self.assistantMessages(from: resp)
+                )
 
                 let json = try JSONEncoder.osaurusCanonical().encode(openResponsesResp)
                 var headers: [(String, String)] = [("Content-Type", "application/json")]
@@ -6496,6 +6996,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     invocations: invs.invocations
                 )
+                if let assistant = Self.assistantMessage(from: invs.invocations) {
+                    Self.storeOpenResponsesContext(
+                        responseId: responseId,
+                        model: model,
+                        request: internalReq,
+                        assistantMessages: [assistant]
+                    )
+                }
                 Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
                 let toolLogs = invs.invocations.map {
                     ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
@@ -6518,6 +7026,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     invocations: [inv]
                 )
+                if let assistant = Self.assistantMessage(from: [inv]) {
+                    Self.storeOpenResponsesContext(
+                        responseId: responseId,
+                        model: model,
+                        request: internalReq,
+                        assistantMessages: [assistant]
+                    )
+                }
                 Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
                 let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
                 logSelf.logRequest(
@@ -6687,6 +7203,136 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - Request Logging
+
+    /// Encode an OpenAI chat-completions response and verify the bytes before
+    /// putting them on the wire. Tool-call arguments are model-authored JSON
+    /// strings and can contain nested backslash/quote sequences; if Codable
+    /// ever produces bytes a client parser rejects, fall back to a
+    /// JSONSerialization envelope that treats those arguments as opaque
+    /// strings and escapes them at the transport boundary.
+    private static func chatCompletionResponseBody(_ response: ChatCompletionResponse) throws -> String {
+        let encoded = try JSONEncoder.osaurusCanonical().encode(response)
+        if (try? JSONSerialization.jsonObject(with: encoded)) != nil {
+            return String(decoding: encoded, as: UTF8.self)
+        }
+
+        let data = try JSONSerialization.data(
+            withJSONObject: chatCompletionResponseJSONObject(response),
+            options: .osaurusCanonical
+        )
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func chatCompletionResponseJSONObject(_ response: ChatCompletionResponse) -> [String: Any] {
+        var object: [String: Any] = [
+            "id": response.id,
+            "object": response.object,
+            "created": response.created,
+            "model": response.model,
+            "choices": response.choices.map(chatChoiceJSONObject(_:)),
+            "usage": [
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+            ],
+        ]
+        if let fingerprint = response.system_fingerprint {
+            object["system_fingerprint"] = fingerprint
+        }
+        if let prefixHash = response.prefix_hash {
+            object["prefix_hash"] = prefixHash
+        }
+        return object
+    }
+
+    private static func chatChoiceJSONObject(_ choice: ChatChoice) -> [String: Any] {
+        [
+            "index": choice.index,
+            "finish_reason": choice.finish_reason,
+            "message": chatMessageJSONObject(choice.message),
+        ]
+    }
+
+    private static func chatMessageJSONObject(_ message: ChatMessage) -> [String: Any] {
+        var object: [String: Any] = ["role": message.role]
+        if let content = message.content {
+            object["content"] = content
+        }
+        if let toolCalls = message.tool_calls {
+            object["tool_calls"] = toolCalls.map(toolCallJSONObject(_:))
+        }
+        if let toolCallId = message.tool_call_id {
+            object["tool_call_id"] = toolCallId
+        }
+        if let reasoning = message.reasoning_content {
+            object["reasoning_content"] = reasoning
+        }
+        return object
+    }
+
+    private static func toolCallJSONObject(_ call: ToolCall) -> [String: Any] {
+        var object: [String: Any] = [
+            "id": call.id,
+            "type": call.type,
+            "function": [
+                "name": call.function.name,
+                "arguments": canonicalToolArgumentsJSON(call.function.arguments),
+            ],
+        ]
+        if let signature = call.geminiThoughtSignature {
+            object["geminiThoughtSignature"] = signature
+        }
+        return object
+    }
+
+    private static func canonicalToolArgumentsJSON(_ json: String, schema: JSONValue? = nil) -> String {
+        let candidates = [
+            json,
+            json.replacingOccurrences(of: #"\""#, with: #"""#),
+        ]
+        guard let object = candidates.lazy.compactMap({ candidate -> Any? in
+            guard let data = candidate.data(using: .utf8) else { return nil }
+            return try? JSONSerialization.jsonObject(with: data)
+        }).first else {
+            return json
+        }
+        let normalized = normalizeNestedJSONStringValues(object)
+        let coerced: Any
+        if let schema {
+            let candidate = SchemaValidator.coerceArguments(normalized, against: schema)
+            let result = SchemaValidator.validate(arguments: candidate, against: schema)
+            coerced = result.isValid ? candidate : normalized
+        } else {
+            coerced = normalized
+        }
+        guard JSONSerialization.isValidJSONObject(coerced),
+            let encoded = try? JSONSerialization.data(withJSONObject: coerced, options: .osaurusCanonical),
+            let string = String(data: encoded, encoding: .utf8)
+        else {
+            return json
+        }
+        return string
+    }
+
+    private static func normalizeNestedJSONStringValues(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.mapValues(normalizeNestedJSONStringValues(_:))
+        }
+        if let array = value as? [Any] {
+            return array.map(normalizeNestedJSONStringValues(_:))
+        }
+        if let string = value as? String,
+            let nestedData = string.data(using: .utf8),
+            let nested = try? JSONSerialization.jsonObject(with: nestedData)
+        {
+            return normalizeNestedJSONStringValues(nested)
+        }
+        return value
+    }
+
+    private static func toolSchema(named name: String, in tools: [Tool]?) -> JSONValue? {
+        tools?.first(where: { $0.function.name == name })?.function.parameters
+    }
 
     /// Log a completed request to InsightsService
     private func logRequest(

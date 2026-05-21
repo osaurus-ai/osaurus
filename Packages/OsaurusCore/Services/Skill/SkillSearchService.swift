@@ -149,13 +149,16 @@ public actor SkillSearchService {
         threshold: Float? = nil
     ) async -> [SkillSearchResult] {
         guard topK > 0 else { return [] }
-        guard let db = vectorDB else { return [] }
+        let effectiveThreshold = threshold ?? Self.defaultSearchThreshold
+        guard let db = vectorDB else {
+            return await searchLiveSkillsLexically(query: query, topK: topK, threshold: effectiveThreshold)
+        }
         do {
             let fetchCount = topK * 3
             let results = try await db.search(
                 query: .text(query),
                 numResults: fetchCount,
-                threshold: threshold ?? Self.defaultSearchThreshold
+                threshold: effectiveThreshold
             )
 
             let scoreMap = Dictionary(
@@ -164,12 +167,14 @@ public actor SkillSearchService {
             )
 
             let matchedSkillIds = results.compactMap { reverseIdMap[$0.id.uuidString] }
-            guard !matchedSkillIds.isEmpty else { return [] }
+            guard !matchedSkillIds.isEmpty else {
+                return await searchLiveSkillsLexically(query: query, topK: topK, threshold: effectiveThreshold)
+            }
 
             let allSkills = await MainActor.run { SkillManager.shared.skills }
             let skillById = Dictionary(allSkills.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-            return Array(
+            let accepted = Array(
                 matchedSkillIds.compactMap { skillId -> SkillSearchResult? in
                     guard let skill = skillById[skillId], skill.enabled else { return nil }
                     let uuid = deterministicUUID(for: skillId)
@@ -179,9 +184,11 @@ public actor SkillSearchService {
                 .sorted { $0.searchScore > $1.searchScore }
                 .prefix(topK)
             )
+            if !accepted.isEmpty { return accepted }
+            return await searchLiveSkillsLexically(query: query, topK: topK, threshold: effectiveThreshold)
         } catch {
             SkillSearchLogger.search.error("Skill search failed: \(error)")
-            return []
+            return await searchLiveSkillsLexically(query: query, topK: topK, threshold: effectiveThreshold)
         }
     }
 
@@ -238,6 +245,66 @@ public actor SkillSearchService {
             return "\(skill.name) \(skill.keywords.joined(separator: " "))"
         }
         return "\(skill.name) \(skill.description)"
+    }
+
+    private func searchLiveSkillsLexically(
+        query: String,
+        topK: Int,
+        threshold: Float
+    ) async -> [SkillSearchResult] {
+        guard topK > 0 else { return [] }
+        let queryTokens = Self.searchTokens(in: query)
+        guard !queryTokens.isEmpty else { return [] }
+
+        var skills = await MainActor.run { SkillManager.shared.skills }
+        if skills.isEmpty {
+            await SkillManager.shared.refresh()
+            skills = await MainActor.run { SkillManager.shared.skills }
+        }
+
+        let results = skills.compactMap { skill -> SkillSearchResult? in
+            guard skill.enabled else { return nil }
+            let score = Self.lexicalScore(skill: skill, queryTokens: queryTokens)
+            guard score >= threshold else { return nil }
+            return SkillSearchResult(skill: skill, searchScore: score)
+        }
+        .sorted { lhs, rhs in
+            if lhs.searchScore == rhs.searchScore {
+                return lhs.skill.name.localizedCaseInsensitiveCompare(rhs.skill.name) == .orderedAscending
+            }
+            return lhs.searchScore > rhs.searchScore
+        }
+        .prefix(topK)
+
+        if !results.isEmpty {
+            SkillSearchLogger.search.info("Skill search using live lexical fallback")
+        }
+        return Array(results)
+    }
+
+    private static func lexicalScore(skill: Skill, queryTokens: Set<String>) -> Float {
+        let nameTokens = searchTokens(in: skill.name)
+        let keywordTokens = Set(skill.keywords.flatMap { searchTokens(in: $0) })
+        let descriptionTokens = searchTokens(in: skill.description)
+
+        let weightedMatches =
+            queryTokens.intersection(nameTokens).count * 3
+            + queryTokens.intersection(keywordTokens).count * 2
+            + queryTokens.intersection(descriptionTokens).count
+        guard weightedMatches > 0 else { return 0 }
+
+        let denominator = max(queryTokens.count * 3, 1)
+        let score = Float(weightedMatches) / Float(denominator)
+        return min(1.0, max(0.0, score))
+    }
+
+    private static func searchTokens(in text: String) -> Set<String> {
+        let tokens = text
+            .lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { $0.count >= 3 }
+        return Set(tokens)
     }
 
     private func deterministicUUID(for skillId: UUID) -> UUID {

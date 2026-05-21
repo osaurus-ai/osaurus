@@ -4,14 +4,15 @@
 //
 //  Aggregates per-tab sidebar badge counts/highlights so `ManagementView`
 //  doesn't have to observe nine separate `ObservableObject` singletons
-//  (and re-run a synchronous `MemoryDatabase.pinnedFactStats()` SQLite
-//  query plus a `MasterKey.exists()` Keychain probe from its `body`)
+//  (and re-run a synchronous `MemoryDatabase.pinnedFactStats()` SQLite query)
 //  every time any of them publishes.
 //
 //  The store fans in publishes from the managers we used to observe
 //  directly, throttles them, and emits a single coalesced snapshot. The
-//  expensive metrics (SQLite + Keychain) are hoisted onto a background
-//  task so even the recompute itself doesn't block the main thread.
+//  expensive metrics are hoisted onto a background task so even the
+//  recompute itself doesn't block the main thread. Identity/Keychain state
+//  is intentionally not polled here; startup badges must not trigger
+//  password prompts or background Keychain reads.
 //
 
 import Combine
@@ -171,31 +172,21 @@ public final class ManagementBadgeStore: ObservableObject {
             snapshot = next
         }
 
-        // Background metrics. Keychain + SQLite must not run on the
-        // main thread from a SwiftUI body, so we hoist them here.
+        // Background metrics. SQLite must not run on the main thread from a
+        // SwiftUI body, so we hoist it here. Do not probe identity/Keychain
+        // from this path; startup badge freshness is less important than
+        // avoiding password prompts while local chat boots.
         Task.detached(priority: .utility) { [weak self] in
             let pinned = (try? MemoryDatabase.shared.pinnedFactStats()) ?? 0
-            let identityExists = MasterKey.exists()
-            await self?.applyBackgroundBadges(
-                pinnedFacts: pinned,
-                identityExists: identityExists
-            )
+            await self?.applyBackgroundBadges(pinnedFacts: pinned)
         }
     }
 
-    private func applyBackgroundBadges(pinnedFacts: Int, identityExists: Bool) {
+    private func applyBackgroundBadges(pinnedFacts: Int) {
         var counts = snapshot.counts
         counts[.memory] = pinnedFacts
-        counts[.identity] = identityExists ? 0 : 1
 
-        var highlights = snapshot.highlights
-        if identityExists {
-            highlights.remove(.identity)
-        } else {
-            highlights.insert(.identity)
-        }
-
-        let next = Snapshot(counts: counts, highlights: highlights)
+        let next = Snapshot(counts: counts, highlights: snapshot.highlights)
         if next != snapshot {
             snapshot = next
         }

@@ -370,6 +370,7 @@ public struct OpenResponsesResponse: Codable, Sendable {
     public let status: OpenResponsesStatus
     public let model: String
     public let output: [OpenResponsesOutputItem]
+    public let output_text: String?
     public let usage: OpenResponsesUsage?
     public let metadata: [String: String]?
 
@@ -379,7 +380,8 @@ public struct OpenResponsesResponse: Codable, Sendable {
         status: OpenResponsesStatus,
         model: String,
         output: [OpenResponsesOutputItem],
-        usage: OpenResponsesUsage?
+        usage: OpenResponsesUsage?,
+        outputText: String? = nil
     ) {
         self.id = id
         self.object = "response"
@@ -387,8 +389,21 @@ public struct OpenResponsesResponse: Codable, Sendable {
         self.status = status
         self.model = model
         self.output = output
+        self.output_text = outputText ?? Self.text(from: output)
         self.usage = usage
         self.metadata = nil
+    }
+
+    private static func text(from output: [OpenResponsesOutputItem]) -> String? {
+        let parts = output.flatMap { item -> [String] in
+            guard case .message(let message) = item else { return [] }
+            return message.content.compactMap { content in
+                guard case .outputText(let text) = content else { return nil }
+                return text.text
+            }
+        }
+        let joined = parts.joined()
+        return joined.isEmpty ? nil : joined
     }
 }
 

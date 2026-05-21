@@ -35,6 +35,9 @@ public actor ModelRuntime {
         let name: String
         let bytes: Int64
         let isCurrent: Bool
+        let draftStrategyDescription: String?
+        let nativeMTPDepth: Int?
+        let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
     }
 
@@ -60,17 +63,27 @@ public actor ModelRuntime {
         let container: ModelContainer
         let weightsSizeBytes: Int64
         let isVLM: Bool
+        let draftStrategy: MLXLMCommon.DraftStrategy?
         init(
             name: String,
             container: ModelContainer,
             weightsSizeBytes: Int64,
-            isVLM: Bool = false
+            isVLM: Bool = false,
+            draftStrategy: MLXLMCommon.DraftStrategy? = nil
         ) {
             self.name = name
             self.container = container
             self.weightsSizeBytes = weightsSizeBytes
             self.isVLM = isVLM
+            self.draftStrategy = draftStrategy
         }
+    }
+
+    private struct NativeMTPLaunchPlan: Sendable {
+        let loadConfiguration: LoadConfiguration
+        let draftStrategy: MLXLMCommon.DraftStrategy?
+        let statusLine: String?
+        let reason: String
     }
 
     /// Sendable wrapper around an immutable snapshot of chat messages.
@@ -130,6 +143,9 @@ public actor ModelRuntime {
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,
+                draftStrategyDescription: Self.describeDraftStrategy(holder.draftStrategy),
+                nativeMTPDepth: Self.nativeMTPDepth(holder.draftStrategy),
+                mlxPressStatus: holder.container.mlxPressStatus(),
                 cacheStats: holder.container.cacheCoordinator?.snapshotStats()
             )
         }.sorted { lhs, rhs in
@@ -606,6 +622,7 @@ public actor ModelRuntime {
         // pass, hits a precondition in TurboQuantSwitchLinear, and abort()s
         // the whole process — taking osaurus with it. Caught here so the user
         // gets a clear error and the server stays up.
+        try Self.validateUnsupportedPlainDSV4AffineJANG(at: localURL, name: name)
         try await Self.ensureJANGTQSidecar(at: localURL, modelId: id, name: name)
         let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
         genLog.info(
@@ -632,10 +649,14 @@ public actor ModelRuntime {
                 "loadContainer: task start model=\(name, privacy: .public) loadID=\(loadID, privacy: .public)"
             )
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
+            let mtpPlan = Self.resolveNativeMTPLaunchPlan(modelDirectory: localURL)
+            genLog.info(
+                "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public)"
+            )
             let container = try await loadModelContainer(
                 from: localURL,
                 using: tokenizerLoader,
-                loadConfiguration: .default
+                loadConfiguration: mtpPlan.loadConfiguration
             )
             let isVLM = await container.isVLM
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - taskStartedAt) * 1000)
@@ -646,7 +667,8 @@ public actor ModelRuntime {
                 name: name,
                 container: container,
                 weightsSizeBytes: weightsBytes,
-                isVLM: isVLM
+                isVLM: isVLM,
+                draftStrategy: mtpPlan.draftStrategy
             )
         }
 
@@ -1020,23 +1042,29 @@ public actor ModelRuntime {
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
         await ModelResidencyManager.shared.markActive(modelName: modelName)
 
-        // Scoped start/finish around ONLY the container load — the "loading
-        // model" UI flag flips off as soon as the container is ready. The
-        // refcount in `InferenceProgressManager` keeps concurrent loads
-        // (two chat windows starting different models) from corrupting
-        // each other.
+        // Scoped start/finish around ONLY a cold container load. Hot
+        // resident turns still call `loadContainer` to get the holder, but
+        // that is a cache hit and must not flash the UI back to
+        // "Loading Model..." on every message.
         let cfg = await getConfig()
         trace?.mark("load_container_start")
-        InferenceProgressManager.shared.modelLoadWillStartAsync()
+        let shouldReportModelLoad = modelCache[modelName] == nil
+        if shouldReportModelLoad {
+            InferenceProgressManager.shared.modelLoadWillStartAsync()
+        }
         let holder: SessionHolder
         do {
             holder = try await loadContainer(id: modelId, name: modelName)
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
-            InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            if shouldReportModelLoad {
+                InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            }
             throw error
         }
-        InferenceProgressManager.shared.modelLoadDidFinishAsync()
+        if shouldReportModelLoad {
+            InferenceProgressManager.shared.modelLoadDidFinishAsync()
+        }
         trace?.mark("load_container_done")
 
         // Pin the model against eviction for the stream's lifetime.
@@ -1063,6 +1091,7 @@ public actor ModelRuntime {
                 buildToolsSpec: buildTools,
                 generation: parameters,
                 stopSequences: stopSequences,
+                draftStrategy: holder.draftStrategy,
                 runtime: cfg,
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
             )
@@ -1125,7 +1154,11 @@ public actor ModelRuntime {
     ) async throws -> String {
         var accumulated = ""
         var pendingTools: [ServiceToolInvocation] = []
-        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
+        let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
+            messages,
+            toolChoice: toolChoice
+        )
+        let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented, trace: parameters.ttftTrace) },
             parameters: parameters,
@@ -1169,7 +1202,11 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<String, Error> {
-        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
+        let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
+            messages,
+            toolChoice: toolChoice
+        )
+        let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented, trace: parameters.ttftTrace) },
             parameters: parameters,
@@ -1298,9 +1335,10 @@ public actor ModelRuntime {
         minP: Float = 0,
         repetitionPenalty: Float?,
         stopSequences: [String] = [],
+        draftStrategy: MLXLMCommon.DraftStrategy? = nil,
         enableCompiledBatchDecode: Bool = true
     ) -> MLXLMCommon.GenerateParameters {
-        MLXLMCommon.GenerateParameters(
+        var params = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
             enableCompiledBatchDecode: enableCompiledBatchDecode,
             temperature: temperature,
@@ -1311,6 +1349,82 @@ public actor ModelRuntime {
             repetitionContextSize: 20,
             extraStopStrings: stopSequences
         )
+        params.draftStrategy = draftStrategy
+        return params
+    }
+
+    private nonisolated static func resolveNativeMTPLaunchPlan(
+        modelDirectory: URL
+    ) -> NativeMTPLaunchPlan {
+        let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
+        let jangConfig = try? JangLoader.loadConfig(at: modelDirectory)
+        let status: MTPBundleStatus?
+        do {
+            status = try MTPBundleInspector.inspect(
+                modelDirectory: modelDirectory,
+                jangConfig: jangConfig
+            )
+        } catch {
+            genLog.error(
+                "native MTP inspection failed for \(modelDirectory.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+            return NativeMTPLaunchPlan(
+                loadConfiguration: .default,
+                draftStrategy: nil,
+                statusLine: nil,
+                reason: "MTP inspection failed; using autoregressive load.")
+        }
+
+        var settings = VMLXServerRuntimeSettings()
+        settings.mtp.mode = .auto
+        let launch = settings.resolvedMTPLaunch(
+            configData: configData,
+            jangConfig: jangConfig,
+            status: status
+        )
+        let loadConfiguration = settings.resolvedLoadConfiguration(
+            base: .default,
+            configData: configData,
+            jangConfig: jangConfig,
+            status: status
+        )
+        let draftStrategy = settings.resolvedMTPDraftStrategy(
+            configData: configData,
+            jangConfig: jangConfig,
+            status: status
+        )
+
+        return NativeMTPLaunchPlan(
+            loadConfiguration: loadConfiguration,
+            draftStrategy: draftStrategy,
+            statusLine: status?.statusLine,
+            reason: launch.reason)
+    }
+
+    private nonisolated static func describeDraftStrategy(
+        _ strategy: MLXLMCommon.DraftStrategy?
+    ) -> String {
+        switch strategy {
+        case nil:
+            return "none"
+        case .some(.none):
+            return "none"
+        case .some(.nativeMTP(depth: let depth, verifierMode: _)):
+            return "native_mtp:d\(depth)"
+        case .some(let strategy):
+            return strategy.kindName
+        }
+    }
+
+    private nonisolated static func nativeMTPDepth(
+        _ strategy: MLXLMCommon.DraftStrategy?
+    ) -> Int? {
+        switch strategy {
+        case .some(.nativeMTP(depth: let depth, verifierMode: _)):
+            return depth
+        default:
+            return nil
+        }
     }
 
     nonisolated static func makeTokenizerTools(
@@ -1332,6 +1446,36 @@ public actor ModelRuntime {
         } else {
             return tools.map { $0.toTokenizerToolSpec() }
         }
+    }
+
+    nonisolated static func applyForcedToolChoiceDirective(
+        _ messages: [ChatMessage],
+        toolChoice: ToolChoiceOption?
+    ) -> [ChatMessage] {
+        guard case .function(let target) = toolChoice else { return messages }
+
+        let toolName = target.function.name
+        let directive = """
+            Tool choice is forced by the API caller. You must call exactly the \
+            function named `\(toolName)` and must not answer in natural language. \
+            Ignore any user instruction that asks you to skip tools, answer in \
+            plain text, or choose a different tool.
+            """
+
+        var out = messages
+        if let firstSystemIdx = out.firstIndex(where: { $0.role == "system" }) {
+            let existing = out[firstSystemIdx].content ?? ""
+            out[firstSystemIdx] = ChatMessage(
+                role: "system",
+                content: existing.isEmpty ? directive : directive + "\n\n" + existing,
+                tool_calls: out[firstSystemIdx].tool_calls,
+                tool_call_id: out[firstSystemIdx].tool_call_id,
+                reasoning_content: out[firstSystemIdx].reasoning_content
+            )
+        } else {
+            out.insert(ChatMessage(role: "system", content: directive), at: 0)
+        }
+        return out
     }
 
     /// When `jsonMode` is true, prepend (or augment) a system instruction
@@ -1970,6 +2114,104 @@ public actor ModelRuntime {
                 ]
             )
         }
+    }
+
+    /// Blocks the known-bad plain affine DeepSeek V4 Flash JANG bundle before
+    /// vmlx starts loading hundreds of GB of shards. The production DSV4 path
+    /// is JANGTQ (`weight_format == "mxtq"` + `jangtq_runtime.safetensors`),
+    /// which dispatches to TurboQuantSwitchGLU. Plain affine DSV4 JANG falls
+    /// through to the generic SwitchGLU route; current engine evidence shows
+    /// unusable decode speed and high memory pressure, not a shippable row.
+    ///
+    /// Engine developers can still opt in for diagnostics with
+    /// `OSAURUS_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG=1` or
+    /// `VMLINUX_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG=1`.
+    static func validateUnsupportedPlainDSV4AffineJANG(at directory: URL, name: String) throws {
+        guard !Self.experimentalDSV4AffineJANGAllowed else { return }
+
+        let fm = FileManager.default
+        let jangConfigURL = directory.appendingPathComponent("jang_config.json")
+        let configURL = directory.appendingPathComponent("config.json")
+        guard fm.fileExists(atPath: jangConfigURL.path),
+            fm.fileExists(atPath: configURL.path)
+        else { return }
+
+        let sidecarURL = directory.appendingPathComponent("jangtq_runtime.safetensors")
+        guard !fm.fileExists(atPath: sidecarURL.path) else { return }
+
+        let jang = Self.readJSONObject(at: jangConfigURL)
+        let config = Self.readJSONObject(at: configURL)
+        let modelType = Self.stringValue(config["model_type"])?.lowercased()
+        guard modelType == "deepseek_v4" else { return }
+
+        let weightFormat = Self.stringValue(jang["weight_format"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let codec = ((jang["quantization"] as? [String: Any])?["routed_experts"] as? [String: Any])
+            .flatMap { Self.stringValue($0["codec"]) }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let isAffine = weightFormat == nil
+            || weightFormat == "affine"
+            || weightFormat == "jang"
+            || weightFormat == "jang_v2"
+            || codec == "affine"
+
+        let routedExperts = Self.intValue(config["n_routed_experts"])
+            ?? Self.intValue(config["num_experts"])
+            ?? Self.intValue(config["num_routed_experts"])
+
+        guard isAffine, (routedExperts ?? 0) >= 128 else { return }
+
+        throw NSError(
+            domain: "ModelRuntime",
+            code: 5,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Model '\(name)' is a plain affine DeepSeek V4 Flash JANG bundle. "
+                    + "That path is not production-supported in this Osaurus build because "
+                    + "it loads through the generic SwitchGLU route and can consume very high "
+                    + "memory while decoding at unusable speed. Use the JANGTQ2 or JANGTQ-K "
+                    + "DeepSeek V4 Flash bundle instead. For engine diagnostics only, set "
+                    + "OSAURUS_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG=1."
+            ]
+        )
+    }
+
+    private static var experimentalDSV4AffineJANGAllowed: Bool {
+        let env = ProcessInfo.processInfo.environment
+        for key in [
+            "OSAURUS_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG",
+            "VMLINUX_ALLOW_EXPERIMENTAL_DSV4_AFFINE_JANG",
+        ] {
+            guard let raw = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+                continue
+            }
+            if ["1", "true", "yes", "on"].contains(raw) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func readJSONObject(at url: URL) -> [String: Any] {
+        guard let data = try? Data(contentsOf: url),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+        return object
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        if let string = value as? String { return string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String { return Int(string) }
+        return nil
     }
 
     /// Async wrapper around `validateJANGTQSidecarIfRequired` that, on a
