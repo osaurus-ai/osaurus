@@ -615,6 +615,10 @@ struct RuntimePolicySourceTests {
         #expect(adapter.contains("diskL2Misses += diskStats.misses"))
         #expect(!adapter.contains("prefixHits += diskStats.hits"))
         #expect(!adapter.contains("prefixMisses += diskStats.misses"))
+
+        let cacheSection = try Self.source("Views/Settings/ServerSettings/CacheSection.swift")
+        #expect(cacheSection.contains(#"value: $draft.cache.blockDisk.directory"#))
+        #expect(cacheSection.contains(#"value: $draft.cache.legacyDisk.directory"#))
     }
 
     @Test("Flexible model residency respects load-time memory budget")
