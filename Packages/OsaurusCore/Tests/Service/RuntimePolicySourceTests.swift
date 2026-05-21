@@ -356,7 +356,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "3cdd9f38ef4a57b53cbac434261b6bac8e038b31"
+        let currentVmlxRevision = "42e6e124aaa52d3cff5bec702727d4a92dee2b08"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
