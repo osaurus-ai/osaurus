@@ -787,10 +787,13 @@ public actor ModelRuntime {
     private nonisolated static func buildCacheCoordinatorConfig(
         modelName: String
     ) -> CacheCoordinatorConfig {
-        let diskCacheDir = OsaurusPaths.diskKVCache()
-        OsaurusPaths.ensureExistsSilent(diskCacheDir)
-        let diskDirUsable = isDirectoryWritable(diskCacheDir)
-        if !diskDirUsable {
+        let settings = ServerRuntimeSettingsStore.snapshot()
+        let diskCacheDir = Self.cacheDiskDirectoryOverride(for: settings.cache)
+        if let diskCacheDir {
+            OsaurusPaths.ensureExistsSilent(diskCacheDir)
+        }
+        let diskDirUsable = diskCacheDir.map(isDirectoryWritable) ?? false
+        if let diskCacheDir, !diskDirUsable {
             genLog.warning(
                 "buildCacheCoordinatorConfig: disk cache dir not writable, forcing memory-only: \(diskCacheDir.path, privacy: .public)"
             )
@@ -811,7 +814,6 @@ public actor ModelRuntime {
         // for path-dependent caches such as DSV4's SWA+CSA+HSA pool and
         // ZAYA's CCA state: a content hash alone proves prompt identity, not
         // cache-layout compatibility.
-        let settings = ServerRuntimeSettingsStore.snapshot()
         let kvModeTag = cacheKVModeTag(for: settings.cache)
         let scopedKey = Self.cacheCoordinatorModelKey(
             modelName: modelName,
@@ -822,14 +824,52 @@ public actor ModelRuntime {
         // so every cache field set in the Server → Settings panel
         // (prefix, paged, block disk, legacy disk, SSM rederive, KV
         // codec, defaultMaxKVSize, longPromptMultiplier) flows into
-        // BatchEngine. The diskCacheDirectory override is the writable
-        // Osaurus path; pass `nil` when the dir is unwritable so the
-        // coordinator falls back to memory-only without crashing.
-        return settings.cacheCoordinatorConfig(
+        // BatchEngine. The diskCacheDirectory override is either the
+        // user-configured disk directory or the writable Osaurus default;
+        // when that path is unusable, disable disk cache instead of letting
+        // vmlx fall back to a different implicit location.
+        var config = settings.cacheCoordinatorConfig(
             modelKey: scopedKey,
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
             ssmMaxEntries: 50
         )
+        if diskCacheDir != nil, !diskDirUsable {
+            config.enableDiskCache = false
+            config.diskCacheDir = nil
+        }
+        return config
+    }
+
+    nonisolated static func cacheDiskDirectoryOverride(
+        for cache: VMLXServerCacheSettings
+    ) -> URL? {
+        guard cache.prefix.enabled else { return nil }
+
+        let directory: String?
+        if cache.pagedKV.enabled {
+            guard cache.blockDisk.enabled else { return nil }
+            directory = cache.blockDisk.directory
+        } else {
+            guard cache.legacyDisk.enabled else { return nil }
+            directory = cache.legacyDisk.directory
+        }
+
+        return resolvedServerRuntimeDirectory(directory) ?? OsaurusPaths.diskKVCache()
+    }
+
+    private nonisolated static func resolvedServerRuntimeDirectory(_ path: String?) -> URL? {
+        guard let path = path?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !path.isEmpty
+        else { return nil }
+        if path == "~" {
+            return FileManager.default.homeDirectoryForCurrentUser
+        }
+        if path.hasPrefix("~/") {
+            let suffix = String(path.dropFirst(2))
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(suffix, isDirectory: true)
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
     }
 
     /// Stable fingerprint for the live KV codec choice. Appended to

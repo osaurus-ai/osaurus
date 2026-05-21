@@ -610,6 +610,60 @@ struct MLXBatchAdapterTests {
         #expect(!zaya.contains("layers=hybrid-ssm"))
     }
 
+    @Test func cacheDiskDirectoryOverrideHonorsBlockDiskDirectory() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.cache.prefix.enabled = true
+        settings.cache.pagedKV.enabled = true
+        settings.cache.blockDisk.enabled = true
+        settings.cache.blockDisk.directory = "~/Library/Caches/osaurus-custom-kv"
+
+        let resolved = ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
+
+        #expect(
+            resolved?.standardizedFileURL.path
+                == FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Caches/osaurus-custom-kv")
+                .standardizedFileURL.path
+        )
+    }
+
+    @Test func cacheDiskDirectoryOverrideFallsBackToOsaurusPathForPagedDiskDefault() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.cache.prefix.enabled = true
+        settings.cache.pagedKV.enabled = true
+        settings.cache.blockDisk.enabled = true
+        settings.cache.blockDisk.directory = nil
+
+        #expect(ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache) == OsaurusPaths.diskKVCache())
+    }
+
+    @Test func cacheDiskDirectoryOverrideHonorsLegacyDiskDirectoryWhenPagedKVIsOff() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.cache.prefix.enabled = true
+        settings.cache.pagedKV.enabled = false
+        settings.cache.legacyDisk.enabled = true
+        settings.cache.legacyDisk.directory = "/tmp/osaurus-legacy-kv"
+
+        #expect(
+            ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
+                == URL(fileURLWithPath: "/tmp/osaurus-legacy-kv", isDirectory: true)
+        )
+    }
+
+    @Test func cacheDiskDirectoryOverrideReturnsNilWhenDiskTierIsDisabled() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.cache.prefix.enabled = true
+        settings.cache.pagedKV.enabled = true
+        settings.cache.blockDisk.enabled = false
+
+        #expect(ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache) == nil)
+
+        settings.cache.prefix.enabled = false
+        settings.cache.blockDisk.enabled = true
+
+        #expect(ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache) == nil)
+    }
+
     @Test func effectiveGenerationSettings_doSampleFalseForcesGreedyOnlyWhenTemperatureOmitted() {
         let defaults = LocalGenerationDefaults.Defaults(
             maxTokens: nil,
