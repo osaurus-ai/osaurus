@@ -355,12 +355,13 @@ struct RuntimePolicySourceTests {
         // MoE router-gate load hardening, native-MTP speedup proof gate,
         // parser override load bridge, complete SSM companion-cache guard,
         // Qwen3.6 native-MTP alias recognition, and expanded loaded
-        // cache-topology snapshotting for server-side cache autodetect.
+        // cache-topology snapshotting for server-side cache autodetect, and
+        // quantization-bound native-MTP tuning for MXFP8 launch safety.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "867c22fd9359416334ac3085479524e242540f69"
+        let currentVmlxRevision = "af0cef57930258f187a25d5eb9b4a8aa47656042"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
