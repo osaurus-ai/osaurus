@@ -7,6 +7,7 @@
 
 import Combine
 import Foundation
+@preconcurrency import MLXLMCommon
 
 /// Lightweight reference to a local MLX model (name + repo id)
 private struct LocalModelRef {
@@ -18,6 +19,16 @@ actor MLXService: ToolCapableService {
 
     /// Shared instance for convenience (actor is stateless, delegates to ModelRuntime.shared)
     static let shared = MLXService()
+
+    struct RuntimePolicyError: Error, LocalizedError, Sendable {
+        let modelName: String
+        let issues: [String]
+
+        var errorDescription: String? {
+            let detail = issues.joined(separator: "; ")
+            return "Request is blocked by local MLX runtime policy for \(modelName): \(detail)"
+        }
+    }
 
     nonisolated var id: String { "mlx" }
 
@@ -55,6 +66,14 @@ actor MLXService: ToolCapableService {
         stopSequences: [String]
     ) async throws -> AsyncThrowingStream<String, Error> {
         let model = try selectModel(requestedName: requestedModel)
+        try Self.validateRuntimePolicy(
+            modelName: model.name,
+            modelId: model.modelId,
+            messages: messages,
+            parameters: parameters,
+            tools: [],
+            runtime: ServerRuntimeSettingsStore.snapshot()
+        )
         return try await ModelRuntime.shared.streamWithTools(
             messages: messages,
             parameters: parameters,
@@ -109,6 +128,14 @@ actor MLXService: ToolCapableService {
         requestedModel: String?
     ) async throws -> String {
         let model = try selectModel(requestedName: requestedModel)
+        try Self.validateRuntimePolicy(
+            modelName: model.name,
+            modelId: model.modelId,
+            messages: messages,
+            parameters: parameters,
+            tools: tools,
+            runtime: ServerRuntimeSettingsStore.snapshot()
+        )
         return try await ModelRuntime.shared.respondWithTools(
             messages: messages,
             parameters: parameters,
@@ -129,6 +156,14 @@ actor MLXService: ToolCapableService {
         requestedModel: String?
     ) async throws -> AsyncThrowingStream<String, Error> {
         let model = try selectModel(requestedName: requestedModel)
+        try Self.validateRuntimePolicy(
+            modelName: model.name,
+            modelId: model.modelId,
+            messages: messages,
+            parameters: parameters,
+            tools: tools,
+            runtime: ServerRuntimeSettingsStore.snapshot()
+        )
         return try await ModelRuntime.shared.streamWithTools(
             messages: messages,
             parameters: parameters,
@@ -173,5 +208,101 @@ actor MLXService: ToolCapableService {
             code: 4,
             userInfo: [NSLocalizedDescriptionKey: "Requested model not found: \(trimmed)"]
         )
+    }
+
+    static func validateRuntimePolicy(
+        modelName: String,
+        modelId: String,
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        tools: [Tool],
+        runtime: VMLXServerRuntimeSettings
+    ) throws {
+        let modalities = requestedModalities(
+            messages: messages,
+            parameters: parameters,
+            tools: tools
+        )
+        let request = ModelRuntimeCapabilityRequest(modalities: modalities)
+        let serverResult = runtime.validateRequest(
+            request,
+            capabilitySnapshot: nil,
+            unknownPolicy: .allowUnknown
+        )
+
+        var issues = serverResult.issues.map { $0.message }
+        let media = mediaCapabilities(modelId: modelId)
+        if modalities.contains(.vision), !media.supportsImage {
+            issues.append("Model capability detection reports vision as unsupported.")
+        }
+        if modalities.contains(.video), !media.supportsVideo {
+            issues.append("Model capability detection reports video as unsupported.")
+        }
+        if modalities.contains(.audio), !media.supportsAudio {
+            issues.append("Model capability detection reports audio as unsupported.")
+        }
+
+        if !issues.isEmpty {
+            throw RuntimePolicyError(modelName: modelName, issues: issues)
+        }
+    }
+
+    private nonisolated static func requestedModalities(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        tools: [Tool]
+    ) -> Set<ModelRuntimeRequestModality> {
+        var modalities: Set<ModelRuntimeRequestModality> = [.text]
+        if messages.contains(where: { !$0.imageUrls.isEmpty }) {
+            modalities.insert(.vision)
+        }
+        if messages.contains(where: { !$0.videoUrls.isEmpty }) {
+            modalities.insert(.video)
+        }
+        if messages.contains(where: { !$0.audioInputs.isEmpty }) {
+            modalities.insert(.audio)
+        }
+        if !tools.isEmpty {
+            modalities.insert(.tools)
+        }
+        if requestUsesReasoning(parameters) {
+            modalities.insert(.reasoning)
+        }
+        return modalities
+    }
+
+    private nonisolated static func requestUsesReasoning(
+        _ parameters: GenerationParameters
+    ) -> Bool {
+        if let disableThinking = parameters.modelOptions["disableThinking"]?.boolValue {
+            return !disableThinking
+        }
+        guard let rawEffort = parameters.modelOptions["reasoningEffort"]?.stringValue else {
+            return false
+        }
+        let effort =
+            rawEffort
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !effort.isEmpty else { return false }
+        switch effort {
+        case "none", "off", "disabled", "false", "no_think", "nothink", "instruct", "chat":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private nonisolated static func mediaCapabilities(
+        modelId: String
+    ) -> ModelMediaCapabilities.Capabilities {
+        let parts = modelId.split(separator: "/").map(String.init)
+        let localDirectory = parts.reduce(DirectoryPickerService.effectiveModelsDirectory()) {
+            $0.appendingPathComponent($1, isDirectory: true)
+        }
+        if FileManager.default.fileExists(atPath: localDirectory.path) {
+            return ModelMediaCapabilities.from(directory: localDirectory, modelId: modelId)
+        }
+        return ModelMediaCapabilities.from(modelId: modelId)
     }
 }
