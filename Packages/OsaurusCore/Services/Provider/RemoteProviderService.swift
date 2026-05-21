@@ -672,6 +672,9 @@ public actor RemoteProviderService: ToolCapableService {
                     throw lastError ?? CancellationError()
                 }
             }
+            if Task.isCancelled || isCancelled() {
+                throw lastError ?? CancellationError()
+            }
             do {
                 return try await session.bytes(for: urlRequest)
             } catch {
