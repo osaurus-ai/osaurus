@@ -147,6 +147,21 @@ actor SessionToolStateStore {
         lastSendCacheHint.removeValue(forKey: sessionId)
     }
 
+    /// Drop every cached session entry. Used when a process-wide signal
+    /// (e.g. the user picked a different working folder) makes EVERY
+    /// session's preflight snapshot stale at once — the per-session
+    /// `invalidate` API would require enumerating live sessions, which
+    /// the store doesn't track.
+    ///
+    /// Folder swap is rare enough that throwing away every session's
+    /// `loadedToolNames` (mid-session `capabilities_load` history) is an
+    /// acceptable cost; a stable but wrong toolset is worse than a clean
+    /// one-turn refresh.
+    func invalidateAll() {
+        states.removeAll()
+        lastSendCacheHint.removeAll()
+    }
+
     /// Reset everything (test helper).
     func reset() {
         states.removeAll()

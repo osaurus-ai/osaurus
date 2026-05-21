@@ -116,6 +116,10 @@ public final class FolderContextService: ObservableObject {
         let isGitRepo = checkIsGitRepo(url)
         let gitStatus = isGitRepo ? await getGitStatus(url) : nil
         let contextFiles = readContextFiles(url)
+        let detectedExtensions = scanForKnownExtensions(
+            url,
+            ignorePatterns: projectType.ignorePatterns
+        )
 
         return FolderContext(
             rootPath: url,
@@ -124,8 +128,70 @@ public final class FolderContextService: ObservableObject {
             manifest: manifest,
             gitStatus: gitStatus,
             isGitRepo: isGitRepo,
-            contextFiles: contextFiles
+            contextFiles: contextFiles,
+            detectedFileExtensions: detectedExtensions
         )
+    }
+
+    // MARK: - Extension Scanner
+
+    /// Hard limit on the number of filesystem entries the scanner will
+    /// inspect before giving up. Picked a folder like `~/Downloads` should
+    /// not pay for tens of thousands of `resourceValues` calls when the
+    /// answer is "we already saw an .xlsx in the first 200 files".
+    private static let extensionScanMaxEntries: Int = 5_000
+
+    /// Walk under `url` looking for files whose extension is in
+    /// `FolderPluginHints.watchedExtensions`. Returns the set of matched
+    /// extensions (lowercased, no leading dot). Early-exits the moment
+    /// every watched extension has been seen — folders dominated by the
+    /// "first match wins" case (e.g. a typical reports folder full of
+    /// `.xlsx`) finish in a handful of `readdir` calls.
+    ///
+    /// `ignorePatterns` mirrors the file-tree builder so we don't dive
+    /// into `.git` / `node_modules` / `.build` looking for spreadsheets
+    /// that the agent would never see anyway. Hidden files are skipped
+    /// for the same reason.
+    private func scanForKnownExtensions(
+        _ url: URL,
+        ignorePatterns: [String]
+    ) -> Set<String> {
+        let watched = FolderPluginHints.watchedExtensions
+        guard !watched.isEmpty else { return [] }
+
+        let fm = FileManager.default
+        guard
+            let enumerator = fm.enumerator(
+                at: url,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+        else { return [] }
+
+        var found: Set<String> = []
+        var inspected = 0
+
+        for case let fileURL as URL in enumerator {
+            inspected += 1
+            if inspected > Self.extensionScanMaxEntries { break }
+
+            let name = fileURL.lastPathComponent
+            if shouldIgnore(name, patterns: ignorePatterns) {
+                enumerator.skipDescendants()
+                continue
+            }
+
+            let isDir = (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDir { continue }
+
+            let ext = fileURL.pathExtension.lowercased()
+            guard !ext.isEmpty, watched.contains(ext) else { continue }
+
+            found.insert(ext)
+            if found.count == watched.count { break }
+        }
+
+        return found
     }
 
     // MARK: - Context Files
@@ -192,6 +258,15 @@ public final class FolderContextService: ObservableObject {
         if unregisterTools {
             FolderToolManager.shared.unregisterFolderTools()
         }
+
+        // Folder change rotates the deterministic plugin-tool injection
+        // set (xlsx in `~/reports`, none in a code repo). Drop every
+        // cached preflight snapshot so the next turn rebuilds against
+        // the new folder context instead of replaying the prior
+        // folder's tools. Folder swaps are rare; losing mid-session
+        // `capabilities_load` history across the process is an
+        // acceptable cost vs the alternative of stale tool sets.
+        Task { await SessionToolStateStore.shared.invalidateAll() }
     }
 
     /// Load previously saved folder from security-scoped bookmark

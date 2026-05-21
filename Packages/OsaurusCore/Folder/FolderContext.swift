@@ -38,6 +38,14 @@ public struct FolderContext: Sendable {
     /// the prompt composer can drop it in as-is.
     public let contextFiles: String?
 
+    /// Lowercased, dot-less file extensions detected anywhere under the
+    /// folder root that match `FolderPluginHints.watchedExtensions`.
+    /// Drives the bias-only plugin injection in
+    /// `PreflightCapabilitySearch` — when this set contains `xlsx`, the
+    /// `osaurus.xlsx` tools are merged into preflight (if installed)
+    /// regardless of what the LLM picks.
+    public let detectedFileExtensions: Set<String>
+
     public init(
         rootPath: URL,
         projectType: ProjectType,
@@ -45,7 +53,8 @@ public struct FolderContext: Sendable {
         manifest: String?,
         gitStatus: String?,
         isGitRepo: Bool,
-        contextFiles: String? = nil
+        contextFiles: String? = nil,
+        detectedFileExtensions: Set<String> = []
     ) {
         self.rootPath = rootPath
         self.projectType = projectType
@@ -54,6 +63,7 @@ public struct FolderContext: Sendable {
         self.gitStatus = gitStatus
         self.isGitRepo = isGitRepo
         self.contextFiles = contextFiles
+        self.detectedFileExtensions = detectedFileExtensions
     }
 }
 

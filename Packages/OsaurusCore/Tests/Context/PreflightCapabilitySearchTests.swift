@@ -514,6 +514,137 @@ struct PreflightCapabilitySearchTests {
         )
         _ = result
     }
+
+    // MARK: - Folder-driven plugin injection
+    //
+    // Pure-form tests for the catalog filter that drives the deterministic
+    // xlsx/pptx injection. The full `searchWithDiagnostic` path needs
+    // real `ExternalTool` fixtures (a plugin dylib) to exercise the
+    // `groupName` path, so we cover the merge-into-catalog logic via
+    // the `folderInjectedToolNames(catalog:groups:folderExtensions:installedPluginIds:)`
+    // overload — same logic the production wrapper calls into after
+    // resolving its singletons.
+
+    private static func makeFolderInjectionCatalog() -> [ToolRegistry.ToolEntry] {
+        // Three tools across two plugin groups + one ungrouped (built-in)
+        // entry. Production catalogs always look like this — mixed group
+        // tools sitting next to entries with no `groupName`.
+        [
+            ToolRegistry.ToolEntry(
+                name: "xlsx_read",
+                description: "Read .xlsx",
+                enabled: true,
+                parameters: nil
+            ),
+            ToolRegistry.ToolEntry(
+                name: "xlsx_write",
+                description: "Write .xlsx",
+                enabled: true,
+                parameters: nil
+            ),
+            ToolRegistry.ToolEntry(
+                name: "pptx_create",
+                description: "Create .pptx",
+                enabled: true,
+                parameters: nil
+            ),
+            ToolRegistry.ToolEntry(
+                name: "weather_today",
+                description: "Today's forecast",
+                enabled: true,
+                parameters: nil
+            ),
+        ]
+    }
+
+    private static let folderInjectionGroups: [String: String] = [
+        "xlsx_read": "osaurus.xlsx",
+        "xlsx_write": "osaurus.xlsx",
+        "pptx_create": "osaurus.pptx",
+            // weather_today: ungrouped on purpose — its group lookup misses
+            // even though the tool sits in the catalog. Pins that the
+            // injector trusts the `groups` map, not the tool name shape.
+    ]
+
+    @Test func folderInjection_emptyExtensionsReturnsEmpty() {
+        let result = PreflightCapabilitySearch.folderInjectedToolNames(
+            catalog: Self.makeFolderInjectionCatalog(),
+            groups: Self.folderInjectionGroups,
+            folderExtensions: [],
+            installedPluginIds: ["osaurus.xlsx", "osaurus.pptx"]
+        )
+        #expect(result.isEmpty)
+    }
+
+    @Test func folderInjection_uninstalledPluginIsDropped() {
+        // Bias-only contract: the table maps `.xlsx` → osaurus.xlsx, but
+        // the user hasn't installed it. No injection.
+        let result = PreflightCapabilitySearch.folderInjectedToolNames(
+            catalog: Self.makeFolderInjectionCatalog(),
+            groups: Self.folderInjectionGroups,
+            folderExtensions: ["xlsx"],
+            installedPluginIds: []
+        )
+        #expect(result.isEmpty)
+    }
+
+    @Test func folderInjection_pickXLSXOnlySelectsXLSXGroup() {
+        // Folder has .xlsx, both plugins installed. Only the xlsx-grouped
+        // tools survive — pptx_create stays out, weather_today (no group)
+        // stays out.
+        let result = PreflightCapabilitySearch.folderInjectedToolNames(
+            catalog: Self.makeFolderInjectionCatalog(),
+            groups: Self.folderInjectionGroups,
+            folderExtensions: ["xlsx"],
+            installedPluginIds: ["osaurus.xlsx", "osaurus.pptx"]
+        )
+        #expect(result == ["xlsx_read", "xlsx_write"])
+    }
+
+    @Test func folderInjection_bothExtensionsReturnsBothGroupsSorted() {
+        // Both extensions matched + both plugins installed → tools from
+        // both groups appear, and the result is alphabetically sorted so
+        // the resulting tool block is byte-stable across turns (KV-cache
+        // friendly).
+        let result = PreflightCapabilitySearch.folderInjectedToolNames(
+            catalog: Self.makeFolderInjectionCatalog(),
+            groups: Self.folderInjectionGroups,
+            folderExtensions: ["xlsx", "pptx"],
+            installedPluginIds: ["osaurus.xlsx", "osaurus.pptx"]
+        )
+        #expect(result == ["pptx_create", "xlsx_read", "xlsx_write"])
+    }
+
+    @Test func folderInjection_respectsCatalogAllowlist() {
+        // The catalog passed in is already filtered by the agent's
+        // allowlist. If `xlsx_write` was disabled at the agent level it
+        // never enters the catalog — and so it cannot be injected,
+        // which is exactly what we want (no end-run around user
+        // toggles).
+        let trimmedCatalog = Self.makeFolderInjectionCatalog()
+            .filter { $0.name != "xlsx_write" }
+
+        let result = PreflightCapabilitySearch.folderInjectedToolNames(
+            catalog: trimmedCatalog,
+            groups: Self.folderInjectionGroups,
+            folderExtensions: ["xlsx"],
+            installedPluginIds: ["osaurus.xlsx"]
+        )
+        #expect(result == ["xlsx_read"])
+    }
+
+    @Test func folderInjection_unknownExtensionReturnsEmpty() {
+        // `.docx` is not in the table today — gets dropped silently
+        // even when the user happens to have a fictional plugin id
+        // installed. The extension table is the only source of truth.
+        let result = PreflightCapabilitySearch.folderInjectedToolNames(
+            catalog: Self.makeFolderInjectionCatalog(),
+            groups: Self.folderInjectionGroups,
+            folderExtensions: ["docx"],
+            installedPluginIds: ["osaurus.docx"]
+        )
+        #expect(result.isEmpty)
+    }
 }
 
 private struct PreflightSearchExposureFixtureTool: OsaurusTool {

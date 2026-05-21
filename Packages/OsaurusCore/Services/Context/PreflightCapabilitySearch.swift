@@ -593,6 +593,7 @@ enum PreflightCapabilitySearch {
         let (catalog, groups) = await MainActor.run {
             loadDynamicCatalog(allowedNames: allowedNames)
         }
+
         // Empty-catalog short-circuit: still emit a diagnostic so verbose
         // eval output tells the operator "the LLM was never called
         // because there are no plugin tools enabled" instead of leaving
@@ -609,6 +610,17 @@ enum PreflightCapabilitySearch {
                 )
             )
         }
+
+        // Folder-driven plugin tools. Filtered through `catalog`, so the
+        // agent's allowlist + enabled flag + plugin-installed-state are
+        // already respected — we only ever inject tools the user could
+        // pick manually. Computed once and reused on both the LLM-NONE
+        // path and the post-guardrail merge.
+        let folderSuggestedNames = await MainActor.run {
+            folderInjectedToolNames(catalog: catalog, groups: groups)
+        }
+
+        let nameToDesc = Dictionary(uniqueKeysWithValues: catalog.map { ($0.name, $0.description) })
 
         InferenceProgressManager.shared.preflightWillStartAsync()
         defer { InferenceProgressManager.shared.preflightDidFinishAsync() }
@@ -641,17 +653,125 @@ enum PreflightCapabilitySearch {
             catalogSize: displayCatalog.count,
             llmError: llmError
         )
-        guard !llmPicks.isEmpty else { return (.empty, diagnostic) }
 
-        let nameToDesc = Dictionary(uniqueKeysWithValues: catalog.map { ($0.name, $0.description) })
-        let selectedNames = await applyEmbeddingGuardrail(
-            query: query,
-            picks: llmPicks,
-            nameToDesc: nameToDesc,
-            embedder: embedder
-        )
+        // Skip the guardrail when the LLM picked nothing — there's
+        // nothing to guard, and we'd otherwise pay an embed call to
+        // filter an empty list. The folder-suggested set carries the
+        // turn on its own when the LLM abstains.
+        let llmGuardedNames: [String]
+        if llmPicks.isEmpty {
+            llmGuardedNames = []
+        } else {
+            llmGuardedNames = await applyEmbeddingGuardrail(
+                query: query,
+                picks: llmPicks,
+                nameToDesc: nameToDesc,
+                embedder: embedder
+            )
+        }
+
+        // Merge LLM picks (post-guardrail) with folder-suggested tools.
+        // Order: LLM picks first (they reflect user intent for THIS
+        // turn), then folder tools that weren't already picked. Dedupe
+        // so a tool that the LLM happened to surface from the same
+        // plugin doesn't appear twice. When the LLM picked nothing the
+        // folder names carry through unchanged.
+        let selectedNames = mergeUnique(llmGuardedNames, folderSuggestedNames)
         guard !selectedNames.isEmpty else { return (.empty, diagnostic) }
 
+        let result = await buildPreflightResult(
+            selectedNames: selectedNames,
+            nameToDesc: nameToDesc,
+            query: query
+        )
+        return (result, diagnostic)
+    }
+
+    // MARK: Folder Injection
+
+    /// Resolve the live `FolderContext` (if any) into the set of dynamic
+    /// tool names that should be unconditionally merged into preflight
+    /// this turn. The returned names are guaranteed to be a subset of
+    /// `catalog`, so the agent's allowlist + the tool's enabled flag are
+    /// respected for free.
+    ///
+    /// Returns `[]` when:
+    /// - no folder context is active
+    /// - the folder has no files matching `FolderPluginHints.watchedExtensions`
+    /// - the matching plugins aren't installed
+    /// - the matching plugins' tools aren't in the supplied catalog
+    ///   (e.g. the agent's capability picker has them disabled)
+    @MainActor
+    private static func folderInjectedToolNames(
+        catalog: [ToolRegistry.ToolEntry],
+        groups: [String: String]
+    ) -> [String] {
+        guard let folderContext = FolderContextService.shared.currentContext else {
+            return []
+        }
+        let installed = Set(PluginManager.shared.plugins.map { $0.plugin.id })
+        return folderInjectedToolNames(
+            catalog: catalog,
+            groups: groups,
+            folderExtensions: folderContext.detectedFileExtensions,
+            installedPluginIds: installed
+        )
+    }
+
+    /// Pure form. Same return contract as the singleton-reading variant
+    /// above, but the folder extensions + installed-plugin set are
+    /// passed in. Lets unit tests assert the lookup + ordering rules
+    /// without standing up `FolderContextService` or `PluginManager`.
+    static func folderInjectedToolNames(
+        catalog: [ToolRegistry.ToolEntry],
+        groups: [String: String],
+        folderExtensions: Set<String>,
+        installedPluginIds: Set<String>
+    ) -> [String] {
+        let suggested = Set(
+            FolderPluginHints.suggestedPluginIds(
+                extensions: folderExtensions,
+                installedPluginIds: installedPluginIds
+            )
+        )
+        guard !suggested.isEmpty else { return [] }
+
+        return
+            catalog
+            .compactMap { entry -> String? in
+                guard let group = groups[entry.name],
+                    suggested.contains(group)
+                else { return nil }
+                return entry.name
+            }
+            .sorted()
+    }
+
+    /// Append `additions` to `base`, preserving order and dropping any
+    /// names already present in `base`. Used to merge LLM picks with
+    /// folder-suggested tool names without disturbing the LLM-pick order
+    /// (which is what the agent surface ranks against for "this turn's
+    /// intent").
+    private static func mergeUnique(_ base: [String], _ additions: [String]) -> [String] {
+        guard !additions.isEmpty else { return base }
+        var seen = Set(base)
+        var result = base
+        result.reserveCapacity(base.count + additions.count)
+        for name in additions where seen.insert(name).inserted {
+            result.append(name)
+        }
+        return result
+    }
+
+    /// Resolve `selectedNames` to a fully-populated `PreflightResult` —
+    /// `Tool` specs + capability items + plugin companions. Single
+    /// MainActor hop; pulled out of `searchWithDiagnostic` so the LLM
+    /// path and the folder-only path share the same construction code.
+    private static func buildPreflightResult(
+        selectedNames: [String],
+        nameToDesc: [String: String],
+        query: String
+    ) async -> PreflightResult {
         let (toolSpecs, items, companions) = await MainActor.run {
             let specs = ToolRegistry.shared.specs(forTools: selectedNames)
             let items = selectedNames.compactMap { name -> PreflightCapabilityItem? in
@@ -672,8 +792,7 @@ enum PreflightCapabilitySearch {
         logger.info(
             "Pre-flight loaded \(toolSpecs.count) tools, \(companions.count) companion plugin(s)"
         )
-        let result = PreflightResult(toolSpecs: toolSpecs, items: items, companions: companions)
-        return (result, diagnostic)
+        return PreflightResult(toolSpecs: toolSpecs, items: items, companions: companions)
     }
 
     /// Pre-rank `catalog` by embedding similarity to the query and keep
