@@ -140,7 +140,8 @@ public actor ToolIndexService {
             entries = await MainActor.run {
                 let excluded = ToolRegistry.capabilityToolNames
                     .union(ToolRegistry.shared.runtimeManagedToolNames)
-                return enabledTools
+                return
+                    enabledTools
                     .filter { !excluded.contains($0.name) }
                     .map { tool -> ToolIndexEntry in
                         let runtime: ToolRuntime

@@ -1945,7 +1945,8 @@ public final class MemoryDatabase: @unchecked Sendable {
             guard score > 0 else { return nil }
             return (turn, score)
         }
-        return scored
+        return
+            scored
             .sorted {
                 if $0.score != $1.score { return $0.score > $1.score }
                 return $0.turn.createdAt > $1.turn.createdAt
@@ -1969,7 +1970,7 @@ public final class MemoryDatabase: @unchecked Sendable {
     private static let looseSearchStopWords: Set<String> = [
         "what", "when", "where", "which", "with", "this", "that", "these", "those",
         "reply", "only", "codeword", "please", "about", "into", "from", "have",
-        "were", "your", "mine", "typed", "type"
+        "were", "your", "mine", "typed", "type",
     ]
 
     /// Returns true when `name` exists as a virtual table — used to

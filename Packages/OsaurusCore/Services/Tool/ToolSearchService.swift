@@ -644,7 +644,8 @@ public actor ToolSearchService {
     }
 
     private static func lexicalTokens(_ text: String) -> [String] {
-        let raw = text
+        let raw =
+            text
             .lowercased()
             .split { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "-" }
             .map(String.init)

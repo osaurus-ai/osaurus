@@ -175,7 +175,10 @@ struct RuntimePolicySourceTests {
         let agents = try Self.source("Managers/AgentManager.swift")
         let migrationStart = try #require(agents.range(of: "private func migrateAgentAddressesIfNeeded()"))
         let migrationEnd = try #require(
-            agents.range(of: "    }\n\n    /// One-time migration: read the legacy active.txt file", range: migrationStart.upperBound ..< agents.endIndex)
+            agents.range(
+                of: "    }\n\n    /// One-time migration: read the legacy active.txt file",
+                range: migrationStart.upperBound ..< agents.endIndex
+            )
         )
         let migrationBody = String(agents[migrationStart.lowerBound ..< migrationEnd.upperBound])
         #expect(!migrationBody.contains("assignAddress(to: agent)"))
@@ -217,7 +220,9 @@ struct RuntimePolicySourceTests {
     func chatSessionManagerRefreshDoesNotSynchronouslyOpenHistoryOnInit() throws {
         let source = try Self.source("Managers/Chat/ChatSessionsManager.swift")
         let initStart = try #require(source.range(of: "private init() {"))
-        let initEnd = try #require(source.range(of: "    }\n\n    // MARK: - Public API", range: initStart.upperBound ..< source.endIndex))
+        let initEnd = try #require(
+            source.range(of: "    }\n\n    // MARK: - Public API", range: initStart.upperBound ..< source.endIndex)
+        )
         let initBody = source[initStart.lowerBound ..< initEnd.upperBound]
 
         #expect(initBody.contains("Task { @MainActor [weak self] in"))
@@ -273,7 +278,10 @@ struct RuntimePolicySourceTests {
         let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
         let sandboxStart = try #require(composer.range(of: "if executionMode.usesSandboxTools"))
         let sandboxEnd = try #require(
-            composer.range(of: "} else if let folder = executionMode.folderContext", range: sandboxStart.upperBound ..< composer.endIndex)
+            composer.range(
+                of: "} else if let folder = executionMode.folderContext",
+                range: sandboxStart.upperBound ..< composer.endIndex
+            )
         )
         let sandboxBody = String(composer[sandboxStart.lowerBound ..< sandboxEnd.lowerBound])
 
@@ -293,8 +301,13 @@ struct RuntimePolicySourceTests {
             "Services/MCP/MCPProviderKeychain.swift",
         ] {
             let source = try Self.source(path)
-            let queryCount = source.components(separatedBy: "kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip").count - 1
-            let contextCount = source.components(separatedBy: "kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext()").count - 1
+            let queryCount =
+                source.components(separatedBy: "kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip").count
+                - 1
+            let contextCount =
+                source.components(
+                    separatedBy: "kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext()"
+                ).count - 1
             #expect(contextCount >= queryCount)
         }
 
@@ -769,13 +782,16 @@ struct RuntimePolicySourceTests {
     func agentRunEndpointDoesNotStreamInternalToolSentinels() throws {
         let handler = try Self.source("Networking/HTTPHandler.swift")
         guard let start = handler.range(of: "private func handleAgentRunEndpoint("),
-            let end = handler.range(of: "// MARK: - Dispatch & Task Endpoints", range: start.lowerBound..<handler.endIndex)
+            let end = handler.range(
+                of: "// MARK: - Dispatch & Task Endpoints",
+                range: start.lowerBound ..< handler.endIndex
+            )
         else {
             Issue.record("Could not locate handleAgentRunEndpoint in HTTPHandler.swift")
             return
         }
 
-        let agentRun = handler[start.lowerBound..<end.lowerBound]
+        let agentRun = handler[start.lowerBound ..< end.lowerBound]
         #expect(agentRun.contains("runToolBatchInParallel"))
         #expect(
             !agentRun.contains("StreamingToolHint.encode(")
@@ -976,8 +992,16 @@ struct RuntimePolicySourceTests {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
         #expect(runtime.contains("let shouldReportModelLoad = modelCache[modelName] == nil"))
-        #expect(runtime.contains("if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadWillStartAsync()"))
-        #expect(runtime.contains("if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadDidFinishAsync()"))
+        #expect(
+            runtime.contains(
+                "if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadWillStartAsync()"
+            )
+        )
+        #expect(
+            runtime.contains(
+                "if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadDidFinishAsync()"
+            )
+        )
         #expect(
             runtime.contains("must not flash the UI back to\n        // \"Loading Model...\" on every message"),
             "Hot resident chat turns must not emit the model-loading phase; users read that as a reload."
@@ -1001,7 +1025,9 @@ struct RuntimePolicySourceTests {
             "Chat UI request history must retain the composed system/context prefix."
         )
         #expect(
-            chatView.contains("if let msg = turnToMessage(t, isLastTurn: isLastTurn) {\n                            msgs.append(msg)\n                        }"),
+            chatView.contains(
+                "if let msg = turnToMessage(t, isLastTurn: isLastTurn) {\n                            msgs.append(msg)\n                        }"
+            ),
             "Every non-empty prior user/assistant/tool turn should be converted into ChatMessage history."
         )
         #expect(buildMessages.lowerBound < streamRequest.lowerBound)

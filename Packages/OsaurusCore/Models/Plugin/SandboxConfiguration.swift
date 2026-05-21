@@ -25,6 +25,15 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
     /// `nil` for installs that pre-date this field; treated as "needs
     /// restart" by `needsBridgeMigrationRestart`.
     public var lastProvisionedAppVersion: String?
+    /// Per-step wall-clock duration (seconds) of the most recent
+    /// *successful* provision. Keyed by `ProvisioningStepID.rawValue`
+    /// so the model layer can stay free of the enum dependency in this
+    /// header. Seeded on every `finishJourney(success: true)`; used to
+    /// pre-populate the UI's ETA for inherently indeterminate steps
+    /// (`configureSandbox`, `startContainer`) on subsequent boots.
+    /// `nil` for installs that pre-date this field — the UI then shows
+    /// "—" until the first successful run is recorded.
+    public var lastBootDurations: [String: Double]?
 
     public static let `default` = SandboxConfiguration(
         cpus: 2,
@@ -32,7 +41,8 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         network: "outbound",
         autoStart: true,
         setupComplete: false,
-        lastProvisionedAppVersion: nil
+        lastProvisionedAppVersion: nil,
+        lastBootDurations: nil
     )
 
     public init(
@@ -41,7 +51,8 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         network: String = "outbound",
         autoStart: Bool = true,
         setupComplete: Bool = false,
-        lastProvisionedAppVersion: String? = nil
+        lastProvisionedAppVersion: String? = nil,
+        lastBootDurations: [String: Double]? = nil
     ) {
         self.cpus = cpus
         self.memoryGB = memoryGB
@@ -49,6 +60,7 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         self.autoStart = autoStart
         self.setupComplete = setupComplete
         self.lastProvisionedAppVersion = lastProvisionedAppVersion
+        self.lastBootDurations = lastBootDurations
     }
 
     public init(from decoder: Decoder) throws {
@@ -60,6 +72,8 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         setupComplete = try container.decodeIfPresent(Bool.self, forKey: .setupComplete) ?? true
         lastProvisionedAppVersion =
             try container.decodeIfPresent(String.self, forKey: .lastProvisionedAppVersion)
+        lastBootDurations =
+            try container.decodeIfPresent([String: Double].self, forKey: .lastBootDurations)
     }
 }
 

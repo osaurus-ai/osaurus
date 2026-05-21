@@ -1752,6 +1752,20 @@ extension FloatingInputCard {
         }
     }
 
+    /// Primary tap on the sandbox chip. While the sandbox is starting
+    /// up — or has failed — we route the click into the Settings →
+    /// Sandbox tab so the user can see the real-time provisioning
+    /// journey (step list, byte progress, ETA, retry button) instead
+    /// of staring at an opaque pulsing pill. Toggling on/off only
+    /// makes sense once the sandbox is in a settled state.
+    private func handleSandboxChipTap() {
+        if isSandboxLoading || isSandboxFailed {
+            AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
+            return
+        }
+        toggleSandbox()
+    }
+
     private func toggleSandbox() {
         let currentConfig = agentManager.effectiveAutonomousExec(for: effectiveAgentId)
         var newConfig = currentConfig ?? .default
@@ -1815,9 +1829,9 @@ extension FloatingInputCard {
 
     private var sandboxHelpText: String {
         if let failure = sandboxFailure, isSandboxEnabled {
-            return "Sandbox unavailable: \(failure.message)\nRight-click for Retry."
+            return "Sandbox unavailable: \(failure.message)\nClick to open Sandbox settings."
         } else if isSandboxLoading {
-            return "Sandbox is starting up…"
+            return "Sandbox is starting up — click to view progress."
         } else if isSandboxEnabled && isSandboxRunning {
             return "Sandbox is active — click to disable. Right-click for settings."
         } else if isSandboxEnabled {
@@ -1838,7 +1852,7 @@ extension FloatingInputCard {
     }
 
     private var sandboxToggleChip: some View {
-        Button(action: toggleSandbox) {
+        Button(action: handleSandboxChipTap) {
             HStack(spacing: 5) {
                 if isSandboxFailed {
                     Image(systemName: "exclamationmark.circle.fill")
@@ -1889,7 +1903,11 @@ extension FloatingInputCard {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isSandboxLoading)
+        // Intentionally NOT `.disabled(isSandboxLoading)` — the chip
+        // stays tappable during provisioning so the user can click
+        // through to the Sandbox settings tab and watch the journey
+        // unfold. Toggling on/off is intercepted by
+        // `handleSandboxChipTap` in that state.
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isSandboxHovered = hovering

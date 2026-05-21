@@ -299,7 +299,8 @@ public actor SkillSearchService {
     }
 
     private static func searchTokens(in text: String) -> Set<String> {
-        let tokens = text
+        let tokens =
+            text
             .lowercased()
             .split { !$0.isLetter && !$0.isNumber }
             .map(String.init)

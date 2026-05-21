@@ -22,7 +22,6 @@ struct SandboxView: View {
     @State private var pendingConfig: SandboxConfiguration
     @State private var provisionError: String?
     @State private var actionError: String?
-    @State private var containerInfo: SandboxManager.ContainerInfo?
     @State private var showResetConfirm = false
     @State private var showRemoveConfirm = false
     @State private var diagResults: [SandboxManager.DiagnosticResult]?
@@ -62,20 +61,19 @@ struct SandboxView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerBar
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
-
             containerTabContent
-                .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .environment(\.theme, theme)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
+            // Previously this tab faded itself in over ~300 ms on every
+            // mount (250 ms duration + 50 ms delay). Because
+            // `SidebarNavigation` uses `.id(selection)`, the view is
+            // destroyed and recreated on every tab switch — so the user
+            // paid that latency every time they returned to Sandbox.
+            // The header + content now appear immediately on first frame.
+            hasAppeared = true
             needsBridgeMigrationRestart = SandboxBridgeMigrationFlag.needsRestart
         }
         .onChange(of: sandboxState.status) { _, _ in
@@ -136,6 +134,10 @@ private extension SandboxView {
                         bridgeMigrationBanner
                     }
                     statusDashboard
+                    // Surfaced only while the post-start verifyPlugins
+                    // step is active. Self-hides when verify finishes,
+                    // so the layout reclaims the space cleanly.
+                    PostStartTasksCard()
                     if sandboxState.status == .running {
                         if hasRenderedHeavyCards {
                             SandboxLogConsoleCard()
@@ -275,75 +277,10 @@ private extension SandboxView {
     }
 
     var provisioningProgressView: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            if let progress = sandboxState.provisioningProgress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .frame(width: 220)
-                    .tint(theme.accentColor)
-                    .animation(.easeOut(duration: 0.3), value: progress)
-            } else {
-                ProgressView()
-                    .controlSize(.large)
-                    .tint(theme.accentColor)
-            }
-
-            VStack(spacing: 8) {
-                Text("Setting Up Sandbox", bundle: .module)
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-
-                if let phase = sandboxState.provisioningPhase {
-                    HStack(spacing: 6) {
-                        Text(phase)
-                        if let progress = sandboxState.provisioningProgress {
-                            Text("\(Int(progress * 100))%", bundle: .module)
-                                .monospacedDigit()
-                                .contentTransition(.numericText())
-                        }
-                    }
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .animation(.easeInOut(duration: 0.2), value: phase)
-                }
-            }
-
-            if let error = provisionError {
-                VStack(spacing: 10) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 12))
-                        Text(error)
-                            .font(.system(size: 12))
-                            .lineLimit(3)
-                    }
-                    .foregroundColor(theme.warningColor)
-
-                    Button(action: performProvision) {
-                        Label {
-                            Text("Retry", bundle: .module)
-                        } icon: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ProvisioningJourneyView(
+            provisionError: provisionError,
+            onRetry: performProvision
+        )
     }
 }
 
@@ -365,7 +302,7 @@ private extension SandboxView {
                     statusActionButton
                 }
 
-                if let info = containerInfo {
+                if let info = sandboxState.containerInfo {
                     LazyVGrid(
                         columns: [
                             GridItem(.flexible(), spacing: 10),
@@ -959,7 +896,9 @@ private extension SandboxView {
         Task {
             do {
                 try await SandboxManager.shared.stopContainer()
-                containerInfo = nil
+                // `stopContainer` itself clears `State.shared.containerInfo`
+                // so the dashboard tiles go blank on stop without needing
+                // a manual assignment here.
             } catch {
                 actionError = error.localizedDescription
             }
@@ -983,7 +922,8 @@ private extension SandboxView {
         Task {
             do {
                 try await SandboxManager.shared.removeContainer()
-                containerInfo = nil
+                // `removeContainer` → `stopContainer` clears the published
+                // metrics, so no manual reset needed here.
             } catch {
                 actionError = error.localizedDescription
             }
@@ -1007,9 +947,10 @@ private extension SandboxView {
     }
 
     func refreshInfo() {
-        Task {
-            containerInfo = await SandboxManager.shared.info()
-        }
+        // `info()` writes the result into `SandboxManager.State.shared`,
+        // which `sandboxState.containerInfo` reads. We don't need to
+        // capture the return value here.
+        Task { _ = await SandboxManager.shared.info() }
     }
 
     /// Structured replacement for the prior `Timer.scheduledTimer`.
@@ -1022,7 +963,7 @@ private extension SandboxView {
                 try? await Task.sleep(for: .seconds(5))
                 if Task.isCancelled { break }
                 if sandboxState.status == .running {
-                    containerInfo = await SandboxManager.shared.info()
+                    _ = await SandboxManager.shared.info()
                 }
             }
         }
@@ -1035,13 +976,15 @@ private extension SandboxView {
 
     /// Defer mount of `SandboxLogConsoleCard` so the first paint of the
     /// running-container scroll view doesn't have to lay out + diff the
-    /// log buffer's contents synchronously. 120 ms is enough for AppKit
-    /// to commit the first frame on a fresh tab visit.
+    /// log buffer's contents synchronously. The card itself already uses
+    /// a `LazyVStack` + throttled snapshot refresh, so 50 ms is plenty
+    /// for AppKit to commit the first frame on a fresh tab visit and
+    /// significantly cuts the perceived "blank then logs appear" lag.
     func scheduleHeavyCardMount() {
         if hasRenderedHeavyCards { return }
         heavyCardMountTask?.cancel()
         heavyCardMountTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: .milliseconds(50))
             if !Task.isCancelled {
                 hasRenderedHeavyCards = true
             }

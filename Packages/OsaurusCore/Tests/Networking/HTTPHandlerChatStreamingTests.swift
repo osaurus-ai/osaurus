@@ -635,7 +635,7 @@ struct HTTPHandlerChatStreamingTests {
                         description: "Mark the agent task complete.",
                         parameters: .object(["summary": .string("")])
                     )
-                ),
+                )
             ],
             tool_choice: .function(
                 ToolChoiceOption.FunctionName(

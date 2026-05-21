@@ -17,6 +17,13 @@ public final class SandboxPluginManager: ObservableObject {
     @Published public var installedPlugins: [String: [InstalledSandboxPlugin]] = [:]
     @Published public var installProgress: [String: InstallProgress] = [:]
 
+    /// Per-launch tracking of agents whose `apk` deps have been bulk-seeded
+    /// by `batchInstallDependencies`. Lets `installSystemDependencies` skip
+    /// the per-plugin `apk add` round-trip during the post-start repair
+    /// pass when the same packages were already installed in one batch.
+    /// Cleared when the container restarts so we re-seed after a fresh boot.
+    private var agentsWithSeededDeps: Set<String> = []
+
     public struct InstallProgress: Sendable {
         public let pluginName: String
         public let phase: String
@@ -201,6 +208,15 @@ public final class SandboxPluginManager: ObservableObject {
     /// Re-installs ephemeral dependencies and re-runs setup for all `.ready`
     /// plugins across all agents. Call after the container restarts so that
     /// system packages and setup side effects lost with the rootfs are restored.
+    ///
+    /// Strategy:
+    /// 1. Dedupe `apk add` packages across each agent's plugins and run a
+    ///    single batched install per agent (apk's container-wide lock makes
+    ///    splitting it pointless anyway).
+    /// 2. After deps are seeded, run per-plugin setup commands concurrently
+    ///    behind a small in-flight cap. `SandboxAgentProvisioner` is already
+    ///    coalesced per-agent, so concurrent repairs for the same agent
+    ///    naturally share its provision task.
     public func verifyAndRepairAllPlugins() async {
         guard await SandboxManager.shared.status().isRunning else { return }
 
@@ -211,14 +227,113 @@ public final class SandboxPluginManager: ObservableObject {
 
         NSLog("[SandboxPluginManager] Verifying \(snapshot.count) installed plugin(s) after container start")
 
+        // Reset the per-launch "deps seeded" set so each post-start pass
+        // re-seeds for the freshly booted rootfs. The set only short-
+        // circuits the repair path (`installSystemDependencies(...:agentId:)`)
+        // — the user-facing `install(...)` path always runs apk add.
+        agentsWithSeededDeps.removeAll()
+
+        // Batch system-deps install per agent first. The await is sequential
+        // across agents because apk acquires a container-wide lock; running
+        // them in parallel would just serialize inside the guest while
+        // burning extra exec round-trips.
+        await batchInstallDependencies(snapshot)
+
+        await runRepairsConcurrently(snapshot, maxConcurrent: 4)
+    }
+
+    /// Group `snapshot` by agent, dedupe the union of `plugin.dependencies`,
+    /// and run one `apk add --no-cache <deduped>` per agent. Marks each
+    /// agent as "deps seeded" for this process so per-plugin
+    /// `installSystemDependencies` can short-circuit during the repair
+    /// pass that follows.
+    private func batchInstallDependencies(_ snapshot: [(String, SandboxPlugin)]) async {
+        var depsByAgent: [String: Set<String>] = [:]
         for (agentId, plugin) in snapshot {
-            await repairPlugin(plugin, for: agentId)
+            guard let deps = plugin.dependencies, !deps.isEmpty else { continue }
+            depsByAgent[agentId, default: []].formUnion(deps)
+        }
+        guard !depsByAgent.isEmpty else { return }
+
+        // Awaiting network here once is cheaper than letting every plugin's
+        // installSystemDependencies await it independently — the readiness
+        // probe is coalesced anyway, but this also lets us skip touching
+        // `apk add` at all if the network never comes up.
+        _ = await SandboxManager.shared.awaitNetworkReady()
+
+        for (agentId, deps) in depsByAgent {
+            let sortedDeps = deps.sorted().joined(separator: " ")
+            do {
+                let result = try await SandboxManager.shared.execAsRoot(
+                    command: "apk add --no-cache \(sortedDeps)",
+                    timeout: 300,
+                    streamToLogs: true,
+                    logSource: "plugin-repair:\(agentId)"
+                )
+                if result.succeeded {
+                    agentsWithSeededDeps.insert(agentId)
+                } else {
+                    NSLog(
+                        "[SandboxPluginManager] Batched apk add for agent \(agentId) returned exit \(result.exitCode): \(result.stderr.prefix(200))"
+                    )
+                }
+            } catch {
+                NSLog(
+                    "[SandboxPluginManager] Batched apk add for agent \(agentId) threw: \(error.localizedDescription)"
+                )
+            }
+        }
+    }
+
+    /// Concurrency-capped scheduler used by `verifyAndRepairAllPlugins`.
+    /// Factored out so each `group.addTask` site captures simple immutable
+    /// `Sendable` values without confusing Swift 6.x's region-based
+    /// isolation checker.
+    private func runRepairsConcurrently(
+        _ snapshot: [(String, SandboxPlugin)],
+        maxConcurrent: Int
+    ) async {
+        await withTaskGroup(of: Void.self) { group in
+            let cap = min(maxConcurrent, snapshot.count)
+            for i in 0 ..< cap {
+                scheduleRepair(in: &group, snapshot: snapshot, at: i)
+            }
+            var next = cap
+            while await group.next() != nil {
+                if next < snapshot.count {
+                    scheduleRepair(in: &group, snapshot: snapshot, at: next)
+                    next += 1
+                }
+            }
+        }
+    }
+
+    /// Single, well-shaped scheduling site for repair tasks. Keeps the
+    /// captured values local + Sendable so the isolation checker is happy.
+    /// `repairPlugin` is `@MainActor`-isolated, so the awaited call hops
+    /// to MainActor automatically — no need to pin the task itself.
+    private nonisolated func scheduleRepair(
+        in group: inout TaskGroup<Void>,
+        snapshot: [(String, SandboxPlugin)],
+        at index: Int
+    ) {
+        let agentId = snapshot[index].0
+        let plugin = snapshot[index].1
+        group.addTask { [weak self] in
+            guard let self else { return }
+            _ = await self.repairPlugin(plugin, for: agentId)
         }
     }
 
     /// Re-installs system dependencies and re-runs the setup command for a
     /// single plugin. If VirtioFS files are intact, only restores ephemeral
     /// deps. If files are missing, does a full reinstall.
+    ///
+    /// Short-circuit: when `hostFilesIntact == true` AND the plugin was
+    /// last successfully verified by this same app version, skip the
+    /// dep install + setup command entirely. The plugin's host files and
+    /// the container's apk db are both stable across restarts of the
+    /// same binary, so re-running everything is just wasted exec time.
     @discardableResult
     public func repairPlugin(_ plugin: SandboxPlugin, for agentId: String) async -> Bool {
         let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
@@ -234,6 +349,7 @@ public final class SandboxPluginManager: ObservableObject {
             NSLog("[SandboxPluginManager] Plugin files missing for '\(plugin.id)' (agent \(agentId)), reinstalling")
             do {
                 try await reinstall(plugin: plugin, for: agentId)
+                stampVerified(pluginId: plugin.id, for: agentId)
                 return true
             } catch {
                 NSLog("[SandboxPluginManager] Reinstall failed for '\(plugin.id)': \(error.localizedDescription)")
@@ -242,16 +358,23 @@ public final class SandboxPluginManager: ObservableObject {
             }
         }
 
+        let currentVersion = Self.currentAppVersion
+        if let installed = self.plugin(id: plugin.id, for: agentId),
+            installed.lastVerifiedAppVersion == currentVersion
+        {
+            return true
+        }
+
         do {
             try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
 
-            if plugin.dependencies != nil {
+            if plugin.dependencies != nil && !agentsWithSeededDeps.contains(agentId) {
                 setProgress(
                     key: key,
                     InstallProgress(pluginName: plugin.name, phase: "Restoring system packages...", agentId: agentId)
                 )
             }
-            try await installSystemDependencies(for: plugin, agentName: agentName)
+            try await installSystemDependencies(for: plugin, agentName: agentName, agentId: agentId)
 
             if plugin.setup != nil {
                 setProgress(
@@ -261,12 +384,31 @@ public final class SandboxPluginManager: ObservableObject {
             }
             try await runSetupCommand(for: plugin, agentName: agentName, agentId: agentId)
 
+            stampVerified(pluginId: plugin.id, for: agentId)
             return true
         } catch {
             NSLog("[SandboxPluginManager] Repair failed for '\(plugin.id)': \(error.localizedDescription)")
             markPluginFailed(plugin.id, for: agentId)
             return false
         }
+    }
+
+    /// Persist the "verified under this app version" stamp for `pluginId`
+    /// so the next post-start repair pass can short-circuit when nothing
+    /// has changed since this successful verification.
+    private func stampVerified(pluginId: String, for agentId: String) {
+        guard var list = installedPlugins[agentId],
+            let index = list.firstIndex(where: { $0.id == pluginId })
+        else { return }
+        let current = Self.currentAppVersion
+        if list[index].lastVerifiedAppVersion == current { return }
+        list[index].lastVerifiedAppVersion = current
+        installedPlugins[agentId] = list
+        saveInstalled(for: agentId)
+    }
+
+    private static var currentAppVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
     private func markPluginFailed(_ pluginId: String, for agentId: String) {
@@ -451,7 +593,27 @@ public final class SandboxPluginManager: ObservableObject {
     }
 
     private func installSystemDependencies(for plugin: SandboxPlugin, agentName: String) async throws {
+        try await installSystemDependencies(for: plugin, agentName: agentName, agentId: nil)
+    }
+
+    /// `installSystemDependencies` variant that knows the caller's `agentId`
+    /// so it can short-circuit when `batchInstallDependencies` already
+    /// seeded the deps for that agent during the post-start repair pass.
+    private func installSystemDependencies(
+        for plugin: SandboxPlugin,
+        agentName: String,
+        agentId: String?
+    ) async throws {
         guard let deps = plugin.dependencies, !deps.isEmpty else { return }
+        if let agentId, agentsWithSeededDeps.contains(agentId) {
+            return
+        }
+        // `apk add` needs the Alpine CDN to resolve. The container's
+        // network readiness probe normally finishes before any plugin
+        // path reaches here, so this typically falls through immediately;
+        // the awaited form just guards against the rare race where a
+        // plugin install runs before the post-boot probe is done.
+        _ = await SandboxManager.shared.awaitNetworkReady()
         let depList = deps.joined(separator: " ")
         let result = try await SandboxManager.shared.execAsRoot(
             command: "apk add --no-cache \(depList)",

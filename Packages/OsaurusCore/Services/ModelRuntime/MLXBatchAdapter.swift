@@ -148,14 +148,17 @@ struct MLXBatchAdapter {
         if disableNativeMTP {
             return nil
         }
-        guard shouldApplyNativeMTPGreedyDefaults(
-            generation: generation,
-            draftStrategy: draftStrategy
-        ) else {
+        guard
+            shouldApplyNativeMTPGreedyDefaults(
+                generation: generation,
+                draftStrategy: draftStrategy
+            )
+        else {
             return nil
         }
         if let promptTokenCount,
-           promptTokenCount < nativeMTPTinyPromptMinimumTokens {
+            promptTokenCount < nativeMTPTinyPromptMinimumTokens
+        {
             return nil
         }
         return draftStrategy
@@ -193,8 +196,9 @@ struct MLXBatchAdapter {
         if let topP = generation.topPOverride, topP < 1 { return false }
         if let minP = generation.minPOverride, minP != 0 { return false }
         if let repetitionPenalty = generation.repetitionPenalty,
-           repetitionPenalty != 0,
-           repetitionPenalty != 1 {
+            repetitionPenalty != 0,
+            repetitionPenalty != 1
+        {
             return false
         }
         return true

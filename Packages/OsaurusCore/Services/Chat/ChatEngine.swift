@@ -273,10 +273,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             json,
             json.replacingOccurrences(of: #"\""#, with: #"""#),
         ]
-        guard let object = candidates.lazy.compactMap({ candidate -> Any? in
-            guard let data = candidate.data(using: .utf8) else { return nil }
-            return try? JSONSerialization.jsonObject(with: data)
-        }).first else {
+        guard
+            let object = candidates.lazy.compactMap({ candidate -> Any? in
+                guard let data = candidate.data(using: .utf8) else { return nil }
+                return try? JSONSerialization.jsonObject(with: data)
+            }).first
+        else {
             return json
         }
         let normalized = normalizeNestedJSONStringValues(object)

@@ -51,7 +51,7 @@ enum ServerConfigurationStore {
     ) -> Bool {
         let markerURL = idleResidencyWarmDefaultMigrationMarkerURL()
         guard configuration.modelIdleResidencyPolicy == .immediately,
-              !FileManager.default.fileExists(atPath: markerURL.path)
+            !FileManager.default.fileExists(atPath: markerURL.path)
         else {
             return false
         }

@@ -90,7 +90,7 @@ struct BatchDiagnosticsView: View {
     private func nativeMTPValue(_ snapshot: BatchDiagnosticsSnapshot) -> String {
         guard snapshot.nativeMTPModelCount > 0 else { return L("Not active") }
         if let depthSummary = snapshot.nativeMTPDepthSummary,
-           !depthSummary.isEmpty
+            !depthSummary.isEmpty
         {
             return "\(snapshot.nativeMTPModelCount) \(L("active")) (\(depthSummary))"
         }

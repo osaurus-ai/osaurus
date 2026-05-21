@@ -264,6 +264,14 @@ public struct InstalledSandboxPlugin: Codable, Sendable, Identifiable, Equatable
     public var status: InstallStatus
     public let sourceContentHash: String
 
+    /// Stamp of the host app's binary version the last time a repair pass
+    /// successfully verified this plugin. Lets the post-start verifier
+    /// short-circuit when nothing in the rootfs would have changed since
+    /// our last successful verification. `nil` means "never verified by a
+    /// version-aware repair pass" (e.g. installs from before this field
+    /// existed) — those still fall through to the full repair path.
+    public var lastVerifiedAppVersion: String?
+
     public enum InstallStatus: String, Codable, Sendable, Equatable {
         case installing
         case ready
@@ -276,13 +284,15 @@ public struct InstalledSandboxPlugin: Codable, Sendable, Identifiable, Equatable
         agentId: String,
         installedAt: Date = Date(),
         status: InstallStatus = .installing,
-        sourceContentHash: String? = nil
+        sourceContentHash: String? = nil,
+        lastVerifiedAppVersion: String? = nil
     ) {
         self.plugin = plugin
         self.agentId = agentId
         self.installedAt = installedAt
         self.status = status
         self.sourceContentHash = sourceContentHash ?? plugin.contentHash
+        self.lastVerifiedAppVersion = lastVerifiedAppVersion
     }
 
     public init(from decoder: Decoder) throws {
@@ -292,6 +302,7 @@ public struct InstalledSandboxPlugin: Codable, Sendable, Identifiable, Equatable
         installedAt = try container.decode(Date.self, forKey: .installedAt)
         status = try container.decode(InstallStatus.self, forKey: .status)
         sourceContentHash = try container.decodeIfPresent(String.self, forKey: .sourceContentHash) ?? ""
+        lastVerifiedAppVersion = try container.decodeIfPresent(String.self, forKey: .lastVerifiedAppVersion)
     }
 }
 

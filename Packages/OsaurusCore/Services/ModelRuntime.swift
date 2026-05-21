@@ -1372,7 +1372,8 @@ public actor ModelRuntime {
                 loadConfiguration: .default,
                 draftStrategy: nil,
                 statusLine: nil,
-                reason: "MTP inspection failed; using autoregressive load.")
+                reason: "MTP inspection failed; using autoregressive load."
+            )
         }
 
         var settings = VMLXServerRuntimeSettings()
@@ -1398,7 +1399,8 @@ public actor ModelRuntime {
             loadConfiguration: loadConfiguration,
             draftStrategy: draftStrategy,
             statusLine: status?.statusLine,
-            reason: launch.reason)
+            reason: launch.reason
+        )
     }
 
     private nonisolated static func describeDraftStrategy(
@@ -2151,13 +2153,15 @@ public actor ModelRuntime {
             .flatMap { Self.stringValue($0["codec"]) }?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        let isAffine = weightFormat == nil
+        let isAffine =
+            weightFormat == nil
             || weightFormat == "affine"
             || weightFormat == "jang"
             || weightFormat == "jang_v2"
             || codec == "affine"
 
-        let routedExperts = Self.intValue(config["n_routed_experts"])
+        let routedExperts =
+            Self.intValue(config["n_routed_experts"])
             ?? Self.intValue(config["num_experts"])
             ?? Self.intValue(config["num_routed_experts"])
 
