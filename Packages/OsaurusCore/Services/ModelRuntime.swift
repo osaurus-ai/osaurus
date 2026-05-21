@@ -650,16 +650,18 @@ public actor ModelRuntime {
                 "loadContainer: task start model=\(name, privacy: .public) loadID=\(loadID, privacy: .public)"
             )
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
-            let mtpPlan = Self.resolveNativeMTPLaunchPlan(modelDirectory: localURL)
+            let serverSettings = ServerRuntimeSettingsStore.snapshot()
+            let mtpPlan = Self.resolveNativeMTPLaunchPlan(
+                modelDirectory: localURL,
+                settings: serverSettings)
             genLog.info(
                 "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public)"
             )
             let container = try await loadModelContainer(
                 from: localURL,
                 using: tokenizerLoader,
-                configuration: ServerRuntimeSettingsStore.snapshot()
-                    .resolvedModelConfiguration(
-                        base: ModelConfiguration(directory: localURL)),
+                configuration: serverSettings.resolvedModelConfiguration(
+                    base: ModelConfiguration(directory: localURL)),
                 loadConfiguration: mtpPlan.loadConfiguration
             )
             let isVLM = await container.isVLM
@@ -1445,7 +1447,8 @@ public actor ModelRuntime {
     }
 
     private nonisolated static func resolveNativeMTPLaunchPlan(
-        modelDirectory: URL
+        modelDirectory: URL,
+        settings: VMLXServerRuntimeSettings
     ) -> NativeMTPLaunchPlan {
         let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
         let jangConfig = try? JangLoader.loadConfig(at: modelDirectory)
@@ -1467,7 +1470,6 @@ public actor ModelRuntime {
             )
         }
 
-        let settings = ServerRuntimeSettingsStore.snapshot()
         let launch = settings.resolvedMTPLaunch(
             configData: configData,
             jangConfig: jangConfig,
