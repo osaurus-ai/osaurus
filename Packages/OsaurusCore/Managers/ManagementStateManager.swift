@@ -42,5 +42,10 @@ public final class ManagementStateManager: ObservableObject {
     /// exact provider whose env vars or OAuth still need attention.
     @Published public var pendingMCPProviderEditId: UUID?
 
+    /// One-shot request to install a theme by content hash from a deeplink
+    /// (`osaurus://themes-install?hash=<sha256>`). `ThemesView` observes
+    /// this and resets it to nil after presenting the import sheet.
+    @Published public var pendingThemeInstallHash: String?
+
     private init() {}
 }

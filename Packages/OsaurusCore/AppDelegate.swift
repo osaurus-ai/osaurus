@@ -1198,12 +1198,19 @@ extension AppDelegate {
 
     /// `osaurus://<addr>?pair=<base64url(invite)>` — incoming agent share link.
     /// `osaurus://plugins-install?tool=<plugin_id>` — open Plugins tab on a plugin's detail page.
+    /// `osaurus://themes-install?hash=<sha256>` — open Themes tab and install a shared theme.
     fileprivate func handleOsaurusDeepLink(_ url: URL) {
         Task { @MainActor in
             NSApp.activate(ignoringOtherApps: true)
 
             if url.host?.lowercased() == "plugins-install" {
                 handlePluginsInstallDeepLink(url)
+                return
+            }
+
+            if url.host?.lowercased() == ThemeShareService.deepLinkHost {
+                showManagementWindow(initialTab: .themes)
+                _ = ThemesDeepLinkRouter.handle(url)
                 return
             }
 

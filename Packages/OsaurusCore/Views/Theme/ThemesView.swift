@@ -21,6 +21,7 @@ struct IdentifiableTheme: Identifiable {
 
 struct ThemesView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var managementState = ManagementStateManager.shared
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -37,6 +38,9 @@ struct ThemesView: View {
     @State private var themeToDelete: CustomTheme?
     @State private var toastMessage: String?
     @State private var toastType: SimpleToastType = .success
+    @State private var sharingTheme: IdentifiableTheme?
+    @State private var showingImportByIdSheet = false
+    @State private var importByIdInitialHash: String?
 
     private var installedThemes: [CustomTheme] {
         themeManager.installedThemes.sorted { $0.metadata.name < $1.metadata.name }
@@ -115,6 +119,7 @@ struct ThemesView: View {
         .background(theme.primaryBackground)
         .onAppear {
             loadThemes()
+            applyPendingThemeInstall()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -141,6 +146,27 @@ struct ThemesView: View {
             defaultFilename: themeToExport?.metadata.name ?? "theme"
         ) { result in
             handleExport(result)
+        }
+        .sheet(item: $sharingTheme) { identifiable in
+            ShareThemeSheet(themeToShare: identifiable.theme) { _ in
+                showToast(L("Theme shared"))
+            }
+        }
+        .sheet(isPresented: $showingImportByIdSheet) {
+            ImportThemeByIdSheet(
+                initialInput: importByIdInitialHash,
+                onCompleted: { imported in
+                    showToast(L("Imported \"\(imported.metadata.name)\""))
+                    importByIdInitialHash = nil
+                },
+                onError: { message in
+                    showToast(L("Import failed: \(message)"), type: .error)
+                    importByIdInitialHash = nil
+                }
+            )
+        }
+        .onReceive(managementState.$pendingThemeInstallHash) { _ in
+            applyPendingThemeInstall()
         }
         .themedAlert(
             "Delete Theme",
@@ -186,6 +212,57 @@ struct ThemesView: View {
 
     // MARK: - Header
 
+    /// Combined "Import" entry point. A single menu so the header row fits
+    /// even on narrow window widths and the two import flavours sit
+    /// together semantically.
+    private var importMenuButton: some View {
+        Menu {
+            Button {
+                showingImporter = true
+            } label: {
+                Label {
+                    Text("From File…", bundle: .module)
+                } icon: {
+                    Image(systemName: "doc")
+                }
+            }
+            Button {
+                importByIdInitialHash = nil
+                showingImportByIdSheet = true
+            } label: {
+                Label {
+                    Text("From Link or ID…", bundle: .module)
+                } icon: {
+                    Image(systemName: "link")
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 12, weight: .medium))
+                Text("Import", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .fixedSize(horizontal: true, vertical: false)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
     private var headerView: some View {
         ManagerHeaderWithActions(
             title: L("Themes"),
@@ -195,9 +272,7 @@ struct ThemesView: View {
             HeaderIconButton("arrow.clockwise", help: "Refresh themes") {
                 loadThemes()
             }
-            HeaderSecondaryButton("Import", icon: "square.and.arrow.down") {
-                showingImporter = true
-            }
+            importMenuButton
             HeaderPrimaryButton("Create Theme", icon: "plus") {
                 createNewTheme()
             }
@@ -424,6 +499,7 @@ struct ThemesView: View {
                         },
                         onEdit: { openEditor(for: themeItem) },
                         onExport: { exportTheme(themeItem) },
+                        onShare: { shareTheme(themeItem) },
                         onDuplicate: { duplicateTheme(themeItem) },
                         onDelete: themeItem.isBuiltIn ? nil : { confirmDelete(themeItem) }
                     )
@@ -564,6 +640,20 @@ struct ThemesView: View {
         showingExporter = true
     }
 
+    private func shareTheme(_ theme: CustomTheme) {
+        sharingTheme = IdentifiableTheme(theme)
+    }
+
+    /// Honor a pending `osaurus://themes-install?hash=…` deeplink request.
+    /// Opens the Import-by-ID sheet pre-populated with the hash so the
+    /// user can confirm before the network round-trip.
+    private func applyPendingThemeInstall() {
+        guard let hash = managementState.pendingThemeInstallHash, !hash.isEmpty else { return }
+        importByIdInitialHash = hash
+        showingImportByIdSheet = true
+        managementState.pendingThemeInstallHash = nil
+    }
+
     private func duplicateTheme(_ themeItem: CustomTheme) {
         // Generate unique copy name
         let baseName = "\(themeItem.metadata.name) Copy"
@@ -631,6 +721,7 @@ struct ThemePreviewCard: View {
     let onApply: () -> Void
     let onEdit: () -> Void
     let onExport: () -> Void
+    let onShare: () -> Void
     let onDuplicate: () -> Void
     let onDelete: (() -> Void)?
 
@@ -716,6 +807,13 @@ struct ThemePreviewCard: View {
                                 Text("Export", bundle: .module)
                             } icon: {
                                 Image(systemName: "square.and.arrow.up")
+                            }
+                        }
+                        Button(action: onShare) {
+                            Label {
+                                Text("Share", bundle: .module)
+                            } icon: {
+                                Image(systemName: "square.and.arrow.up.on.square")
                             }
                         }
                         if let onDelete = onDelete {

@@ -232,6 +232,8 @@ struct HeaderPrimaryButton: View {
                 }
                 Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundColor(.white)
             .padding(.horizontal, 14)
@@ -278,6 +280,8 @@ struct HeaderSecondaryButton: View {
                 }
                 Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundColor(theme.primaryText)
             .padding(.horizontal, 14)
