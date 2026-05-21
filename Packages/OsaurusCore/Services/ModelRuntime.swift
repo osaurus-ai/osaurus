@@ -878,22 +878,18 @@ public actor ModelRuntime {
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
-    /// Stable fingerprint for the live KV codec choice. Appended to
+    /// Stable fingerprint for the effective live KV codec. Appended to
     /// the L2 disk-cache model key so a mid-session change to the
-    /// codec doesn't serve stale entries.
+    /// actual KV representation doesn't serve stale entries.
     nonisolated static func cacheKVModeTag(
         for cache: VMLXServerCacheSettings
     ) -> String {
-        switch cache.liveKVCodec {
+        switch cache.defaultKVMode {
         case .none:
             return "fp16"
-        case .engineSelected:
-            return "engineSelected"
-        case .native:
-            return "native"
-        case .turboQuant:
-            let keyBits = cache.turboQuantKeyBits ?? 0
-            let valueBits = cache.turboQuantValueBits ?? 0
+        case .affine(let bits, let groupSize):
+            return "affine(\(bits),\(groupSize))"
+        case .turboQuant(let keyBits, let valueBits):
             return "turbo(\(keyBits),\(valueBits))"
         }
     }

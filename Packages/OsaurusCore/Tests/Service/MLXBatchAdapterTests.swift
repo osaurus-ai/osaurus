@@ -575,6 +575,25 @@ struct MLXBatchAdapterTests {
         #expect(Set([dsv4, zaya, ling, omni, generic]).count == 5)
     }
 
+    @Test func cacheKVModeTagTracksEffectiveCoordinatorPolicy() {
+        var settings = VMLXServerRuntimeSettings()
+
+        settings.cache.liveKVCodec = .engineSelected
+        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
+
+        settings.cache.liveKVCodec = .native
+        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
+
+        settings.cache.liveKVCodec = .turboQuant
+        settings.cache.turboQuantKeyBits = nil
+        settings.cache.turboQuantValueBits = nil
+        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
+
+        settings.cache.turboQuantKeyBits = 4
+        settings.cache.turboQuantValueBits = 3
+        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "turbo(4,3)")
+    }
+
     @Test func cacheCoordinatorModelKey_alignsWithKnownHybridFamilies() {
         for name in [
             "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
