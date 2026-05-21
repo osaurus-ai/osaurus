@@ -165,6 +165,18 @@ struct MLXBatchAdapterTests {
         #expect(params.minP == 0.02)
     }
 
+    @Test func generateParameters_threadsRuntimePrefillStepSize() {
+        let params = ModelRuntime.makeGenerateParameters(
+            temperature: 0,
+            maxTokens: 16,
+            topP: 1,
+            repetitionPenalty: nil,
+            prefillStepSize: 256
+        )
+
+        #expect(params.prefillStepSize == 256)
+    }
+
     @Test func effectiveGenerationSettings_honorsBundleDefaultsWhenRequestOmitted() {
         let generation = GenerationParameters(
             temperature: nil,

@@ -900,7 +900,8 @@ struct MLXBatchAdapter {
             repetitionPenalty: effective.repetitionPenalty,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
-            enableCompiledBatchDecode: effective.compiledBatchDecode
+            enableCompiledBatchDecode: effective.compiledBatchDecode,
+            prefillStepSize: runtime.concurrency.prefillStepSize
         )
 
         // Best-effort per-request determinism: seed the MLX global random

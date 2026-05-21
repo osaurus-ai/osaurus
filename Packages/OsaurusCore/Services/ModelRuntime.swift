@@ -796,8 +796,6 @@ public actor ModelRuntime {
             )
         }
 
-        // L2 disk cache: enabled when the disk dir is writable.
-        //
         // The Metal `notifyExternalReferencesNonZeroOnDealloc` crash on the
         // `Cache disk hit … prefilling 0 remaining` path is fixed upstream
         // in vmlx-swift-lm `0756dc0` ("close trim-path Metal lifecycle crash
@@ -806,8 +804,7 @@ public actor ModelRuntime {
         // scope. Now wired in through the `0e22eba` pin. The
         // `eval_http_stability.py` suite is the regression check; re-run on
         // any future pin bump that touches the CacheCoordinator restore path.
-        let enableDiskCache = diskDirUsable
-
+        //
         // L2 disk-cache modelKey fingerprint includes the KV mode tag and
         // native cache-topology tags so runtime upgrades cannot serve stale
         // entries encoded under a different serializer contract. This matters
@@ -1382,7 +1379,8 @@ public actor ModelRuntime {
         repetitionPenalty: Float?,
         stopSequences: [String] = [],
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
-        enableCompiledBatchDecode: Bool = true
+        enableCompiledBatchDecode: Bool = true,
+        prefillStepSize: Int? = nil
     ) -> MLXLMCommon.GenerateParameters {
         var params = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
@@ -1396,6 +1394,9 @@ public actor ModelRuntime {
             extraStopStrings: stopSequences
         )
         params.draftStrategy = draftStrategy
+        if let prefillStepSize, prefillStepSize > 0 {
+            params.prefillStepSize = prefillStepSize
+        }
         return params
     }
 
