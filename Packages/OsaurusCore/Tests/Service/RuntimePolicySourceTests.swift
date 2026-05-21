@@ -74,8 +74,8 @@ struct RuntimePolicySourceTests {
         #expect(serverStart.lowerBound < schedulerStart.lowerBound)
         #expect(serverStart.lowerBound < speechAutoload.lowerBound)
         #expect(source.contains("await serverStartupTask.value"))
-        #expect(!source.contains("MCPProviderManager.shared.connectEnabledProviders()"))
-        #expect(!source.contains("RemoteProviderManager.shared.connectEnabledProviders()"))
+        #expect(source.contains("MCPProviderManager.shared.connectEnabledProviders()"))
+        #expect(source.contains("RemoteProviderManager.shared.connectEnabledProviders()"))
     }
 
     @Test("AppDelegate does not read the storage key before database opens")
