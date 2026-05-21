@@ -48,6 +48,27 @@ struct ServerRuntimeSettingsStoreTests {
         }
     }
 
+    @Test @MainActor func snapshotColdFallbackUsesMigratedOsaurusDefaults() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            let previousLegacy = ServerConfigurationStore.overrideDirectory
+            ServerConfigurationStore.overrideDirectory = dir
+            defer { ServerConfigurationStore.overrideDirectory = previousLegacy }
+
+            let snapshot = ServerRuntimeSettingsStore.snapshot()
+
+            #expect(snapshot.network.port == ServerConfiguration.default.port)
+            #expect(snapshot.cache.prefix.enabled == true)
+            #expect(snapshot.cache.pagedKV.enabled == true)
+            #expect(snapshot.cache.blockDisk.enabled == true)
+            #expect(snapshot.cache.legacyDisk.enabled == false)
+            #expect(snapshot.cache.liveKVCodec == .none)
+            #expect(snapshot.cache.defaultMaxKVSize == 65536)
+            #expect(snapshot.cache.longPromptMultiplier == 2.0)
+            #expect(snapshot.cache.enableSSMReDerive == false)
+        }
+    }
+
     @Test @MainActor func save_thenLoadReturnsSameValue() async throws {
         let dir = try makeTempDirectory()
         try await withOverriddenDirectory(dir) {

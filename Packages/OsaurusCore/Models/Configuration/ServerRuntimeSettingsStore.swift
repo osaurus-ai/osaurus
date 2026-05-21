@@ -104,7 +104,10 @@ public enum ServerRuntimeSettingsStore {
             cachedSnapshot = decoded
             return decoded
         }
-        let fallback = VMLXServerRuntimeSettings()
+        let fallback = migratedFromLegacy(
+            serverConfiguration: diskBackedServerConfiguration() ?? .default,
+            userDefaults: .standard
+        )
         cachedSnapshot = fallback
         return fallback
     }
@@ -259,5 +262,18 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func fileURL() -> URL {
         directoryURL().appendingPathComponent(fileName)
+    }
+
+    private nonisolated static func legacyConfigurationFileURL() -> URL {
+        if let override = overrideDirectory {
+            return override.appendingPathComponent("server.json")
+        }
+        return OsaurusPaths.resolvePath(new: OsaurusPaths.serverConfigFile(), legacy: "ServerConfiguration.json")
+    }
+
+    private nonisolated static func diskBackedServerConfiguration() -> ServerConfiguration? {
+        let url = legacyConfigurationFileURL()
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try? JSONDecoder().decode(ServerConfiguration.self, from: Data(contentsOf: url))
     }
 }
