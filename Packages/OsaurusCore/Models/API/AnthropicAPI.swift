@@ -828,10 +828,8 @@ extension AnthropicMessagesRequest {
             case "user":
                 // Check for tool_result blocks
                 let blocks = msg.content.blocks
-                var hasToolResult = false
                 for block in blocks {
                     if case .toolResult(let result) = block {
-                        hasToolResult = true
                         let content = result.content?.plainText ?? ""
                         openAIMessages.append(
                             ChatMessage(
@@ -843,11 +841,12 @@ extension AnthropicMessagesRequest {
                         )
                     }
                 }
-                if !hasToolResult {
+                let userVisibleParts = msg.content.chatMessageParts
+                if !userVisibleParts.isEmpty {
                     openAIMessages.append(
                         ChatMessage(
                             role: "user",
-                            contentParts: msg.content.chatMessageParts
+                            contentParts: userVisibleParts
                         )
                     )
                 }

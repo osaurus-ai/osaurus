@@ -378,4 +378,56 @@ struct AnthropicAPITests {
             Issue.record("Second converted part should be image_url")
         }
     }
+
+    @Test func convertAnthropicToolResultKeepsSiblingUserBlocksForRuntime() throws {
+        let json = """
+            {
+                "model": "claude-3-5-sonnet-20241022",
+                "max_tokens": 1024,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_123",
+                                "content": "72F and sunny"
+                            },
+                            {"type": "text", "text": "Use that result with this image."},
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": "QUJD"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+            """
+        let data = Data(json.utf8)
+        let anthropicReq = try JSONDecoder().decode(AnthropicMessagesRequest.self, from: data)
+
+        let openAIReq = anthropicReq.toChatCompletionRequest()
+
+        #expect(openAIReq.messages.count == 2)
+        guard openAIReq.messages.count == 2 else {
+            Issue.record("tool_result conversion dropped sibling user-visible blocks")
+            return
+        }
+        #expect(openAIReq.messages[0].role == "tool")
+        #expect(openAIReq.messages[0].tool_call_id == "toolu_123")
+        #expect(openAIReq.messages[0].content == "72F and sunny")
+        #expect(openAIReq.messages[1].role == "user")
+        #expect(openAIReq.messages[1].content == "Use that result with this image.")
+        #expect(openAIReq.messages[1].imageUrls == ["data:image/png;base64,QUJD"])
+
+        guard let parts = openAIReq.messages[1].contentParts else {
+            Issue.record("Sibling text/image blocks must remain visible after tool_result conversion")
+            return
+        }
+        #expect(parts.count == 2)
+    }
 }
