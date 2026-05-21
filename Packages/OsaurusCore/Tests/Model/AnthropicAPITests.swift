@@ -331,4 +331,51 @@ struct AnthropicAPITests {
         #expect(openAIReq.tools?[0].function.name == "get_weather")
         #expect(openAIReq.tools?[0].function.description == "Get weather for a location")
     }
+
+    @Test func convertAnthropicImageBlocksToOpenAIPartsForVLRuntime() throws {
+        let json = """
+            {
+                "model": "claude-3-5-sonnet-20241022",
+                "max_tokens": 1024,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "What is in this image?"},
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": "QUJD"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+            """
+        let data = Data(json.utf8)
+        let anthropicReq = try JSONDecoder().decode(AnthropicMessagesRequest.self, from: data)
+
+        let openAIReq = anthropicReq.toChatCompletionRequest()
+
+        #expect(openAIReq.messages.count == 1)
+        #expect(openAIReq.messages[0].role == "user")
+        #expect(openAIReq.messages[0].content == "What is in this image?")
+        #expect(openAIReq.messages[0].imageUrls == ["data:image/png;base64,QUJD"])
+        #expect(openAIReq.messages[0].imageDataFromParts == [Data("ABC".utf8)])
+
+        guard let parts = openAIReq.messages[0].contentParts else {
+            Issue.record("Anthropic image blocks must survive conversion as ChatMessage.contentParts")
+            return
+        }
+        #expect(parts.count == 2)
+        if case .imageUrl(let url, let detail) = parts[1] {
+            #expect(url == "data:image/png;base64,QUJD")
+            #expect(detail == nil)
+        } else {
+            Issue.record("Second converted part should be image_url")
+        }
+    }
 }

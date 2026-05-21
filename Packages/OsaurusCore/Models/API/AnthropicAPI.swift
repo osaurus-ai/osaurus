@@ -844,7 +844,12 @@ extension AnthropicMessagesRequest {
                     }
                 }
                 if !hasToolResult {
-                    openAIMessages.append(ChatMessage(role: "user", content: msg.content.plainText))
+                    openAIMessages.append(
+                        ChatMessage(
+                            role: "user",
+                            contentParts: msg.content.chatMessageParts
+                        )
+                    )
                 }
             case "assistant":
                 // Check for tool_use blocks
@@ -946,6 +951,43 @@ extension AnthropicMessagesRequest {
             tool_choice: openAIToolChoice,
             session_id: nil
         )
+    }
+}
+
+private extension AnthropicMessageContent {
+    var chatMessageParts: [MessageContentPart] {
+        switch self {
+        case .text(let text):
+            return [.text(text)]
+        case .blocks(let blocks):
+            return blocks.compactMap { block in
+                switch block {
+                case .text(let textBlock):
+                    return .text(textBlock.text)
+                case .image(let imageBlock):
+                    return imageBlock.source.chatImagePart
+                case .toolUse, .toolResult:
+                    return nil
+                }
+            }
+        }
+    }
+}
+
+private extension AnthropicImageBlock.AnthropicImageSource {
+    var chatImagePart: MessageContentPart? {
+        switch type {
+        case "base64":
+            guard let data, !data.isEmpty else { return nil }
+            let mime = media_type?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedMime = (mime?.isEmpty == false) ? mime! : "image/png"
+            return .imageUrl(url: "data:\(normalizedMime);base64,\(data)", detail: nil)
+        case "url":
+            guard let url, !url.isEmpty else { return nil }
+            return .imageUrl(url: url, detail: nil)
+        default:
+            return nil
+        }
     }
 }
 
