@@ -357,7 +357,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "cf193ff004152e6f4bff3c5db1b9cb234cc62ba1"
+        let currentVmlxRevision = "ee2d8528e329848b6acb066f5dfb719c134a95e6"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
@@ -985,6 +985,8 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("resolvedMTPLaunch("))
         #expect(runtime.contains("resolvedLoadConfiguration("))
         #expect(runtime.contains("resolvedMTPDraftStrategy("))
+        #expect(runtime.contains("resolvedModelConfiguration("))
+        #expect(runtime.contains("configuration: ServerRuntimeSettingsStore.snapshot()"))
         #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
         #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
         #expect(runtime.contains("draftStrategy: holder.draftStrategy"))

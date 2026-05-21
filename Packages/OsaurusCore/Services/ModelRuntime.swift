@@ -638,9 +638,10 @@ public actor ModelRuntime {
 
         // Tool-call format + reasoning parser are stamped automatically by
         // vmlx-swift's LLM/VLM factories from `jang_config.json` capabilities
-        // and `config.json.model_type`. Osaurus no longer resolves them at
-        // the app layer — `BatchEngine.generate` reads them directly from
-        // the resolved `ModelConfiguration` to emit `.toolCall` events.
+        // and `config.json.model_type`. Server Runtime Settings may layer an
+        // explicit parser override on top; the resulting ModelConfiguration
+        // still enters through vmlx's factory registry, so BatchEngine remains
+        // the single owner of parser execution and `.toolCall` emission.
 
         let loadID = allocateLoadingTaskID()
         let task = Task<SessionHolder, Error> {
@@ -656,6 +657,9 @@ public actor ModelRuntime {
             let container = try await loadModelContainer(
                 from: localURL,
                 using: tokenizerLoader,
+                configuration: ServerRuntimeSettingsStore.snapshot()
+                    .resolvedModelConfiguration(
+                        base: ModelConfiguration(directory: localURL)),
                 loadConfiguration: mtpPlan.loadConfiguration
             )
             let isVLM = await container.isVLM
