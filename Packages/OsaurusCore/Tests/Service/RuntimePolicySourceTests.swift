@@ -354,13 +354,13 @@ struct RuntimePolicySourceTests {
         // VMLX-prefixed products, plus the Qwen3.6 MXFP affine metadata,
         // MoE router-gate load hardening, native-MTP speedup proof gate,
         // parser override load bridge, complete SSM companion-cache guard,
-        // Qwen3.6 native-MTP alias recognition, and loaded cache-topology
-        // snapshotting for server-side cache autodetect.
+        // Qwen3.6 native-MTP alias recognition, and expanded loaded
+        // cache-topology snapshotting for server-side cache autodetect.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "0d2b97e4b3652ab0def02fa2beb81192d89ca474"
+        let currentVmlxRevision = "a502cd816d65c9fa4deca53e9462a416cbe0459b"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))

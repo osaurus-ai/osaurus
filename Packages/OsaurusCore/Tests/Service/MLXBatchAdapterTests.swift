@@ -636,7 +636,10 @@ struct MLXBatchAdapterTests {
         let topology = ModelCacheTopologySnapshot(
             layerCount: 4,
             kvLayerCount: 1,
+            turboQuantKVLayerCount: 1,
             rotatingKVLayerCount: 1,
+            rotatingWrapperLayerCount: 1,
+            hybridPoolLayerCount: 1,
             mambaLayerCount: 1,
             arraysLayerCount: 1
         )
@@ -649,11 +652,15 @@ struct MLXBatchAdapterTests {
 
         #expect(key.contains("topology=real"))
         #expect(key.contains("layers=4"))
-        #expect(key.contains("kv=1"))
-        #expect(key.contains("rotating=1"))
-        #expect(key.contains("mamba=1"))
-        #expect(key.contains("arrays=1"))
+        #expect(key.contains("kvLayers=1"))
+        #expect(key.contains("turboQuantKVLayers=1"))
+        #expect(key.contains("rotatingLayers=1"))
+        #expect(key.contains("rotatingWrapperLayers=1"))
+        #expect(key.contains("hybridPoolLayers=1"))
+        #expect(key.contains("mambaLayers=1"))
+        #expect(key.contains("arraysLayers=1"))
         #expect(key.contains("companion=ssm"))
+        #expect(key.contains("restore=disk-backed"))
         #expect(key.contains("kv=turbo(4,3)"))
         #expect(!key.contains("layers=hybrid-ssm"))
     }
