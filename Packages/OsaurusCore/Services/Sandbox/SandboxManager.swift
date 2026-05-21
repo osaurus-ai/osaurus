@@ -432,7 +432,7 @@
         @MainActor
         private static func installedPluginsRequireVerify() -> Bool {
             for (_, plugins) in SandboxPluginManager.shared.installedPlugins
-                where plugins.contains(where: { $0.status == .ready }) {
+            where plugins.contains(where: { $0.status == .ready }) {
                 return true
             }
             return false
@@ -448,7 +448,8 @@
             guard var journey = State.shared.journey else { return }
             let target = journey.currentStepID
             if let target,
-                let index = journey.steps.firstIndex(where: { $0.id == target }) {
+                let index = journey.steps.firstIndex(where: { $0.id == target })
+            {
                 journey.steps[index].status = .failed
                 journey.steps[index].finishedAt = Date()
                 State.shared.journey = journey
@@ -2080,7 +2081,8 @@
         static func syncLegacyPhase(from journey: ProvisioningJourney) {
             let activeStep: ProvisioningStepState? = {
                 if let current = journey.currentStepID,
-                    let step = journey.steps.first(where: { $0.id == current }) {
+                    let step = journey.steps.first(where: { $0.id == current })
+                {
                     return step
                 }
                 return journey.steps.first { $0.status == .inProgress }

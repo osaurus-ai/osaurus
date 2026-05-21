@@ -20,7 +20,7 @@ struct MasterMnemonicCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
-                Text("MASTER RECOVERY PHRASE", bundle: .module)
+                Text("YOUR RECOVERY CODE", bundle: .module)
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
                     .tracking(1)

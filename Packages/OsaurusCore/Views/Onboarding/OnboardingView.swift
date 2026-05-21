@@ -22,6 +22,8 @@ public enum OnboardingStep: Int, CaseIterable {
     case createAgent
     case configureAI
     case identitySetup
+    case sandboxSetup
+    case choosePlugins
     case walkthrough
 }
 
@@ -46,10 +48,12 @@ public struct OnboardingView: View {
     @StateObject private var createAgentState = CreateAgentState()
     @StateObject private var configureAIState = ConfigureAIState()
     @StateObject private var identityState = IdentityState()
+    @StateObject private var sandboxSetupState = SandboxSetupState()
+    @StateObject private var choosePluginsState = ChoosePluginsState()
     @StateObject private var walkthroughState = WalkthroughState()
 
     private static let progressSteps: [OnboardingStep] = [
-        .createAgent, .configureAI, .identitySetup, .walkthrough,
+        .createAgent, .configureAI, .identitySetup, .sandboxSetup, .choosePlugins, .walkthrough,
     ]
 
     public init(
@@ -201,6 +205,10 @@ public struct OnboardingView: View {
             ConfigureAIBody(state: configureAIState)
         case .identitySetup:
             IdentityBody(state: identityState)
+        case .sandboxSetup:
+            SandboxSetupBody(state: sandboxSetupState)
+        case .choosePlugins:
+            ChoosePluginsBody(state: choosePluginsState)
         case .walkthrough:
             WalkthroughBody(state: walkthroughState)
         }
@@ -230,6 +238,16 @@ public struct OnboardingView: View {
         case .identitySetup:
             IdentityCTA(
                 state: identityState,
+                onComplete: { advanceFromIdentity() }
+            )
+        case .sandboxSetup:
+            SandboxSetupCTA(
+                state: sandboxSetupState,
+                onComplete: { advance(to: .choosePlugins) }
+            )
+        case .choosePlugins:
+            ChoosePluginsCTA(
+                state: choosePluginsState,
                 onComplete: { advance(to: .walkthrough) }
             )
         case .walkthrough:
@@ -250,7 +268,11 @@ public struct OnboardingView: View {
         case .configureAI:
             ConfigureAISecondary(state: configureAIState, onComplete: { advance(to: .identitySetup) })
         case .identitySetup:
-            IdentitySecondary(state: identityState, onSkip: { advance(to: .walkthrough) })
+            IdentitySecondary(state: identityState, onSkip: { advanceFromIdentity() })
+        case .sandboxSetup:
+            SandboxSetupSecondary(onSkip: { advance(to: .choosePlugins) })
+        case .choosePlugins:
+            ChoosePluginsSecondary(onSkip: { advance(to: .walkthrough) })
         case .walkthrough:
             EmptyView()
         }
@@ -263,7 +285,9 @@ public struct OnboardingView: View {
         case .welcome: return nil
         case .createAgent: return "Create your agent"
         case .configureAI: return "Configure your AI"
-        case .identitySetup: return "Set up identity"
+        case .identitySetup: return "Make this yours"
+        case .sandboxSetup: return "Add a safe sandbox"
+        case .choosePlugins: return "Add a few tools"
         case .walkthrough: return "How it works"
         }
     }
@@ -274,6 +298,8 @@ public struct OnboardingView: View {
         case .createAgent: return nil
         case .configureAI: return configureAIState.footerCaption
         case .identitySetup: return identityState.footerCaption
+        case .sandboxSetup: return nil
+        case .choosePlugins: return nil
         case .walkthrough: return nil
         }
     }
@@ -288,11 +314,37 @@ public struct OnboardingView: View {
             return { configureAIState.handleBack { advance(to: .createAgent, direction: .backward) } }
         case .identitySetup:
             return { advance(to: .configureAI, direction: .backward) }
+        case .sandboxSetup:
+            return { advance(to: .identitySetup, direction: .backward) }
+        case .choosePlugins:
+            return {
+                advance(
+                    to: sandboxStepAvailable ? .sandboxSetup : .identitySetup,
+                    direction: .backward
+                )
+            }
         case .walkthrough:
             return {
-                walkthroughState.handleBack { advance(to: .identitySetup, direction: .backward) }
+                walkthroughState.handleBack { advance(to: .choosePlugins, direction: .backward) }
             }
         }
+    }
+
+    // MARK: - Conditional sandbox step
+
+    /// The sandbox step is sandboxed (heh) behind macOS 26+ /
+    /// Containerization availability. On unsupported machines we skip
+    /// straight from identity to plugins so the user never sees a
+    /// dead-end "not available" card. `SandboxManager.State.shared`
+    /// publishes this synchronously on app launch via its seeded
+    /// `initialAvailability`, so the gate is always reliable by the
+    /// time the user reaches identity.
+    private var sandboxStepAvailable: Bool {
+        SandboxManager.State.shared.availability.isAvailable
+    }
+
+    private func advanceFromIdentity() {
+        advance(to: sandboxStepAvailable ? .sandboxSetup : .choosePlugins)
     }
 
     // MARK: - Step indicator
@@ -359,6 +411,13 @@ public struct OnboardingView: View {
     }
 
     private func finishOnboarding() {
+        // If the user created an agent in step 2, drop them into chat
+        // with that agent already selected — otherwise the freshly
+        // created persona is buried behind the built-in default and the
+        // user has to hunt for it in the agent switcher.
+        if let createdId = createAgentState.createdAgentId {
+            AgentManager.shared.setActiveAgent(createdId)
+        }
         OnboardingService.shared.completeOnboarding()
         onComplete()
     }

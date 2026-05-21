@@ -19,7 +19,7 @@ struct WelcomeBody: View {
             illustrationAsset: "osaurus-main",
             headline: "Own your AI.",
             subtitle:
-                "Agents, memory, tools, and identity that live on your Mac. Models are interchangeable — everything else compounds, and stays with you."
+                "AI that runs on your Mac. Pick any brain, plug in your tools, and keep everything yours."
         )
         .opacity(visible ? 1 : 0)
         .scaleEffect(visible ? 1 : 0.98)

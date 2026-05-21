@@ -2,17 +2,28 @@
 //  OnboardingIdentitySetupView.swift
 //  osaurus
 //
-//  Onboarding step 4 — claim a cryptographic master identity. Three internal
-//  phases (prompt → generating → recovery code) swap inside the body slot
-//  so the chrome stays still.
+//  Onboarding step 4 — claim a personal signature. Three internal phases
+//  (prompt → generating → recovery code) swap inside the body slot so the
+//  chrome stays still.
 //
-//  Visual model: the master identity is the root of trust everything else
-//  derives from (agents, devices, osk-v1 access keys, Bonjour pairing).
-//  See docs/IDENTITY.md.
+//  Copy avoids crypto/wallet vocabulary on purpose — first-run users see
+//  "secret signature" and "recovery code", not "master key" / "BIP39".
+//  The underlying primitive is still the cryptographic master identity
+//  from `docs/IDENTITY.md`; only the surface language changed.
 //
 
 import AppKit
 import SwiftUI
+
+// MARK: - Animation
+
+/// Spring used for the in-step phase cross-fades (prompt → generating →
+/// recovery → …). Lives at file scope so both `IdentityState` (which
+/// drives the swap via `withAnimation`) and the in-body phase ZStack
+/// reach for the same easing.
+enum IdentityAnimation {
+    static let layoutSwap: Animation = .spring(response: 0.5, dampingFraction: 0.85)
+}
 
 // MARK: - Phase
 
@@ -46,7 +57,7 @@ final class IdentityState: ObservableObject {
     var footerCaption: LocalizedStringKey? {
         switch phase {
         case .recovery:
-            return "Your recovery phrase is shown once. Save it before you continue."
+            return "Shown once. Save it before continuing."
         case .prompt, .generating, .alreadyExists, .error:
             return nil
         }
@@ -58,15 +69,15 @@ final class IdentityState: ObservableObject {
         // OnboardingService) must never silently regenerate the master and
         // strand all derived agent / access keys.
         if OsaurusIdentity.exists() {
-            phase = .alreadyExists
+            withAnimation(IdentityAnimation.layoutSwap) { phase = .alreadyExists }
             return
         }
 
-        phase = .generating
-        // No `withAnimation` wrappers below — the body has its own
-        // `.animation(value: phaseID)` modifier scoped to the phase ZStack.
-        // Wrapping here would propagate to the CTA (which observes `phase`)
-        // and morph the button between phases.
+        // The phase-level cross-fade is driven by `withAnimation` here
+        // (rather than an implicit `.animation(value:)` on the body) so
+        // the parent OnboardingView's slide-in transition isn't
+        // intercepted when the user first lands on the identity step.
+        withAnimation(IdentityAnimation.layoutSwap) { phase = .generating }
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             do {
@@ -75,12 +86,14 @@ final class IdentityState: ObservableObject {
                     // setup() short-circuited because a key already exists.
                     // Surface that state explicitly rather than rendering a
                     // blank recovery card.
-                    self.phase = .alreadyExists
+                    withAnimation(IdentityAnimation.layoutSwap) { self.phase = .alreadyExists }
                 } else {
-                    self.phase = .recovery(info)
+                    withAnimation(IdentityAnimation.layoutSwap) { self.phase = .recovery(info) }
                 }
             } catch {
-                self.phase = .error(error.localizedDescription)
+                withAnimation(IdentityAnimation.layoutSwap) {
+                    self.phase = .error(error.localizedDescription)
+                }
             }
         }
     }
@@ -107,28 +120,22 @@ struct IdentityBody: View {
         "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
 
     var body: some View {
-        // The BIP39 grid needs the full window to render without
-        // clipping words, so `.recovery` swaps to a full-width body and
-        // the outer animation cross-fades when crossing that boundary.
-        // Intra-two-column phase changes keep using the inner ZStack's
-        // slide transition.
-        Group {
-            switch state.phase {
-            case .recovery(let info):
-                OnboardingFullWidthBody(subtitle: subtitle) {
-                    recoveryBody(info: info)
-                }
-                .transition(.opacity)
-            default:
-                twoColumnBody
-                    .transition(.opacity)
+        // No `.transition(...)` or `.animation(_:value:)` at this level:
+        // those would compete with the parent `OnboardingView`'s slide
+        // transition when the user first lands on the identity step, and
+        // the freshly-inserted child's opacity fade would visually hide
+        // the slide motion. The intra-step recovery <-> non-recovery
+        // cross-fade is driven by `IdentityState.generate` wrapping its
+        // phase mutation in `withAnimation(IdentityAnimation.layoutSwap)`.
+        switch state.phase {
+        case .recovery(let info):
+            OnboardingFullWidthBody(subtitle: subtitle) {
+                recoveryBody(info: info)
             }
+        default:
+            twoColumnBody
         }
-        .animation(IdentityBody.layoutSwapAnimation, value: isRecoveryPhase)
     }
-
-    private static let layoutSwapAnimation: Animation =
-        .spring(response: 0.5, dampingFraction: 0.85)
 
     private var twoColumnBody: some View {
         OnboardingTwoColumnBody(
@@ -137,27 +144,25 @@ struct IdentityBody: View {
             leftBody: leftBody,
             subtitle: subtitle
         ) {
+            // Intra-two-column phase swaps (prompt → generating → error
+            // → alreadyExists) still slide horizontally. The .id()
+            // change is what triggers the transition; the `withAnimation`
+            // wrapper at the state mutation site provides the timing.
             ZStack {
                 phaseBody
                     .id(phaseID)
                     .transition(phaseTransition)
             }
-            .animation(IdentityBody.layoutSwapAnimation, value: phaseID)
         }
-    }
-
-    private var isRecoveryPhase: Bool {
-        if case .recovery = state.phase { return true }
-        return false
     }
 
     // MARK: - Copy
 
     private var leftHeadline: LocalizedStringKey {
         switch state.phase {
-        case .prompt, .generating, .error: return "Your root identity"
-        case .recovery: return "Save your recovery phrase"
-        case .alreadyExists: return "Identity already set up"
+        case .prompt, .generating, .error: return "Your secret signature"
+        case .recovery: return "Save your recovery code"
+        case .alreadyExists: return "You're already set up"
         }
     }
 
@@ -165,25 +170,25 @@ struct IdentityBody: View {
         switch state.phase {
         case .prompt, .error:
             return
-                "The master key for everything you do here. Agents derive from it, devices pair through it, and signed messages all trace back to it. Stored in iCloud Keychain — never in plain text."
+                "A short code that proves *you* made what you make on Osaurus. Stops other people from posing as your agent. Saved in your Mac's Keychain — we never see it."
         case .generating:
-            return "Generating a fresh keypair. This only takes a moment."
+            return "Just a moment — making your signature now."
         case .recovery:
             return
-                "Write down the 24-word phrase below. It's the only way to restore your master key if it's ever lost or replaced. Osaurus cannot recover it for you."
+                "Write these 24 words down or paste them into your password manager. If your Mac's Keychain ever gets wiped, this is how you restore your identity. Osaurus can't email it to you."
         case .alreadyExists:
             return
-                "We found an existing identity in your iCloud Keychain. Onboarding will not create a new one — your existing master, agents, and access keys are preserved."
+                "We found a signature already saved in your Mac's Keychain. We're keeping that one so nothing you've built here breaks."
         }
     }
 
     private var subtitle: LocalizedStringKey {
         switch state.phase {
         case .prompt, .error:
-            return "The root of trust your agents, devices, and tools all derive from."
-        case .generating: return "Creating your keypair…"
-        case .recovery: return "Shown once. Copy it before you continue."
-        case .alreadyExists: return "Continuing with the existing identity."
+            return "Like a master password — but you keep the only copy."
+        case .generating: return "Making your signature…"
+        case .recovery: return "Shown once. Copy it before continuing."
+        case .alreadyExists: return "Picking up where you left off."
         }
     }
 
@@ -237,11 +242,11 @@ struct IdentityBody: View {
                         .foregroundColor(theme.successColor)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Existing identity detected", bundle: .module)
+                    Text("Signature already saved", bundle: .module)
                         .font(theme.font(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     Text(
-                        "Skipping master key creation to protect existing agents and access keys.",
+                        "We won't make a new one — everything you've built so far keeps working.",
                         bundle: .module
                     )
                     .font(theme.font(size: 11))
@@ -261,7 +266,7 @@ struct IdentityBody: View {
         VStack(alignment: .leading, spacing: 14) {
             addressChip(
                 Self.previewMasterAddress,
-                label: "Your master address (preview)",
+                label: "Your signature (preview)",
                 trailingBadge: "PREVIEW"
             )
 
@@ -275,19 +280,21 @@ struct IdentityBody: View {
         OnboardingGlassCard {
             VStack(alignment: .leading, spacing: 12) {
                 bulletRow(
-                    icon: "rectangle.connected.to.line.below",
-                    title: L("Pair other devices"),
-                    detail: L("Bonjour discovery; the connector you tap shows up in your list.")
-                )
-                bulletRow(
-                    icon: "person.line.dotted.person.fill",
-                    title: L("Agent-to-agent verify"),
-                    detail: L("Recipients can verify a message really came from your agent.")
+                    icon: "checkmark.seal.fill",
+                    title: L("Prove it's really you"),
+                    detail: L("Stops anyone from impersonating your agent.")
                 )
                 bulletRow(
                     icon: "key.horizontal.fill",
-                    title: L("External tool access"),
-                    detail: L("Mint osk-v1 keys for MCP, plugins, and remote agents — revocable any time.")
+                    title: L("Hand out safe keys"),
+                    detail: L("Give tools and plugins their own access you can take back — never your password.")
+                )
+                bulletRow(
+                    icon: "lifepreserver.fill",
+                    title: L("Have a backup phrase"),
+                    detail: L(
+                        "24 words you save once — enough to restore your identity if your Mac's Keychain gets wiped."
+                    )
                 )
             }
             .padding(14)
@@ -296,10 +303,10 @@ struct IdentityBody: View {
 
     private var footnoteRow: some View {
         HStack(spacing: 6) {
-            Image(systemName: "icloud.fill")
+            Image(systemName: "lock.fill")
                 .font(.system(size: 10, weight: .semibold))
             Text(
-                "Stored in iCloud Keychain. Skippable, addable later from Settings.",
+                "Saved in your Mac's Keychain. You can skip and add this later.",
                 bundle: .module
             )
             .font(theme.font(size: 11))
@@ -407,7 +414,7 @@ struct IdentityBody: View {
             HStack(spacing: 12) {
                 ProgressView()
                     .scaleEffect(0.9)
-                Text("Generating identity…", bundle: .module)
+                Text("Making your signature…", bundle: .module)
                     .font(theme.font(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                 Spacer(minLength: 0)
@@ -423,20 +430,20 @@ struct IdentityBody: View {
         VStack(alignment: .leading, spacing: 10) {
             OnboardingCalloutBanner(
                 tone: .warning,
-                message: "Lost phrases cannot be recovered."
+                message: "This is the only copy. We can't email it to you."
             )
 
             if let mnemonic = info.mnemonic {
                 MasterMnemonicCard(words: mnemonic)
             }
 
-            addressChip(info.osaurusId, label: "Master address")
+            addressChip(info.osaurusId, label: "Your signature")
 
             HStack(spacing: 6) {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 10, weight: .semibold))
                 Text(
-                    "Write the 24 words down or save them in a password manager.",
+                    "Write the 24 words down or paste them into your password manager.",
                     bundle: .module
                 )
                 .font(theme.font(size: 11))
@@ -458,7 +465,7 @@ struct IdentityCTA: View {
     var body: some View {
         switch state.phase {
         case .prompt, .error:
-            OnboardingBrandButton(title: "Create Identity", action: state.generate)
+            OnboardingBrandButton(title: "Make My Signature", action: state.generate)
                 .frame(width: OnboardingMetrics.ctaWidthCompact)
 
         case .generating:

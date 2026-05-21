@@ -29,6 +29,13 @@ final class CreateAgentState: ObservableObject {
     @Published var selectedAvatar: String? = AgentMascot.allCases.first?.id
     @Published var isSaving: Bool = false
 
+    /// ID of the agent created by `saveAgent`. Read by
+    /// `OnboardingView.finishOnboarding` to flip
+    /// `AgentManager.activeAgentId` so the user lands in chat with the
+    /// agent they just made already selected. `nil` when the user
+    /// skipped this step.
+    @Published private(set) var createdAgentId: UUID?
+
     init() {
         applyTemplate(.writer)
     }
@@ -55,8 +62,14 @@ final class CreateAgentState: ObservableObject {
 
     /// Persists the agent and returns whether save succeeded. The caller is
     /// responsible for advancing the flow afterwards.
+    ///
+    /// Idempotent: if the user navigates back from a later onboarding
+    /// step and re-fires the CTA, the previously-created agent's id is
+    /// returned as success without spawning a duplicate `AgentManager`
+    /// entry.
     @discardableResult
     func saveAgent() -> Bool {
+        if createdAgentId != nil { return true }
         guard !trimmedName.isEmpty, !isSaving else { return false }
         isSaving = true
         let agent = Agent(
@@ -70,6 +83,7 @@ final class CreateAgentState: ObservableObject {
             avatar: selectedAvatar
         )
         AgentManager.shared.add(agent)
+        createdAgentId = agent.id
         isSaving = false
         return true
     }

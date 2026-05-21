@@ -18,16 +18,14 @@ import SwiftUI
 
 enum WalkthroughPage: Int, CaseIterable, Identifiable {
     case loop = 0
-    case sandbox = 1
-    case personal = 2
-    case privacy = 3
+    case personal = 1
+    case privacy = 2
 
     var id: Int { rawValue }
 
     var illustrationAsset: String {
         switch self {
         case .loop: return "osaurus-tool"
-        case .sandbox: return "osaurus-sandbox"
         case .personal: return "osaurus-built"
         case .privacy: return "osaurus-data"
         }
@@ -35,9 +33,8 @@ enum WalkthroughPage: Int, CaseIterable, Identifiable {
 
     var headline: LocalizedStringKey {
         switch self {
-        case .loop: return "Every chat is an agent loop"
-        case .sandbox: return "Safe sandbox"
-        case .personal: return "Built around you"
+        case .loop: return "How a chat actually works"
+        case .personal: return "Made to feel like yours"
         case .privacy: return "Your data stays yours"
         }
     }
@@ -46,15 +43,12 @@ enum WalkthroughPage: Int, CaseIterable, Identifiable {
         switch self {
         case .loop:
             return
-                "Ask anything. Osaurus plans with todos, calls tools, pauses for clarification when it matters, and ends with a verified summary — no mode switching."
-        case .sandbox:
-            return
-                "Toggle the sandbox to give your agent shell access — install packages, run scripts, and work with files inside a Linux container, isolated from your Mac."
+                "Ask anything. Osaurus plans, runs the tools it needs, and checks itself before answering."
         case .personal:
             return
-                "Specialized agents, voice control, and your own theme. Memory belongs to you, surfaced exactly when the next question needs it."
+                "Make different agents for different jobs. Your memories stick around, ready when you need them."
         case .privacy:
-            return "Conversations live on your Mac. Switch models or providers any time without losing your history."
+            return "Chats live on your Mac. Switch models or providers any time without losing your history."
         }
     }
 }

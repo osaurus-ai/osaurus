@@ -17,7 +17,7 @@ public final class OnboardingService: ObservableObject {
     private let onboardingVersionKey = "onboardingVersion"
 
     /// Current onboarding version - increment to force re-onboarding after major updates
-    private let currentOnboardingVersion = 2
+    private let currentOnboardingVersion = 3
 
     /// Whether onboarding should be shown (first launch or version mismatch)
     public var shouldShowOnboarding: Bool {
