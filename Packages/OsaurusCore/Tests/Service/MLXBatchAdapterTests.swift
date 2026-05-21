@@ -538,7 +538,7 @@ struct MLXBatchAdapterTests {
             kvModeTag: "fp16"
         )
         let generic = ModelRuntime.cacheCoordinatorModelKey(
-            modelName: "Qwen3.6-27B-MXFP4-MTP",
+            modelName: "Mistral-Medium-3.5-128B-MXFP4",
             kvModeTag: "fp16"
         )
 
@@ -561,6 +561,41 @@ struct MLXBatchAdapterTests {
         #expect(!generic.contains("media=omni-audio-video"))
 
         #expect(Set([dsv4, zaya, ling, omni, generic]).count == 5)
+    }
+
+    @Test func cacheCoordinatorModelKey_alignsWithKnownHybridFamilies() {
+        for name in [
+            "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
+            "qwen3-next-80b-jangtq",
+            "ibm-granite/granite-3.0-moe-hybrid-7b",
+            "tiiuae/falcon-h1-34b",
+            "baichuan-m1-14b",
+            "jamba-3b",
+            "lfm2-vl-1.6b",
+        ] {
+            let key = ModelRuntime.cacheCoordinatorModelKey(
+                modelName: name,
+                kvModeTag: "fp16"
+            )
+            #expect(
+                key.contains("layers=hybrid-ssm"),
+                "Hybrid family cache key must include SSM companion topology: \(name)"
+            )
+        }
+
+        let omni = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Nemotron-Omni-Nano-JANGTQ4-CRACK",
+            kvModeTag: "fp16"
+        )
+        #expect(omni.contains("layers=hybrid-ssm"))
+        #expect(omni.contains("media=omni-audio-video"))
+
+        let zaya = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "ZAYA1-8B-JANGTQ4",
+            kvModeTag: "fp16"
+        )
+        #expect(zaya.contains("layers=zayaCCA"))
+        #expect(!zaya.contains("layers=hybrid-ssm"))
     }
 
     @Test func effectiveGenerationSettings_doSampleFalseForcesGreedyOnlyWhenTemperatureOmitted() {
