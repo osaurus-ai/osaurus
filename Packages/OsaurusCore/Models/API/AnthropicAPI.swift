@@ -843,9 +843,11 @@ extension AnthropicMessagesRequest {
                 }
                 let userVisibleParts = msg.content.chatMessageParts
                 if !userVisibleParts.isEmpty {
+                    let plainText = msg.content.plainText
                     openAIMessages.append(
                         ChatMessage(
                             role: "user",
+                            content: plainText.isEmpty ? nil : plainText,
                             contentParts: userVisibleParts
                         )
                     )
