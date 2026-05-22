@@ -8044,6 +8044,16 @@
         }
       }
     },
+    "Export failed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export failed"
+          }
+        }
+      }
+    },
     "Export Bundle…" : {
       "comment" : "Swift localization key; translations need review.",
       "localizations" : {
