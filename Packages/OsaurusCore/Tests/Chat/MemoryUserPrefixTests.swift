@@ -76,7 +76,7 @@ struct MemoryUserPrefixTests {
 
     @Test
     func composeChatContext_passesQueryToMemoryRecallGate() async throws {
-        try await SandboxTestLock.shared.run {
+        try await SandboxTestLock.runWithStoragePaths {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(
                 "osaurus-memory-query-compose-\(UUID().uuidString)",
                 isDirectory: true

@@ -203,11 +203,11 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// A greeting should not run preflight or carry dynamic discovery
-    /// prompt text. The callable bootstrap tools remain present so the
-    /// session can grow as soon as the user asks for real work.
-    @Test("compose: trivial greeting skips dynamic capability prompt sections")
-    func trivialGreeting_skipsPreflightAndDynamicPromptSections() async {
+    /// A greeting should not run preflight, carry dynamic discovery prompt
+    /// text, or enter the local tool-template path. Keep the always-loaded
+    /// baseline frozen separately so turn 2 can grow into real work.
+    @Test("compose: trivial greeting suppresses tool schema and dynamic prompt sections")
+    func trivialGreeting_suppressesToolSchemaAndDynamicPromptSections() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let context = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
@@ -220,7 +220,61 @@ struct ContextBudgetPreviewTests {
             #expect(ids.contains("capabilityNudge") == false)
             #expect(ids.contains("pluginCreator") == false)
             #expect(ids.contains("agentLoopGuidance") == false)
+            #expect(context.tools.isEmpty)
+            #expect(context.toolTokens == 0)
+            #expect(context.alwaysLoadedNames.contains("capabilities_load"))
+        }
+    }
+
+    /// The greeting-only fast path must not poison the session freeze. After
+    /// a trivial first turn, a real request still gets the bootstrap catalog
+    /// needed to load/discover capabilities.
+    @Test("compose: real task after greeting restores bootstrap tools")
+    func realTaskAfterGreeting_restoresBootstrapTools() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let greeting = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                query: "hi!"
+            )
+            let followUp = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                query: "summarize this project",
+                cachedPreflight: greeting.preflight,
+                frozenAlwaysLoadedNames: greeting.alwaysLoadedNames
+            )
+
+            #expect(greeting.tools.isEmpty)
+            #expect(greeting.alwaysLoadedNames.contains("capabilities_load"))
+            #expect(followUp.tools.contains { $0.function.name == "capabilities_load" })
+            #expect(followUp.tools.contains { $0.function.name == "capabilities_search" })
+            #expect(followUp.toolTokens > 0)
+        }
+    }
+
+    /// "ok" is only harmless on a clean first turn. Once the session has
+    /// cached tool state or prior task history, an acknowledgement can be the
+    /// user's confirmation for a `clarify`/loop step and must keep schemas.
+    @Test("compose: trivial continuation with cached state keeps bootstrap tools")
+    func trivialContinuationWithCachedState_keepsBootstrapTools() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let frozen = LoadedTools(
+                ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name)
+            )
+            let context = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                query: "ok",
+                messages: [ChatMessage(role: "user", content: "summarize this project")],
+                cachedPreflight: .empty,
+                frozenAlwaysLoadedNames: frozen
+            )
+
+            #expect(SystemPromptComposer.isTrivialPreflightQuery("ok"))
             #expect(context.tools.contains { $0.function.name == "capabilities_load" })
+            #expect(context.tools.contains { $0.function.name == "capabilities_search" })
+            #expect(context.toolTokens > 0)
         }
     }
 
