@@ -30,6 +30,9 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     /// task UUID. Equal to `id` once `ExecutionContext` is taught to align
     /// the two (Phase 2 of the chat-sessions refactor).
     public var dispatchTaskId: UUID?
+    /// User-set archive flag. Hidden from the default sidebar view, shown
+    /// under the "Archived" filter chip.
+    public var archived: Bool
 
     public init(
         id: UUID = UUID(),
@@ -42,7 +45,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         source: SessionSource = .chat,
         sourcePluginId: String? = nil,
         externalSessionKey: String? = nil,
-        dispatchTaskId: UUID? = nil
+        dispatchTaskId: UUID? = nil,
+        archived: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -55,6 +59,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.sourcePluginId = sourcePluginId
         self.externalSessionKey = externalSessionKey
         self.dispatchTaskId = dispatchTaskId
+        self.archived = archived
     }
 
     // Custom decoder for backward compatibility with old sessions
@@ -73,6 +78,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         sourcePluginId = try container.decodeIfPresent(String.self, forKey: .sourcePluginId)
         externalSessionKey = try container.decodeIfPresent(String.self, forKey: .externalSessionKey)
         dispatchTaskId = try container.decodeIfPresent(UUID.self, forKey: .dispatchTaskId)
+        archived = try container.decodeIfPresent(Bool.self, forKey: .archived) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -88,12 +94,14 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(sourcePluginId, forKey: .sourcePluginId)
         try container.encodeIfPresent(externalSessionKey, forKey: .externalSessionKey)
         try container.encodeIfPresent(dispatchTaskId, forKey: .dispatchTaskId)
+        try container.encode(archived, forKey: .archived)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, createdAt, updatedAt, selectedModel, turns, agentId
         case personaId  // legacy key for migration
         case source, sourcePluginId, externalSessionKey, dispatchTaskId
+        case archived
     }
 
     /// Generate a title from the first user message

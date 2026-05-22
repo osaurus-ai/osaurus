@@ -2281,6 +2281,9 @@
         }
       }
     },
+    "Archive" : {
+
+    },
     "Arguments" : {
       "localizations" : {
         "de" : {
@@ -21349,6 +21352,9 @@
 
     },
     "Type your answer…" : {
+
+    },
+    "Unarchive" : {
 
     },
     "Uninstall" : {

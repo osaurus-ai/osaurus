@@ -172,6 +172,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // updates keep painting.
         StorageMigrationCoordinator.blockingAwaitReady()
 
+        // Warm the storage-encryption key cache. The migrator above
+        // populates it as a side effect on first launch, but on every
+        // subsequent launch it short-circuits and the cache stays
+        // empty — which makes every `hasCachedKey` guard downstream
+        // (ChatSessionStore, MemoryDatabase, schedulers, ...) fail
+        // closed and the encrypted DBs silently never open. Reads
+        // from Keychain on the main thread are acceptable here:
+        // the storage key is installed without an ACL prompt, and
+        // launch is already synchronously gated on the migrator.
+        try? StorageKeyManager.shared.prewarmCurrentKey()
+
         // Deferred from `ServerController.init()` to keep
         // `~/.osaurus/` pristine until the storage gate has stamped
         // `.storage-version`. See `bootstrapRuntimeSettings()`.

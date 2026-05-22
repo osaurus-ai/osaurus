@@ -156,6 +156,9 @@ final class ChatSession: ObservableObject {
     var sourcePluginId: String?
     var externalSessionKey: String?
     var dispatchTaskId: UUID?
+    /// Mirrors `ChatSessionData.archived`. Required here so `toSessionData()`
+    /// round-trips the flag instead of stamping `false` on every save.
+    var archived: Bool = false
 
     /// Tracks if session has unsaved content changes
     private var isDirty: Bool = false
@@ -864,6 +867,7 @@ final class ChatSession: ObservableObject {
         sourcePluginId = nil
         externalSessionKey = nil
         dispatchTaskId = nil
+        archived = false
         isDirty = false
 
         // Reset agent-loop UI state.
@@ -1053,7 +1057,8 @@ final class ChatSession: ObservableObject {
             source: source,
             sourcePluginId: sourcePluginId,
             externalSessionKey: externalSessionKey,
-            dispatchTaskId: dispatchTaskId
+            dispatchTaskId: dispatchTaskId,
+            archived: archived
         )
     }
 
@@ -1098,6 +1103,7 @@ final class ChatSession: ObservableObject {
         sourcePluginId = data.sourcePluginId
         externalSessionKey = data.externalSessionKey
         dispatchTaskId = data.dispatchTaskId
+        archived = data.archived
 
         // Restore the persisted model when it's still valid; otherwise
         // fall back to the agent's preferred model. `isLoadingModel`
@@ -2738,6 +2744,16 @@ struct ChatView: View {
                             },
                             onRename: { id, title in
                                 ChatSessionsManager.shared.rename(id: id, title: title)
+                                windowState.refreshSessions()
+                            },
+                            onSetArchived: { id, archived in
+                                ChatSessionsManager.shared.setArchived(id: id, archived: archived)
+                                // Keep the open view-model in sync so the next
+                                // auto-save (turn flush, run cleanup, etc.)
+                                // doesn't overwrite the just-written flag.
+                                if session.sessionId == id {
+                                    session.archived = archived
+                                }
                                 windowState.refreshSessions()
                             },
                             onOpenInNewWindow: { sessionData in

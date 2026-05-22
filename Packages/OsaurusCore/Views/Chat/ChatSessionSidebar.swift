@@ -30,6 +30,7 @@ struct ChatSessionSidebar: View {
     let onNewChat: () -> Void
     let onDelete: (UUID) -> Void
     let onRename: (UUID, String) -> Void
+    let onSetArchived: (UUID, Bool) -> Void
     /// Optional callback for opening a session in a new window
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
 
@@ -43,16 +44,20 @@ struct ChatSessionSidebar: View {
 
     // MARK: - Source Filter
 
-    /// Sidebar-local filter for `SessionSource`. Composes with the search
-    /// query and the agent filter applied by the caller.
+    /// Sidebar-local filter for `SessionSource` plus the archive lens.
+    /// Composes with the search query and the agent filter applied by the
+    /// caller. `.archived` is exclusive: it ignores source and shows only
+    /// archived sessions; every other case hides archived sessions.
     enum SourceFilter: Hashable {
         case all
         case source(SessionSource)
+        case archived
 
         var label: String {
             switch self {
             case .all: return "All"
             case .source(let s): return s.shortLabel
+            case .archived: return "Archived"
             }
         }
     }
@@ -64,23 +69,26 @@ struct ChatSessionSidebar: View {
         .source(.http),
         .source(.schedule),
         .source(.watcher),
+        .archived,
     ]
 
     // MARK: - Computed Properties
 
-    /// Sessions after applying both source filter and search query.
+    /// Sessions after applying source/archive filter and search query.
     private var filteredSessions: [ChatSessionData] {
-        let bySource: [ChatSessionData]
+        let byFilter: [ChatSessionData]
         switch sourceFilter {
         case .all:
-            bySource = sessions
+            byFilter = sessions.filter { !$0.archived }
         case .source(let s):
-            bySource = sessions.filter { $0.source == s }
+            byFilter = sessions.filter { $0.source == s && !$0.archived }
+        case .archived:
+            byFilter = sessions.filter { $0.archived }
         }
         guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return bySource
+            return byFilter
         }
-        return bySource.filter { session in
+        return byFilter.filter { session in
             SearchService.matches(query: searchQuery, in: session.title)
                 || (session.externalSessionKey.map {
                     SearchService.matches(query: searchQuery, in: $0)
@@ -88,14 +96,19 @@ struct ChatSessionSidebar: View {
         }
     }
 
-    /// Source-filter chips shown above the list — only includes filters
-    /// that match at least one session in the current set, plus `.all`,
-    /// so the chip rail doesn't render dead options for empty buckets.
+    /// Source-filter chips shown above the list. Hides chips with no
+    /// matching sessions so the rail does not render dead buckets.
+    /// `.all` is always shown; `.archived` only when the agent has at
+    /// least one archived session.
     private var visibleSourceFilters: [SourceFilter] {
-        let presentSources = Set(sessions.map(\.source))
+        let activeSources = Set(sessions.filter { !$0.archived }.map(\.source))
+        let hasArchived = sessions.contains { $0.archived }
         return Self.allSourceFilters.filter { filter in
-            if case .source(let s) = filter { return presentSources.contains(s) }
-            return true
+            switch filter {
+            case .all: return true
+            case .source(let s): return activeSources.contains(s)
+            case .archived: return hasArchived
+            }
         }
     }
 
@@ -203,6 +216,9 @@ struct ChatSessionSidebar: View {
             if case .source(let s) = filter {
                 Image(systemName: s.iconName)
                     .font(.system(size: 9.5, weight: .semibold))
+            } else if case .archived = filter {
+                Image(systemName: "archivebox.fill")
+                    .font(.system(size: 9.5, weight: .semibold))
             }
             Text(LocalizedStringKey(filter.label), bundle: .module)
                 .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
@@ -303,6 +319,9 @@ struct ChatSessionSidebar: View {
                             }
                             onDelete(session.id)
                         },
+                        onToggleArchive: {
+                            onSetArchived(session.id, !session.archived)
+                        },
                         onOpenInNewWindow: onOpenInNewWindow != nil
                             ? {
                                 onOpenInNewWindow?(session)
@@ -331,6 +350,7 @@ private struct SessionRow: View {
     let onConfirmRename: (String) -> Void
     let onCancelRename: () -> Void
     let onDelete: () -> Void
+    let onToggleArchive: () -> Void
     /// Optional callback for opening in a new window
     var onOpenInNewWindow: (() -> Void)? = nil
 
@@ -434,6 +454,9 @@ private struct SessionRow: View {
                     Divider()
                 }
                 Button(action: onStartRename) { Text("Rename", bundle: .module) }
+                Button(action: onToggleArchive) {
+                    Text(session.archived ? "Unarchive" : "Archive", bundle: .module)
+                }
                 Button(role: .destructive, action: requestDelete) { Text("Delete", bundle: .module) }
             }
         }
@@ -446,6 +469,14 @@ private struct SessionRow: View {
             ActionsPopoverButton(icon: "pencil", label: "Rename", isDestructive: false) {
                 showActionsPopover = false
                 onStartRename()
+            }
+            ActionsPopoverButton(
+                icon: session.archived ? "tray.and.arrow.up" : "archivebox",
+                label: session.archived ? "Unarchive" : "Archive",
+                isDestructive: false
+            ) {
+                showActionsPopover = false
+                onToggleArchive()
             }
             ActionsPopoverButton(icon: "trash", label: "Delete", isDestructive: true) {
                 showActionsPopover = false
@@ -721,7 +752,8 @@ private struct DontAskAgainToggle: View {
                 onSelect: { _ in },
                 onNewChat: {},
                 onDelete: { _ in },
-                onRename: { _, _ in }
+                onRename: { _, _ in },
+                onSetArchived: { _, _ in }
             )
             .frame(height: 400)
         }

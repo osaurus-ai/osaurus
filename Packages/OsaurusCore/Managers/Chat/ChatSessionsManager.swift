@@ -93,6 +93,20 @@ final class ChatSessionsManager: ObservableObject {
         upsertInMemory(session)
     }
 
+    /// Toggle a session's archive flag. Same in-memory-first lookup as
+    /// `rename` because a freshly created chat may not be in the store yet.
+    /// Does not touch `updatedAt` so an archive doesn't bubble the row to
+    /// the top of the recent list and confuse the user.
+    func setArchived(id: UUID, archived: Bool) {
+        guard var session = sessions.first(where: { $0.id == id })
+            ?? ChatSessionStore.load(id: id)
+        else { return }
+        guard session.archived != archived else { return }
+        session.archived = archived
+        ChatSessionStore.save(session)
+        upsertInMemory(session)
+    }
+
     /// Get a session by ID
     func session(for id: UUID) -> ChatSessionData? {
         sessions.first { $0.id == id }
