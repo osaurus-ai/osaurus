@@ -2730,11 +2730,10 @@ struct ChatView: View {
                                 windowState.startNewChat()
                             },
                             onDelete: { id in
-                                ChatSessionsManager.shared.delete(id: id)
-                                // If we deleted the current session, reset
                                 if session.sessionId == id {
                                     session.reset()
                                 }
+                                ChatSessionsManager.shared.delete(id: id)
                                 windowState.refreshSessions()
                             },
                             onRename: { id, title in
