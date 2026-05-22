@@ -105,4 +105,17 @@ struct MLXServiceRuntimePolicyTests {
             )
         }
     }
+
+    @Test func policyRejectsKnownBadZayaVLJANGTQKDiagnosticArtifact() {
+        #expect(throws: MLXService.RuntimePolicyError.self) {
+            try MLXService.validateRuntimePolicy(
+                modelName: "zaya1-vl-8b-jangtq_k",
+                modelId: "JANGQ/ZAYA1-VL-8B-JANGTQ_K",
+                messages: [ChatMessage(role: "user", content: "Compute 7 + 8 - 11.")],
+                parameters: GenerationParameters(temperature: nil, maxTokens: 16),
+                tools: [],
+                runtime: VMLXServerRuntimeSettings()
+            )
+        }
+    }
 }

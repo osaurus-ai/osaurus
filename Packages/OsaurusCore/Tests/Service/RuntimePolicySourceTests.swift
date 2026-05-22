@@ -356,12 +356,13 @@ struct RuntimePolicySourceTests {
         // parser override load bridge, complete SSM companion-cache guard,
         // Qwen3.6 native-MTP alias recognition, and expanded loaded
         // cache-topology snapshotting for server-side cache autodetect, and
-        // quantization-bound native-MTP tuning for MXFP8 launch safety.
+        // quantization-bound native-MTP tuning for MXFP8 launch safety, and
+        // ZAYA1-VL reasoning-parser fallback separation.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "af0cef57930258f187a25d5eb9b4a8aa47656042"
+        let currentVmlxRevision = "e766882df8ffd0c347e3a29c3b2989e3dc73ca73"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
