@@ -3,6 +3,29 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.37</title>
+            <pubDate>Fri, 22 May 2026 13:00:19 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.37</sparkle:version>
+            <sparkle:shortVersionString>0.18.37</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.37/Osaurus-0.18.37.dmg" length="49051889" type="application/octet-stream" sparkle:edSignature="mU2u/QzWeUuxB6kDPOVBbRwDCWSwTM81UGp3NDCaqgX+Bfzd3Ej64iTrZpkpvVrdEI4c3ECvH0Q6ivP7W706AQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Harden XLSX ZIP package parsing (#1216) by @mimeding
+- Harden plugin HTTP redirects against SSRF (#1215) by @mimeding
+- Wire global proxy into providers and model downloads (#1214) by @mimeding
+- Isolate eval search storage roots (#1213) by @mimeding
+- Harden structured document ingress metadata (#1212) by @mimeding
+- Harden provider discovery diagnostics (#1211) by @mimeding
+- chat sidebar improvements (#1219) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.36...0.18.37
+]]></description>
+        </item>
+        <item>
             <title>0.18.36</title>
             <pubDate>Fri, 22 May 2026 05:40:32 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

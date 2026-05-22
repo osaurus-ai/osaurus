@@ -99,6 +99,47 @@ struct XLSXAdapterTests {
         }
     }
 
+    @Test func parse_rejectsLocalHeaderNameMismatches() async throws {
+        let package = try Self.replacingLocalHeaderName(
+            in: Self.makeWorkbookPackage(),
+            original: "xl/workbook.xml",
+            replacement: "xl/workbooK.xml"
+        )
+        let url = try Self.writePackage(package)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        await #expect(throws: DocumentAdapterError.self) {
+            _ = try await XLSXAdapter().parse(url: url, sizeLimit: 0)
+        }
+    }
+
+    @Test func parse_rejectsMultiDiskXLSXPackages() async throws {
+        var package = Self.makeWorkbookPackage()
+        let eocdOffset = try Self.endOfCentralDirectoryOffset(in: package)
+        try package.writeUInt16LE(1, at: eocdOffset + 4)
+        let url = try Self.writePackage(package)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        await #expect(throws: DocumentAdapterError.self) {
+            _ = try await XLSXAdapter().parse(url: url, sizeLimit: 0)
+        }
+    }
+
+    @Test func parse_rejectsZIP64Sentinels() async throws {
+        var package = Self.makeWorkbookPackage()
+        let centralEntryOffset = try Self.centralDirectoryEntryOffset(
+            in: package,
+            path: "xl/workbook.xml"
+        )
+        try package.writeUInt32LE(UInt32.max, at: centralEntryOffset + 42)
+        let url = try Self.writePackage(package)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        await #expect(throws: DocumentAdapterError.self) {
+            _ = try await XLSXAdapter().parse(url: url, sizeLimit: 0)
+        }
+    }
+
     @Test func bootstrap_registersXLSXAdapter() {
         let registry = DocumentFormatRegistry()
 
@@ -110,10 +151,86 @@ struct XLSXAdapterTests {
     // MARK: - Fixture
 
     private static func writeFixture() throws -> URL {
+        try writePackage(Self.makeWorkbookPackage())
+    }
+
+    private static func writePackage(_ package: Data) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-workbook.xlsx")
-        try makeWorkbookPackage().write(to: url)
+        try package.write(to: url)
         return url
+    }
+
+    private static func replacingLocalHeaderName(
+        in archive: Data,
+        original: String,
+        replacement: String
+    ) throws -> Data {
+        let originalName = Array(original.utf8)
+        let replacementName = Array(replacement.utf8)
+        guard originalName.count == replacementName.count else {
+            throw XLSXFixtureMutationError.replacementLengthMismatch
+        }
+
+        var mutated = archive
+        var offset = 0
+        while offset + 30 <= mutated.count {
+            guard try mutated.uint32LE(at: offset) == 0x0403_4B50 else {
+                offset += 1
+                continue
+            }
+
+            let compressedSize = Int(try mutated.uint32LE(at: offset + 18))
+            let nameLength = Int(try mutated.uint16LE(at: offset + 26))
+            let extraLength = Int(try mutated.uint16LE(at: offset + 28))
+            let nameStart = offset + 30
+            let nameEnd = nameStart + nameLength
+            guard nameEnd <= mutated.count else {
+                throw XLSXFixtureMutationError.truncatedArchive
+            }
+            if Array(mutated[nameStart ..< nameEnd]) == originalName {
+                mutated.replaceSubrange(nameStart ..< nameEnd, with: replacementName)
+                return mutated
+            }
+            offset = nameEnd + extraLength + compressedSize
+        }
+
+        throw XLSXFixtureMutationError.entryNotFound(original)
+    }
+
+    private static func centralDirectoryEntryOffset(in archive: Data, path: String) throws -> Int {
+        let eocdOffset = try endOfCentralDirectoryOffset(in: archive)
+        var offset = Int(try archive.uint32LE(at: eocdOffset + 16))
+        let entryCount = Int(try archive.uint16LE(at: eocdOffset + 10))
+        for _ in 0 ..< entryCount {
+            guard try archive.uint32LE(at: offset) == 0x0201_4B50 else {
+                throw XLSXFixtureMutationError.truncatedArchive
+            }
+            let nameLength = Int(try archive.uint16LE(at: offset + 28))
+            let extraLength = Int(try archive.uint16LE(at: offset + 30))
+            let commentLength = Int(try archive.uint16LE(at: offset + 32))
+            let nameStart = offset + 46
+            let nameEnd = nameStart + nameLength
+            guard nameEnd <= archive.count,
+                let name = String(data: archive.subdata(in: nameStart ..< nameEnd), encoding: .utf8)
+            else {
+                throw XLSXFixtureMutationError.truncatedArchive
+            }
+            if name == path { return offset }
+            offset = nameEnd + extraLength + commentLength
+        }
+        throw XLSXFixtureMutationError.entryNotFound(path)
+    }
+
+    private static func endOfCentralDirectoryOffset(in archive: Data) throws -> Int {
+        var offset = archive.count - 22
+        while offset >= 0 {
+            if try archive.uint32LE(at: offset) == 0x0605_4B50 {
+                return offset
+            }
+            offset -= 1
+        }
+        throw XLSXFixtureMutationError.entryNotFound("end-of-central-directory")
     }
 
     private static func makeWorkbookPackage() -> Data {
@@ -291,6 +408,12 @@ struct XLSXAdapterTests {
     }
 }
 
+private enum XLSXFixtureMutationError: Error {
+    case entryNotFound(String)
+    case replacementLengthMismatch
+    case truncatedArchive
+}
+
 private extension Workbook.Sheet {
     func cell(_ reference: String) -> Workbook.Cell? {
         rows.flatMap(\.cells).first { $0.reference == reference }
@@ -312,5 +435,41 @@ private extension Data {
             UInt8((value >> 16) & 0x0000_00FF),
             UInt8((value >> 24) & 0x0000_00FF),
         ])
+    }
+
+    func uint16LE(at offset: Int) throws -> UInt16 {
+        guard offset >= 0, offset + 2 <= count else {
+            throw XLSXFixtureMutationError.truncatedArchive
+        }
+        return UInt16(self[offset])
+            | (UInt16(self[offset + 1]) << 8)
+    }
+
+    func uint32LE(at offset: Int) throws -> UInt32 {
+        guard offset >= 0, offset + 4 <= count else {
+            throw XLSXFixtureMutationError.truncatedArchive
+        }
+        return UInt32(self[offset])
+            | (UInt32(self[offset + 1]) << 8)
+            | (UInt32(self[offset + 2]) << 16)
+            | (UInt32(self[offset + 3]) << 24)
+    }
+
+    mutating func writeUInt16LE(_ value: UInt16, at offset: Int) throws {
+        guard offset >= 0, offset + 2 <= count else {
+            throw XLSXFixtureMutationError.truncatedArchive
+        }
+        self[offset] = UInt8(value & 0x00FF)
+        self[offset + 1] = UInt8((value >> 8) & 0x00FF)
+    }
+
+    mutating func writeUInt32LE(_ value: UInt32, at offset: Int) throws {
+        guard offset >= 0, offset + 4 <= count else {
+            throw XLSXFixtureMutationError.truncatedArchive
+        }
+        self[offset] = UInt8(value & 0x0000_00FF)
+        self[offset + 1] = UInt8((value >> 8) & 0x0000_00FF)
+        self[offset + 2] = UInt8((value >> 16) & 0x0000_00FF)
+        self[offset + 3] = UInt8((value >> 24) & 0x0000_00FF)
     }
 }
