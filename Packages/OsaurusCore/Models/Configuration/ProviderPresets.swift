@@ -13,6 +13,7 @@ import SwiftUI
 enum ProviderPreset: String, CaseIterable, Identifiable {
     case anthropic
     case azureOpenAI
+    case atlasCloud
     case openai
     case google
     case xai
@@ -29,6 +30,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "Anthropic"
         case .azureOpenAI: return "Azure OpenAI Foundry"
+        case .atlasCloud: return "AtlasCloud"
         case .openai: return "OpenAI"
         case .google: return "Google"
         case .xai: return "xAI"
@@ -45,6 +47,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "Claude models"
         case .azureOpenAI: return "Azure deployments"
+        case .atlasCloud: return "300+ unified AI models"
         case .openai: return "ChatGPT/Codex or Platform API"
         case .google: return "Gemini models"
         case .xai: return "Grok models"
@@ -61,6 +64,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "brain.head.profile"
         case .azureOpenAI: return "cloud.fill"
+        case .atlasCloud: return "square.stack.3d.up.fill"
         case .openai: return "sparkles"
         case .google: return "globe"
         case .xai: return "bolt.fill"
@@ -77,6 +81,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return [Color(red: 0.85, green: 0.55, blue: 0.35), Color(red: 0.75, green: 0.4, blue: 0.25)]
         case .azureOpenAI: return [Color(red: 0.0, green: 0.47, blue: 0.84), Color(red: 0.0, green: 0.62, blue: 0.72)]
+        case .atlasCloud: return [Color(red: 0.03, green: 0.23, blue: 0.21), Color(red: 0.07, green: 0.39, blue: 0.34)]
         case .openai: return [Color(red: 0.0, green: 0.65, blue: 0.52), Color(red: 0.0, green: 0.5, blue: 0.4)]
         case .google: return [Color(red: 0.26, green: 0.52, blue: 0.96), Color(red: 0.18, green: 0.38, blue: 0.85)]
         case .xai: return [Color(red: 0.1, green: 0.1, blue: 0.1), Color(red: 0.2, green: 0.2, blue: 0.2)]
@@ -93,6 +98,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "https://console.anthropic.com/settings/keys"
         case .azureOpenAI: return "https://ai.azure.com"
+        case .atlasCloud: return "https://www.atlascloud.ai/console/api-keys"
         case .openai: return "https://platform.openai.com/api-keys"
         case .google: return "https://aistudio.google.com/apikey"
         case .xai: return "https://console.x.ai/"
@@ -118,6 +124,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     var documentationURL: String? {
         switch self {
         case .azureOpenAI: return "https://learn.microsoft.com/azure/ai-foundry/openai/"
+        case .atlasCloud: return "https://www.atlascloud.ai/docs"
         case .deepseek: return "https://api-docs.deepseek.com/"
         case .venice: return "https://docs.venice.ai"
         case .ollama: return "https://github.com/ollama/ollama"
@@ -142,6 +149,13 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 "Open your Azure OpenAI resource in Azure AI Foundry",
                 "Copy the resource endpoint host and an API key",
                 "Add deployment names if they do not appear automatically",
+                "Paste the key here",
+            ]
+        case .atlasCloud:
+            return [
+                "Go to the AtlasCloud API keys page",
+                "Create or copy an API key",
+                "Use the OpenAI-compatible base URL https://api.atlascloud.ai/v1",
                 "Paste the key here",
             ]
         case .openai:
@@ -214,6 +228,16 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 basePath: "/openai/v1",
                 authType: .apiKey,
                 providerType: .azureOpenAI
+            )
+        case .atlasCloud:
+            return ProviderPresetConfiguration(
+                name: "AtlasCloud",
+                host: "api.atlascloud.ai",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1",
+                authType: .apiKey,
+                providerType: .openaiLegacy
             )
         case .openai:
             return ProviderPresetConfiguration(

@@ -124,7 +124,21 @@ On macOS 26+, use Apple's on-device model as a first-class provider. Pass `model
 
 ### Cloud
 
-Connect to OpenAI, Anthropic, Gemini, xAI/Grok, [Venice AI](https://venice.ai), OpenRouter, Ollama, or LM Studio. Venice provides uncensored, privacy-focused inference with no data retention. Context and memory persist across all providers.
+Connect to OpenAI, Anthropic, Gemini, xAI/Grok, AtlasCloud, [Venice AI](https://venice.ai), OpenRouter, Ollama, or LM Studio. Venice provides uncensored, privacy-focused inference with no data retention. Context and memory persist across all providers.
+
+### AtlasCloud
+
+<p align="center">
+  <img src="docs/assets/atlascloud-logo.png" alt="AtlasCloud" width="720" />
+</p>
+
+AtlasCloud works as an OpenAI-compatible provider in Osaurus. Use:
+
+- Host: `api.atlascloud.ai`
+- Protocol: `HTTPS`
+- Base Path: `/v1`
+- Auth: `API Key`
+- Tested model: `deepseek-ai/DeepSeek-V3-0324`
 
 ## MCP
 

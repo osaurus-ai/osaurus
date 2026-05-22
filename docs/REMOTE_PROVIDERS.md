@@ -33,6 +33,7 @@ Osaurus includes presets for common providers:
 | Preset         | Host              | Port | Base Path | API Format | Auth             |
 | -------------- | ----------------- | ---- | --------- | ---------- | ---------------- |
 | **Anthropic**  | api.anthropic.com | 443  | /v1       | Anthropic  | API Key required |
+| **AtlasCloud** | api.atlascloud.ai | 443  | /v1       | OpenAI     | API Key required |
 | **OpenAI**     | api.openai.com    | 443  | /v1       | OpenAI     | API Key required |
 | **xAI**        | api.x.ai          | 443  | /v1       | OpenAI     | API Key required |
 | **OpenRouter** | openrouter.ai     | 443  | /api/v1   | OpenAI     | API Key required |
@@ -164,6 +165,17 @@ Auth: API Key (get from platform.openai.com)
 ```
 
 Models available: All ChatGPT models via the OpenAI API.
+
+### AtlasCloud
+
+```
+Host: api.atlascloud.ai
+Protocol: HTTPS
+Base Path: /v1
+Auth: API Key (get from atlascloud.ai)
+```
+
+AtlasCloud's LLM endpoint is OpenAI-compatible. A tested model is `deepseek-ai/DeepSeek-V3-0324`.
 
 ### OpenRouter
 
