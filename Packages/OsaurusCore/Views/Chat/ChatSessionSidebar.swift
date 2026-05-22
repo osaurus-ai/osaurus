@@ -31,8 +31,15 @@ struct ChatSessionSidebar: View {
     let onDelete: (UUID) -> Void
     let onRename: (UUID, String) -> Void
     let onSetArchived: (UUID, Bool) -> Void
+    let onExport: (ChatSessionData, ExportFormat) -> Void
     /// Optional callback for opening a session in a new window
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
+
+    enum ExportFormat {
+        case markdown
+        case pdf
+        case zip
+    }
 
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
@@ -93,8 +100,7 @@ struct ChatSessionSidebar: View {
             if let key = session.externalSessionKey,
                 SearchService.matches(query: searchQuery, in: key)
             { return true }
-            // Capability names match too: typing "vision" / "code" /
-            // "voice" / "search" surfaces the chats tagged with them.
+            // Match capability labels so "vision" / "code" finds tagged chats.
             return session.capabilities.contains { cap in
                 SearchService.matches(query: searchQuery, in: cap.label)
             }
@@ -327,6 +333,9 @@ struct ChatSessionSidebar: View {
                         onToggleArchive: {
                             onSetArchived(session.id, !session.archived)
                         },
+                        onExport: { format in
+                            onExport(session, format)
+                        },
                         onOpenInNewWindow: onOpenInNewWindow != nil
                             ? {
                                 onOpenInNewWindow?(session)
@@ -356,6 +365,7 @@ private struct SessionRow: View {
     let onCancelRename: () -> Void
     let onDelete: () -> Void
     let onToggleArchive: () -> Void
+    let onExport: (ChatSessionSidebar.ExportFormat) -> Void
     /// Optional callback for opening in a new window
     var onOpenInNewWindow: (() -> Void)? = nil
 
@@ -463,6 +473,11 @@ private struct SessionRow: View {
                     Divider()
                 }
                 Button(action: onStartRename) { Text("Rename", bundle: .module) }
+                Divider()
+                Button { onExport(.markdown) } label: { Text("Export Markdown", bundle: .module) }
+                Button { onExport(.pdf) } label: { Text("Export PDF", bundle: .module) }
+                Button { onExport(.zip) } label: { Text("Export Zip", bundle: .module) }
+                Divider()
                 Button(action: onToggleArchive) {
                     Text(session.archived ? "Unarchive" : "Archive", bundle: .module)
                 }
@@ -479,6 +494,20 @@ private struct SessionRow: View {
                 showActionsPopover = false
                 onStartRename()
             }
+            Divider().padding(.vertical, 2)
+            ActionsPopoverButton(icon: "doc.text", label: "Export Markdown", isDestructive: false) {
+                showActionsPopover = false
+                onExport(.markdown)
+            }
+            ActionsPopoverButton(icon: "doc.richtext", label: "Export PDF", isDestructive: false) {
+                showActionsPopover = false
+                onExport(.pdf)
+            }
+            ActionsPopoverButton(icon: "doc.zipper", label: "Export Zip", isDestructive: false) {
+                showActionsPopover = false
+                onExport(.zip)
+            }
+            Divider().padding(.vertical, 2)
             ActionsPopoverButton(
                 icon: session.archived ? "tray.and.arrow.up" : "archivebox",
                 label: session.archived ? "Unarchive" : "Archive",
@@ -493,7 +522,7 @@ private struct SessionRow: View {
             }
         }
         .padding(6)
-        .frame(minWidth: 140)
+        .frame(minWidth: 180)
     }
 
     // MARK: - Delete Confirmation
@@ -527,14 +556,12 @@ private struct SessionRow: View {
 
     // MARK: - Capability Badges
 
-    /// Stable order matches `SessionCapability.allCases` so badges don't
-    /// shuffle position between renders.
+    /// Stable rendering order.
     private var orderedCapabilities: [SessionCapability] {
         SessionCapability.allCases.filter { session.capabilities.contains($0) }
     }
 
-    /// Up to 3 capability icons; overflow rendered as a `+N` pill, matching
-    /// the rule the user picked in the design pass.
+    /// Up to 3 icons, then a `+N` pill.
     private var capabilityBadges: some View {
         let visibleLimit = 3
         let ordered = orderedCapabilities
@@ -808,7 +835,8 @@ private struct DontAskAgainToggle: View {
                 onNewChat: {},
                 onDelete: { _ in },
                 onRename: { _, _ in },
-                onSetArchived: { _, _ in }
+                onSetArchived: { _, _ in },
+                onExport: { _, _ in }
             )
             .frame(height: 400)
         }

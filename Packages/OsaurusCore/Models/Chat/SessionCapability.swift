@@ -2,23 +2,19 @@
 //  SessionCapability.swift
 //  osaurus
 //
-//  Derived "what this chat did" badges, surfaced in the sidebar row so
-//  the user can find chats by interaction kind (vision, voice, code,
-//  search) instead of having to remember titles.
+//  Per-chat capability badges (vision / voice / code / search).
 //
 
 import Foundation
 
-/// Per-session capability flag derived from turns. Set is stored on
-/// `ChatSessionData.capabilities` and persisted as a comma-separated
-/// TEXT column on `sessions`.
+/// Per-session capability tag derived from turns and persisted as a
+/// comma-separated TEXT column on `sessions`.
 public enum SessionCapability: String, Codable, Hashable, Sendable, CaseIterable {
     case vision
     case voice
     case code
     case search
 
-    /// SF Symbol for the row badge.
     public var iconName: String {
         switch self {
         case .vision: return "eye.fill"
@@ -28,7 +24,6 @@ public enum SessionCapability: String, Codable, Hashable, Sendable, CaseIterable
         }
     }
 
-    /// User-facing label used in tooltips and search.
     public var label: String {
         switch self {
         case .vision: return "Vision"
@@ -40,9 +35,7 @@ public enum SessionCapability: String, Codable, Hashable, Sendable, CaseIterable
 }
 
 extension SessionCapability {
-    /// Derive the capability set from a session's turns. Tool-name matching
-    /// uses substrings on the canonical lowercased name so plugin/MCP
-    /// prefixes (e.g. `gmail_api_search`) still classify correctly.
+    /// Match plugin/MCP-prefixed names by substring on the lowercased name.
     public static func derive(from turns: [ChatTurnData]) -> Set<SessionCapability> {
         var caps: Set<SessionCapability> = []
 
@@ -62,8 +55,7 @@ extension SessionCapability {
         return caps
     }
 
-    /// Encode/decode for the SQLite TEXT column. Stable, comma-separated,
-    /// raw-value form so future additions don't break older rows.
+    /// Stable comma-separated raw values for the SQLite column.
     public static func encode(_ caps: Set<SessionCapability>) -> String {
         SessionCapability.allCases
             .filter { caps.contains($0) }
@@ -80,9 +72,6 @@ extension SessionCapability {
         )
     }
 
-    // MARK: - Tool name classification
-
-    /// Sandbox shell, code interpreter, and file-mutating tools.
     private static let codeToolNames: Set<String> = [
         "sandbox_exec",
         "sandbox_execute_code",
@@ -90,8 +79,6 @@ extension SessionCapability {
         "sandbox_edit_file",
     ]
 
-    /// File-content search plus a fuzzy match for `*search*` in MCP/plugin
-    /// tool names (e.g. `gmail_api_search_messages`, `tavily_search`).
     private static func isCodeTool(_ name: String) -> Bool {
         codeToolNames.contains(name)
     }

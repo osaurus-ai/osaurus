@@ -2749,13 +2749,18 @@ struct ChatView: View {
                             },
                             onSetArchived: { id, archived in
                                 ChatSessionsManager.shared.setArchived(id: id, archived: archived)
-                                // Keep the open view-model in sync so the next
-                                // auto-save (turn flush, run cleanup, etc.)
-                                // doesn't overwrite the just-written flag.
+                                // Keep the open view-model in sync so the
+                                // next auto-save doesn't clobber the flag.
                                 if session.sessionId == id {
                                     session.archived = archived
                                 }
                                 windowState.refreshSessions()
+                            },
+                            onExport: { metadata, format in
+                                ChatSessionExportCoordinator.run(
+                                    metadataSession: metadata,
+                                    format: format
+                                )
                             },
                             onOpenInNewWindow: { sessionData in
                                 // Open session in a new window via ChatWindowManager

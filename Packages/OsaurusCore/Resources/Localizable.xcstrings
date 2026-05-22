@@ -8114,6 +8114,12 @@
         }
       }
     },
+    "Export Markdown" : {
+
+    },
+    "Export PDF" : {
+
+    },
     "Export Skill (Agent Skills Format)" : {
       "localizations" : {
         "de" : {
@@ -8135,6 +8141,9 @@
           }
         }
       }
+    },
+    "Export Zip" : {
+
     },
     "Exported \"%@\"" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
