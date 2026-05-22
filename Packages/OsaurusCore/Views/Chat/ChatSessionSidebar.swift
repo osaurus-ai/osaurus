@@ -7,6 +7,15 @@
 
 import SwiftUI
 
+/// In-memory toggle for the delete-conversation confirmation. Resets on
+/// every app launch, matching the "for the rest of the session" semantic.
+@MainActor
+final class DeleteConfirmationPreference: ObservableObject {
+    static let shared = DeleteConfirmationPreference()
+    @Published var skipForSession: Bool = false
+    private init() {}
+}
+
 struct ChatSessionSidebar: View {
     /// Sessions to display (already filtered by agent if needed)
     let sessions: [ChatSessionData]
@@ -326,6 +335,7 @@ private struct SessionRow: View {
     var onOpenInNewWindow: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
+    @Environment(\.themedAlertScope) private var alertScope
     @State private var isHovered = false
     @State private var showActionsPopover = false
     /// Local buffer for the rename TextField. Kept on the row (not the
@@ -424,7 +434,7 @@ private struct SessionRow: View {
                     Divider()
                 }
                 Button(action: onStartRename) { Text("Rename", bundle: .module) }
-                Button(role: .destructive, action: onDelete) { Text("Delete", bundle: .module) }
+                Button(role: .destructive, action: requestDelete) { Text("Delete", bundle: .module) }
             }
         }
     }
@@ -439,11 +449,40 @@ private struct SessionRow: View {
             }
             ActionsPopoverButton(icon: "trash", label: "Delete", isDestructive: true) {
                 showActionsPopover = false
-                onDelete()
+                requestDelete()
             }
         }
         .padding(6)
         .frame(minWidth: 140)
+    }
+
+    // MARK: - Delete Confirmation
+
+    /// Entry point for both the context menu and the popover's Delete row.
+    /// Skips the dialog if the user opted out earlier this app session.
+    private func requestDelete() {
+        if DeleteConfirmationPreference.shared.skipForSession {
+            onDelete()
+            return
+        }
+        let requestId = UUID()
+        let accessory = AnyView(DontAskAgainToggle())
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Delete Conversation?",
+                message: "\"\(session.title)\" will be removed permanently. This can't be undone.",
+                accessory: accessory,
+                buttons: [
+                    .cancel("Cancel"),
+                    .destructive("Delete") { onDelete() },
+                ],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: alertScope, id: requestId)
+                }
+            ),
+            scope: alertScope
+        )
     }
 
     // MARK: - Source Badge
@@ -648,6 +687,25 @@ private struct ActionsPopoverButton: View {
     private var hoverFill: Color {
         if isDestructive { return Color.red.opacity(0.12) }
         return theme.accentColor.opacity(0.12)
+    }
+}
+
+// MARK: - Don't Ask Again Toggle
+
+/// Checkbox row rendered as the delete-confirmation accessory. Writes
+/// straight to the session-scoped preference so the toggle survives
+/// across consecutive deletes within the same app run.
+private struct DontAskAgainToggle: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var pref = DeleteConfirmationPreference.shared
+
+    var body: some View {
+        Toggle(isOn: $pref.skipForSession) {
+            Text("Don't ask me again", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+        }
+        .toggleStyle(.checkbox)
     }
 }
 

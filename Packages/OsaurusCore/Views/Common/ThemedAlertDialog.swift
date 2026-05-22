@@ -70,6 +70,9 @@ public struct ThemedAlertRequest: Identifiable {
     public let title: String
     /// Optional message displayed below the title
     public let message: String?
+    /// Optional accessory view rendered between the message and the button row.
+    /// Use for extras like a "Don't ask again" toggle.
+    public let accessory: AnyView?
     /// Button configurations for the alert actions
     public let buttons: [AlertButtonConfig]
 
@@ -80,12 +83,14 @@ public struct ThemedAlertRequest: Identifiable {
         id: UUID = UUID(),
         title: String,
         message: String?,
+        accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
         onDismiss: @escaping () -> Void
     ) {
         self.id = id
         self.title = title
         self.message = message
+        self.accessory = accessory
         self.buttons = buttons
         self.onDismiss = onDismiss
     }
@@ -140,6 +145,7 @@ private struct ThemedAlertDialogContent: View {
 
     let title: String
     let message: String?
+    let accessory: AnyView?
     let buttons: [AlertButtonConfig]
     let presentationStyle: ThemedAlertPresentationStyle
     let onDismiss: () -> Void
@@ -192,6 +198,12 @@ private struct ThemedAlertDialogContent: View {
             // Message
             if let message = message {
                 messageSection(message)
+            }
+
+            // Optional accessory (e.g. "Don't ask again" toggle)
+            if let accessory = accessory {
+                accessory
+                    .padding(.top, 12)
             }
 
             // Divider
@@ -413,6 +425,7 @@ private struct ThemedAlertModifier: ViewModifier {
                     ThemedAlertDialogContent(
                         title: title,
                         message: message,
+                        accessory: nil,
                         buttons: buttons,
                         presentationStyle: presentationStyle,
                         onDismiss: {
@@ -498,6 +511,7 @@ public struct ThemedAlertHost: View {
                 ThemedAlertDialogContent(
                     title: request.title,
                     message: request.message,
+                    accessory: request.accessory,
                     buttons: request.buttons,
                     presentationStyle: .window,
                     onDismiss: { request.onDismiss() }
@@ -610,6 +624,7 @@ private extension View {
                 ThemedAlertDialogContent(
                     title: "Cancel Background Task?",
                     message: "The work task is still running. Dismissing will cancel the task.",
+                    accessory: nil,
                     buttons: [
                         .destructive("Cancel Task") {},
                         .cancel("Keep Running"),
