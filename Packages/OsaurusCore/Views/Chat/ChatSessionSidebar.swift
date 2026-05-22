@@ -89,10 +89,15 @@ struct ChatSessionSidebar: View {
             return byFilter
         }
         return byFilter.filter { session in
-            SearchService.matches(query: searchQuery, in: session.title)
-                || (session.externalSessionKey.map {
-                    SearchService.matches(query: searchQuery, in: $0)
-                } ?? false)
+            if SearchService.matches(query: searchQuery, in: session.title) { return true }
+            if let key = session.externalSessionKey,
+                SearchService.matches(query: searchQuery, in: key)
+            { return true }
+            // Capability names match too: typing "vision" / "code" /
+            // "voice" / "search" surfaces the chats tagged with them.
+            return session.capabilities.contains { cap in
+                SearchService.matches(query: searchQuery, in: cap.label)
+            }
         }
     }
 
@@ -405,6 +410,10 @@ private struct SessionRow: View {
                         if session.source != .chat {
                             sourceBadge
                         }
+
+                        if !session.capabilities.isEmpty {
+                            capabilityBadges
+                        }
                     }
 
                     Text(metadataLine)
@@ -514,6 +523,52 @@ private struct SessionRow: View {
             ),
             scope: alertScope
         )
+    }
+
+    // MARK: - Capability Badges
+
+    /// Stable order matches `SessionCapability.allCases` so badges don't
+    /// shuffle position between renders.
+    private var orderedCapabilities: [SessionCapability] {
+        SessionCapability.allCases.filter { session.capabilities.contains($0) }
+    }
+
+    /// Up to 3 capability icons; overflow rendered as a `+N` pill, matching
+    /// the rule the user picked in the design pass.
+    private var capabilityBadges: some View {
+        let visibleLimit = 3
+        let ordered = orderedCapabilities
+        let visible = Array(ordered.prefix(visibleLimit))
+        let overflow = ordered.count - visible.count
+        return HStack(spacing: 3) {
+            ForEach(visible, id: \.self) { cap in
+                capabilityIcon(cap)
+            }
+            if overflow > 0 {
+                Text(verbatim: "+\(overflow)")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(theme.secondaryText.opacity(theme.isDark ? 0.16 : 0.12))
+                    )
+                    .help(Text(verbatim: ordered.dropFirst(visibleLimit).map(\.label).joined(separator: ", ")))
+            }
+        }
+    }
+
+    private func capabilityIcon(_ cap: SessionCapability) -> some View {
+        Image(systemName: cap.iconName)
+            .font(.system(size: 8.5, weight: .semibold))
+            .foregroundColor(theme.secondaryText)
+            .frame(width: 14, height: 14)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(theme.secondaryText.opacity(theme.isDark ? 0.16 : 0.12))
+            )
+            .help(Text(LocalizedStringKey(cap.label), bundle: .module))
     }
 
     // MARK: - Source Badge

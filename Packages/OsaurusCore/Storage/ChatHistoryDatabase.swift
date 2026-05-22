@@ -40,7 +40,7 @@ public enum ChatHistoryDatabaseError: Error, LocalizedError {
 public final class ChatHistoryDatabase: @unchecked Sendable {
     public static let shared = ChatHistoryDatabase()
 
-    private static let schemaVersion = 3
+    private static let schemaVersion = 4
 
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.chatHistory.database")
@@ -125,6 +125,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 1 { try migrateToV1() }
         if current < 2 { try migrateToV2() }
         if current < 3 { try migrateToV3() }
+        if current < 4 { try migrateToV4() }
     }
 
     private func getSchemaVersion() throws -> Int {
@@ -202,6 +203,17 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV3() throws {
         try executeRaw("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
         try setSchemaVersion(3)
+    }
+
+    /// v4: add `capabilities` (comma-separated `SessionCapability`
+    /// raw values) so the sidebar can render per-row badges without
+    /// loading every turn. Existing rows keep an empty string and will
+    /// fill in lazily when the user next saves them; a full backfill
+    /// would require parsing every turn's attachments + toolCalls JSON
+    /// in Swift, which we avoid here to keep the migration cheap.
+    private func migrateToV4() throws {
+        try executeRaw("ALTER TABLE sessions ADD COLUMN capabilities TEXT NOT NULL DEFAULT ''")
+        try setSchemaVersion(4)
     }
 
     // MARK: - Public API: sessions
@@ -531,6 +543,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 9, value: session.externalSessionKey)
             Self.bindText(stmt, index: 10, value: session.dispatchTaskId?.uuidString)
             sqlite3_bind_int(stmt, 11, session.archived ? 1 : 0)
+            Self.bindText(stmt, index: 12, value: SessionCapability.encode(session.capabilities))
         }
     }
 
@@ -710,7 +723,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private static let baseSessionSelectSQL = """
         SELECT id, title, created_at, updated_at, selected_model, agent_id,
                source, source_plugin_id, external_session_key, dispatch_task_id,
-               archived
+               archived, capabilities
         FROM sessions
         """
 
@@ -720,8 +733,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         INSERT INTO sessions
             (id, title, created_at, updated_at, selected_model, agent_id,
              source, source_plugin_id, external_session_key, dispatch_task_id,
-             archived)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             archived, capabilities)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         ON CONFLICT(id) DO UPDATE SET
             title                = excluded.title,
             updated_at           = excluded.updated_at,
@@ -731,7 +744,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             source_plugin_id     = excluded.source_plugin_id,
             external_session_key = excluded.external_session_key,
             dispatch_task_id     = excluded.dispatch_task_id,
-            archived             = excluded.archived
+            archived             = excluded.archived,
+            capabilities         = excluded.capabilities
         """
 
     private static let insertTurnSQL = """
@@ -774,6 +788,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         let externalKey = sqlite3_column_text(stmt, 8).map { String(cString: $0) }
         let dispatchId = sqlite3_column_text(stmt, 9).map { String(cString: $0) }.flatMap { UUID(uuidString: $0) }
         let archived = sqlite3_column_int(stmt, 10) != 0
+        let capabilitiesRaw = sqlite3_column_text(stmt, 11).map { String(cString: $0) } ?? ""
         return ChatSessionData(
             id: UUID(uuidString: idStr) ?? UUID(),
             title: title,
@@ -786,7 +801,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             sourcePluginId: pluginId,
             externalSessionKey: externalKey,
             dispatchTaskId: dispatchId,
-            archived: archived
+            archived: archived,
+            capabilities: SessionCapability.decode(capabilitiesRaw)
         )
     }
 

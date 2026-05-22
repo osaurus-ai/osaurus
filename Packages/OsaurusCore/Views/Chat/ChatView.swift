@@ -1058,7 +1058,8 @@ final class ChatSession: ObservableObject {
             sourcePluginId: sourcePluginId,
             externalSessionKey: externalSessionKey,
             dispatchTaskId: dispatchTaskId,
-            archived: archived
+            archived: archived,
+            capabilities: SessionCapability.derive(from: turnData)
         )
     }
 

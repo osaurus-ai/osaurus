@@ -33,6 +33,9 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     /// User-set archive flag. Hidden from the default sidebar view, shown
     /// under the "Archived" filter chip.
     public var archived: Bool
+    /// Derived from turns at save time and persisted so the sidebar can
+    /// render badges without loading every turn.
+    public var capabilities: Set<SessionCapability>
 
     public init(
         id: UUID = UUID(),
@@ -46,7 +49,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         sourcePluginId: String? = nil,
         externalSessionKey: String? = nil,
         dispatchTaskId: UUID? = nil,
-        archived: Bool = false
+        archived: Bool = false,
+        capabilities: Set<SessionCapability> = []
     ) {
         self.id = id
         self.title = title
@@ -60,6 +64,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.externalSessionKey = externalSessionKey
         self.dispatchTaskId = dispatchTaskId
         self.archived = archived
+        self.capabilities = capabilities
     }
 
     // Custom decoder for backward compatibility with old sessions
@@ -79,6 +84,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         externalSessionKey = try container.decodeIfPresent(String.self, forKey: .externalSessionKey)
         dispatchTaskId = try container.decodeIfPresent(UUID.self, forKey: .dispatchTaskId)
         archived = try container.decodeIfPresent(Bool.self, forKey: .archived) ?? false
+        capabilities = try container.decodeIfPresent(Set<SessionCapability>.self, forKey: .capabilities) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -95,6 +101,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(externalSessionKey, forKey: .externalSessionKey)
         try container.encodeIfPresent(dispatchTaskId, forKey: .dispatchTaskId)
         try container.encode(archived, forKey: .archived)
+        try container.encode(capabilities, forKey: .capabilities)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -102,6 +109,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         case personaId  // legacy key for migration
         case source, sourcePluginId, externalSessionKey, dispatchTaskId
         case archived
+        case capabilities
     }
 
     /// Generate a title from the first user message
