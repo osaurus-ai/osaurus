@@ -147,6 +147,13 @@ struct RuntimePolicySourceTests {
         #expect(storageKey.contains("public var hasCachedKey: Bool"))
 
         let appDelegate = try Self.source("AppDelegate.swift")
+        // The migrator used to be the implicit key-cache warmer via its
+        // own `currentKey()` call, but `runIfNeeded` short-circuits on
+        // launches with no pending migration. The synchronous prewarm
+        // here is the explicit guarantee that downstream `hasCachedKey`
+        // guards (chat history, memory, schedulers) never fail closed
+        // simply because nothing happened to read the key first.
+        #expect(appDelegate.contains("StorageKeyManager.shared.prewarmCurrentKey()"))
         #expect(!appDelegate.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
         #expect(!appDelegate.contains("let storageKeyPrewarmTask"))
         #expect(appDelegate.contains("Storage-dependent search/index services disabled"))
@@ -154,7 +161,6 @@ struct RuntimePolicySourceTests {
 
         let chatSessions = try Self.source("Managers/Chat/ChatSessionsManager.swift")
         #expect(!chatSessions.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
-        #expect(chatSessions.contains("self?.refresh()"))
 
         let apiKeys = try Self.source("Identity/APIKeyManager.swift")
         #expect(apiKeys.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
@@ -216,7 +222,7 @@ struct RuntimePolicySourceTests {
         #expect(!source.contains("ChatHistoryWriter.persist(\n                            source: .http"))
     }
 
-    @Test("chat session manager refresh does not synchronously open history on init")
+    @Test("chat session manager loads synchronously on init so first read sees populated sessions")
     func chatSessionManagerRefreshDoesNotSynchronouslyOpenHistoryOnInit() throws {
         let source = try Self.source("Managers/Chat/ChatSessionsManager.swift")
         let initStart = try #require(source.range(of: "private init() {"))
@@ -225,9 +231,13 @@ struct RuntimePolicySourceTests {
         )
         let initBody = source[initStart.lowerBound ..< initEnd.upperBound]
 
-        #expect(initBody.contains("Task { @MainActor [weak self] in"))
-        #expect(initBody.contains("self?.refresh()"))
-        #expect(!initBody.contains("\n        refresh()\n"))
+        // Synchronous load is the contract: `ChatWindowState.init` reads
+        // `manager.sessions(for:)` immediately, and the Combine
+        // subscription downstream drops its first emission, so any
+        // deferred refresh strands the sidebar empty until the user
+        // manually triggers a refresh.
+        #expect(initBody.contains("sessions = ChatSessionStore.loadAll()"))
+        #expect(!initBody.contains("Task { @MainActor [weak self] in"))
         #expect(!initBody.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
     }
 
