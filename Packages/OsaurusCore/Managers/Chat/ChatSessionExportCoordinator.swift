@@ -82,7 +82,15 @@ enum ChatSessionExportCoordinator {
             displayTask.cancel()
             // Idempotent: no-op when nothing was ever presented for this id.
             ThemedAlertCenter.shared.dismiss(scope: scope, id: progressId)
-            if case .failure(let error) = result {
+            switch result {
+            case .success:
+                ToastManager.shared.action(
+                    L("Export complete"),
+                    message: url.lastPathComponent,
+                    action: .revealInFinder(url),
+                    buttonTitle: L("Reveal in Finder")
+                )
+            case .failure(let error):
                 presentError(error)
             }
         }

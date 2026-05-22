@@ -321,7 +321,8 @@ private struct ThemedAlertDialogContent: View {
     }
 
     private var inlinePrimaryIndex: Int {
-        inlineButtons.firstIndex { $0.role == nil }
+        if showsCloseButton { return -1 }
+        return inlineButtons.firstIndex { $0.role == nil }
             ?? inlineButtons.firstIndex { $0.role == .destructive }
             ?? 0
     }

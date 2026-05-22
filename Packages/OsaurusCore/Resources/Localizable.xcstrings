@@ -8059,6 +8059,26 @@
         }
       }
     },
+    "Export complete" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export complete"
+          }
+        }
+      }
+    },
+    "Reveal in Finder" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reveal in Finder"
+          }
+        }
+      }
+    },
     "Export Bundle…" : {
       "comment" : "Swift localization key; translations need review.",
       "localizations" : {

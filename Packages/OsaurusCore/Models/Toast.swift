@@ -303,6 +303,9 @@ public enum ToastAction: Equatable, Sendable {
     /// Open a URL in the default browser
     case openURL(URL)
 
+    /// Reveal a file in Finder (selects the file in its enclosing folder).
+    case revealInFinder(URL)
+
     /// Show the main app window
     case showMainWindow
 
@@ -325,6 +328,8 @@ public enum ToastAction: Equatable, Sendable {
             return "Open Settings"
         case .openURL:
             return "Open"
+        case .revealInFinder:
+            return "Reveal in Finder"
         case .showMainWindow:
             return "Show"
         case .showExecutionContext:
@@ -356,6 +361,8 @@ public enum ToastAction: Equatable, Sendable {
             return "openSettings"
         case .openURL(let url):
             return "openURL:\(url.absoluteString)"
+        case .revealInFinder(let url):
+            return "revealInFinder:\(url.absoluteString)"
         case .showMainWindow:
             return "showMainWindow"
         case .showExecutionContext(let contextId):
@@ -394,6 +401,10 @@ public enum ToastAction: Equatable, Sendable {
         case "openURL":
             guard parts.count > 1, let url = URL(string: parts[1]) else { return nil }
             return .openURL(url)
+
+        case "revealInFinder":
+            guard parts.count > 1, let url = URL(string: parts[1]) else { return nil }
+            return .revealInFinder(url)
 
         case "showMainWindow":
             return .showMainWindow
