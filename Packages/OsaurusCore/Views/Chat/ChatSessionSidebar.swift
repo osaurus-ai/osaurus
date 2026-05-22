@@ -333,6 +333,7 @@ private struct SessionRow: View {
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
+    @State private var showActionsPopover = false
     @FocusState private var isTextFieldFocused: Bool
 
     /// Whether this is the default agent
@@ -385,20 +386,14 @@ private struct SessionRow: View {
                 }
                 Spacer()
 
-                // Action buttons (visible on hover)
-                if isHovered {
-                    HStack(spacing: 4) {
-                        SidebarRowActionButton(
-                            icon: "pencil",
-                            help: "Rename",
-                            action: onStartRename
-                        )
-
-                        SidebarRowActionButton(
-                            icon: "trash",
-                            help: "Delete",
-                            action: onDelete
-                        )
+                if isHovered || showActionsPopover {
+                    SidebarRowActionButton(
+                        icon: "ellipsis",
+                        help: "Actions",
+                        action: { showActionsPopover.toggle() }
+                    )
+                    .popover(isPresented: $showActionsPopover, arrowEdge: .trailing) {
+                        actionsPopover
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
@@ -434,6 +429,23 @@ private struct SessionRow: View {
                 Button(role: .destructive, action: onDelete) { Text("Delete", bundle: .module) }
             }
         }
+    }
+
+    // MARK: - Actions Popover
+
+    private var actionsPopover: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ActionsPopoverButton(icon: "pencil", label: "Rename", isDestructive: false) {
+                showActionsPopover = false
+                onStartRename()
+            }
+            ActionsPopoverButton(icon: "trash", label: "Delete", isDestructive: true) {
+                showActionsPopover = false
+                onDelete()
+            }
+        }
+        .padding(6)
+        .frame(minWidth: 140)
     }
 
     // MARK: - Source Badge
@@ -555,6 +567,54 @@ private struct SessionRow: View {
         }
     }
 
+}
+
+// MARK: - Actions Popover Button
+
+/// Menu-style row used inside `SessionRow`'s actions popover. Kept as its
+/// own view so each row owns its hover state independently.
+private struct ActionsPopoverButton: View {
+    let icon: String
+    let label: String
+    let isDestructive: Bool
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: 14)
+                Text(LocalizedStringKey(label), bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundColor(foreground)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isHovered ? hoverFill : .clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+
+    private var foreground: Color {
+        if isDestructive { return isHovered ? .red : theme.primaryText }
+        return isHovered ? theme.accentColor : theme.primaryText
+    }
+
+    private var hoverFill: Color {
+        if isDestructive { return Color.red.opacity(0.12) }
+        return theme.accentColor.opacity(0.12)
+    }
 }
 
 // MARK: - Preview
