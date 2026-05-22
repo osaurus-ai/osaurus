@@ -78,9 +78,15 @@ final class ChatSessionsManager: ObservableObject {
         sessions.removeAll { $0.id == id }
     }
 
-    /// Rename a session
+    /// Rename a session.
+    ///
+    /// Pulls from the in-memory list first because new sessions are only
+    /// flushed to `ChatSessionStore` after their first turn writes, so a
+    /// rename issued before that flush would otherwise be dropped.
     func rename(id: UUID, title: String) {
-        guard var session = ChatSessionStore.load(id: id) else { return }
+        guard var session = sessions.first(where: { $0.id == id })
+            ?? ChatSessionStore.load(id: id)
+        else { return }
         session.title = title
         session.updatedAt = Date()
         ChatSessionStore.save(session)

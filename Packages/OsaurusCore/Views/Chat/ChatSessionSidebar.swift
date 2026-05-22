@@ -27,7 +27,6 @@ struct ChatSessionSidebar: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
     @State private var editingSessionId: UUID?
-    @State private var editingTitle: String = ""
     @State private var searchQuery: String = ""
     @State private var sourceFilter: SourceFilter = .all
     @State private var hoveredFilter: SourceFilter?
@@ -211,11 +210,9 @@ struct ChatSessionSidebar: View {
         return .clear
     }
 
+    /// Exits edit mode without saving. The row's local buffer is dropped,
+    /// matching the Esc behavior.
     private func dismissEditing() {
-        guard let id = editingSessionId else { return }
-        if !editingTitle.trimmingCharacters(in: .whitespaces).isEmpty {
-            onRename(id, editingTitle)
-        }
         editingSessionId = nil
     }
 
@@ -269,25 +266,22 @@ struct ChatSessionSidebar: View {
                         agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
                         isSelected: session.id == currentSessionId,
                         isEditing: editingSessionId == session.id,
-                        editingTitle: $editingTitle,
                         onSelect: {
-                            // Dismiss any ongoing edit first
                             if editingSessionId != nil && editingSessionId != session.id {
                                 dismissEditing()
                             }
                             onSelect(session)
                         },
                         onStartRename: {
-                            // Dismiss any other editing first
                             if editingSessionId != nil && editingSessionId != session.id {
                                 dismissEditing()
                             }
                             editingSessionId = session.id
-                            editingTitle = session.title
                         },
-                        onConfirmRename: {
-                            if !editingTitle.trimmingCharacters(in: .whitespaces).isEmpty {
-                                onRename(session.id, editingTitle)
+                        onConfirmRename: { newTitle in
+                            let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
+                            if !trimmed.isEmpty {
+                                onRename(session.id, trimmed)
                             }
                             editingSessionId = nil
                         },
@@ -295,7 +289,6 @@ struct ChatSessionSidebar: View {
                             editingSessionId = nil
                         },
                         onDelete: {
-                            // Dismiss editing first
                             if editingSessionId != nil {
                                 dismissEditing()
                             }
@@ -322,10 +315,11 @@ private struct SessionRow: View {
     let agent: Agent?
     let isSelected: Bool
     let isEditing: Bool
-    @Binding var editingTitle: String
     let onSelect: () -> Void
     let onStartRename: () -> Void
-    let onConfirmRename: () -> Void
+    /// Fires with the typed buffer when the user confirms the rename.
+    /// Parent owns trim and persist.
+    let onConfirmRename: (String) -> Void
     let onCancelRename: () -> Void
     let onDelete: () -> Void
     /// Optional callback for opening in a new window
@@ -334,6 +328,10 @@ private struct SessionRow: View {
     @Environment(\.theme) private var theme
     @State private var isHovered = false
     @State private var showActionsPopover = false
+    /// Local buffer for the rename TextField. Kept on the row (not the
+    /// sidebar) so focus churn during popover dismissal cannot desync it
+    /// from the focused row.
+    @State private var editBuffer: String = ""
     @FocusState private var isTextFieldFocused: Bool
 
     /// Whether this is the default agent
@@ -543,27 +541,64 @@ private struct SessionRow: View {
     }
 
     private var editingView: some View {
-        TextField(text: $editingTitle, prompt: Text("Title", bundle: .module)) {
-            Text("Title", bundle: .module)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                TextField(text: $editBuffer, prompt: Text("Title", bundle: .module)) {
+                    Text("Title", bundle: .module)
+                }
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .submitLabel(.done)
+                .onSubmit { onConfirmRename(editBuffer) }
+                .focused($isTextFieldFocused)
+                .onExitCommand(perform: onCancelRename)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(theme.primaryBackground.opacity(0.5))
+                )
+
+                // Mouse fallbacks for the Return and Esc shortcuts.
+                SidebarRowActionButton(
+                    icon: "checkmark",
+                    help: "Save (Return)",
+                    action: { onConfirmRename(editBuffer) }
+                )
+                SidebarRowActionButton(
+                    icon: "xmark",
+                    help: "Cancel (Esc)",
+                    action: onCancelRename
+                )
+            }
+
+            renameKeyboardHint
         }
-        .onSubmit(onConfirmRename)
-        .textFieldStyle(.plain)
-        .font(.system(size: 12, weight: .medium))
-        .foregroundColor(theme.primaryText)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 2)
-        .background(theme.primaryBackground.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .focused($isTextFieldFocused)
-        .onExitCommand(perform: onCancelRename)
         .onAppear {
+            editBuffer = session.title
             isTextFieldFocused = true
         }
-        .onChange(of: isTextFieldFocused) { _, focused in
-            if !focused {
-                // Clicked outside - confirm the rename
-                onConfirmRename()
-            }
+    }
+
+    /// Low-contrast hint showing the Return and Esc shortcuts.
+    private var renameKeyboardHint: some View {
+        HStack(spacing: 6) {
+            keyHintChip(symbol: "return", label: "save")
+            Text("·")
+                .font(.system(size: 9))
+            keyHintChip(symbol: "escape", label: "cancel")
+        }
+        .foregroundColor(theme.secondaryText.opacity(0.75))
+        .padding(.leading, 6)
+    }
+
+    private func keyHintChip(symbol: String, label: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .semibold))
+            Text(LocalizedStringKey(label), bundle: .module)
+                .font(.system(size: 9, weight: .medium))
         }
     }
 
@@ -571,8 +606,7 @@ private struct SessionRow: View {
 
 // MARK: - Actions Popover Button
 
-/// Menu-style row used inside `SessionRow`'s actions popover. Kept as its
-/// own view so each row owns its hover state independently.
+/// Menu-style row used inside the actions popover. Owns its own hover state.
 private struct ActionsPopoverButton: View {
     let icon: String
     let label: String
