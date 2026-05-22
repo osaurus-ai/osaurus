@@ -50,13 +50,21 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
+            "query": .object([
+                "type": .string("string"),
+                "description": .string("Single search query. Prefer `queries` for new calls."),
+            ]),
             "queries": .object([
-                "type": .string("array"),
-                "items": .object(["type": .string("string")]),
+                "anyOf": .array([
+                    .object([
+                        "type": .string("array"),
+                        "items": .object(["type": .string("string")]),
+                    ]),
+                    .object(["type": .string("string")]),
+                ]),
                 "description": .string("One or more search queries describing what you need"),
-            ])
+            ]),
         ]),
-        "required": .array([.string("queries")]),
     ])
 
     /// Cap on the number of distinct queries we'll fan out per call.
@@ -78,12 +86,7 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        let queriesReq = requireStringArray(
-            args,
-            "queries",
-            expected: "non-empty array of search query strings",
-            tool: name
-        )
+        let queriesReq = Self.requireQueries(args, tool: self)
         guard case .value(let rawQueries) = queriesReq else { return queriesReq.failureEnvelope ?? "" }
 
         // Normalise: trim, drop empties, dedupe case-insensitively (small
@@ -231,6 +234,51 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         return await MainActor.run {
             AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
         }
+    }
+
+    /// Accept the canonical `queries` array plus the legacy singular
+    /// `query` spelling that older prompt text taught models to emit.
+    /// This recovery is local to the discovery tool so other array
+    /// arguments keep the stricter validator behavior.
+    private static func requireQueries(
+        _ args: [String: Any],
+        tool: CapabilitiesSearchTool
+    ) -> ArgumentRequirement<[String]> {
+        if args["queries"] != nil {
+            let req = tool.requireStringArray(
+                args,
+                "queries",
+                expected: "non-empty array of search query strings",
+                tool: tool.name
+            )
+            if case .value(let queries) = req, !queries.isEmpty {
+                return .value(queries)
+            }
+            if args["query"] == nil { return req }
+        }
+
+        guard args["query"] != nil else {
+            return .failure(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Missing required argument `queries` (non-empty array of search query strings).",
+                    field: "queries",
+                    expected: "non-empty array of search query strings",
+                    tool: tool.name
+                )
+            )
+        }
+
+        let req = tool.requireString(
+            args,
+            "query",
+            expected: "single search query string",
+            tool: tool.name
+        )
+        guard case .value(let query) = req else {
+            return .failure(req.failureEnvelope ?? "")
+        }
+        return .value([query])
     }
 
     // MARK: - Merge

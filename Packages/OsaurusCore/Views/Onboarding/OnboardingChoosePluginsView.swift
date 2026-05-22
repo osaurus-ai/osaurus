@@ -65,14 +65,14 @@ final class ChoosePluginsState: ObservableObject {
         OnboardingPluginPick(
             pluginId: "osaurus.xlsx",
             displayName: "Excel",
-            blurb: "Read and build .xlsx spreadsheets.",
+            blurb: "Read and build Excel spreadsheets.",
             icon: "tablecells.fill",
             isDefaultOn: true
         ),
         OnboardingPluginPick(
             pluginId: "osaurus.pptx",
             displayName: "PowerPoint",
-            blurb: "Generate .pptx slide decks from scratch.",
+            blurb: "Build PowerPoint decks from scratch.",
             icon: "rectangle.on.rectangle.angled",
             isDefaultOn: false
         ),
@@ -86,7 +86,7 @@ final class ChoosePluginsState: ObservableObject {
         OnboardingPluginPick(
             pluginId: "osaurus.shell",
             displayName: "Shell",
-            blurb: "Run shell commands inside the sandbox.",
+            blurb: "Run terminal commands inside the safety net.",
             icon: "terminal.fill",
             isDefaultOn: false
         ),
@@ -294,11 +294,11 @@ struct ChoosePluginsBody: View {
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Catalog is offline", bundle: .module)
+                    Text("Couldn't load the tool list", bundle: .module)
                         .font(theme.font(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     Text(
-                        "We couldn't reach the plugin catalog. You can add tools later from Settings.",
+                        "We'll keep trying. You can also add tools later from Settings.",
                         bundle: .module
                     )
                     .font(theme.font(size: 11))

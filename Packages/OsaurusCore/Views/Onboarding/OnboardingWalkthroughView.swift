@@ -48,7 +48,7 @@ enum WalkthroughPage: Int, CaseIterable, Identifiable {
             return
                 "Make different agents for different jobs. Your memories stick around, ready when you need them."
         case .privacy:
-            return "Chats live on your Mac. Switch models or providers any time without losing your history."
+            return "Chats live on your Mac. Swap brains any time without losing your history."
         }
     }
 }

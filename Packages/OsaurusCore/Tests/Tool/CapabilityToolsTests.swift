@@ -63,6 +63,27 @@ struct CapabilitiesSearchToolTests {
         #expect(result.contains("queries"))
     }
 
+    @Test @MainActor
+    func registryAcceptsLegacySingularQueryAlias() async throws {
+        let result = try await ToolRegistry.shared.execute(
+            name: "capabilities_search",
+            argumentsJSON: "{\"query\": \"zzz_capability_alias_probe_\(UUID().uuidString)\"}"
+        )
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("No capabilities found") || result.contains("Found"))
+    }
+
+    @Test @MainActor
+    func registryAcceptsStringifiedQueriesFromSmallModels() async throws {
+        let result = try await ToolRegistry.shared.execute(
+            name: "capabilities_search",
+            argumentsJSON:
+                "{\"queries\": \"[<|\\\"|>zzz_capability_string_probe_\(UUID().uuidString)<|\\\"|>]\"}"
+        )
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("No capabilities found") || result.contains("Found"))
+    }
+
     @Test func returnsNoMatchMessage() async throws {
         let tool = CapabilitiesSearchTool()
         let result = try await tool.execute(

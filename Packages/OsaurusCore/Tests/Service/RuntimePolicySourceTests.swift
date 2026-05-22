@@ -1037,6 +1037,14 @@ struct RuntimePolicySourceTests {
             "The UI may pass the agent/profile temperature, but it must also mark sampling implicit so native MTP can force greedy defaults."
         )
         #expect(
+            chatView.contains("tools: toolSpecs.isEmpty ? nil : toolSpecs"),
+            "Chat UI should only send tool schemas when the composer resolved a non-empty tool set."
+        )
+        #expect(
+            chatView.contains("tool_choice: toolSpecs.isEmpty ? nil : .auto"),
+            "Chat UI should keep the local no-tool path available by omitting auto tool choice when no tools are resolved."
+        )
+        #expect(
             chatView.contains("finalReq.samplingParametersAreImplicit = true"),
             "Tool-budget wrap-up calls use the same implicit-sampling contract as normal UI turns."
         )

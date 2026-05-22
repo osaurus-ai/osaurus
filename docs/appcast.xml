@@ -3,6 +3,36 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.36</title>
+            <pubDate>Fri, 22 May 2026 05:40:32 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.36</sparkle:version>
+            <sparkle:shortVersionString>0.18.36</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.36/Osaurus-0.18.36.dmg" length="48988486" type="application/octet-stream" sparkle:edSignature="Kn/B4wW8fKOuJOUfVG++1owHwdH0RIm40h3/rLbpEdh7DI04ezp9Ro93mEHtuLcLIQxcCavZEovxdrVNSq+rCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Fix capability search prompt arguments (#1208) by @mimeding
+- Accept Responses message input without type (#1206) by @mimeding
+- Narrow trivial local chat tool schema (#1205) by @mimeding
+- Stabilize storage-path CI gate (#1204) by @mimeding
+
+## 🚀 Features
+
+- Share Themes and import themes with deep link (#1202) by @tpae
+
+## 🧰 Maintenance
+
+- onboarding copy changes (#1210) by @tpae
+- reduce avatar size on empty chat view (#1209) by @tpae
+- sped up sandbox launch (#1207) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.35...0.18.36
+]]></description>
+        </item>
+        <item>
             <title>0.18.35</title>
             <pubDate>Thu, 21 May 2026 12:30:50 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

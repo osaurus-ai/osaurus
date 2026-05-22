@@ -82,7 +82,7 @@ public enum SystemPromptTemplates {
         Your current tool list is the relevant subset for this task. If you \
         need a capability that is not listed, grow the list in two steps:
 
-        1. `capabilities_search({"query": "<what you need>"})` — returns \
+        1. `capabilities_search({"queries": ["<what you need>"]})` — returns \
         IDs like `tool/sandbox_exec` or `skill/plot-data`.
         2. `capabilities_load({"ids": ["tool/sandbox_exec"]})` — adds \
         those tools to your schema for the rest of this session.

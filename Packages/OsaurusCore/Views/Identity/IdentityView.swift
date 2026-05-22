@@ -21,12 +21,14 @@ struct IdentityView: View {
     @State private var hasAppeared = false
     @State private var phase: IdentityPhase = .checking
     @State private var drift: IdentityDrift?
-    @State private var mnemonicAcknowledged: Bool = UserDefaults.standard
-        .bool(forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
 
     @State private var showRecoverSheet = false
     @State private var showRepairConfirm = false
     @State private var showResetConfirm = false
+    @State private var showRecoveryPhraseSheet = false
+    @State private var recoveryPhraseWords: [String]?
+    @State private var recoveryPhraseError: String?
+    @State private var isLoadingRecoveryPhrase = false
     @State private var lastActionResult: ActionResult?
 
     /// Result of the most recent recover / repair / reset action, surfaced in
@@ -68,6 +70,14 @@ struct IdentityView: View {
             )
             .environment(\.theme, theme)
         }
+        .sheet(isPresented: $showRecoveryPhraseSheet) {
+            RecoveryPhraseSheet(
+                words: recoveryPhraseWords ?? [],
+                error: recoveryPhraseError,
+                onClose: closeRecoveryPhraseSheet
+            )
+            .environment(\.theme, theme)
+        }
         .alert(
             Text("Repair Identity?", bundle: .module),
             isPresented: $showRepairConfirm,
@@ -86,7 +96,7 @@ struct IdentityView: View {
             },
             message: {
                 Text(
-                    "This deletes your Master Key, every agent's derived address, and every osk-v1 access key. Onboarding will start over.\n\nIf you have not saved your 24-word recovery phrase, this is irreversible.",
+                    "This deletes your signature, every agent's derived address, and every access key. Onboarding will start over. The backup in your iCloud Keychain will also be removed.",
                     bundle: .module
                 )
             }
@@ -103,8 +113,6 @@ struct IdentityView: View {
                 .frame(maxWidth: .infinity, minHeight: 200)
         case .noIdentity:
             IdentitySetupCard(onCreated: handleIdentityCreated)
-        case .recoveryPrompt(let info):
-            RecoveryPromptCard(info: info, onDismiss: handleRecoveryDismissed)
         case .ready(let osaurusId, let deviceId):
             readyContent(osaurusId: osaurusId, deviceId: deviceId)
         }
@@ -125,11 +133,11 @@ struct IdentityView: View {
             actionResultBanner(lastActionResult)
         }
 
-        if !mnemonicAcknowledged {
-            BackupNotConfirmedBanner()
-        }
-
-        MasterAddressSection(osaurusId: osaurusId)
+        MasterAddressSection(
+            osaurusId: osaurusId,
+            isLoadingPhrase: isLoadingRecoveryPhrase,
+            onViewRecoveryPhrase: viewRecoveryPhrase
+        )
         AgentAddressesSection(
             masterAddress: osaurusId,
             mismatchedAgentIds: Set((drift?.mismatchedAgents ?? []).map(\.id)),
@@ -156,8 +164,6 @@ struct IdentityView: View {
             return "Loading identity..."
         case .noIdentity:
             return "Set up your Osaurus Identity"
-        case .recoveryPrompt:
-            return "Save your recovery phrase"
         case .ready:
             return drift?.hasDrift == true ? "Identity drift detected" : "Your identity is active"
         }
@@ -228,7 +234,6 @@ struct IdentityView: View {
 
             phase = .ready(osaurusId: osaurusId, deviceId: deviceId)
             drift = diagnosed
-            mnemonicAcknowledged = UserDefaults.standard.bool(forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
         } catch {
             phase = .noIdentity
             drift = nil
@@ -242,13 +247,12 @@ struct IdentityView: View {
     }
 
     private func handleIdentityCreated(_ info: IdentityInfo) {
-        phase = .recoveryPrompt(info: info)
-    }
-
-    private func handleRecoveryDismissed(_ osaurusId: OsaurusID, _ deviceId: String) {
-        UserDefaults.standard.set(true, forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
-        mnemonicAcknowledged = true
-        phase = .ready(osaurusId: osaurusId, deviceId: deviceId)
+        // The mnemonic is now stored in iCloud Keychain by
+        // `OsaurusIdentity.setup()` itself, so there's nothing to gate the
+        // user behind a write-it-down screen anymore. Drop straight into
+        // the ready state — they can pull the phrase from "View recovery
+        // phrase" whenever they want.
+        phase = .ready(osaurusId: info.osaurusId, deviceId: info.deviceId)
         runRefresh()
     }
 
@@ -317,7 +321,6 @@ struct IdentityView: View {
         )
         phase = .noIdentity
         drift = nil
-        mnemonicAcknowledged = false
 
         restartServerIfRunning()
     }
@@ -326,6 +329,50 @@ struct IdentityView: View {
         guard server.isRunning else { return }
         Task { await server.restartServer() }
     }
+
+    // MARK: - View recovery phrase
+
+    /// Read the stored 24-word phrase out of iCloud Keychain and surface it
+    /// in a sheet. Existing users who pre-date `MasterMnemonicStore` won't
+    /// have an entry there yet, so on `errSecItemNotFound` we re-derive
+    /// the phrase from the seed (one more biometric prompt) and write it
+    /// through. Subsequent reads hit the store directly.
+    private func viewRecoveryPhrase() {
+        guard !isLoadingRecoveryPhrase else { return }
+        isLoadingRecoveryPhrase = true
+        recoveryPhraseWords = nil
+        recoveryPhraseError = nil
+
+        Task { @MainActor in
+            do {
+                let context = OsaurusIdentityContext.biometric()
+                let words: [String]
+                if MasterMnemonicStore.exists() {
+                    words = try MasterMnemonicStore.load(context: context)
+                } else {
+                    // Backfill from the seed for legacy installs.
+                    var seed = try MasterKey.getPrivateKey(context: context)
+                    defer { seed.zeroOut() }
+                    let derived = try MasterKeyMnemonic.mnemonic(forKey: seed)
+                    try? MasterMnemonicStore.store(derived)
+                    words = derived
+                }
+                recoveryPhraseWords = words
+                isLoadingRecoveryPhrase = false
+                showRecoveryPhraseSheet = true
+            } catch {
+                recoveryPhraseError = error.localizedDescription
+                isLoadingRecoveryPhrase = false
+                showRecoveryPhraseSheet = true
+            }
+        }
+    }
+
+    private func closeRecoveryPhraseSheet() {
+        showRecoveryPhraseSheet = false
+        recoveryPhraseWords = nil
+        recoveryPhraseError = nil
+    }
 }
 
 // MARK: - Identity Phase
@@ -333,7 +380,6 @@ struct IdentityView: View {
 private enum IdentityPhase {
     case checking
     case noIdentity
-    case recoveryPrompt(info: IdentityInfo)
     case ready(osaurusId: OsaurusID, deviceId: String)
 }
 
@@ -457,43 +503,6 @@ private struct IdentityDriftBanner: View {
     }
 }
 
-// MARK: - Backup Reminder Banner
-
-private struct BackupNotConfirmedBanner: View {
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.warningColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Master key backup not confirmed", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Text(
-                    "Your 24-word recovery phrase wasn't acknowledged. Without it, you cannot restore this master key if it's ever lost or replaced.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.warningColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.warningColor.opacity(0.20), lineWidth: 1)
-                )
-        )
-    }
-}
-
 // MARK: - Danger Zone
 
 private struct DangerZoneSection: View {
@@ -508,7 +517,7 @@ private struct DangerZoneSection: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     Text(
-                        "Wipes the Master Key, every agent address, and every access key. Onboarding will start over.",
+                        "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. Onboarding will start over.",
                         bundle: .module
                     )
                     .font(.system(size: 11))
@@ -647,43 +656,57 @@ private struct IdentitySetupCard: View {
     }
 }
 
-// MARK: - Recovery Prompt Card
+// MARK: - Recovery Phrase Sheet
 
-private struct RecoveryPromptCard: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+/// Modal that shows the 24-word backup phrase after a biometric-gated
+/// fetch from `MasterMnemonicStore`. Renders the shared
+/// `MasterMnemonicCard` (copy / save / print) when the load succeeded,
+/// or a friendly error card otherwise.
+private struct RecoveryPhraseSheet: View {
+    @Environment(\.theme) private var theme
 
-    let info: IdentityInfo
-    let onDismiss: (OsaurusID, String) -> Void
+    let words: [String]
+    let error: String?
+    let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 20) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Text("Save this now. It won't be shown again.", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Your recovery phrase", bundle: .module)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Save it somewhere safe. Anyone with these words can recover your identity.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                }
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let mnemonic = info.mnemonic {
-                MasterMnemonicCard(words: mnemonic)
+            if let error {
+                errorCard(error)
+            } else if !words.isEmpty {
+                MasterMnemonicCard(words: words)
                     .environment(\.theme, theme)
             }
 
-            metadataCard
-
-            HStack(spacing: 12) {
+            HStack {
                 Spacer()
-                Button(action: dismiss) {
-                    Text("I've saved it", bundle: .module)
+                Button(action: onClose) {
+                    Text("Done", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
+                        .padding(.vertical, 9)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(theme.accentColor)
@@ -693,88 +716,36 @@ private struct RecoveryPromptCard: View {
             }
         }
         .padding(24)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .frame(width: 540)
+        .background(theme.primaryBackground)
     }
 
-    private var metadataCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("OSAURUS IDENTITY RECOVERY", bundle: .module)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .tracking(1)
-
-            VStack(alignment: .leading, spacing: 6) {
-                metadataField(label: "Master Address", value: info.osaurusId)
-                if !info.recovery.code.isEmpty {
-                    metadataField(label: "Recovery Code", value: info.recovery.code)
-                }
-            }
-
-            Divider()
-                .background(theme.secondaryBorder)
-
+    private func errorCard(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.errorColor)
             VStack(alignment: .leading, spacing: 4) {
-                bulletPoint("The 24-word phrase above can restore your master key locally")
-                bulletPoint("The recovery code is single-use and only valid against the Osaurus directory")
-                bulletPoint("Neither can be retrieved by Osaurus once dismissed")
+                Text("Couldn't load your phrase", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.errorColor)
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            Text("Generated: \(formattedDate)", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+            Spacer(minLength: 0)
         }
-        .padding(20)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(theme.tertiaryBackground)
+                .fill(theme.errorColor.opacity(0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.secondaryBorder, lineWidth: 1)
+                        .stroke(theme.errorColor.opacity(0.20), lineWidth: 1)
                 )
         )
-    }
-
-    private func metadataField(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label + ":")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            Text(value)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .textSelection(.enabled)
-        }
-    }
-
-    private func bulletPoint(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text("\u{2022}", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-            Text(text)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-        }
-    }
-
-    private var formattedDate: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        return formatter.string(from: Date())
-    }
-
-    private func dismiss() {
-        UserDefaults.standard.set(true, forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
-        onDismiss(info.osaurusId, info.deviceId)
     }
 }
 
@@ -785,6 +756,8 @@ private struct MasterAddressSection: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let osaurusId: OsaurusID
+    let isLoadingPhrase: Bool
+    let onViewRecoveryPhrase: () -> Void
 
     @State private var copied = false
 
@@ -803,6 +776,30 @@ private struct MasterAddressSection: View {
                     }
 
                     Spacer()
+
+                    Button(action: onViewRecoveryPhrase) {
+                        HStack(spacing: 4) {
+                            if isLoadingPhrase {
+                                ProgressView()
+                                    .scaleEffect(0.55)
+                                    .frame(width: 11, height: 11)
+                            } else {
+                                Image(systemName: "key.viewfinder")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            Text("View recovery phrase", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isLoadingPhrase)
 
                     Button(action: copyId) {
                         HStack(spacing: 4) {
@@ -827,7 +824,7 @@ private struct MasterAddressSection: View {
                 HStack(spacing: 24) {
                     statusField(
                         label: "Recovery",
-                        value: "Recovery code saved",
+                        value: "Backed up in iCloud Keychain",
                         icon: "checkmark.shield.fill",
                         color: theme.successColor
                     )

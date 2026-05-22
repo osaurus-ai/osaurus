@@ -243,6 +243,10 @@ struct RecoverFromMnemonicSheet: View {
             }
 
             try MasterKey.install(seed: seed, allowReplace: true)
+            // Keep the stored phrase in sync with the newly-installed master
+            // so subsequent "View recovery phrase" reads hit the cache
+            // instead of falling into the lazy-backfill path.
+            try? MasterMnemonicStore.store(parsedWords)
             statusIsError = false
             statusMessage = "Master key restored. Drift cleared."
             isRestoring = false

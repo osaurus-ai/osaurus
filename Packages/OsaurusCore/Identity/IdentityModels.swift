@@ -45,9 +45,10 @@ public struct TokenPayload: Codable, Sendable {
 /// onboarding view, the Identity view, and the wipe helper can't drift on
 /// the spelling of a magic string. Add new identity-scoped flags here.
 public enum IdentityDefaultsKey {
-    /// Set to `true` once the user has acknowledged ("I've saved it") that
-    /// they have stored the BIP39 master recovery phrase. When false, the
-    /// Identity view shows a yellow "backup not confirmed" banner.
+    /// Legacy flag — used to track whether the user clicked "I've saved it"
+    /// on the now-removed onboarding recovery screen. Retained only so the
+    /// `OsaurusIdentity.wipe()` cleanup keeps clearing it on reset for
+    /// users upgrading from older builds. New code paths never read it.
     public static let masterMnemonicAcknowledged = "masterMnemonicAcknowledged"
 
     /// One-shot migration flag set by `AgentManager` after it has back-filled
@@ -59,26 +60,21 @@ public enum IdentityDefaultsKey {
 
 /// Returned once after initial identity setup.
 ///
-/// `mnemonic` is the BIP39 24-word backup of the master key. It is `nil` when
-/// `OsaurusIdentity.setup()` short-circuits because an identity already exists
-/// (the original mnemonic was discarded after the original setup screen — we
-/// do not re-display it on subsequent runs).
+/// The 24-word BIP39 backup is no longer carried here — it is persisted to
+/// `MasterMnemonicStore` at setup time and fetched on demand from Settings.
 public struct IdentityInfo: Sendable {
     public let osaurusId: OsaurusID
     public let deviceId: String
     public let recovery: RecoveryInfo
-    public let mnemonic: [String]?
 
     public init(
         osaurusId: OsaurusID,
         deviceId: String,
-        recovery: RecoveryInfo,
-        mnemonic: [String]? = nil
+        recovery: RecoveryInfo
     ) {
         self.osaurusId = osaurusId
         self.deviceId = deviceId
         self.recovery = recovery
-        self.mnemonic = mnemonic
     }
 }
 
