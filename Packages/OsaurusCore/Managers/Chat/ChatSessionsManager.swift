@@ -21,9 +21,11 @@ final class ChatSessionsManager: ObservableObject {
     @Published var currentSessionId: UUID?
 
     private init() {
-        Task { @MainActor [weak self] in
-            self?.refresh()
-        }
+        // Load synchronously so the first reader (ChatWindowState.init)
+        // sees populated sessions. Deferring this via Task caused the
+        // sidebar to render empty on first open until something else
+        // (New Chat, agent switch) triggered a manual refresh.
+        sessions = ChatSessionStore.loadAll()
     }
 
     // MARK: - Public API
