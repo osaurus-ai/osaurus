@@ -116,7 +116,7 @@ struct CreateAgentBody: View {
 
             Spacer().frame(height: OnboardingMetrics.illustrationToHeadline)
 
-            Text("Meet your assistant", bundle: .module)
+            Text("Say hi to your dino", bundle: .module)
                 .font(theme.font(size: OnboardingMetrics.leftHeadlineSize, weight: .bold))
                 .foregroundColor(theme.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -205,10 +205,8 @@ struct CreateAgentBody: View {
                     HStack(spacing: 6) {
                         Image(systemName: "quote.opening")
                             .font(.system(size: 10, weight: .bold))
-                        Text("Prompt preview", bundle: .module)
-                            .textCase(.uppercase)
-                            .font(theme.font(size: OnboardingMetrics.sectionLabelSize, weight: .bold))
-                            .tracking(0.6)
+                        Text("Preview", bundle: .module)
+                            .font(theme.font(size: 11, weight: .semibold))
                     }
                     .foregroundColor(theme.tertiaryText)
 
@@ -305,11 +303,11 @@ struct CreateAgentBody: View {
         }
     }
 
-    // MARK: - System Prompt
+    // MARK: - Instructions
 
     private var systemPromptField: some View {
         VStack(alignment: .leading, spacing: OnboardingMetrics.labelToInput) {
-            sectionLabel("System Prompt")
+            sectionLabel("Instructions")
             OnboardingTextEditor(
                 label: "",
                 placeholder: "Instructions for this agent…",
@@ -386,15 +384,23 @@ struct CreateAgentBody: View {
             .animation(theme.animationQuick(), value: isSelected)
         }
         .buttonStyle(.plain)
-        .help(Text(mascotId.map { "Avatar: \($0)" } ?? "Initial", bundle: .module))
+        .help(Text(LocalizedStringKey(avatarTooltip(for: mascotId)), bundle: .module))
+    }
+
+    /// Friendly tooltip label for the avatar chip. Avoids leaking the raw
+    /// mascot enum case (`"blue"`, `"yellow"`, …) into help text.
+    private func avatarTooltip(for mascotId: String?) -> String {
+        guard let mascotId else { return "Initial" }
+        if let mascot = AgentMascot(rawValue: mascotId) {
+            return "Avatar: \(mascot.displayName)"
+        }
+        return "Avatar: \(mascotId)"
     }
 
     @ViewBuilder
     private func sectionLabel(_ key: String) -> some View {
         Text(LocalizedStringKey(key), bundle: .module)
-            .textCase(.uppercase)
-            .font(theme.font(size: OnboardingMetrics.sectionLabelSize, weight: .bold))
-            .tracking(0.6)
+            .font(theme.font(size: 11, weight: .semibold))
             .foregroundColor(theme.tertiaryText)
     }
 }

@@ -2,8 +2,14 @@
 //  OnboardingConfigureAIView.swift
 //  osaurus
 //
-//  Onboarding step 3 — pick where the model brain lives (Apple Intelligence,
-//  a local MLX model, or any cloud provider) and configure it inline.
+//  Onboarding step 3 — pick where the model brain lives (a curated local
+//  MLX model, or any cloud / locally-hosted provider) and configure it
+//  inline.
+//
+//  Apple Intelligence was removed from this step: it's too limited (no
+//  tools, no web, no agent work) to be a first-class first-run option.
+//  Users with `FoundationModelService` available can still configure it
+//  post-onboarding from Settings.
 //
 //  Split into:
 //   - `ConfigureAIState`: ObservableObject holding path/substate selection,
@@ -21,13 +27,11 @@ import SwiftUI
 // MARK: - Path
 
 enum ConfigurePath: String, CaseIterable {
-    case appleFoundation
     case local
     case apiProvider
 
     var title: LocalizedStringKey {
         switch self {
-        case .appleFoundation: return "Apple"
         case .local: return "Local"
         case .apiProvider: return "Cloud"
         }
@@ -35,7 +39,6 @@ enum ConfigurePath: String, CaseIterable {
 
     var icon: String {
         switch self {
-        case .appleFoundation: return "apple.logo"
         case .local: return "internaldrive"
         case .apiProvider: return "network"
         }
@@ -59,6 +62,21 @@ enum APITestResult: Equatable {
     case success
     case failure(String)
 }
+
+// MARK: - Auth choice protocol
+
+/// Bridges the OpenAI and OpenRouter credential-mode enums so the
+/// auth-choice card UI doesn't need a copy-pasted row factory per
+/// provider. Each conforming type just exposes the human-readable
+/// title / subtitle / SF Symbol it should render with.
+private protocol AuthChoiceMode {
+    var title: String { get }
+    var subtitle: String { get }
+    var icon: String { get }
+}
+
+extension OpenAIProviderCredentialMode: AuthChoiceMode {}
+extension OpenRouterCredentialMode: AuthChoiceMode {}
 
 // MARK: - Resolved provider config
 
@@ -115,13 +133,22 @@ struct CustomProviderForm {
 
 @MainActor
 final class ConfigureAIState: ObservableObject {
+    /// Provider order inside the Cloud tab. Curation reasoning:
+    ///   1. OAuth-capable providers lead — they're the lowest-friction
+    ///      onboarding path (one browser round-trip, no API-key paste).
+    ///   2. Ollama follows, badged as "Local", so users who already run
+    ///      a local server discover it without scrolling.
+    ///   3. The rest of the paste-an-API-key providers follow.
+    ///   4. The "Custom / OpenAI-compatible" escape hatch lives at the
+    ///      tail end.
     static let onboardingPresets: [ProviderPreset] = [
-        .ollama, .anthropic, .deepseek, .google, .openai, .openrouter, .venice, .xai, .custom,
+        .openai, .openrouter,
+        .ollama,
+        .anthropic, .google, .deepseek, .xai, .venice,
+        .custom,
     ]
 
-    let foundationAvailable: Bool
-
-    @Published var selectedPath: ConfigurePath
+    @Published var selectedPath: ConfigurePath = .local
     @Published var localSubstate: LocalSubstate = .picker
     @Published var apiSubstate: APISubstate = .picker
 
@@ -143,25 +170,18 @@ final class ConfigureAIState: ObservableObject {
     @Published var isSaving = false
     @Published var testResult: APITestResult? = nil
 
-    init() {
-        let foundation = FoundationModelService.isDefaultModelAvailable()
-        self.foundationAvailable = foundation
-        self.selectedPath = foundation ? .appleFoundation : .local
-    }
-
+    /// Two-tab layout: a curated download (Local) and a provider picker
+    /// (Cloud / locally-hosted via Ollama). Apple Intelligence was
+    /// retired from onboarding; it lives in Settings for the small
+    /// audience that wants it.
     var availablePaths: [ConfigurePath] {
-        if foundationAvailable {
-            return [.appleFoundation, .local, .apiProvider]
-        } else {
-            return [.local, .apiProvider]
-        }
+        [.local, .apiProvider]
     }
 
     var footerCaption: LocalizedStringKey {
         switch selectedPath {
-        case .appleFoundation: return "Private, instant, no setup."
-        case .local: return "No account, no cloud, no data sent anywhere."
-        case .apiProvider: return "API keys are stored securely in Keychain."
+        case .local: return "Stays on your Mac. Nothing sent anywhere."
+        case .apiProvider: return "Your key stays on your Mac, locked in the Keychain."
         }
     }
 
@@ -465,7 +485,7 @@ struct ConfigureAIBody: View {
             illustrationAsset: "osaurus-brain",
             leftHeadline: "Pick a brain",
             leftBody:
-                "Apple Intelligence on-device, a local MLX model, or any cloud provider. Models are interchangeable — switch any time without losing your history.",
+                "Run a brain on your Mac, or plug in one you already pay for. You can swap brains any time — chats come along.",
             subtitle: pathSubtitle,
             // We manage our own inner scroll: the segmented control stays
             // pinned at the top while the substate body scrolls beneath it.
@@ -497,9 +517,8 @@ struct ConfigureAIBody: View {
 
     private var pathSubtitle: LocalizedStringKey {
         switch state.selectedPath {
-        case .appleFoundation: return "Apple Intelligence — on-device and ready to go."
-        case .local: return "Local MLX model — runs entirely on this Mac."
-        case .apiProvider: return "Cloud provider — bring your own API key."
+        case .local: return "Lives on your Mac. Works offline."
+        case .apiProvider: return "Plug in a brain you already pay for, or run one locally with Ollama."
         }
     }
 
@@ -529,7 +548,6 @@ struct ConfigureAIBody: View {
 
     private var substateID: String {
         switch state.selectedPath {
-        case .appleFoundation: return "apple"
         case .local:
             switch state.localSubstate {
             case .picker: return "local-picker"
@@ -564,40 +582,44 @@ struct ConfigureAIBody: View {
     @ViewBuilder
     private var substateContainer: some View {
         switch state.selectedPath {
-        case .appleFoundation:
-            OnboardingScrollContainer { appleConfirmView }
+        case .local: localSubstateContainer
+        case .apiProvider: apiSubstateContainer
+        }
+    }
 
-        case .local:
-            switch state.localSubstate {
-            case .picker:
-                OnboardingScrollContainer { localPickerView }
-            case .downloading:
-                substateWithBackBar(
-                    title: state.selectedModel?.name ?? L("Downloading"),
-                    onBack: { state.popLocalToPicker() }
-                ) {
-                    localDownloadingView
-                }
+    @ViewBuilder
+    private var localSubstateContainer: some View {
+        switch state.localSubstate {
+        case .picker:
+            OnboardingScrollContainer { localPickerView }
+        case .downloading:
+            substateWithBackBar(
+                title: state.selectedModel?.name ?? L("Downloading"),
+                onBack: { state.popLocalToPicker() }
+            ) {
+                localDownloadingView
             }
+        }
+    }
 
-        case .apiProvider:
-            switch state.apiSubstate {
-            case .picker:
-                OnboardingScrollContainer { apiPickerView }
-            case .keyForm(let provider):
-                substateWithBackBar(
-                    title: provider == .openai ? L("Connect OpenAI") : "Connect \(provider.name)",
-                    onBack: { state.resetAPIState() }
-                ) {
-                    apiKeyFormView
-                }
-            case .customForm:
-                substateWithBackBar(
-                    title: L("Custom provider"),
-                    onBack: { state.resetAPIState() }
-                ) {
-                    apiCustomFormView
-                }
+    @ViewBuilder
+    private var apiSubstateContainer: some View {
+        switch state.apiSubstate {
+        case .picker:
+            OnboardingScrollContainer { apiPickerView }
+        case .keyForm(let provider):
+            substateWithBackBar(
+                title: provider == .openai ? L("Connect OpenAI") : "Connect \(provider.name)",
+                onBack: { state.resetAPIState() }
+            ) {
+                apiKeyFormView
+            }
+        case .customForm:
+            substateWithBackBar(
+                title: L("Custom provider"),
+                onBack: { state.resetAPIState() }
+            ) {
+                apiCustomFormView
             }
         }
     }
@@ -635,57 +657,6 @@ struct ConfigureAIBody: View {
         .localizedHelp("Back")
     }
 
-    // MARK: - Apple confirm
-
-    private var appleConfirmView: some View {
-        VStack(spacing: 12) {
-            OnboardingGlassCard {
-                HStack(spacing: 14) {
-                    ZStack {
-                        Circle()
-                            .fill(theme.accentColor.opacity(0.14))
-                            .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
-                        Image(systemName: "apple.logo")
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                    }
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Apple Intelligence is ready", bundle: .module)
-                            .font(theme.font(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text("Private, on-device, and built into your Mac.", bundle: .module)
-                            .font(theme.font(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    Spacer(minLength: 8)
-                }
-                .padding(.horizontal, OnboardingMetrics.cardPaddingH)
-                .padding(.vertical, OnboardingMetrics.cardPaddingV)
-            }
-
-            // Capability disclosure. The on-device foundation model
-            // is lightweight — surface its limits before the user
-            // commits, not mid-task.
-            OnboardingCalloutBanner(
-                tone: .warning,
-                message:
-                    "Best for short chats. Won't run tools, browse the web, or handle complex agent tasks — pick Local or Cloud for those.",
-                multiline: true
-            )
-
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.successColor)
-                Text("No download. No setup. No keys.", bundle: .module)
-                    .font(theme.font(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 4)
-        }
-    }
-
     // MARK: - Local picker
 
     /// Top-suggestion curated models paired with their compatibility
@@ -706,8 +677,8 @@ struct ConfigureAIBody: View {
         let hasAnyRunnable = pairs.contains(where: { $0.compatibility != .tooLarge })
 
         // When nothing fits (or there are no top suggestions at all),
-        // redirecting to Apple Intelligence / cloud beats a dead-end
-        // list of disabled rows.
+        // redirecting to the Cloud / Ollama tab beats a dead-end list
+        // of disabled rows.
         if !hasAnyRunnable {
             localNoCompatibleModelsView
         } else {
@@ -721,6 +692,12 @@ struct ConfigureAIBody: View {
                         subtitle: model.description,
                         secondaryLine: model.formattedReleaseMonth.map { L("Released \($0)") },
                         badges: localBadges(for: model, compatibility: pair.compatibility),
+                        // Local model rows ship up to four badges
+                        // (use case · size · modality · compat verdict);
+                        // inline next to the title they truncated the
+                        // model name to "Gemm…". Bump them to their own
+                        // row so the full name is always readable.
+                        badgesBelowTitle: true,
                         accessory: .radio(isSelected: state.selectedModel?.id == model.id),
                         isSelected: state.selectedModel?.id == model.id,
                         isDisabled: pair.compatibility == .tooLarge
@@ -752,7 +729,7 @@ struct ConfigureAIBody: View {
                         .foregroundColor(theme.accentColor)
                 }
                 Text(
-                    "Local models run on your Mac's unified memory — they're compute-intensive but stay available offline.",
+                    "Local brains live on your Mac. They use a chunk of memory while running, and they keep working offline.",
                     bundle: .module
                 )
                 .font(theme.font(size: 11))
@@ -800,16 +777,9 @@ struct ConfigureAIBody: View {
 
                 HStack(spacing: 10) {
                     Spacer()
-                    if state.foundationAvailable {
-                        OnboardingCompactButton(
-                            title: "Use Apple Intelligence",
-                            style: .accent,
-                            action: { state.selectPath(.appleFoundation) }
-                        )
-                    }
                     OnboardingCompactButton(
-                        title: "Use a cloud provider",
-                        style: .outline,
+                        title: "Pick a Cloud provider",
+                        style: .accent,
                         action: { state.selectPath(.apiProvider) }
                     )
                 }
@@ -1086,11 +1056,9 @@ struct ConfigureAIBody: View {
             icon: .custom {
                 ProviderIcon(preset: preset, size: 18, color: theme.secondaryText)
             },
-            title: preset == .custom ? L("Custom / OpenAI-compatible") : preset.name,
-            subtitle: preset == .custom
-                ? L("Together AI, LM Studio, and more")
-                : (preset == .openai ? L("ChatGPT, Codex, or Platform API") : preset.description),
-            badges: preset.badge.map { [OnboardingRowBadge($0)] } ?? [],
+            title: presetTitle(for: preset),
+            subtitle: presetSubtitle(for: preset),
+            badges: presetBadges(for: preset),
             accessory: .chevron
         ) {
             // Drill-in: tapping a card commits the choice and advances
@@ -1099,30 +1067,62 @@ struct ConfigureAIBody: View {
         }
     }
 
+    private func presetTitle(for preset: ProviderPreset) -> String {
+        preset == .custom ? L("Custom / OpenAI-compatible") : preset.name
+    }
+
+    /// Onboarding-specific subtitle. Diverges from the generic
+    /// `preset.description` for OpenAI (call out OAuth + key options) and
+    /// for the custom card (concrete example providers).
+    private func presetSubtitle(for preset: ProviderPreset) -> String {
+        switch preset {
+        case .custom: return L("Together AI, LM Studio, and more")
+        case .openai: return L("ChatGPT, Codex, or Platform API")
+        default: return preset.description
+        }
+    }
+
+    /// Lift selected provider badges to a richer style so the cloud
+    /// picker stays scannable. Ollama's "Local" label specifically gets
+    /// the success-green chip — it lives in the Cloud tab for routing
+    /// reasons (same HTTP code path), but the row needs to read as "this
+    /// is the local-server option" at a glance.
+    private func presetBadges(for preset: ProviderPreset) -> [OnboardingRowBadge] {
+        guard let label = preset.badge else { return [] }
+        let style: OnboardingRowBadge.Style = (preset == .ollama) ? .success : .neutral
+        return [OnboardingRowBadge(label, style: style)]
+    }
+
     // MARK: - API key form
 
+    @ViewBuilder
     private var apiKeyFormView: some View {
-        Group {
-            if case .keyForm(let provider) = state.apiSubstate {
-                VStack(spacing: 14) {
-                    if provider == .openai {
-                        openAIAuthChoiceSection
-                    }
-                    if provider == .openrouter {
-                        openRouterAuthChoiceSection
-                    }
-                    if provider.configuration.authType == .none {
-                        noAuthEndpointBanner(for: provider)
-                    }
-                    if shouldShowKeyField(for: provider) {
-                        apiKeyField(provider: provider)
-                    }
-                    if shouldShowKeyField(for: provider)
-                        || provider.configuration.authType == .none
-                    {
-                        helpSection(for: provider)
-                    }
-                }
+        if case .keyForm(let provider) = state.apiSubstate {
+            apiKeyForm(provider: provider)
+        }
+    }
+
+    private func apiKeyForm(provider: ProviderPreset) -> some View {
+        // Compute once — both the key field and the help section condition
+        // depend on the same answer.
+        let showsKeyField = shouldShowKeyField(for: provider)
+        let isNoAuth = provider.configuration.authType == .none
+
+        return VStack(spacing: 14) {
+            switch provider {
+            case .openai: openAIAuthChoiceSection
+            case .openrouter: openRouterAuthChoiceSection
+            default: EmptyView()
+            }
+
+            if isNoAuth {
+                noAuthEndpointBanner(for: provider)
+            }
+            if showsKeyField {
+                apiKeyField(provider: provider)
+            }
+            if showsKeyField || isNoAuth {
+                helpSection(for: provider)
             }
         }
     }
@@ -1181,20 +1181,24 @@ struct ConfigureAIBody: View {
             }
             apiKeyField(provider: .custom)
             if state.customForm.isLocalhost {
-                HStack(spacing: 6) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 11))
-                    Text(
-                        "Local endpoints don't usually need a key — leave blank to skip auth.",
-                        bundle: .module
-                    )
-                    .font(theme.font(size: 11))
-                    Spacer(minLength: 0)
-                }
-                .foregroundColor(theme.tertiaryText)
-                .padding(.horizontal, 4)
+                customFormLocalhostHint
             }
         }
+    }
+
+    private var customFormLocalhostHint: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11))
+            Text(
+                "Local endpoints don't usually need a key — leave blank to skip auth.",
+                bundle: .module
+            )
+            .font(theme.font(size: 11))
+            Spacer(minLength: 0)
+        }
+        .foregroundColor(theme.tertiaryText)
+        .padding(.horizontal, 4)
     }
 
     private var customProviderForm: some View {
@@ -1207,10 +1211,9 @@ struct ConfigureAIBody: View {
 
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("PROTOCOL", bundle: .module)
-                        .font(theme.font(size: OnboardingMetrics.sectionLabelSize, weight: .bold))
+                    Text("Protocol", bundle: .module)
+                        .font(theme.font(size: 11, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
-                        .tracking(0.5)
                     OnboardingSegmentedControl(
                         selection: $state.customForm.protocolKind,
                         items: [
@@ -1322,22 +1325,10 @@ struct ConfigureAIBody: View {
         let action: () -> Void
     }
 
-    private func authChoiceRowSpec(
-        mode: OpenAIProviderCredentialMode,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> AuthChoiceRowSpec {
-        AuthChoiceRowSpec(
-            title: LocalizedStringKey(mode.title),
-            subtitle: LocalizedStringKey(mode.subtitle),
-            icon: mode.icon,
-            isSelected: isSelected,
-            action: action
-        )
-    }
-
-    private func authChoiceRowSpec(
-        mode: OpenRouterCredentialMode,
+    /// Shared shape of OpenAI and OpenRouter credential-mode enums so the
+    /// auth-choice card factory only needs one row constructor.
+    private func authChoiceRowSpec<Mode: AuthChoiceMode>(
+        mode: Mode,
         isSelected: Bool,
         action: @escaping () -> Void
     ) -> AuthChoiceRowSpec {
@@ -1431,6 +1422,12 @@ struct ConfigureAICTA: View {
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
 
+    /// Observed-but-not-read: the CTA's `isLocalCompleted` / `isLocalFailed`
+    /// reads bounce through `ConfigureAIState`, but those computed
+    /// properties pull live values out of `ModelManager.shared` rather
+    /// than out of any `@Published` on `state`. Without this observer the
+    /// CTA wouldn't refresh from "Continue (disabled)" → "Continue
+    /// (enabled)" when the download finishes.
     @ObservedObject private var modelManager = ModelManager.shared
 
     var body: some View {
@@ -1445,10 +1442,6 @@ struct ConfigureAICTA: View {
     @ViewBuilder
     private var primaryButton: some View {
         switch state.selectedPath {
-        case .appleFoundation:
-            OnboardingBrandButton(title: "Use Apple Intelligence", action: onComplete)
-                .frame(width: OnboardingMetrics.ctaWidthCompact)
-
         case .local:
             switch state.localSubstate {
             case .picker:
@@ -1558,7 +1551,7 @@ struct ConfigureAISecondary: View {
             case .picker:
                 EmptyView()
             }
-        case .apiProvider, .appleFoundation:
+        case .apiProvider:
             EmptyView()
         }
     }

@@ -283,12 +283,12 @@ public struct OnboardingView: View {
     private var chromeTitle: LocalizedStringKey? {
         switch currentStep {
         case .welcome: return nil
-        case .createAgent: return "Create your agent"
-        case .configureAI: return "Configure your AI"
+        case .createAgent: return "Meet your dino"
+        case .configureAI: return "Give your dino a brain"
         case .identitySetup: return "Make this yours"
-        case .sandboxSetup: return "Add a safe sandbox"
+        case .sandboxSetup: return "Add a safety net"
         case .choosePlugins: return "Add a few tools"
-        case .walkthrough: return "How it works"
+        case .walkthrough: return "A quick tour"
         }
     }
 

@@ -105,5 +105,10 @@ struct OnboardingStepIndicator: View {
                     .animation(theme.springAnimation(), value: current)
             }
         }
+        // Collapse the row of dots into a single VoiceOver utterance so
+        // screen-reader users hear "Step 2 of 5" instead of five
+        // unlabelled "Circle" announcements in a row.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Step \(current) of \(total)", bundle: .module))
     }
 }

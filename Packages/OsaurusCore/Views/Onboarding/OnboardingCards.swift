@@ -180,6 +180,14 @@ struct OnboardingRowCard: View {
     let subtitle: String?
     /// Muted third line rendered beneath `subtitle` (e.g. "Released Apr 2026").
     let secondaryLine: String?
+    /// When true, badges sit on their own row below the title instead of
+    /// fighting with the title for the title-row's horizontal space.
+    /// Default is `false` (inline) — provider preset cards typically have
+    /// 0–1 badge and look fine that way. The local model picker turns
+    /// this on because it stacks three or four badges per row
+    /// (use case · size · modality · capability), which used to crowd the
+    /// title into a "Gemm…"-style truncation.
+    let badgesBelowTitle: Bool
     let badges: [OnboardingRowBadge]
     let accessory: OnboardingRowAccessory
     let isSelected: Bool
@@ -198,6 +206,7 @@ struct OnboardingRowCard: View {
         subtitle: String? = nil,
         secondaryLine: String? = nil,
         badges: [OnboardingRowBadge] = [],
+        badgesBelowTitle: Bool = false,
         accessory: OnboardingRowAccessory = .none,
         isSelected: Bool = false,
         isDisabled: Bool = false,
@@ -208,6 +217,7 @@ struct OnboardingRowCard: View {
         self.subtitle = subtitle
         self.secondaryLine = secondaryLine
         self.badges = badges
+        self.badgesBelowTitle = badgesBelowTitle
         self.accessory = accessory
         self.isSelected = isSelected
         self.isDisabled = isDisabled
@@ -227,15 +237,20 @@ struct OnboardingRowCard: View {
                                 .foregroundColor(theme.primaryText)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
+                                // Title outranks the badge cluster so a
+                                // crowded row truncates the badges (which
+                                // are visually optional) instead of the
+                                // model name.
+                                .layoutPriority(2)
 
-                            if !badges.isEmpty {
-                                HStack(spacing: 4) {
-                                    ForEach(Array(badges.enumerated()), id: \.offset) { _, badge in
-                                        OnboardingBadgeChip(badge: badge)
-                                    }
-                                }
-                                .layoutPriority(1)
+                            if !badges.isEmpty && !badgesBelowTitle {
+                                badgeStrip
+                                    .layoutPriority(1)
                             }
+                        }
+
+                        if !badges.isEmpty && badgesBelowTitle {
+                            badgeStrip
                         }
 
                         if let subtitle = subtitle, !subtitle.isEmpty {
@@ -265,6 +280,17 @@ struct OnboardingRowCard: View {
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
+    }
+
+    /// Horizontal strip of badge chips. Shared between the inline
+    /// title-row layout and the below-title row layout so both spellings
+    /// stay identical.
+    private var badgeStrip: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(badges.enumerated()), id: \.offset) { _, badge in
+                OnboardingBadgeChip(badge: badge)
+            }
+        }
     }
 
     @ViewBuilder
@@ -443,6 +469,12 @@ struct OnboardingCalloutBanner: View {
     private enum Message {
         case localized(LocalizedStringKey)
         case raw(String)
+        /// Friendly title + raw secondary detail (typically
+        /// `error.localizedDescription`). Renders the title in the usual
+        /// banner-strong style and the detail dimmer beneath it so the
+        /// banner stays human-readable even when the underlying error
+        /// string is jargon-y or terse.
+        case titled(LocalizedStringKey, detail: String)
     }
 
     let tone: OnboardingCalloutTone
@@ -464,6 +496,10 @@ struct OnboardingCalloutBanner: View {
         self.multiline = multiline
     }
 
+    /// Renders a raw error string verbatim. Prefer
+    /// `OnboardingCalloutBanner.error(prefix:detail:)` for user-facing
+    /// surfaces — the raw initializer leaks Foundation/Security/network
+    /// error vocabulary into the UI.
     init(
         tone: OnboardingCalloutTone,
         rawMessage: String,
@@ -474,16 +510,30 @@ struct OnboardingCalloutBanner: View {
         self.multiline = multiline
     }
 
+    private init(
+        tone: OnboardingCalloutTone,
+        titled: LocalizedStringKey,
+        detail: String
+    ) {
+        self.tone = tone
+        self.message = .titled(titled, detail: detail)
+        self.multiline = true
+    }
+
+    /// Convenience for "something failed" banners. Renders a friendly,
+    /// human-written headline above the raw `localizedDescription` so the
+    /// banner doesn't lead with system error text.
+    static func error(prefix: LocalizedStringKey, detail: String) -> OnboardingCalloutBanner {
+        OnboardingCalloutBanner(tone: .error, titled: prefix, detail: detail)
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: tone.icon)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(toneColor)
-            messageText
-                .font(theme.font(size: 12, weight: multiline ? .medium : .semibold))
-                .foregroundColor(toneColor)
-                .lineLimit(multiline ? nil : 2)
-                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, isTitled ? 1 : 0)
+            messageBody
             Spacer(minLength: 0)
         }
         .padding(.horizontal, OnboardingMetrics.bannerPaddingH)
@@ -494,13 +544,36 @@ struct OnboardingCalloutBanner: View {
         )
     }
 
+    private var isTitled: Bool {
+        if case .titled = message { return true }
+        return false
+    }
+
     @ViewBuilder
-    private var messageText: some View {
+    private var messageBody: some View {
         switch message {
         case .localized(let key):
             Text(key, bundle: .module)
+                .font(theme.font(size: 12, weight: multiline ? .medium : .semibold))
+                .foregroundColor(toneColor)
+                .lineLimit(multiline ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
         case .raw(let raw):
             Text(raw)
+                .font(theme.font(size: 12, weight: multiline ? .medium : .semibold))
+                .foregroundColor(toneColor)
+                .lineLimit(multiline ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+        case .titled(let title, let detail):
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title, bundle: .module)
+                    .font(theme.font(size: 12, weight: .semibold))
+                    .foregroundColor(toneColor)
+                Text(detail)
+                    .font(theme.font(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
