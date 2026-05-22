@@ -87,6 +87,15 @@
         private var containerManager: ContainerManager?
         private var linuxContainer: LinuxContainer?
         private var _removedByUser = false
+        /// Set to `true` by `provision()` when the most recent boot reused
+        /// the on-disk `rootfs.ext4` (warm restart), `false` when it had to
+        /// re-unpack the image (cold path). Read by
+        /// `SandboxPluginManager.verifyAndRepairAllPlugins` to skip the
+        /// per-agent `apk add` batch when the in-guest package state from
+        /// the previous boot is still on disk.
+        private var _wasLastBootWarm: Bool = false
+
+        public var wasLastBootWarm: Bool { _wasLastBootWarm }
 
         /// Coalesces concurrent `startContainer()` calls. Without this,
         /// AppDelegate's auto-start, `SandboxToolRegistrar.start`,
@@ -211,24 +220,44 @@
             OsaurusPaths.container().appendingPathComponent("containers/\(Self.containerID)")
         }
 
+        /// Path to the cached EXT4 rootfs unpacked by `manager.create`.
+        /// When present (and the pinned image digest still matches the
+        /// stamp from the last successful boot), `provision()` can take
+        /// the warm path and skip the multi-second 8 GiB unpack.
+        private var rootfsFile: URL {
+            staleContainerDir.appendingPathComponent("rootfs.ext4")
+        }
+
         private var hasRequiredAssets: Bool {
             let fm = FileManager.default
             return fm.fileExists(atPath: OsaurusPaths.containerKernelFile().path)
                 && fm.fileExists(atPath: OsaurusPaths.containerInitFSFile().path)
         }
 
+        /// True iff the persisted `rootfs.ext4` from the last boot is on
+        /// disk *and* it was produced by the same image reference the
+        /// current binary pins. The digest check guards against an app
+        /// update that bumped `containerImage` but left an older rootfs
+        /// behind — in that case we still want the cold path so the new
+        /// pinned digest gets unpacked.
+        private var canWarmRestart: Bool {
+            guard FileManager.default.fileExists(atPath: rootfsFile.path) else {
+                return false
+            }
+            let stamped = SandboxConfigurationStore.load().lastBootedImageDigest
+            return stamped == Self.containerImage
+        }
+
         public func refreshStatus() async -> ContainerStatus {
             if linuxContainer != nil {
                 _status = .running
             } else if FileManager.default.fileExists(atPath: staleContainerDir.path) {
-                // Auto-clean stale container state from a previous session.
-                // forciblyRemove walks the tree so a stuck FUSE mount or
-                // locked socket file from a crashed run can't keep the
-                // directory around to confuse `manager.create` later.
-                // Runs off-actor so a slow tree walk doesn't pin the
-                // executor for every other queued sandbox call.
-                debugLog("[Sandbox] Cleaning up stale container state from previous session")
-                try? await Self.forciblyRemoveAsync(at: staleContainerDir)
+                // Container dir exists from a previous boot. With persistent
+                // rootfs this is the normal case — the next provision picks
+                // the warm path. `provision()` owns the wipe-vs-reuse
+                // decision via `canWarmRestart`; if the rootfs turns out to
+                // be corrupt the warm-path do/catch in `provision()` falls
+                // back to a full cold rebuild.
                 _status = .stopped
             } else if hasRequiredAssets {
                 _status = .stopped
@@ -241,6 +270,149 @@
 
         // MARK: - Provisioning
 
+        /// Configuration values threaded through the warm / cold create
+        /// helpers so each helper has a single argument bundle instead of
+        /// six positional parameters.
+        private struct BootInputs {
+            let workspace: String
+            let bridgeSocketPath: String
+            let guestBridgeSocketPath: String
+            let cpus: Int
+            let memoryGB: Int
+        }
+
+        /// Build the `LinuxContainer.Configuration` closure that's shared
+        /// between the warm and cold `manager.create` calls. Identical
+        /// process, sockets, and mount setup in both cases — only the
+        /// surrounding `create` overload differs.
+        private static func makeContainerConfig(
+            inputs: BootInputs
+        ) -> (inout LinuxContainer.Configuration) -> Void {
+            return { cfg in
+                cfg.cpus = inputs.cpus
+                cfg.memoryInBytes = UInt64(inputs.memoryGB).gib()
+                cfg.process.arguments = ["sleep", "infinity"]
+                cfg.process.workingDirectory = "/"
+
+                let bridgeRelay = UnixSocketConfiguration(
+                    source: URL(fileURLWithPath: inputs.bridgeSocketPath),
+                    destination: URL(fileURLWithPath: inputs.guestBridgeSocketPath),
+                    direction: .into
+                )
+                cfg.sockets = [bridgeRelay]
+                cfg.mounts.append(.share(source: inputs.workspace, destination: "/workspace"))
+            }
+        }
+
+        /// Warm-restart create: hands the persisted `rootfs.ext4` to the
+        /// SDK's third `create` overload, bypassing the 8 GiB unpack. The
+        /// `.createContainer` journey step was pre-marked `.skipped` in
+        /// `plannedSteps`, so no step transitions happen here.
+        private func createWarmContainer(
+            manager: inout ContainerManager,
+            inputs: BootInputs
+        ) async throws -> LinuxContainer {
+            let image = try await manager.imageStore.get(
+                reference: Self.containerImage,
+                pull: true
+            )
+            let rootfs = Mount.block(
+                format: "ext4",
+                source: rootfsFile.absolutePath(),
+                destination: "/",
+                options: []
+            )
+            return try await manager.create(
+                Self.containerID,
+                image: image,
+                rootfs: rootfs,
+                networking: true,
+                configuration: Self.makeContainerConfig(inputs: inputs)
+            )
+        }
+
+        /// Cold-create: standard `create(reference:)` overload that pulls
+        /// (if needed) and unpacks the 8 GiB rootfs. Drives the
+        /// `.createContainer` step start → end. Caller must ensure
+        /// `staleContainerDir` is gone first — the SDK throws "file
+        /// already exists" otherwise.
+        private func createColdContainer(
+            manager: inout ContainerManager,
+            inputs: BootInputs,
+            detail: String,
+            bridge: Task<Void, Error>
+        ) async throws -> LinuxContainer {
+            await startStep(.createContainer, detail: detail)
+            let progressTracker = Self.makeContainerCreateProgressHandler(
+                stepID: .createContainer
+            )
+            let c: LinuxContainer
+            do {
+                c = try await manager.create(
+                    Self.containerID,
+                    reference: Self.containerImage,
+                    rootfsSizeInBytes: 8.gib(),
+                    networking: true,
+                    progress: progressTracker,
+                    configuration: Self.makeContainerConfig(inputs: inputs)
+                )
+            } catch {
+                await endStep(.createContainer, status: .failed)
+                await resolveBridgeStep(bridge: bridge)
+                throw error
+            }
+            await endStep(.createContainer, status: .completed)
+            return c
+        }
+
+        /// Boot a freshly created `LinuxContainer`: VM create → bridge
+        /// ready → process start. Drives the `.startContainer` and
+        /// `.startBridge` journey steps. Throws on any SDK failure;
+        /// caller is responsible for any cleanup.
+        private func bootContainer(
+            _ c: LinuxContainer,
+            bridge: Task<Void, Error>
+        ) async throws {
+            await startStep(.startContainer, detail: "Booting Linux VM")
+            try await c.create()
+            // Bridge must be bound before container.start() — that's
+            // when the guest attaches the relayed socket. Awaiting
+            // `.value` is idempotent under repeated calls so it's safe
+            // even after `resolveBridgeStep` has already drained the
+            // task in an earlier failure path.
+            try await bridge.value
+            await endStep(.startBridge, status: .completed)
+            try await c.start()
+            await endStep(.startContainer, status: .completed)
+        }
+
+        /// Resolve the `.startBridge` step into its final status by
+        /// inspecting whether the bridge Task itself succeeded. Used
+        /// from cold-create's catch path where the create failure may
+        /// or may not be the bridge's fault.
+        private func resolveBridgeStep(bridge: Task<Void, Error>) async {
+            do {
+                try await bridge.value
+                await endStep(.startBridge, status: .completed)
+            } catch {
+                await endStep(.startBridge, status: .failed)
+            }
+        }
+
+        /// Tear down whatever the warm-restart attempt left behind so the
+        /// cold rebuild path can start from a clean slate.
+        private func teardownWarmAttempt(manager: inout ContainerManager) async {
+            if let existing = self.linuxContainer {
+                try? await existing.stop()
+            }
+            try? manager.delete(Self.containerID)
+            self.linuxContainer = nil
+            self.containerManager = nil
+            if FileManager.default.fileExists(atPath: staleContainerDir.path) {
+                try? await Self.forciblyRemoveAsync(at: staleContainerDir)
+            }
+        }
+
         public func provision() async throws {
             guard _availability?.isAvailable == true else {
                 throw SandboxError.unavailable
@@ -249,13 +421,21 @@
 
             let config = SandboxConfigurationStore.load()
             let isRestart = hasRequiredAssets
+            let isWarm = canWarmRestart
             let hasPlugins = await Self.installedPluginsRequireVerify()
 
-            // Begin a fresh journey. On warm restart the kernel / initfs
-            // / extract steps are pre-marked `.skipped` so the UI shows
-            // checkmarks immediately rather than misleading spinners.
-            let planned = plannedSteps(isRestart: isRestart, hasPlugins: hasPlugins)
+            // Pre-mark cached steps `.skipped` so the UI shows checkmarks
+            // rather than spinners that never tick. Warm restart skips the
+            // image unpack step too.
+            let planned = plannedSteps(
+                isRestart: isRestart,
+                isWarmRestart: isWarm,
+                hasPlugins: hasPlugins
+            )
             await beginJourney(steps: planned)
+            // Flipped to true below only when the warm path actually
+            // succeeds end-to-end; `verifyAndRepairAllPlugins` reads it.
+            _wasLastBootWarm = false
 
             do {
                 // Download (or load) the kernel + initfs concurrently. Both
@@ -274,105 +454,107 @@
                 try ensureHostDirectories()
 
                 // Clean up stale container state from a previous crash.
-                // Use `try` (not `try?`) so a real cleanup failure surfaces
-                // here as a clear error instead of bubbling up later as the
-                // misleading "file already exists" from `manager.create`.
-                if FileManager.default.fileExists(atPath: staleContainerDir.path) {
+                // Warm path skips this so the persisted `rootfs.ext4` stays
+                // available for reuse; the cold path needs the dir gone
+                // because the SDK's `createContainerRoot` uses
+                // `withIntermediateDirectories: false`. `try` (not `try?`)
+                // so a real cleanup failure surfaces here instead of
+                // bubbling up as "file already exists" from `manager.create`.
+                if !isWarm, FileManager.default.fileExists(atPath: staleContainerDir.path) {
                     debugLog("[Sandbox] Cleaning up stale container state")
                     try await Self.forciblyRemoveAsync(at: staleContainerDir)
                 }
 
                 if #available(macOS 26, *) {
-                    // Kick off the NIO bridge bootstrap concurrently with
-                    // VmnetNetwork + ContainerManager setup and the rootfs
-                    // image pull/unpack. Both paths are independent — the
-                    // bridge only needs to be listening before
-                    // `container.start()` because that's when the guest
-                    // tries to attach the relayed socket. Awaiting it
-                    // there (instead of immediately after `start()`) lets
-                    // the slower of the two (usually the image work) hide
-                    // the bridge cost entirely.
+                    // Bring up the host API bridge concurrently with the
+                    // ContainerManager / rootfs work. The bridge only needs
+                    // to be listening by the time `container.start()` runs
+                    // (that's when the guest attaches the relayed socket),
+                    // so the slower of the two hides the other's cost.
                     await startStep(.startBridge, detail: "Binding host socket")
-                    async let bridgeStarted: Void = HostAPIBridgeServer.shared.start(
-                        socketPath: Self.bridgeSocketPath
-                    )
+                    let bridgeStarted = Task {
+                        try await HostAPIBridgeServer.shared.start(
+                            socketPath: Self.bridgeSocketPath
+                        )
+                    }
 
-                    let network = try VmnetNetwork()
                     var manager = try ContainerManager(
                         kernel: kernel,
                         initfs: initfs,
                         root: OsaurusPaths.container(),
-                        network: network
+                        network: try VmnetNetwork()
+                    )
+                    let inputs = BootInputs(
+                        workspace: OsaurusPaths.containerWorkspace().path,
+                        bridgeSocketPath: Self.bridgeSocketPath,
+                        guestBridgeSocketPath: Self.guestBridgeSocketPath,
+                        cpus: config.cpus,
+                        memoryGB: config.memoryGB
                     )
 
-                    let workspace = OsaurusPaths.containerWorkspace().path
-                    let bridgeSocketPath = Self.bridgeSocketPath
-                    let guestBridgeSocketPath = Self.guestBridgeSocketPath
-
-                    await startStep(
-                        .createContainer,
-                        detail: isRestart ? "Loading cached image" : "Pulling image layers"
-                    )
-                    // Fold the SDK's `ProgressEvent` stream into our
-                    // active createContainer step. The SDK fires items
-                    // *and* sizes; size-based progress is the most
-                    // user-meaningful so we drive the journey off that
-                    // and use the items totals only to enrich the
-                    // activity subtitle.
-                    let progressTracker = Self.makeContainerCreateProgressHandler(stepID: .createContainer)
                     let container: LinuxContainer
-                    do {
-                        container = try await manager.create(
-                            Self.containerID,
-                            reference: Self.containerImage,
-                            rootfsSizeInBytes: 8.gib(),
-                            networking: true,
-                            progress: progressTracker
-                        ) { cfg in
-                            cfg.cpus = config.cpus
-                            cfg.memoryInBytes = UInt64(config.memoryGB).gib()
-                            cfg.process.arguments = ["sleep", "infinity"]
-                            cfg.process.workingDirectory = "/"
-
-                            let bridgeRelay = UnixSocketConfiguration(
-                                source: URL(fileURLWithPath: bridgeSocketPath),
-                                destination: URL(fileURLWithPath: guestBridgeSocketPath),
-                                direction: .into
+                    if isWarm {
+                        // Warm path: hand the existing rootfs.ext4 to the
+                        // SDK's third `create` overload — no image unpack.
+                        // The do/catch covers both the SDK call and the
+                        // subsequent VM boot, since a corrupted rootfs
+                        // typically only manifests on disk attach. On any
+                        // throw we wipe and rebuild via the cold path
+                        // exactly once.
+                        do {
+                            let warmContainer = try await createWarmContainer(
+                                manager: &manager,
+                                inputs: inputs
                             )
-                            cfg.sockets = [bridgeRelay]
-                            cfg.mounts.append(.share(source: workspace, destination: "/workspace"))
+                            // Publish so `cleanupAfterFailure` can tear
+                            // down partial state if `bootContainer` throws.
+                            self.containerManager = manager
+                            self.linuxContainer = warmContainer
+                            try await bootContainer(warmContainer, bridge: bridgeStarted)
+                            container = warmContainer
+                            _wasLastBootWarm = true
+                        } catch {
+                            debugLog(
+                                "[Sandbox] Warm restart failed (\(error.localizedDescription)), falling back to cold create"
+                            )
+                            await teardownWarmAttempt(manager: &manager)
+                            // `.startContainer` may already be in-progress
+                            // from the failed warm boot — reset so the
+                            // cold rebuild can re-enter it cleanly.
+                            await resetStepStatus(.startContainer, to: .pending)
+
+                            container = try await createColdContainer(
+                                manager: &manager,
+                                inputs: inputs,
+                                detail: "Unpacking cached image",
+                                bridge: bridgeStarted
+                            )
+                            self.containerManager = manager
+                            self.linuxContainer = container
+                            try await bootContainer(container, bridge: bridgeStarted)
                         }
-                    } catch {
-                        await endStep(.createContainer, status: .failed)
-                        // Don't leave an orphaned bridge listening if the
-                        // container create fails — `cleanupAfterFailure`
-                        // will also stop it, but completing the structured
-                        // task locally keeps the actor's state coherent.
-                        _ = try? await bridgeStarted
-                        await endStep(.startBridge, status: .failed)
-                        throw error
+                    } else {
+                        // Cold path. When the pinned digest matches the
+                        // stamp from a prior boot, layers are already in
+                        // the local content store and create() just
+                        // unpacks; otherwise it pulls from GHCR first.
+                        let imageCached = config.lastBootedImageDigest == Self.containerImage
+                        container = try await createColdContainer(
+                            manager: &manager,
+                            inputs: inputs,
+                            detail: imageCached ? "Unpacking cached image" : "Pulling sandbox image",
+                            bridge: bridgeStarted
+                        )
+                        // Publish IMMEDIATELY so cleanupAfterFailure() can
+                        // tear down the SDK objects if `bootContainer`
+                        // throws below. Otherwise a partial-provision
+                        // failure leaves the container registered inside
+                        // the SDK and on disk, surfacing as confusing
+                        // "file already exists" on the next attempt.
+                        self.containerManager = manager
+                        self.linuxContainer = container
+                        try await bootContainer(container, bridge: bridgeStarted)
                     }
-                    await endStep(.createContainer, status: .completed)
-
-                    // Assign to self IMMEDIATELY so cleanupAfterFailure() can
-                    // see and tear down the SDK objects if container.create()
-                    // or container.start() throws below. Previously these
-                    // fields were only set after a successful start, so a
-                    // partial-provision failure left the container registered
-                    // inside the SDK and on disk — the source of subsequent
-                    // "file already exists" errors on the next attempt.
-                    self.containerManager = manager
-                    self.linuxContainer = container
-
-                    await startStep(.startContainer, detail: "Booting Linux VM")
-                    try await container.create()
-                    // Guarantee the bridge is bound before the VM tries to
-                    // attach the relayed socket. In the common case the
-                    // bridge was already up before `manager.create` returned.
-                    try await bridgeStarted
-                    await endStep(.startBridge, status: .completed)
-                    try await container.start()
-                    await endStep(.startContainer, status: .completed)
                 }
 
                 await startStep(.configureSandbox, detail: "Installing in-guest shim")
@@ -395,6 +577,14 @@
                 // post-#950 token migration is lazy on container restart.
                 if savedConfig.lastProvisionedAppVersion != currentVersion {
                     savedConfig.lastProvisionedAppVersion = currentVersion
+                    configChanged = true
+                }
+                // Stamp the image reference this boot ran against so the
+                // next `provision()` knows whether `rootfs.ext4` is reusable.
+                // An app update that bumps the pinned digest invalidates
+                // the warm path automatically.
+                if savedConfig.lastBootedImageDigest != Self.containerImage {
+                    savedConfig.lastBootedImageDigest = Self.containerImage
                     configChanged = true
                 }
                 if configChanged {
@@ -511,8 +701,13 @@
             if let container = linuxContainer {
                 try await container.stop()
             }
+            // Release the network interface but keep the on-disk container
+            // dir (and its `rootfs.ext4`) intact for the warm-restart path.
+            // `manager.delete` would `rm -rf` the whole tree and force a
+            // full 8 GiB re-unpack on the next start. The apk db survives
+            // too, so `verifyAndRepairAllPlugins` skips its batch.
             if var manager = containerManager {
-                try? manager.delete(Self.containerID)
+                try? manager.releaseNetwork(Self.containerID)
             }
             linuxContainer = nil
             containerManager = nil
@@ -564,6 +759,8 @@
 
             var config = SandboxConfigurationStore.load()
             config.setupComplete = false
+            // Invalidate the warm-restart stamp now that the rootfs is gone.
+            config.lastBootedImageDigest = nil
             SandboxConfigurationStore.save(config)
 
             if !warnings.isEmpty {
@@ -1471,6 +1668,10 @@
 
         func cleanupAfterFailure() async {
             if let container = linuxContainer { try? await container.stop() }
+            // Unlike the expected `stopContainer` path (which preserves
+            // `rootfs.ext4` for a warm restart), failure cleanup uses the
+            // full `delete` so we don't carry a half-unpacked rootfs into
+            // the next provision attempt. The cold path will rebuild it.
             if var mgr = containerManager { try? mgr.delete(Self.containerID) }
             linuxContainer = nil
             containerManager = nil
@@ -1543,18 +1744,35 @@
             // is up well before anyone asks, so the wait becomes a no-op.
             startNetworkReadinessProbe()
 
+            // The shim at `/usr/local/bin/osaurus-host` lives in the
+            // persistent rootfs, so on warm restarts the previous copy is
+            // almost always byte-identical. Hash both sides and skip the
+            // stage + cp + chmod when they already match. On cold boots
+            // the missing-file `sha256sum` yields an empty stdout that
+            // won't match, falling through to the install path.
             let shimScript = Self.osaurusHostShimScript
-            let shimStagingPath = OsaurusPaths.containerWorkspace().appendingPathComponent(".osaurus-host-shim")
-            try shimScript.write(to: shimStagingPath, atomically: true, encoding: .utf8)
-            _ = try await execAsRoot(
-                command:
-                    "cp /workspace/.osaurus-host-shim /usr/local/bin/osaurus-host && chmod 555 /usr/local/bin/osaurus-host && rm /workspace/.osaurus-host-shim"
+            let shimDigest = SHA256.hash(data: Data(shimScript.utf8))
+                .map { String(format: "%02x", $0) }
+                .joined()
+            let check = try? await exec(
+                command: "sha256sum /usr/local/bin/osaurus-host 2>/dev/null | awk '{print $1}'"
             )
+            let existingDigest = check?.stdout
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if existingDigest != shimDigest {
+                let shimStagingPath = OsaurusPaths.containerWorkspace()
+                    .appendingPathComponent(".osaurus-host-shim")
+                try shimScript.write(to: shimStagingPath, atomically: true, encoding: .utf8)
+                _ = try await execAsRoot(
+                    command:
+                        "cp /workspace/.osaurus-host-shim /usr/local/bin/osaurus-host && chmod 555 /usr/local/bin/osaurus-host && rm /workspace/.osaurus-host-shim"
+                )
+            }
 
-            // Bridge token directory: each agent user's token file lives here as
-            // mode 0600. Mode 0711 on the directory lets users stat their own
-            // file (which they know by name == their own $USER) without being
-            // able to enumerate or read sibling token files.
+            // Bridge token directory: per-agent token files (mode 0600).
+            // Mode 0711 on the dir lets each user stat its own file (known
+            // by `$USER` name) without enumerating siblings. `/run` is
+            // tmpfs in Alpine, so this re-runs on every VM boot.
             _ = try await execAsRoot(
                 command: "mkdir -p \(Self.bridgeTokenDir) && chmod 0711 \(Self.bridgeTokenDir)"
             )
@@ -1819,8 +2037,16 @@
         /// through. On warm restarts (`isRestart == true`), the cached
         /// kernel + initfs steps are pre-marked `.skipped` so the UI
         /// renders them as completed checkmarks instead of indeterminate
-        /// spinners that never tick.
-        private func plannedSteps(isRestart: Bool, hasPlugins: Bool) -> [ProvisioningStepState] {
+        /// spinners that never tick. On a *fully* warm boot
+        /// (`isWarmRestart == true`), the `createContainer` step — which
+        /// normally unpacks the 8 GiB rootfs from cached OCI layers — is
+        /// also `.skipped` because the persisted `rootfs.ext4` is reused
+        /// directly via the third `ContainerManager.create` overload.
+        private func plannedSteps(
+            isRestart: Bool,
+            isWarmRestart: Bool,
+            hasPlugins: Bool
+        ) -> [ProvisioningStepState] {
             let seeds = SandboxConfigurationStore.load().lastBootDurations ?? [:]
             func eta(_ id: ProvisioningStepID) -> Double? { seeds[id.rawValue] }
 
@@ -1838,7 +2064,7 @@
             steps.append(base(.downloadInitFS, status: isRestart ? .skipped : .pending))
             steps.append(base(.extractKernel, status: isRestart ? .skipped : .pending))
             steps.append(base(.startBridge))
-            steps.append(base(.createContainer))
+            steps.append(base(.createContainer, status: isWarmRestart ? .skipped : .pending))
             steps.append(base(.startContainer))
             steps.append(base(.configureSandbox))
             if hasPlugins {
@@ -1928,6 +2154,30 @@
                         step.progress = 1.0
                         step.etaSeconds = 0
                     }
+                    if journey.currentStepID == id { journey.currentStepID = nil }
+                }
+            }
+        }
+
+        /// Roll a journey step back to a clean status (typically `.pending`)
+        /// without finalizing it. Used by the warm-restart fallback in
+        /// `provision()`: after the warm attempt's `bootContainer` fails,
+        /// the `.startContainer` step may be `.inProgress`, but we're about
+        /// to drive it again via the cold rebuild and need `startStep` to
+        /// re-enter the in-progress state with fresh timestamps. Without
+        /// this reset, `startStep`'s idempotent guard would leave the row
+        /// stuck on the warm attempt's `startedAt`.
+        private func resetStepStatus(_ id: ProvisioningStepID, to status: ProvisioningStepStatus) async {
+            await MainActor.run {
+                Self.mutateJourney(stepID: id) { journey, step in
+                    step.status = status
+                    step.startedAt = nil
+                    step.finishedAt = nil
+                    step.progress = nil
+                    step.detail = nil
+                    step.bytesProcessed = nil
+                    step.bytesTotal = nil
+                    step.bytesPerSecond = nil
                     if journey.currentStepID == id { journey.currentStepID = nil }
                 }
             }

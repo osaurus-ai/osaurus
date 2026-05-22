@@ -34,6 +34,14 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
     /// `nil` for installs that pre-date this field — the UI then shows
     /// "—" until the first successful run is recorded.
     public var lastBootDurations: [String: Double]?
+    /// Image reference (`name@sha256:digest`) of the last container that
+    /// booted successfully. Compared against the currently pinned image
+    /// in `SandboxManager.provision()` to decide whether the on-disk
+    /// `rootfs.ext4` can be reused (warm restart) or must be re-unpacked
+    /// (cold restart after app update). `nil` for installs that pre-date
+    /// this field — treated as "cold" so we conservatively re-unpack
+    /// once after upgrade and then stamp the digest for future warm boots.
+    public var lastBootedImageDigest: String?
 
     public static let `default` = SandboxConfiguration(
         cpus: 2,
@@ -42,7 +50,8 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         autoStart: true,
         setupComplete: false,
         lastProvisionedAppVersion: nil,
-        lastBootDurations: nil
+        lastBootDurations: nil,
+        lastBootedImageDigest: nil
     )
 
     public init(
@@ -52,7 +61,8 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         autoStart: Bool = true,
         setupComplete: Bool = false,
         lastProvisionedAppVersion: String? = nil,
-        lastBootDurations: [String: Double]? = nil
+        lastBootDurations: [String: Double]? = nil,
+        lastBootedImageDigest: String? = nil
     ) {
         self.cpus = cpus
         self.memoryGB = memoryGB
@@ -61,6 +71,7 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
         self.setupComplete = setupComplete
         self.lastProvisionedAppVersion = lastProvisionedAppVersion
         self.lastBootDurations = lastBootDurations
+        self.lastBootedImageDigest = lastBootedImageDigest
     }
 
     public init(from decoder: Decoder) throws {
@@ -74,6 +85,8 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
             try container.decodeIfPresent(String.self, forKey: .lastProvisionedAppVersion)
         lastBootDurations =
             try container.decodeIfPresent([String: Double].self, forKey: .lastBootDurations)
+        lastBootedImageDigest =
+            try container.decodeIfPresent(String.self, forKey: .lastBootedImageDigest)
     }
 }
 
