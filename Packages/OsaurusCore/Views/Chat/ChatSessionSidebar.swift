@@ -474,9 +474,7 @@ private struct SessionRow: View {
                 }
                 Button(action: onStartRename) { Text("Rename", bundle: .module) }
                 Divider()
-                Button { onExport(.markdown) } label: { Text("Export Markdown", bundle: .module) }
-                Button { onExport(.pdf) } label: { Text("Export PDF", bundle: .module) }
-                Button { onExport(.zip) } label: { Text("Export Zip", bundle: .module) }
+                Button(action: requestExport) { Text("Export…", bundle: .module) }
                 Divider()
                 Button(action: onToggleArchive) {
                     Text(session.archived ? "Unarchive" : "Archive", bundle: .module)
@@ -495,17 +493,9 @@ private struct SessionRow: View {
                 onStartRename()
             }
             Divider().padding(.vertical, 2)
-            ActionsPopoverButton(icon: "doc.text", label: "Export Markdown", isDestructive: false) {
+            ActionsPopoverButton(icon: "square.and.arrow.up", label: "Export…", isDestructive: false) {
                 showActionsPopover = false
-                onExport(.markdown)
-            }
-            ActionsPopoverButton(icon: "doc.richtext", label: "Export PDF", isDestructive: false) {
-                showActionsPopover = false
-                onExport(.pdf)
-            }
-            ActionsPopoverButton(icon: "doc.zipper", label: "Export Zip", isDestructive: false) {
-                showActionsPopover = false
-                onExport(.zip)
+                requestExport()
             }
             Divider().padding(.vertical, 2)
             ActionsPopoverButton(
@@ -523,6 +513,30 @@ private struct SessionRow: View {
         }
         .padding(6)
         .frame(minWidth: 180)
+    }
+
+    // MARK: - Export Format Chooser
+
+    private func requestExport() {
+        let requestId = UUID()
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Export Conversation",
+                message: L("Choose a format to export this conversation."),
+                buttons: [
+                    .primary(L("Markdown")) { onExport(.markdown) },
+                    .primary(L("PDF")) { onExport(.pdf) },
+                    .primary(L("Zip Bundle")) { onExport(.zip) },
+                    .cancel(L("Cancel")),
+                ],
+                showsCloseButton: true,
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: alertScope, id: requestId)
+                }
+            ),
+            scope: alertScope
+        )
     }
 
     // MARK: - Delete Confirmation

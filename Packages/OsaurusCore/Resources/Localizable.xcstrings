@@ -8160,6 +8160,66 @@
     "Export Zip" : {
 
     },
+    "Export Conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export Conversation"
+          }
+        }
+      }
+    },
+    "Export…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export…"
+          }
+        }
+      }
+    },
+    "Choose a format to export this conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Choose a format to export this conversation."
+          }
+        }
+      }
+    },
+    "Markdown" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Markdown"
+          }
+        }
+      }
+    },
+    "PDF" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "PDF"
+          }
+        }
+      }
+    },
+    "Zip Bundle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Zip Bundle"
+          }
+        }
+      }
+    },
     "Exported \"%@\"" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",

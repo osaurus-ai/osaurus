@@ -75,6 +75,10 @@ public struct ThemedAlertRequest: Identifiable {
     public let accessory: AnyView?
     /// Button configurations for the alert actions
     public let buttons: [AlertButtonConfig]
+    /// When true, the cancel button is rendered as an X in the top-trailing
+    /// corner instead of inline. Useful for chooser-style alerts where the
+    /// inline row would just be padding.
+    public let showsCloseButton: Bool
 
     /// Callback invoked when the alert is dismissed
     public let onDismiss: () -> Void
@@ -85,6 +89,7 @@ public struct ThemedAlertRequest: Identifiable {
         message: String?,
         accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
+        showsCloseButton: Bool = false,
         onDismiss: @escaping () -> Void
     ) {
         self.id = id
@@ -92,6 +97,7 @@ public struct ThemedAlertRequest: Identifiable {
         self.message = message
         self.accessory = accessory
         self.buttons = buttons
+        self.showsCloseButton = showsCloseButton
         self.onDismiss = onDismiss
     }
 }
@@ -147,6 +153,7 @@ private struct ThemedAlertDialogContent: View {
     let message: String?
     let accessory: AnyView?
     let buttons: [AlertButtonConfig]
+    let showsCloseButton: Bool
     let presentationStyle: ThemedAlertPresentationStyle
     let onDismiss: () -> Void
 
@@ -167,6 +174,12 @@ private struct ThemedAlertDialogContent: View {
 
             // Dialog content
             dialogContent
+                .overlay(alignment: .topTrailing) {
+                    if showsCloseButton, let cancel = cancelButton {
+                        closeButton(cancel)
+                            .padding(10)
+                    }
+                }
                 .scaleEffect(isAppearing ? 1 : 0.9)
                 .opacity(isAppearing ? 1 : 0)
                 .offset(y: isAppearing ? 0 : 20)
@@ -206,14 +219,16 @@ private struct ThemedAlertDialogContent: View {
                     .padding(.top, 12)
             }
 
-            // Divider
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.3))
-                .frame(height: 1)
-                .padding(.top, 16)
+            if !inlineButtons.isEmpty {
+                // Divider
+                Rectangle()
+                    .fill(theme.primaryBorder.opacity(0.3))
+                    .frame(height: 1)
+                    .padding(.top, 16)
 
-            // Buttons
-            buttonSection
+                // Buttons
+                buttonSection
+            }
         }
         .padding(.top, 24)
         .padding(.horizontal, 24)
@@ -279,22 +294,55 @@ private struct ThemedAlertDialogContent: View {
     // MARK: - Button Section
 
     private var buttonSection: some View {
-        Group {
-            if buttons.count <= 2 {
+        let inline = inlineButtons
+        return Group {
+            if inline.count <= 2 {
                 HStack(spacing: 12) {
-                    ForEach(Array(buttons.enumerated()), id: \.element.title) { idx, button in
-                        alertButton(button, isPrimary: idx == primaryButtonIndex)
+                    ForEach(Array(inline.enumerated()), id: \.element.title) { idx, button in
+                        alertButton(button, isPrimary: idx == inlinePrimaryIndex)
                     }
                 }
             } else {
                 VStack(spacing: 10) {
-                    ForEach(Array(buttons.enumerated()), id: \.element.title) { idx, button in
-                        alertButton(button, isPrimary: idx == primaryButtonIndex)
+                    ForEach(Array(inline.enumerated()), id: \.element.title) { idx, button in
+                        alertButton(button, isPrimary: idx == inlinePrimaryIndex)
                     }
                 }
             }
         }
         .padding(.top, 16)
+    }
+
+    /// Buttons rendered inline. When the close icon is shown, the cancel
+    /// button is promoted to the corner and removed from the row.
+    private var inlineButtons: [AlertButtonConfig] {
+        guard showsCloseButton else { return buttons }
+        return buttons.filter { $0.role != .cancel }
+    }
+
+    private var inlinePrimaryIndex: Int {
+        inlineButtons.firstIndex { $0.role == nil }
+            ?? inlineButtons.firstIndex { $0.role == .destructive }
+            ?? 0
+    }
+
+    private func closeButton(_ cancel: AlertButtonConfig) -> some View {
+        Button {
+            dismissWithAnimation { cancel.action() }
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 22, height: 22)
+                .background(
+                    Circle().fill(theme.tertiaryBackground.opacity(0.6))
+                )
+                .overlay(
+                    Circle().stroke(theme.cardBorder, lineWidth: 1)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help(Text(cancel.title))
     }
 
     private func alertButton(_ config: AlertButtonConfig, isPrimary: Bool) -> some View {
@@ -427,6 +475,7 @@ private struct ThemedAlertModifier: ViewModifier {
                         message: message,
                         accessory: nil,
                         buttons: buttons,
+                        showsCloseButton: false,
                         presentationStyle: presentationStyle,
                         onDismiss: {
                             isPresented = false
@@ -513,6 +562,7 @@ public struct ThemedAlertHost: View {
                     message: request.message,
                     accessory: request.accessory,
                     buttons: request.buttons,
+                    showsCloseButton: request.showsCloseButton,
                     presentationStyle: .window,
                     onDismiss: { request.onDismiss() }
                 )
@@ -629,6 +679,7 @@ private extension View {
                         .destructive("Cancel Task") {},
                         .cancel("Keep Running"),
                     ],
+                    showsCloseButton: false,
                     presentationStyle: .window,
                     onDismiss: {}
                 )
