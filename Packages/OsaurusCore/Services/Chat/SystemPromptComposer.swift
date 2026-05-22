@@ -427,7 +427,7 @@ public struct SystemPromptComposer: Sendable {
         )
 
         trace?.mark("resolve_tools_start")
-        let tools = resolveTools(
+        let resolvedTools = resolveTools(
             snapshot: snapshot,
             executionMode: executionMode,
             toolsDisabled: effectiveToolsOff,
@@ -436,9 +436,26 @@ public struct SystemPromptComposer: Sendable {
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames
         )
         trace?.mark("resolve_tools_done")
+        let suppressTrivialToolSchema = shouldSuppressTrivialToolSchema(
+            isTrivialInput: isTrivialInput,
+            executionMode: executionMode,
+            messages: messages,
+            cachedPreflight: cachedPreflight,
+            additionalToolNames: additionalToolNames,
+            frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
+            resolvedTools: resolvedTools
+        )
+        if suppressTrivialToolSchema {
+            trace?.set("toolSchemaSuppressed", "trivial")
+        }
+        // #1161 reports clean raw local completions but corrupted UI/local
+        // chat for greetings. Keep those tiny turns on the no-tool path, while
+        // preserving the baseline below so the next real task can still freeze
+        // against the always-loaded tools that were available at session start.
+        let tools = suppressTrivialToolSchema ? [] : resolvedTools
 
         let alwaysLoadedNames = resolveAlwaysLoadedNames(
-            tools: tools,
+            tools: resolvedTools,
             executionMode: executionMode,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames
         )
@@ -464,6 +481,27 @@ public struct SystemPromptComposer: Sendable {
             capabilityPromptSectionsEnabled: !isTrivialInput,
             agentLoopGuidanceEnabled: hasPriorAgentLoopUse(messages)
         )
+    }
+
+    /// Keep #1161's greeting-only fast path to the clean first-turn shape.
+    /// Cached preflight, frozen baselines, loaded tools, execution modes, or
+    /// prior messages all mean the user is already in a task context where an
+    /// acknowledgement like "ok" may still need loop/discovery tools.
+    private static func shouldSuppressTrivialToolSchema(
+        isTrivialInput: Bool,
+        executionMode: ExecutionMode,
+        messages: [ChatMessage],
+        cachedPreflight: PreflightResult?,
+        additionalToolNames: LoadedTools,
+        frozenAlwaysLoadedNames: LoadedTools?,
+        resolvedTools: [Tool]
+    ) -> Bool {
+        guard isTrivialInput, !resolvedTools.isEmpty else { return false }
+        guard case .none = executionMode else { return false }
+        return messages.isEmpty
+            && cachedPreflight == nil
+            && additionalToolNames.isEmpty
+            && frozenAlwaysLoadedNames == nil
     }
 
     /// Pick the preflight to use this turn: cached (skip the LLM call),

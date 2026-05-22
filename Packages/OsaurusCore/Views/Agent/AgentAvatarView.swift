@@ -18,6 +18,20 @@ public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
     public var assetName: String { "osaurus-avatar-\(rawValue)" }
 
+    /// Human-friendly label for accessibility / tooltip surfaces. Avoids
+    /// leaking the raw enum case (`"blue"`) into help text — the avatar
+    /// strip in onboarding used to read `"Avatar: blue"`.
+    public var displayName: String {
+        switch self {
+        case .blue: return "Blue dino"
+        case .green: return "Green dino"
+        case .orange: return "Orange dino"
+        case .purple: return "Purple dino"
+        case .red: return "Red dino"
+        case .yellow: return "Yellow dino"
+        }
+    }
+
     /// Asset name for the "create-pose" illustration paired with this
     /// mascot color (used by the onboarding Create Agent step).
     ///

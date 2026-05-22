@@ -91,7 +91,12 @@ public enum OpenResponsesInputItem: Codable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let type = try container.decode(String.self, forKey: .type)
+        let type: String?
+        if container.contains(.type) {
+            type = try container.decode(String.self, forKey: .type)
+        } else {
+            type = nil
+        }
 
         switch type {
         case "message":
@@ -100,11 +105,14 @@ public enum OpenResponsesInputItem: Codable, Sendable {
             self = .functionCall(try OpenResponsesFunctionCall(from: decoder))
         case "function_call_output":
             self = .functionCallOutput(try OpenResponsesFunctionCallOutputItem(from: decoder))
+        case nil:
+            // OpenAI Responses clients omit this discriminator for plain message input items.
+            self = .message(try OpenResponsesMessageItem(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type,
                 in: container,
-                debugDescription: "Unknown input item type: \(type)"
+                debugDescription: "Unknown input item type: \(type ?? "<missing>")"
             )
         }
     }
@@ -127,10 +135,37 @@ public struct OpenResponsesMessageItem: Codable, Sendable {
     public let role: String
     public let content: OpenResponsesMessageContent
 
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case role
+        case content
+    }
+
     public init(role: String, content: OpenResponsesMessageContent) {
         self.type = "message"
         self.role = role
         self.content = content
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedType: String
+        if container.contains(.type) {
+            decodedType = try container.decode(String.self, forKey: .type)
+        } else {
+            decodedType = "message"
+        }
+        guard decodedType == "message" else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .type,
+                in: container,
+                debugDescription: "Expected message input item type"
+            )
+        }
+
+        self.type = "message"
+        self.role = try container.decode(String.self, forKey: .role)
+        self.content = try container.decode(OpenResponsesMessageContent.self, forKey: .content)
     }
 }
 

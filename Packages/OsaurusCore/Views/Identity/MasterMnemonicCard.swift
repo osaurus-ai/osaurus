@@ -3,8 +3,9 @@
 //  osaurus
 //
 //  Renders the 24-word BIP39 master-key recovery phrase as a numbered grid
-//  with copy / save / print actions. Shared between onboarding and the
-//  Identity view's RecoveryPromptCard.
+//  with copy / save / print actions. Reached only via Settings → Identity
+//  → "View recovery phrase" now that onboarding doesn't gate users on a
+//  write-it-down screen.
 //
 
 import AppKit

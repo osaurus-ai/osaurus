@@ -12,12 +12,12 @@ import SwiftUI
 // MARK: - Hero Avatar Metrics
 
 /// Diameter for hero-sized agent avatars in the empty-state surfaces.
-private let heroAvatarDiameter: CGFloat = 128
+private let heroAvatarDiameter: CGFloat = 64
 /// Font size for the icon/monogram inside a hero avatar (built-in `person.fill`
 /// placeholder and `AgentAvatarView` monogram fallback).
-private let heroAvatarIconFontSize: CGFloat = 56
+private let heroAvatarIconFontSize: CGFloat = 28
 /// Font size for the SF Symbol inside the remote-hero avatar (relay / discovered).
-private let heroAvatarRemoteIconFontSize: CGFloat = 48
+private let heroAvatarRemoteIconFontSize: CGFloat = 24
 
 // MARK: - Shimmer Fade-In
 

@@ -96,8 +96,6 @@ struct CreateAgentBody: View {
 
     @Environment(\.theme) private var theme
 
-    private let formMaxWidth: CGFloat = 440
-
     var body: some View {
         OnboardingTwoColumnBody(
             leftColumn: { leftColumnContent },
@@ -116,7 +114,7 @@ struct CreateAgentBody: View {
 
             Spacer().frame(height: OnboardingMetrics.illustrationToHeadline)
 
-            Text("Meet your assistant", bundle: .module)
+            Text("Say hi to your dino", bundle: .module)
                 .font(theme.font(size: OnboardingMetrics.leftHeadlineSize, weight: .bold))
                 .foregroundColor(theme.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -142,6 +140,12 @@ struct CreateAgentBody: View {
     /// `OnboardingScrollContainer`, so the column gets the standard
     /// scroll buffer (which clears glass-card hover shadows on the
     /// chrome's clip) without each step re-applying it manually.
+    ///
+    /// We deliberately don't cap this with a `formMaxWidth` — at the
+    /// fixed window size the two-column body already gives the right
+    /// column exactly the breathing room it needs (~424pt usable). Any
+    /// max-width constraint wider than that just pushed the chrome out
+    /// past the rest of the onboarding flow.
     private var rightColumnContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Sequenced top-to-bottom in dependency order: pick a visual
@@ -152,7 +156,6 @@ struct CreateAgentBody: View {
             nameField
             systemPromptField
         }
-        .frame(maxWidth: formMaxWidth, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -205,22 +208,27 @@ struct CreateAgentBody: View {
                     HStack(spacing: 6) {
                         Image(systemName: "quote.opening")
                             .font(.system(size: 10, weight: .bold))
-                        Text("Prompt preview", bundle: .module)
-                            .textCase(.uppercase)
-                            .font(theme.font(size: OnboardingMetrics.sectionLabelSize, weight: .bold))
-                            .tracking(0.6)
+                        Text("Preview", bundle: .module)
+                            .font(theme.font(size: 11, weight: .semibold))
                     }
                     .foregroundColor(theme.tertiaryText)
 
+                    // No `lineLimit` — the whole instructions text should
+                    // be readable in the preview, since that's the entire
+                    // point of the card. `fixedSize(vertical:)` lets the
+                    // card grow to fit; the left column has plenty of
+                    // vertical space below the headline copy.
                     Text(previewPrompt)
                         .font(theme.font(size: 12))
                         .foregroundColor(theme.secondaryText)
                         .lineSpacing(3)
-                        .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(18)
+            // `minHeight` is the floor for short prompts (so the card
+            // never feels under-filled). No `maxHeight` — when the prompt
+            // is long the card grows so every line is visible.
             .frame(
                 maxWidth: .infinity,
                 minHeight: OnboardingMetrics.illustrationMaxHeight,
@@ -305,16 +313,20 @@ struct CreateAgentBody: View {
         }
     }
 
-    // MARK: - System Prompt
+    // MARK: - Instructions
 
     private var systemPromptField: some View {
         VStack(alignment: .leading, spacing: OnboardingMetrics.labelToInput) {
-            sectionLabel("System Prompt")
+            sectionLabel("Instructions")
+            // Onboarding's "Meet your dino" flow shouldn't read like a
+            // terminal — opt out of the monospaced default so the field
+            // matches the friendly tone of the rest of the step.
             OnboardingTextEditor(
                 label: "",
                 placeholder: "Instructions for this agent…",
                 text: $state.systemPrompt,
-                height: 100
+                isMonospaced: false,
+                height: 116
             )
             .onChange(of: state.systemPrompt) { _, newValue in
                 // Track edits so switching starters won't overwrite the
@@ -333,23 +345,30 @@ struct CreateAgentBody: View {
     /// Six mascots, one chip each. The "no avatar" / monogram option lives
     /// in Configure post-onboarding — the create form always picks a
     /// colorful mascot so the row of cute dinos can read as the brand.
+    ///
+    /// Chips distribute themselves with flexible spacers between them
+    /// rather than a fixed gap, so the row stays balanced as the right
+    /// column resizes (and never overflows the 424pt usable width that
+    /// would otherwise push the chrome wider than the other steps).
     private var avatarRow: some View {
         VStack(alignment: .leading, spacing: OnboardingMetrics.labelToInput) {
             sectionLabel("Avatar")
-            HStack(spacing: 8) {
-                ForEach(AgentMascot.allCases) { mascot in
+            HStack(spacing: 0) {
+                ForEach(Array(AgentMascot.allCases.enumerated()), id: \.element.id) { index, mascot in
                     avatarChip(mascotId: mascot.id)
+                    if index < AgentMascot.allCases.count - 1 {
+                        Spacer(minLength: 4)
+                    }
                 }
-                Spacer(minLength: 0)
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, 4)
         }
     }
 
     private func avatarChip(mascotId: String?) -> some View {
         let isSelected = state.selectedAvatar == mascotId
-        let diameter: CGFloat = 64
-        let cellSize: CGFloat = 64
+        let diameter: CGFloat = 52
+        let cellSize: CGFloat = 56
         return Button {
             withAnimation(theme.animationQuick()) {
                 state.selectedAvatar = mascotId
@@ -359,8 +378,8 @@ struct CreateAgentBody: View {
                 if isSelected {
                     Circle()
                         .fill(theme.accentColor.opacity(0.22))
-                        .frame(width: diameter + 18, height: diameter + 18)
-                        .blur(radius: 8)
+                        .frame(width: diameter + 14, height: diameter + 14)
+                        .blur(radius: 7)
                 }
 
                 AgentAvatarView(
@@ -368,7 +387,7 @@ struct CreateAgentBody: View {
                     name: state.name,
                     tint: agentColorFor(state.name),
                     diameter: diameter,
-                    monogramFontSize: 18,
+                    monogramFontSize: 16,
                     borderWidth: 1.5
                 )
                 .overlay(
@@ -386,15 +405,23 @@ struct CreateAgentBody: View {
             .animation(theme.animationQuick(), value: isSelected)
         }
         .buttonStyle(.plain)
-        .help(Text(mascotId.map { "Avatar: \($0)" } ?? "Initial", bundle: .module))
+        .help(Text(LocalizedStringKey(avatarTooltip(for: mascotId)), bundle: .module))
+    }
+
+    /// Friendly tooltip label for the avatar chip. Avoids leaking the raw
+    /// mascot enum case (`"blue"`, `"yellow"`, …) into help text.
+    private func avatarTooltip(for mascotId: String?) -> String {
+        guard let mascotId else { return "Initial" }
+        if let mascot = AgentMascot(rawValue: mascotId) {
+            return "Avatar: \(mascot.displayName)"
+        }
+        return "Avatar: \(mascotId)"
     }
 
     @ViewBuilder
     private func sectionLabel(_ key: String) -> some View {
         Text(LocalizedStringKey(key), bundle: .module)
-            .textCase(.uppercase)
-            .font(theme.font(size: OnboardingMetrics.sectionLabelSize, weight: .bold))
-            .tracking(0.6)
+            .font(theme.font(size: 11, weight: .semibold))
             .foregroundColor(theme.tertiaryText)
     }
 }

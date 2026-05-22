@@ -15,12 +15,14 @@ public struct OsaurusIdentity: Sendable {
 
     // MARK: - Setup
 
-    /// Full identity setup: generates Master Key, attests device, generates recovery
-    /// code, and computes a BIP39 24-word backup of the master.
+    /// Full identity setup: generates Master Key, attests device, generates
+    /// recovery code, and persists the 24-word BIP39 backup into iCloud
+    /// Keychain (alongside the seed). The mnemonic is no longer surfaced to
+    /// the caller — it lives in `MasterMnemonicStore` and is fetched on
+    /// demand (e.g. from Settings → "View recovery phrase").
     ///
-    /// If an identity already exists, this short-circuits and returns the existing
-    /// identity (no new master, no new recovery code, no mnemonic). The caller is
-    /// expected to detect the `mnemonic == nil` case and skip the recovery-display UI.
+    /// If an identity already exists, this short-circuits and returns the
+    /// existing identity.
     public static func setup() async throws -> IdentityInfo {
         if MasterKey.exists() {
             return try await loadExistingIdentity()
@@ -30,6 +32,7 @@ public struct OsaurusIdentity: Sendable {
         var seed = result.seed
         defer { seed.zeroOut() }
         let mnemonic = try MasterKeyMnemonic.mnemonic(forKey: seed)
+        try MasterMnemonicStore.store(mnemonic)
 
         let deviceId = try await DeviceKey.attest()
         let recovery = RecoveryManager.configure(address: result.osaurusId)
@@ -37,14 +40,12 @@ public struct OsaurusIdentity: Sendable {
         return IdentityInfo(
             osaurusId: result.osaurusId,
             deviceId: deviceId,
-            recovery: recovery,
-            mnemonic: mnemonic
+            recovery: recovery
         )
     }
 
     /// Build an `IdentityInfo` from the already-installed master key. Triggers a
-    /// biometric prompt to read the master and re-attest the device, but does NOT
-    /// produce a new mnemonic or recovery code.
+    /// biometric prompt to read the master and re-attest the device.
     private static func loadExistingIdentity() async throws -> IdentityInfo {
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 300
@@ -53,8 +54,7 @@ public struct OsaurusIdentity: Sendable {
         return IdentityInfo(
             osaurusId: osaurusId,
             deviceId: deviceId,
-            recovery: RecoveryInfo(code: ""),
-            mnemonic: nil
+            recovery: RecoveryInfo(code: "")
         )
     }
 
@@ -71,6 +71,7 @@ public struct OsaurusIdentity: Sendable {
     @MainActor
     public static func wipe() {
         MasterKey.delete()
+        MasterMnemonicStore.delete()
         APIKeyManager.shared.deleteAll()
 
         for agent in AgentManager.shared.agents where !agent.isBuiltIn {

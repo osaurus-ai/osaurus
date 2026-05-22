@@ -227,17 +227,30 @@ public final class SandboxPluginManager: ObservableObject {
 
         NSLog("[SandboxPluginManager] Verifying \(snapshot.count) installed plugin(s) after container start")
 
-        // Reset the per-launch "deps seeded" set so each post-start pass
-        // re-seeds for the freshly booted rootfs. The set only short-
-        // circuits the repair path (`installSystemDependencies(...:agentId:)`)
-        // — the user-facing `install(...)` path always runs apk add.
-        agentsWithSeededDeps.removeAll()
+        // Warm restart: the in-guest apk db from the previous boot is
+        // still on disk, so every previously-installed system package is
+        // already present. Skip `batchInstallDependencies` and seed
+        // `agentsWithSeededDeps` so per-plugin repair also short-circuits
+        // `installSystemDependencies`. Per-plugin verify still runs to
+        // catch app-version changes, but for unchanged plugins it's just
+        // a few hundred ms of bridge stat()s.
+        let isWarmBoot = await SandboxManager.shared.wasLastBootWarm
 
-        // Batch system-deps install per agent first. The await is sequential
-        // across agents because apk acquires a container-wide lock; running
-        // them in parallel would just serialize inside the guest while
-        // burning extra exec round-trips.
-        await batchInstallDependencies(snapshot)
+        if isWarmBoot {
+            agentsWithSeededDeps = Set(
+                snapshot.compactMap { (agentId, plugin) -> String? in
+                    plugin.dependencies?.isEmpty == false ? agentId : nil
+                }
+            )
+        } else {
+            // Cold boot: reset the per-launch "deps seeded" set so each
+            // post-start pass re-seeds for the freshly booted rootfs.
+            // `apk` is sequential per agent because it acquires a
+            // container-wide lock — parallel calls would just serialize
+            // inside the guest while burning extra exec round-trips.
+            agentsWithSeededDeps.removeAll()
+            await batchInstallDependencies(snapshot)
+        }
 
         await runRepairsConcurrently(snapshot, maxConcurrent: 4)
     }

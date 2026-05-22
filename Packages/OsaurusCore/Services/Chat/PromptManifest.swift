@@ -169,11 +169,12 @@ struct ComposedContext: Sendable {
     /// prefix is what makes the prompt byte-stable across turns once preflight
     /// is cached.
     let memorySection: String?
-    /// Snapshot of the always-loaded tool names this compose used. Callers
-    /// stash it on `SessionToolState.initialAlwaysLoadedNames` after the
-    /// first compose so subsequent composes can freeze the schema against
+    /// Snapshot of the always-loaded tool names resolved for this compose.
+    /// Callers stash it on `SessionToolState.initialAlwaysLoadedNames` after
+    /// the first compose so subsequent composes can freeze the schema against
     /// it via `frozenAlwaysLoadedNames` — preventing tools that register
-    /// mid-session from silently appearing in turn 2.
+    /// mid-session from silently appearing in turn 2. It may include a
+    /// trivial-turn baseline even when `tools` is empty for that one request.
     let alwaysLoadedNames: LoadedTools
     /// Hash of the static prefix + canonical tool payloads for cache evidence.
     let cacheHint: String

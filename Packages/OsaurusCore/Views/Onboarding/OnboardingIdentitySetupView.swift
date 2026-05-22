@@ -3,13 +3,12 @@
 //  osaurus
 //
 //  Onboarding step 4 — claim a personal signature. Three internal phases
-//  (prompt → generating → recovery code) swap inside the body slot so the
-//  chrome stays still.
+//  (prompt → generating → done) swap inside the body slot so the chrome
+//  stays still.
 //
-//  Copy avoids crypto/wallet vocabulary on purpose — first-run users see
-//  "secret signature" and "recovery code", not "master key" / "BIP39".
-//  The underlying primitive is still the cryptographic master identity
-//  from `docs/IDENTITY.md`; only the surface language changed.
+//  Copy avoids crypto/wallet vocabulary on purpose. The 24-word recovery
+//  phrase is no longer surfaced here — it's persisted to iCloud Keychain
+//  by `OsaurusIdentity.setup()` and viewable later from Settings.
 //
 
 import AppKit
@@ -18,9 +17,9 @@ import SwiftUI
 // MARK: - Animation
 
 /// Spring used for the in-step phase cross-fades (prompt → generating →
-/// recovery → …). Lives at file scope so both `IdentityState` (which
-/// drives the swap via `withAnimation`) and the in-body phase ZStack
-/// reach for the same easing.
+/// done → …). Lives at file scope so both `IdentityState` (which drives
+/// the swap via `withAnimation`) and the in-body phase ZStack reach for
+/// the same easing.
 enum IdentityAnimation {
     static let layoutSwap: Animation = .spring(response: 0.5, dampingFraction: 0.85)
 }
@@ -30,7 +29,11 @@ enum IdentityAnimation {
 enum OnboardingIdentityPhase: Equatable {
     case prompt
     case generating
-    case recovery(IdentityInfo)
+    /// Terminal confirmation beat shown for ~`autoAdvanceDelay` seconds
+    /// after a successful setup, before the step auto-advances. Gives the
+    /// user a "signature ready" frame instead of slamming them into the
+    /// next slide mid-biometric.
+    case done(IdentityInfo)
     case alreadyExists
     case error(String)
 
@@ -38,7 +41,7 @@ enum OnboardingIdentityPhase: Equatable {
         switch (lhs, rhs) {
         case (.prompt, .prompt): return true
         case (.generating, .generating): return true
-        case (.recovery(let a), .recovery(let b)): return a.osaurusId == b.osaurusId
+        case (.done(let a), .done(let b)): return a.osaurusId == b.osaurusId
         case (.alreadyExists, .alreadyExists): return true
         case (.error(let a), .error(let b)): return a == b
         default: return false
@@ -52,16 +55,20 @@ enum OnboardingIdentityPhase: Equatable {
 final class IdentityState: ObservableObject {
     @Published var phase: OnboardingIdentityPhase = .prompt
 
-    /// A footer caption that nudges the user about the recovery code rules
-    /// only on the recovery phase. Other phases hide it.
-    var footerCaption: LocalizedStringKey? {
-        switch phase {
-        case .recovery:
-            return "Shown once. Save it before continuing."
-        case .prompt, .generating, .alreadyExists, .error:
-            return nil
-        }
-    }
+    /// Whether the "Advanced" disclosure (hex address preview) is
+    /// expanded. Lives on the state object so the toggle survives the
+    /// prompt → error → prompt phase swap.
+    @Published var showAdvanced: Bool = false
+
+    /// How long the `.done` confirmation card hangs on screen before the
+    /// step auto-advances. Long enough to register the success state,
+    /// short enough to feel snappy.
+    static let autoAdvanceDelay: TimeInterval = 0.6
+
+    /// No footer caption on this step anymore. The recovery phrase that
+    /// used to live behind "Shown once. Save it before continuing." now
+    /// lives in iCloud Keychain.
+    var footerCaption: LocalizedStringKey? { nil }
 
     func generate() {
         // If a master already exists, jump straight past identity setup —
@@ -73,36 +80,18 @@ final class IdentityState: ObservableObject {
             return
         }
 
-        // The phase-level cross-fade is driven by `withAnimation` here
-        // (rather than an implicit `.animation(value:)` on the body) so
-        // the parent OnboardingView's slide-in transition isn't
-        // intercepted when the user first lands on the identity step.
         withAnimation(IdentityAnimation.layoutSwap) { phase = .generating }
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             do {
                 let info = try await OsaurusIdentity.setup()
-                if info.mnemonic == nil {
-                    // setup() short-circuited because a key already exists.
-                    // Surface that state explicitly rather than rendering a
-                    // blank recovery card.
-                    withAnimation(IdentityAnimation.layoutSwap) { self.phase = .alreadyExists }
-                } else {
-                    withAnimation(IdentityAnimation.layoutSwap) { self.phase = .recovery(info) }
-                }
+                withAnimation(IdentityAnimation.layoutSwap) { self.phase = .done(info) }
             } catch {
                 withAnimation(IdentityAnimation.layoutSwap) {
                     self.phase = .error(error.localizedDescription)
                 }
             }
         }
-    }
-
-    /// Persist the user-facing acknowledgement that they have saved the BIP39
-    /// recovery phrase. Drives the banner in `IdentityView.MasterAddressSection`
-    /// on subsequent launches.
-    func acknowledgeBackup() {
-        UserDefaults.standard.set(true, forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
     }
 }
 
@@ -115,26 +104,14 @@ struct IdentityBody: View {
 
     /// Sample master address taken straight from `docs/IDENTITY.md`. Used
     /// only as a visual preview before the real one is generated, so the
-    /// abstract "cryptographic address" idea has a concrete shape.
+    /// abstract "cryptographic address" idea has a concrete shape. Kept
+    /// behind the "Advanced" disclosure so first-run users don't see
+    /// hex-encoded wallet language.
     private static let previewMasterAddress =
         "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
 
     var body: some View {
-        // No `.transition(...)` or `.animation(_:value:)` at this level:
-        // those would compete with the parent `OnboardingView`'s slide
-        // transition when the user first lands on the identity step, and
-        // the freshly-inserted child's opacity fade would visually hide
-        // the slide motion. The intra-step recovery <-> non-recovery
-        // cross-fade is driven by `IdentityState.generate` wrapping its
-        // phase mutation in `withAnimation(IdentityAnimation.layoutSwap)`.
-        switch state.phase {
-        case .recovery(let info):
-            OnboardingFullWidthBody(subtitle: subtitle) {
-                recoveryBody(info: info)
-            }
-        default:
-            twoColumnBody
-        }
+        twoColumnBody
     }
 
     private var twoColumnBody: some View {
@@ -144,10 +121,6 @@ struct IdentityBody: View {
             leftBody: leftBody,
             subtitle: subtitle
         ) {
-            // Intra-two-column phase swaps (prompt → generating → error
-            // → alreadyExists) still slide horizontally. The .id()
-            // change is what triggers the transition; the `withAnimation`
-            // wrapper at the state mutation site provides the timing.
             ZStack {
                 phaseBody
                     .id(phaseID)
@@ -161,7 +134,7 @@ struct IdentityBody: View {
     private var leftHeadline: LocalizedStringKey {
         switch state.phase {
         case .prompt, .generating, .error: return "Your secret signature"
-        case .recovery: return "Save your recovery code"
+        case .done: return "Signature ready"
         case .alreadyExists: return "You're already set up"
         }
     }
@@ -170,24 +143,22 @@ struct IdentityBody: View {
         switch state.phase {
         case .prompt, .error:
             return
-                "A short code that proves *you* made what you make on Osaurus. Stops other people from posing as your agent. Saved in your Mac's Keychain — we never see it."
+                "A short code that proves what you make is really yours. We back it up in iCloud Keychain so it follows you across your Apple devices."
         case .generating:
             return "Just a moment — making your signature now."
-        case .recovery:
-            return
-                "Write these 24 words down or paste them into your password manager. If your Mac's Keychain ever gets wiped, this is how you restore your identity. Osaurus can't email it to you."
+        case .done:
+            return "Backed up in iCloud Keychain so it follows you across your Apple devices."
         case .alreadyExists:
-            return
-                "We found a signature already saved in your Mac's Keychain. We're keeping that one so nothing you've built here breaks."
+            return "We're keeping the signature you have so nothing breaks."
         }
     }
 
     private var subtitle: LocalizedStringKey {
         switch state.phase {
         case .prompt, .error:
-            return "Like a master password — but you keep the only copy."
+            return "A short code that proves what you make is really yours."
         case .generating: return "Making your signature…"
-        case .recovery: return "Shown once. Copy it before continuing."
+        case .done: return "All set. Carrying on…"
         case .alreadyExists: return "Picking up where you left off."
         }
     }
@@ -196,7 +167,7 @@ struct IdentityBody: View {
         switch state.phase {
         case .prompt: return "prompt"
         case .generating: return "generating"
-        case .recovery: return "recovery"
+        case .done: return "done"
         case .alreadyExists: return "alreadyExists"
         case .error: return "error"
         }
@@ -218,8 +189,8 @@ struct IdentityBody: View {
             promptBody
         case .generating:
             generatingBody
-        case .recovery(let info):
-            recoveryBody(info: info)
+        case .done(let info):
+            doneBody(info: info)
         case .alreadyExists:
             alreadyExistsBody
         case .error(let message):
@@ -246,7 +217,7 @@ struct IdentityBody: View {
                         .font(theme.font(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     Text(
-                        "We won't make a new one — everything you've built so far keeps working.",
+                        "We're keeping the one you already have so nothing you've built breaks.",
                         bundle: .module
                     )
                     .font(theme.font(size: 11))
@@ -260,17 +231,13 @@ struct IdentityBody: View {
         }
     }
 
-    // MARK: - Prompt body (hero chip + capabilities + footnote)
+    // MARK: - Prompt body (capabilities + advanced + footnote)
 
     private var promptBody: some View {
         VStack(alignment: .leading, spacing: 14) {
-            addressChip(
-                Self.previewMasterAddress,
-                label: "Your signature (preview)",
-                trailingBadge: "PREVIEW"
-            )
-
             capabilityRows
+
+            advancedDisclosure
 
             footnoteRow
         }
@@ -286,18 +253,58 @@ struct IdentityBody: View {
                 )
                 bulletRow(
                     icon: "key.horizontal.fill",
-                    title: L("Hand out safe keys"),
-                    detail: L("Give tools and plugins their own access you can take back — never your password.")
+                    title: L("Let tools in without sharing your password"),
+                    detail: L("Each one gets its own access, and you can take it back any time.")
                 )
                 bulletRow(
-                    icon: "lifepreserver.fill",
-                    title: L("Have a backup phrase"),
+                    icon: "icloud.fill",
+                    title: L("Backed up by Apple"),
                     detail: L(
-                        "24 words you save once — enough to restore your identity if your Mac's Keychain gets wiped."
+                        "Stored in your iCloud Keychain, so a new Mac just picks up where you left off."
                     )
                 )
             }
             .padding(14)
+        }
+    }
+
+    /// Disclosure that exposes the hex address preview chip for users who
+    /// actually want to see it. Hidden by default so non-crypto users on
+    /// first run aren't confronted with wallet-style language.
+    ///
+    /// Implemented as a Button + conditional content rather than
+    /// `DisclosureGroup` because the latter only registers its own
+    /// invisible chevron as the hit target — the custom label content
+    /// stays inert and clicking "Advanced" did nothing.
+    @ViewBuilder
+    private var advancedDisclosure: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(theme.animationQuick()) {
+                    state.showAdvanced.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: state.showAdvanced ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("Advanced", bundle: .module)
+                        .font(theme.font(size: 12, weight: .semibold))
+                    Spacer(minLength: 0)
+                }
+                .foregroundColor(theme.tertiaryText)
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .localizedHelp(state.showAdvanced ? "Hide details" : "Show details")
+
+            if state.showAdvanced {
+                addressChip(
+                    Self.previewMasterAddress,
+                    label: "Your signature (preview)",
+                    trailingBadge: "Preview"
+                )
+            }
         }
     }
 
@@ -306,7 +313,7 @@ struct IdentityBody: View {
             Image(systemName: "lock.fill")
                 .font(.system(size: 10, weight: .semibold))
             Text(
-                "Saved in your Mac's Keychain. You can skip and add this later.",
+                "Backed up in iCloud Keychain. You can manage this later in Settings.",
                 bundle: .module
             )
             .font(theme.font(size: 11))
@@ -339,11 +346,12 @@ struct IdentityBody: View {
         }
     }
 
-    // MARK: - Address chip (shared by prompt preview and recovery card)
+    // MARK: - Address chip (used by the Advanced preview)
 
-    /// Renders an EIP-55 hex address as a labelled chip. Used for the
-    /// prompt-phase preview (with a `PREVIEW` badge) and the recovery-phase
-    /// real master address (no badge).
+    /// Renders an EIP-55 hex address as a labelled chip. The trailing
+    /// "Preview" badge marks this as a sample value, not the user's own
+    /// signature (which they'll see in Settings → Identity once setup
+    /// completes).
     private func addressChip(
         _ address: String,
         label: LocalizedStringKey,
@@ -362,10 +370,8 @@ struct IdentityBody: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(label, bundle: .module)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(theme.font(size: 10, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
-                        .tracking(0.6)
-                        .textCase(.uppercase)
                     Text(truncated(address))
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
                         .foregroundColor(theme.primaryText)
@@ -377,8 +383,7 @@ struct IdentityBody: View {
 
                 if let badge = trailingBadge {
                     Text(LocalizedStringKey(badge), bundle: .module)
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .tracking(0.7)
+                        .font(theme.font(size: 10, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
@@ -403,10 +408,13 @@ struct IdentityBody: View {
         return "\(head)…\(tail)"
     }
 
-    // MARK: - Error / Generating
+    // MARK: - Error / Generating / Done
 
     private func errorBanner(_ message: String) -> some View {
-        OnboardingCalloutBanner(tone: .error, rawMessage: message)
+        OnboardingCalloutBanner.error(
+            prefix: "Couldn't make your signature.",
+            detail: message
+        )
     }
 
     private var generatingBody: some View {
@@ -424,36 +432,39 @@ struct IdentityBody: View {
         }
     }
 
-    // MARK: - Recovery body
-
-    private func recoveryBody(info: IdentityInfo) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            OnboardingCalloutBanner(
-                tone: .warning,
-                message: "This is the only copy. We can't email it to you."
-            )
-
-            if let mnemonic = info.mnemonic {
-                MasterMnemonicCard(words: mnemonic)
-            }
-
-            addressChip(info.osaurusId, label: "Your signature")
-
-            HStack(spacing: 6) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                Text(
-                    "Write the 24 words down or paste them into your password manager.",
-                    bundle: .module
-                )
-                .font(theme.font(size: 11))
+    /// Confirmation card shown for one beat after a successful generate.
+    /// The CTA observes the phase change and auto-advances after
+    /// `IdentityState.autoAdvanceDelay`, so this view never owns its own
+    /// continue action.
+    private func doneBody(info _: IdentityInfo) -> some View {
+        OnboardingGlassCard {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(theme.successColor.opacity(0.14))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.successColor)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Signature ready", bundle: .module)
+                        .font(theme.font(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Backed up in your iCloud Keychain. You can view it in Settings any time.",
+                        bundle: .module
+                    )
+                    .font(theme.font(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
                 Spacer(minLength: 0)
             }
-            .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
         }
     }
-
 }
 
 // MARK: - CTA
@@ -462,23 +473,38 @@ struct IdentityCTA: View {
     @ObservedObject var state: IdentityState
     let onComplete: () -> Void
 
+    @State private var hasAutoAdvanced = false
+
     var body: some View {
+        ctaContent
+            .onChange(of: state.phase) { _, newPhase in
+                // Auto-advance after the .done confirmation card has had a
+                // beat to register. Guarded so we don't fire twice if the
+                // user rapidly bounces between phases.
+                if case .done = newPhase, !hasAutoAdvanced {
+                    hasAutoAdvanced = true
+                    Task { @MainActor in
+                        try? await Task.sleep(
+                            nanoseconds: UInt64(IdentityState.autoAdvanceDelay * 1_000_000_000)
+                        )
+                        onComplete()
+                    }
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var ctaContent: some View {
         switch state.phase {
         case .prompt, .error:
             OnboardingBrandButton(title: "Make My Signature", action: state.generate)
                 .frame(width: OnboardingMetrics.ctaWidthCompact)
 
-        case .generating:
+        case .generating, .done:
             // Reserve the CTA footprint so the action row doesn't twitch
-            // when the phase advances.
+            // when the phase advances. `.done` auto-advances via the
+            // `onChange` observer above.
             Color.clear.frame(width: OnboardingMetrics.ctaWidthCompact, height: OnboardingMetrics.buttonHeight)
-
-        case .recovery:
-            OnboardingBrandButton(title: "I've Saved It") {
-                state.acknowledgeBackup()
-                onComplete()
-            }
-            .frame(width: OnboardingMetrics.ctaWidthCompact)
 
         case .alreadyExists:
             OnboardingBrandButton(title: "Continue", action: onComplete)
@@ -497,14 +523,8 @@ struct IdentitySecondary: View {
         switch state.phase {
         case .prompt, .error:
             OnboardingTextButton(title: "Skip for now", action: onSkip)
-        case .generating, .alreadyExists:
+        case .generating, .done, .alreadyExists:
             EmptyView()
-        case .recovery(let info):
-            OnboardingTextButton(title: "Copy phrase") {
-                guard let mnemonic = info.mnemonic else { return }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(mnemonic.joined(separator: " "), forType: .string)
-            }
         }
     }
 }
