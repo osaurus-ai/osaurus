@@ -2759,7 +2759,8 @@ struct ChatView: View {
                             onExport: { metadata, format in
                                 ChatSessionExportCoordinator.run(
                                     metadataSession: metadata,
-                                    format: format
+                                    format: format,
+                                    scope: .chat(windowState.windowId)
                                 )
                             },
                             onOpenInNewWindow: { sessionData in

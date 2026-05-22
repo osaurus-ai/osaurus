@@ -7,13 +7,15 @@
 
 import AppKit
 import Foundation
+import SwiftUI
 import UniformTypeIdentifiers
 
 @MainActor
 enum ChatSessionExportCoordinator {
     static func run(
         metadataSession: ChatSessionData,
-        format: ChatSessionSidebar.ExportFormat
+        format: ChatSessionSidebar.ExportFormat,
+        scope: ThemedAlertScope
     ) {
         // Sidebar only carries metadata. Prefer the store, fall back to the
         // in-memory manager (freshly created sessions are not flushed yet,
@@ -35,26 +37,53 @@ enum ChatSessionExportCoordinator {
         let response = panel.runModal()
         guard response == .OK, let url = panel.url else { return }
 
-        switch format {
-        case .markdown:
+        let progressId = UUID()
+
+        // Only surface the progress alert if the export hasn't finished
+        // within the threshold, so quick markdown writes don't flash a
+        // dialog the user can't read.
+        let progressThreshold: Duration = .seconds(2.5)
+        let displayTask = Task { @MainActor in
             do {
-                try ChatSessionExporter.writeMarkdown(session: full, to: url)
+                try await Task.sleep(for: progressThreshold)
             } catch {
-                presentError(error)
+                return  // cancelled before the threshold elapsed
             }
-        case .pdf:
+            ThemedAlertCenter.shared.present(
+                ThemedAlertRequest(
+                    id: progressId,
+                    title: progressTitle(format),
+                    message: "Working on \"\(full.title)\". This may take a moment for larger chats.",
+                    accessory: AnyView(ExportProgressIndicator()),
+                    buttons: [.cancel("Hide")],
+                    onDismiss: {
+                        ThemedAlertCenter.shared.dismiss(scope: scope, id: progressId)
+                    }
+                ),
+                scope: scope
+            )
+        }
+
+        Task { @MainActor in
+            let result: Result<Void, Error>
             do {
-                try ChatSessionExporter.writePDF(session: full, to: url)
-            } catch {
-                presentError(error)
-            }
-        case .zip:
-            Task { @MainActor in
-                do {
+                switch format {
+                case .markdown:
+                    try ChatSessionExporter.writeMarkdown(session: full, to: url)
+                case .pdf:
+                    try ChatSessionExporter.writePDF(session: full, to: url)
+                case .zip:
                     try await ChatSessionExporter.writeZip(session: full, to: url)
-                } catch {
-                    presentError(error)
                 }
+                result = .success(())
+            } catch {
+                result = .failure(error)
+            }
+            displayTask.cancel()
+            // Idempotent: no-op when nothing was ever presented for this id.
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: progressId)
+            if case .failure(let error) = result {
+                presentError(error)
             }
         }
     }
@@ -91,6 +120,14 @@ enum ChatSessionExportCoordinator {
         }
     }
 
+    private static func progressTitle(_ format: ChatSessionSidebar.ExportFormat) -> String {
+        switch format {
+        case .markdown: return "Exporting Markdown\u{2026}"
+        case .pdf: return "Exporting PDF\u{2026}"
+        case .zip: return "Building Zip\u{2026}"
+        }
+    }
+
     private static func sanitize(_ raw: String) -> String {
         let invalid = CharacterSet(charactersIn: "/\\:*?\"<>|")
         let cleaned = raw.components(separatedBy: invalid).joined(separator: "_")
@@ -105,6 +142,19 @@ enum ChatSessionExportCoordinator {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+}
+
+/// Indeterminate spinner used as the themed-alert accessory while an
+/// export is in flight.
+private struct ExportProgressIndicator: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .scaleEffect(0.8)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
