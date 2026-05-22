@@ -137,10 +137,10 @@ enum ChatSessionExportCoordinator {
 
     private static func presentError(_ error: Error) {
         let alert = NSAlert()
-        alert.messageText = "Export failed"
+        alert.messageText = L("Export failed")
         alert.informativeText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: L("OK"))
         alert.runModal()
     }
 }
