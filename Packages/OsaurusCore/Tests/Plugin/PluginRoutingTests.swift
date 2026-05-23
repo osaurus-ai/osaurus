@@ -114,6 +114,68 @@ struct PluginWebSpecAPIMountTests {
     }
 }
 
+// MARK: - Plugin static file containment
+
+struct PluginStaticFileContainmentTests {
+    @Test func staticFileContainmentAllowsFilesInsideWebDirectory() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let webDir = root.appendingPathComponent("web", isDirectory: true)
+        try FileManager.default.createDirectory(at: webDir, withIntermediateDirectories: true)
+        let fileURL = webDir.appendingPathComponent("index.html")
+        try "ok".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let resolved = try #require(HTTPHandler.containedPluginStaticFileURL(for: fileURL, webDirectory: webDir))
+
+        #expect(resolved.path == fileURL.resolvingSymlinksInPath().standardizedFileURL.path)
+    }
+
+    @Test func staticFileContainmentRejectsSiblingPrefixDirectories() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let webDir = root.appendingPathComponent("web", isDirectory: true)
+        let sibling = root.appendingPathComponent("web-other", isDirectory: true)
+        try FileManager.default.createDirectory(at: webDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+        let secretURL = sibling.appendingPathComponent("secret.txt")
+        try "secret".write(to: secretURL, atomically: true, encoding: .utf8)
+
+        #expect(HTTPHandler.containedPluginStaticFileURL(for: secretURL, webDirectory: webDir) == nil)
+    }
+
+    @Test func staticFileContainmentRejectsTraversalOutsideWebDirectory() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let webDir = root.appendingPathComponent("web", isDirectory: true)
+        try FileManager.default.createDirectory(at: webDir, withIntermediateDirectories: true)
+        let secretURL = root.appendingPathComponent("secret.txt")
+        try "secret".write(to: secretURL, atomically: true, encoding: .utf8)
+        let traversalURL = webDir.appendingPathComponent("../secret.txt")
+
+        #expect(HTTPHandler.containedPluginStaticFileURL(for: traversalURL, webDirectory: webDir) == nil)
+    }
+
+    @Test func staticFileContainmentRejectsSymlinksEscapingWebDirectory() throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let webDir = root.appendingPathComponent("web", isDirectory: true)
+        try FileManager.default.createDirectory(at: webDir, withIntermediateDirectories: true)
+        let secretURL = root.appendingPathComponent("secret.txt")
+        try "secret".write(to: secretURL, atomically: true, encoding: .utf8)
+        let linkURL = webDir.appendingPathComponent("linked-secret.txt")
+        try FileManager.default.createSymbolicLink(at: linkURL, withDestinationURL: secretURL)
+
+        #expect(HTTPHandler.containedPluginStaticFileURL(for: linkURL, webDirectory: webDir) == nil)
+    }
+
+    private func makeTemporaryRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-plugin-static-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+}
+
 // MARK: - Tunnel exposure flag
 
 struct PluginTunnelExposureTests {

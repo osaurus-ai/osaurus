@@ -913,10 +913,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let webDir = versionDir.appendingPathComponent(webSpec.static_dir, isDirectory: true)
                     let fileURL = webDir.appendingPathComponent(filePath)
 
-                    // Prevent escaping the web directory
-                    let resolvedPath = fileURL.standardizedFileURL.path
-                    let webDirPath = webDir.standardizedFileURL.path
-                    guard resolvedPath.hasPrefix(webDirPath) else {
+                    guard
+                        let resolvedFileURL = Self.containedPluginStaticFileURL(
+                            for: fileURL,
+                            webDirectory: webDir
+                        )
+                    else {
                         return self.sendPluginErrorFromTask(
                             loop: loop,
                             ctxBound: ctxBound,
@@ -932,12 +934,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
 
                     let apiMount = webSpec.api_mount ?? "/api"
-                    if FileManager.default.fileExists(atPath: resolvedPath) {
+                    if FileManager.default.fileExists(atPath: resolvedFileURL.path) {
                         return self.serveStaticFile(
                             loop: loop,
                             ctxBound: ctxBound,
                             version: version,
-                            filePath: resolvedPath,
+                            filePath: resolvedFileURL.path,
                             pluginId: pluginId,
                             apiMount: apiMount,
                             agentId: agentIdStr,
@@ -950,13 +952,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
 
                     // SPA fallback: serve entry point for non-file paths
-                    let entryPath = webDir.appendingPathComponent(webSpec.entry).path
-                    if FileManager.default.fileExists(atPath: entryPath) {
+                    let entryURL = webDir.appendingPathComponent(webSpec.entry)
+                    guard
+                        let resolvedEntryURL = Self.containedPluginStaticFileURL(
+                            for: entryURL,
+                            webDirectory: webDir
+                        )
+                    else {
+                        return self.sendPluginErrorFromTask(
+                            loop: loop,
+                            ctxBound: ctxBound,
+                            version: version,
+                            status: .forbidden,
+                            message: "Access denied",
+                            corsHeaders: corsHeaders,
+                            startTime: startTime,
+                            method: method,
+                            path: path,
+                            userAgent: userAgent
+                        )
+                    }
+                    if FileManager.default.fileExists(atPath: resolvedEntryURL.path) {
                         return self.serveStaticFile(
                             loop: loop,
                             ctxBound: ctxBound,
                             version: version,
-                            filePath: entryPath,
+                            filePath: resolvedEntryURL.path,
                             pluginId: pluginId,
                             apiMount: apiMount,
                             agentId: agentIdStr,
@@ -1430,6 +1451,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 userAgent: userAgent
             )
         }
+    }
+
+    /// Resolves symlinks before plugin static serving so path checks use the real filesystem boundary.
+    static func containedPluginStaticFileURL(for candidateURL: URL, webDirectory: URL) -> URL? {
+        let baseURL = webDirectory.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedURL = candidateURL.resolvingSymlinksInPath().standardizedFileURL
+        let basePath = baseURL.path
+        let resolvedPath = resolvedURL.path
+
+        guard resolvedPath == basePath || resolvedPath.hasPrefix(basePath + "/") else {
+            return nil
+        }
+        return resolvedURL
     }
 
     /// Validates a Bearer token from the Authorization header.
