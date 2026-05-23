@@ -626,6 +626,41 @@ struct RuntimePolicySourceTests {
         #expect(cacheSection.contains(#"value: $draft.cache.legacyDisk.directory"#))
     }
 
+    @Test("Server settings cache changes clear loaded model runtime")
+    func cacheSettingsChangesClearLoadedModelRuntime() throws {
+        let controller = try Self.source("Networking/ServerController.swift")
+
+        #expect(controller.contains("loadedModelRuntimeInputsRequireRefresh"))
+        #expect(controller.contains("previous.cache != next.cache"))
+        #expect(controller.contains("previous.multimodal != next.multimodal"))
+        #expect(controller.contains("previous.mtp != next.mtp"))
+        #expect(controller.contains("await ModelRuntime.shared.clearAll()"))
+    }
+
+    @Test("Server settings concurrency UI does not advertise false restart or runtime wiring")
+    func serverSettingsConcurrencyUIDoesNotAdvertiseFalseRestartOrRuntimeWiring() throws {
+        let tab = try Self.source("Views/Settings/ServerSettingsTabContent.swift")
+        let concurrency = try Self.source("Views/Settings/ServerSettings/ConcurrencySection.swift")
+
+        guard let restartStart = tab.range(of: "private var pendingRestart: Bool"),
+            let restartEnd = tab.range(
+                of: "private var hasUnsavedChanges: Bool",
+                range: restartStart.lowerBound ..< tab.endIndex
+            )
+        else {
+            Issue.record("Could not locate pendingRestart in ServerSettingsTabContent.swift")
+            return
+        }
+        let pendingRestart = tab[restartStart.lowerBound ..< restartEnd.lowerBound]
+        #expect(!pendingRestart.contains("concurrency.maxConcurrentSequences"))
+
+        #expect(concurrency.contains("`maxConcurrentSequences` hot-resizes"))
+        #expect(concurrency.contains("runtime consumers are not yet implemented"))
+        #expect(concurrency.contains("Reserved contract flag for explicit scheduler gating"))
+        #expect(concurrency.contains("Concurrent Sessions"))
+        #expect(concurrency.contains("Prompt Prefill Chunk Size"))
+    }
+
     @Test("Tools settings panel separates wired parser overrides from planned host bridges")
     func toolsSettingsPanelSeparatesWiredParserOverridesFromPlannedHostBridges() throws {
         let toolsSection = try Self.source("Views/Settings/ServerSettings/ToolsTemplatesSection.swift")

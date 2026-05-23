@@ -51,8 +51,6 @@ struct ServerSettingsTabContent: View {
         draft.network.port != server.runtimeSettings.network.port
             || draft.network.host != server.runtimeSettings.network.host
             || draft.network.corsOrigins != server.runtimeSettings.network.corsOrigins
-            || draft.concurrency.maxConcurrentSequences
-                != server.runtimeSettings.concurrency.maxConcurrentSequences
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
             || draftLegacy.maxRequestBodyBytes != server.configuration.maxRequestBodyBytes
             || draftLegacy.maxPairingBodyBytes != server.configuration.maxPairingBodyBytes
