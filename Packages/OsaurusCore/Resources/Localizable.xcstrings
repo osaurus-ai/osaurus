@@ -1048,7 +1048,7 @@
     "A quick tour" : {
 
     },
-    "A safety net for your agent" : {
+    "A safety net for your dino" : {
 
     },
     "A short code that proves what you make is really yours." : {
@@ -5463,6 +5463,9 @@
           }
         }
       }
+    },
+    "Create Dino" : {
+
     },
     "Create custom assistant personalities with unique behaviors" : {
       "localizations" : {
@@ -11049,7 +11052,7 @@
     "Let tools in without sharing your password" : {
 
     },
-    "Lets your agent install packages, run scripts, and work with files like a real machine." : {
+    "Lets your dino install packages, run scripts, and work with files like a real machine." : {
 
     },
     "License" : {
@@ -11494,7 +11497,7 @@
         }
       }
     },
-    "Make different agents for different jobs. Your memories stick around, ready when you need them." : {
+    "A different dino for every job. Your memories stick around, ready when you need them." : {
 
     },
     "Make My Signature" : {
@@ -14819,7 +14822,7 @@
     "Pick one or more above." : {
 
     },
-    "Pick what your agent can do" : {
+    "Pick what your dino can do" : {
 
     },
     "Pick when this agent should resume firing scheduled and self-scheduled runs. The optional reason is logged in the audit trail." : {
@@ -19556,7 +19559,7 @@
         }
       }
     },
-    "Stops anyone from impersonating your agent." : {
+    "Stops anyone from pretending to be you." : {
 
     },
     "Storage" : {
@@ -21096,7 +21099,7 @@
         }
       }
     },
-    "Tools are little powers your agent can use — like reading the web or grabbing a file. Add a couple now, swap them in and out any time from Settings." : {
+    "Tools are little powers your dino can use — like reading the web or grabbing a file. Add a couple now, swap them in and out any time from Settings." : {
 
     },
     "Top P Override" : {
@@ -22706,13 +22709,13 @@
     "When enabled, press the hotkey to start transcribing. Your voice will be typed directly into the focused text field in any application." : {
 
     },
-    "When your agent installs packages, runs scripts, or fiddles with files, it does that in a tiny, walled-off workspace — separate from your Mac." : {
+    "When your dino installs packages, runs scripts, or fiddles with files, it does that in a tiny, walled-off workspace — separate from your Mac." : {
 
     },
     "Where do I get my key?" : {
 
     },
-    "Where your agent runs anything that touches your system." : {
+    "Where your dino runs anything that touches your system." : {
 
     },
     "Wide" : {

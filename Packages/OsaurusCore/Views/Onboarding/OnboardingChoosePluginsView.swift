@@ -231,9 +231,9 @@ struct ChoosePluginsBody: View {
     var body: some View {
         OnboardingTwoColumnBody(
             illustrationAsset: "osaurus-tool",
-            leftHeadline: "Pick what your agent can do",
+            leftHeadline: "Pick what your dino can do",
             leftBody:
-                "Tools are little powers your agent can use — like reading the web or grabbing a file. Add a couple now, swap them in and out any time from Settings.",
+                "Tools are little powers your dino can use — like reading the web or grabbing a file. Add a couple now, swap them in and out any time from Settings.",
             subtitle: "All optional. Add or remove anytime."
         ) {
             content

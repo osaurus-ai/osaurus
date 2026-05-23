@@ -123,7 +123,10 @@ public enum ChatSessionExporter {
     public static func writeZip(session: ChatSessionData, to url: URL) async throws {
         let fm = FileManager.default
         let bundleName = sanitizeFilename(session.title.isEmpty ? "chat" : session.title)
-        let workRoot = fm.temporaryDirectory.appendingPathComponent("osaurus-export-\(UUID().uuidString)", isDirectory: true)
+        let workRoot = fm.temporaryDirectory.appendingPathComponent(
+            "osaurus-export-\(UUID().uuidString)",
+            isDirectory: true
+        )
         let bundleDir = workRoot.appendingPathComponent(bundleName, isDirectory: true)
         let attachmentsDir = bundleDir.appendingPathComponent("attachments", isDirectory: true)
         defer { try? fm.removeItem(at: workRoot) }
@@ -227,34 +230,42 @@ public enum ChatSessionExporter {
             meta.append("Model: \(model)")
         }
         meta.append("Source: \(session.source.rawValue)")
-        body.append(NSAttributedString(
-            string: meta.joined(separator: " · ") + "\n\n",
-            attributes: [.font: metaFont, .foregroundColor: secondary]
-        ))
+        body.append(
+            NSAttributedString(
+                string: meta.joined(separator: " · ") + "\n\n",
+                attributes: [.font: metaFont, .foregroundColor: secondary]
+            )
+        )
 
         for (idx, turn) in session.turns.enumerated() {
-            body.append(NSAttributedString(
-                string: "\(turn.role.rawValue.capitalized) — turn \(idx + 1)\n",
-                attributes: [.font: roleFont]
-            ))
+            body.append(
+                NSAttributedString(
+                    string: "\(turn.role.rawValue.capitalized) — turn \(idx + 1)\n",
+                    attributes: [.font: roleFont]
+                )
+            )
             let trimmed = turn.content.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 body.append(NSAttributedString(string: trimmed + "\n", attributes: [.font: textFont]))
             }
             if !turn.attachments.isEmpty {
                 let listing = turn.attachments.map { "  - \(describe($0))" }.joined(separator: "\n")
-                body.append(NSAttributedString(
-                    string: "Attachments\n\(listing)\n",
-                    attributes: [.font: metaFont, .foregroundColor: secondary]
-                ))
+                body.append(
+                    NSAttributedString(
+                        string: "Attachments\n\(listing)\n",
+                        attributes: [.font: metaFont, .foregroundColor: secondary]
+                    )
+                )
             }
             if let calls = turn.toolCalls, !calls.isEmpty {
                 let listing = calls.map { "  - \($0.function.name)(\($0.function.arguments))" }
                     .joined(separator: "\n")
-                body.append(NSAttributedString(
-                    string: "Tool calls\n\(listing)\n",
-                    attributes: [.font: monoFont, .foregroundColor: secondary]
-                ))
+                body.append(
+                    NSAttributedString(
+                        string: "Tool calls\n\(listing)\n",
+                        attributes: [.font: monoFont, .foregroundColor: secondary]
+                    )
+                )
             }
             body.append(NSAttributedString(string: "\n", attributes: [.font: textFont]))
         }

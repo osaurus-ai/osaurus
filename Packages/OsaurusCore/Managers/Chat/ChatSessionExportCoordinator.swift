@@ -21,8 +21,9 @@ enum ChatSessionExportCoordinator {
         // in-memory manager (freshly created sessions are not flushed yet,
         // and `loadSession` is intermittently returning nil for rows that
         // do exist).
-        guard let full = ChatSessionStore.load(id: metadataSession.id)
-            ?? ChatSessionsManager.shared.session(for: metadataSession.id)
+        guard
+            let full = ChatSessionStore.load(id: metadataSession.id)
+                ?? ChatSessionsManager.shared.session(for: metadataSession.id)
         else {
             presentError(ChatSessionExporter.ExportError.sessionMissing)
             return
@@ -165,4 +166,3 @@ private struct ExportProgressIndicator: View {
         .frame(maxWidth: .infinity)
     }
 }
-
