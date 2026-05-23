@@ -49,8 +49,9 @@ public enum ChatSessionExporter {
         lines.append("> " + meta.joined(separator: " · "))
         lines.append("")
 
+        let agentLabel = assistantLabel(for: session)
         for (idx, turn) in session.turns.enumerated() {
-            lines.append("## \(turn.role.rawValue.capitalized) — turn \(idx + 1)")
+            lines.append("## \(roleLabel(for: turn, assistantLabel: agentLabel)) — turn \(idx + 1)")
             lines.append("")
             let trimmed = turn.content.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
@@ -175,6 +176,27 @@ public enum ChatSessionExporter {
         return att.filename ?? "attachment"
     }
 
+    /// Resolves the session's agent name for assistant role labels. Returns
+    /// nil for the default (built-in) agent so the export stays "Assistant"
+    /// instead of adding a noisy suffix.
+    private static func assistantLabel(for session: ChatSessionData) -> String? {
+        guard let agentId = session.agentId,
+              agentId != Agent.defaultId,
+              let agent = AgentManager.shared.agent(for: agentId),
+              !agent.isBuiltIn
+        else { return nil }
+        let name = agent.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
+    }
+
+    private static func roleLabel(for turn: ChatTurn, assistantLabel: String?) -> String {
+        let base = turn.role.rawValue.capitalized
+        if turn.role == .assistant, let label = assistantLabel {
+            return "\(base) (\(label))"
+        }
+        return base
+    }
+
     private static func formatDate(_ date: Date) -> String {
         let f = DateFormatter()
         f.dateStyle = .medium
@@ -232,9 +254,10 @@ public enum ChatSessionExporter {
             attributes: [.font: metaFont, .foregroundColor: secondary]
         ))
 
+        let agentLabel = assistantLabel(for: session)
         for (idx, turn) in session.turns.enumerated() {
             body.append(NSAttributedString(
-                string: "\(turn.role.rawValue.capitalized) — turn \(idx + 1)\n",
+                string: "\(roleLabel(for: turn, assistantLabel: agentLabel)) — turn \(idx + 1)\n",
                 attributes: [.font: roleFont]
             ))
             let trimmed = turn.content.trimmingCharacters(in: .whitespacesAndNewlines)
