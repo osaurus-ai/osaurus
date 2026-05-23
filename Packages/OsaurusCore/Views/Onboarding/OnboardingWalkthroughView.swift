@@ -46,7 +46,7 @@ enum WalkthroughPage: Int, CaseIterable, Identifiable {
                 "Ask anything. Osaurus plans, runs the tools it needs, and checks itself before answering."
         case .personal:
             return
-                "Make different agents for different jobs. Your memories stick around, ready when you need them."
+                "A different dino for every job. Your memories stick around, ready when you need them."
         case .privacy:
             return "Chats live on your Mac. Swap brains any time without losing your history."
         }

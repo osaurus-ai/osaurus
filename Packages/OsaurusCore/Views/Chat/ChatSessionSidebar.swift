@@ -99,7 +99,9 @@ struct ChatSessionSidebar: View {
             if SearchService.matches(query: searchQuery, in: session.title) { return true }
             if let key = session.externalSessionKey,
                 SearchService.matches(query: searchQuery, in: key)
-            { return true }
+            {
+                return true
+            }
             // Match capability labels so "vision" / "code" finds tagged chats.
             return session.capabilities.contains { cap in
                 SearchService.matches(query: searchQuery, in: cap.label)
