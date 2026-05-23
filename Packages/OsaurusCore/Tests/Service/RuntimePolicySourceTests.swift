@@ -685,7 +685,8 @@ struct RuntimePolicySourceTests {
         let toolsSection = try Self.source("Views/Settings/ServerSettings/ToolsTemplatesSection.swift")
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        #expect(toolsSection.contains("status: .engineReady"))
+        #expect(toolsSection.contains("status: .partial"))
+        #expect(!toolsSection.contains("status: .engineReady"))
         #expect(toolsSection.contains("Parser overrides are applied at model load"))
         #expect(toolsSection.contains("Applied by vmlx at local model load"))
         #expect(toolsSection.contains("Implicit tool-choice policy is persisted only"))

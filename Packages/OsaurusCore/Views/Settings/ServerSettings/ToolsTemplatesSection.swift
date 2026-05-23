@@ -17,7 +17,7 @@ struct ToolsTemplatesSection: View {
     var body: some View {
         ServerSettingsCard(
             section: .tools,
-            status: .engineReady,
+            status: .partial,
             blurb:
                 "Parser overrides are applied at model load. Tool-provider and template controls are persisted here until their host bridges land."
         ) {

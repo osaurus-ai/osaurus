@@ -23,12 +23,12 @@ import SwiftUI
 /// Card wrapper used by every Server → Settings section. Renders a
 /// proper card header (title + subtitle), only surfacing the
 /// engineering-state status chip when the controls aren't fully wired
-/// yet (`needsBridge`, `future`).
+/// yet (`partial`, `needsBridge`, `future`).
 ///
 /// `status` of `.engineReady` or `.hostOwned` is the common case and
-/// shows no chip — the title speaks for itself. Only off-by-default
-/// "Planned" or "Future" cards get the inline chip so the user knows
-/// the change won't take effect today.
+/// shows no chip — the title speaks for itself. Partial, Planned, or
+/// Future cards get the inline chip so the user knows which changes
+/// take effect today.
 struct ServerSettingsCard<Content: View>: View {
     let section: ServerSettingsSection
     let status: ServerSettingsStatusBadge.Status
@@ -40,7 +40,7 @@ struct ServerSettingsCard<Content: View>: View {
 
     private var shouldShowChip: Bool {
         switch status {
-        case .needsBridge, .future: return true
+        case .partial, .needsBridge, .future: return true
         case .engineReady, .hostOwned: return false
         }
     }
