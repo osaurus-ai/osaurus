@@ -47,9 +47,11 @@ public enum ServerRuntimeSettingsStore {
         let url = fileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
-            let decoded = normalizeLoadedSettings(
-                try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: url))
-            )
+            let raw = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: url))
+            let decoded = normalizeLoadedSettings(raw)
+            if decoded != raw {
+                save(decoded)
+            }
             cachedSnapshot = decoded
             return decoded
         } catch {
@@ -101,9 +103,12 @@ public enum ServerRuntimeSettingsStore {
         let url = directoryURL().appendingPathComponent(fileName)
         if FileManager.default.fileExists(atPath: url.path),
             let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
+            let raw = try? JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
         {
-            let normalized = normalizeLoadedSettings(decoded)
+            let normalized = normalizeLoadedSettings(raw)
+            if normalized != raw {
+                save(normalized)
+            }
             cachedSnapshot = normalized
             return normalized
         }

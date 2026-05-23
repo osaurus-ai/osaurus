@@ -101,6 +101,11 @@ struct ServerRuntimeSettingsStoreTests {
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let loaded = try #require(ServerRuntimeSettingsStore.load())
             #expect(loaded.mtp.mode == .auto)
+            let repaired = try #require(ServerRuntimeSettingsStore.load())
+            #expect(repaired.mtp.mode == .auto)
+            let data = try Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
+            let persisted = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
+            #expect(persisted.mtp.mode == .auto)
 
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let snapshot = ServerRuntimeSettingsStore.snapshot()
