@@ -521,23 +521,31 @@ private struct SessionRow: View {
 
     private func requestExport() {
         let requestId = UUID()
+        let scope = alertScope
+        let metadata = session
+        let sheet = ExportChooserSheet(session: session) { format, options in
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            ChatSessionExportCoordinator.run(
+                metadataSession: metadata,
+                format: format,
+                options: options,
+                scope: scope
+            )
+        }
         ThemedAlertCenter.shared.present(
             ThemedAlertRequest(
                 id: requestId,
                 title: "Export Conversation",
-                message: L("Choose a format to export this conversation."),
-                buttons: [
-                    .primary(L("Markdown")) { onExport(.markdown) },
-                    .primary(L("PDF")) { onExport(.pdf) },
-                    .primary(L("Zip Bundle")) { onExport(.zip) },
-                    .cancel(L("Cancel")),
-                ],
+                message: nil,
+                buttons: [.cancel(L("Cancel"))],
                 showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 420,
                 onDismiss: {
-                    ThemedAlertCenter.shared.dismiss(scope: alertScope, id: requestId)
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
                 }
             ),
-            scope: alertScope
+            scope: scope
         )
     }
 

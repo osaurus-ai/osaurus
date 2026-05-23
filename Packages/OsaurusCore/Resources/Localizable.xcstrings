@@ -8223,6 +8223,56 @@
         }
       }
     },
+    "Include in export" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Include in export"
+          }
+        }
+      }
+    },
+    "Timestamps" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Timestamps"
+          }
+        }
+      }
+    },
+    "Deltas" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Deltas"
+          }
+        }
+      }
+    },
+    "Token usage" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Token usage"
+          }
+        }
+      }
+    },
+    "No timing data captured for this conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No timing data captured for this conversation."
+          }
+        }
+      }
+    },
     "PDF" : {
       "localizations" : {
         "en" : {

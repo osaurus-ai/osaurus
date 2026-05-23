@@ -28,7 +28,10 @@ public enum ChatSessionExporter {
     // MARK: - Markdown
 
     /// Each turn becomes an H2 with role label, content, attachments, tool calls.
-    public static func markdown(for session: ChatSessionData) -> String {
+    /// When `options` enables any timing flag, the header line gains a
+    /// suffix like ` — 14:02:18 (+1m23s, 312 tok, 28.4 tok/s)` with each
+    /// piece guarded by both the flag and presence of the underlying data.
+    public static func markdown(for session: ChatSessionData, options: ChatExportOptions = ChatExportOptions()) -> String {
         var lines: [String] = []
         lines.append("# \(session.title)")
         lines.append("")
@@ -49,9 +52,14 @@ public enum ChatSessionExporter {
         lines.append("> " + meta.joined(separator: " · "))
         lines.append("")
 
+        let agentLabel = assistantLabel(for: session)
+        var previousTurnAnchor: Date? = nil
         for (idx, turn) in session.turns.enumerated() {
-            lines.append("## \(turn.role.rawValue.capitalized) — turn \(idx + 1)")
+            let role = roleLabel(for: turn, assistantLabel: agentLabel)
+            let suffix = timingSuffix(for: turn, options: options, previousAnchor: previousTurnAnchor)
+            lines.append("## \(role) — turn \(idx + 1)\(suffix)")
             lines.append("")
+            previousTurnAnchor = turn.createdAt ?? previousTurnAnchor
             let trimmed = turn.content.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 lines.append(trimmed)
@@ -75,8 +83,8 @@ public enum ChatSessionExporter {
         return lines.joined(separator: "\n")
     }
 
-    public static func writeMarkdown(session: ChatSessionData, to url: URL) throws {
-        let text = markdown(for: session)
+    public static func writeMarkdown(session: ChatSessionData, options: ChatExportOptions = ChatExportOptions(), to url: URL) throws {
+        let text = markdown(for: session, options: options)
         do {
             try text.data(using: .utf8)?.write(to: url, options: .atomic)
         } catch {
@@ -88,8 +96,8 @@ public enum ChatSessionExporter {
 
     /// `NSPrintOperation` save-to-file gives page-broken output instead of
     /// the single tall page `NSView.dataWithPDF` would produce.
-    public static func writePDF(session: ChatSessionData, to url: URL) throws {
-        let attributed = attributedMarkdown(for: session)
+    public static func writePDF(session: ChatSessionData, options: ChatExportOptions = ChatExportOptions(), to url: URL) throws {
+        let attributed = attributedMarkdown(for: session, options: options)
         let contentWidth: CGFloat = 540  // letter width minus 72pt margins
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 720))
         textView.textStorage?.setAttributedString(attributed)
@@ -120,7 +128,7 @@ public enum ChatSessionExporter {
 
     /// Bundles `chat.md` plus hydrated attachments under `attachments/`.
     /// Unresolvable attachment bytes are skipped.
-    public static func writeZip(session: ChatSessionData, to url: URL) async throws {
+    public static func writeZip(session: ChatSessionData, options: ChatExportOptions = ChatExportOptions(), to url: URL) async throws {
         let fm = FileManager.default
         let bundleName = sanitizeFilename(session.title.isEmpty ? "chat" : session.title)
         let workRoot = fm.temporaryDirectory.appendingPathComponent(
@@ -135,7 +143,7 @@ public enum ChatSessionExporter {
             try fm.createDirectory(at: bundleDir, withIntermediateDirectories: true)
             try fm.createDirectory(at: attachmentsDir, withIntermediateDirectories: true)
             let mdURL = bundleDir.appendingPathComponent("chat.md")
-            try markdown(for: session).data(using: .utf8)?.write(to: mdURL, options: .atomic)
+            try markdown(for: session, options: options).data(using: .utf8)?.write(to: mdURL, options: .atomic)
 
             var writtenNames = Set<String>()
             for (turnIdx, turn) in session.turns.enumerated() {
@@ -178,6 +186,88 @@ public enum ChatSessionExporter {
         return att.filename ?? "attachment"
     }
 
+    /// Resolves the session's agent name for assistant role labels. Returns
+    /// nil for the default (built-in) agent so the export stays "Assistant"
+    /// instead of adding a noisy suffix.
+    private static func assistantLabel(for session: ChatSessionData) -> String? {
+        guard let agentId = session.agentId,
+              agentId != Agent.defaultId,
+              let agent = AgentManager.shared.agent(for: agentId),
+              !agent.isBuiltIn
+        else { return nil }
+        let name = agent.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
+    }
+
+    /// Builds the timing suffix appended to a turn header. Each piece
+    /// is gated on the corresponding flag and the underlying data being
+    /// present, so legacy turns (no timing fields) just contribute "".
+    private static func timingSuffix(
+        for turn: ChatTurnData,
+        options: ChatExportOptions,
+        previousAnchor: Date?
+    ) -> String {
+        guard options.hasAnyFlag else { return "" }
+        var head: String? = nil
+        if options.includeTimestamps, let created = turn.createdAt {
+            head = formatTime(created)
+        }
+        var parens: [String] = []
+        if options.includeDeltas,
+           let created = turn.createdAt,
+           let previous = previousAnchor {
+            let delta = created.timeIntervalSince(previous)
+            if delta >= 0 {
+                parens.append("+\(formatDuration(delta))")
+            }
+        }
+        if options.includeTokenUsage {
+            if let tokens = turn.generationTokenCount {
+                parens.append("\(tokens) tok")
+            }
+            if let created = turn.createdAt,
+               let completed = turn.completedAt {
+                let dur = completed.timeIntervalSince(created)
+                if dur > 0, let tokens = turn.generationTokenCount, tokens > 0 {
+                    let tps = Double(tokens) / dur
+                    parens.append(String(format: "%.1f tok/s", tps))
+                }
+            }
+        }
+        let parenStr = parens.isEmpty ? "" : " (\(parens.joined(separator: ", ")))"
+        if let head {
+            return " — \(head)\(parenStr)"
+        }
+        return parens.isEmpty ? "" : " —\(parenStr)"
+    }
+
+    /// HH:MM:SS for the timestamp head.
+    private static func formatTime(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f.string(from: date)
+    }
+
+    /// Compact "1m23s" / "12s" / "1h05m" — keeps the header short.
+    private static func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        if total < 60 { return "\(total)s" }
+        let m = total / 60
+        let s = total % 60
+        if m < 60 { return "\(m)m\(String(format: "%02d", s))s" }
+        let h = m / 60
+        let mm = m % 60
+        return "\(h)h\(String(format: "%02d", mm))m"
+    }
+
+    private static func roleLabel(for turn: ChatTurnData, assistantLabel: String?) -> String {
+        let base = turn.role.rawValue.capitalized
+        if turn.role == .assistant, let label = assistantLabel {
+            return "\(base) (\(label))"
+        }
+        return base
+    }
+
     private static func formatDate(_ date: Date) -> String {
         let f = DateFormatter()
         f.dateStyle = .medium
@@ -215,7 +305,7 @@ public enum ChatSessionExporter {
     }
 
     /// PDF body: title bold, meta secondary, tool calls monospace.
-    private static func attributedMarkdown(for session: ChatSessionData) -> NSAttributedString {
+    private static func attributedMarkdown(for session: ChatSessionData, options: ChatExportOptions) -> NSAttributedString {
         let body = NSMutableAttributedString()
         let titleFont = NSFont.boldSystemFont(ofSize: 18)
         let metaFont = NSFont.systemFont(ofSize: 10)
@@ -237,13 +327,16 @@ public enum ChatSessionExporter {
             )
         )
 
+        let agentLabel = assistantLabel(for: session)
+        var previousTurnAnchor: Date? = nil
         for (idx, turn) in session.turns.enumerated() {
-            body.append(
-                NSAttributedString(
-                    string: "\(turn.role.rawValue.capitalized) — turn \(idx + 1)\n",
-                    attributes: [.font: roleFont]
-                )
-            )
+            let role = roleLabel(for: turn, assistantLabel: agentLabel)
+            let suffix = timingSuffix(for: turn, options: options, previousAnchor: previousTurnAnchor)
+            body.append(NSAttributedString(
+                string: "\(role) — turn \(idx + 1)\(suffix)\n",
+                attributes: [.font: roleFont]
+            ))
+            previousTurnAnchor = turn.createdAt ?? previousTurnAnchor
             let trimmed = turn.content.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 body.append(NSAttributedString(string: trimmed + "\n", attributes: [.font: textFont]))

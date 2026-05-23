@@ -1800,6 +1800,11 @@ final class ChatSession: ObservableObject {
                 currentTurn.generationTokenCount = rollingRate.totalTokens
             }
         }
+        // Stamp stream-end wall-clock for opt-in export timing. Set
+        // unconditionally so cancelled and zero-token streams still get
+        // a timestamp — the token count tells the consumer how much was
+        // actually generated.
+        currentTurn.completedAt = Date()
 
         let totalTime = Date().timeIntervalSince(streamStartTime)
         print(

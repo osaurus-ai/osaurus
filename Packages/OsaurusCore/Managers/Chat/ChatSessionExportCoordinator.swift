@@ -15,6 +15,7 @@ enum ChatSessionExportCoordinator {
     static func run(
         metadataSession: ChatSessionData,
         format: ChatSessionSidebar.ExportFormat,
+        options: ChatExportOptions = ChatExportOptions(),
         scope: ThemedAlertScope
     ) {
         // Sidebar only carries metadata. Prefer the store, fall back to the
@@ -70,11 +71,11 @@ enum ChatSessionExportCoordinator {
             do {
                 switch format {
                 case .markdown:
-                    try ChatSessionExporter.writeMarkdown(session: full, to: url)
+                    try ChatSessionExporter.writeMarkdown(session: full, options: options, to: url)
                 case .pdf:
-                    try ChatSessionExporter.writePDF(session: full, to: url)
+                    try ChatSessionExporter.writePDF(session: full, options: options, to: url)
                 case .zip:
-                    try await ChatSessionExporter.writeZip(session: full, to: url)
+                    try await ChatSessionExporter.writeZip(session: full, options: options, to: url)
                 }
                 result = .success(())
             } catch {
