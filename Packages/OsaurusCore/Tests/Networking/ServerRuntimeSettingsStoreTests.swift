@@ -41,6 +41,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.cache.legacyDisk.enabled == false)
             #expect(migrated.cache.defaultMaxKVSize == 65536)
             #expect(migrated.cache.longPromptMultiplier == 2.0)
+            #expect(migrated.mtp.mode == .auto)
 
             // File should now exist.
             let url = dir.appendingPathComponent("server-runtime.json")
@@ -66,6 +67,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.cache.defaultMaxKVSize == 65536)
             #expect(snapshot.cache.longPromptMultiplier == 2.0)
             #expect(snapshot.cache.enableSSMReDerive == false)
+            #expect(snapshot.mtp.mode == .auto)
         }
     }
 
@@ -86,6 +88,38 @@ struct ServerRuntimeSettingsStoreTests {
 
             #expect(loaded == settings)
             #expect(ServerRuntimeSettingsStore.snapshot() == settings)
+        }
+    }
+
+    @Test @MainActor func load_repairsOldPersistedMTPDefaultOffToAuto() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var oldDefault = VMLXServerRuntimeSettings()
+            oldDefault.mtp.mode = .off
+            try writeSettings(oldDefault, to: dir)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+            #expect(loaded.mtp.mode == .auto)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let snapshot = ServerRuntimeSettingsStore.snapshot()
+            #expect(snapshot.mtp.mode == .auto)
+        }
+    }
+
+    @Test @MainActor func load_preservesExplicitNonDefaultMTPOff() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var explicitOff = VMLXServerRuntimeSettings()
+            explicitOff.mtp.mode = .off
+            explicitOff.mtp.draftTokenLimit = 2
+            try writeSettings(explicitOff, to: dir)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+            #expect(loaded.mtp.mode == .off)
+            #expect(loaded.mtp.draftTokenLimit == 2)
         }
     }
 
@@ -161,6 +195,16 @@ struct ServerRuntimeSettingsStoreTests {
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         return defaults
+    }
+
+    private func writeSettings(
+        _ settings: VMLXServerRuntimeSettings,
+        to dir: URL
+    ) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(settings)
+            .write(to: dir.appendingPathComponent("server-runtime.json"), options: [.atomic])
     }
 
     @MainActor

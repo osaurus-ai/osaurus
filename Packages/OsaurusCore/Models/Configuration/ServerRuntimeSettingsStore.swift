@@ -47,7 +47,9 @@ public enum ServerRuntimeSettingsStore {
         let url = fileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
-            let decoded = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: url))
+            let decoded = normalizeLoadedSettings(
+                try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: url))
+            )
             cachedSnapshot = decoded
             return decoded
         } catch {
@@ -101,8 +103,9 @@ public enum ServerRuntimeSettingsStore {
             let data = try? Data(contentsOf: url),
             let decoded = try? JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
         {
-            cachedSnapshot = decoded
-            return decoded
+            let normalized = normalizeLoadedSettings(decoded)
+            cachedSnapshot = normalized
+            return normalized
         }
         let fallback = migratedFromLegacy(
             serverConfiguration: diskBackedServerConfiguration() ?? .default,
@@ -116,6 +119,23 @@ public enum ServerRuntimeSettingsStore {
     /// call to re-read from disk.
     public nonisolated static func invalidateSnapshot() {
         cachedSnapshot = nil
+    }
+
+    private nonisolated static func normalizeLoadedSettings(
+        _ settings: VMLXServerRuntimeSettings
+    ) -> VMLXServerRuntimeSettings {
+        var normalized = settings
+        // vmlx-swift e095d0f changed the engine default from "MTP off" to
+        // "auto". Existing Osaurus installs persisted the old default exactly,
+        // so without this repair tuned MXFP8/MTP bundles still never reach the
+        // tensor+tuning-gated autodetect path after upgrade.
+        if normalized.mtp.mode == .off,
+           normalized.mtp.draftTokenLimit == nil,
+           normalized.mtp.keepDraftCacheSeparate,
+           normalized.mtp.acceptedTokensOnlyEnterBaseCache {
+            normalized.mtp.mode = .auto
+        }
+        return normalized
     }
 
     // MARK: - Migration

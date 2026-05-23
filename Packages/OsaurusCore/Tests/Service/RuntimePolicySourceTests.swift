@@ -34,6 +34,21 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("Makefile builds through workspace resolver mirrors")
+    func makefileUsesWorkspaceResolver() throws {
+        let source = try Self.source("../../Makefile")
+
+        #expect(source.contains("WORKSPACE := osaurus.xcworkspace"))
+        #expect(source.contains("XCODEBUILD_FLAGS ?="))
+        #expect(source.contains("xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_CLI)"))
+        #expect(source.contains("xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_APP)"))
+        #expect(source.contains("$(XCODEBUILD_FLAGS)"))
+        #expect(
+            !source.contains("xcodebuild -project $(PROJECT)"),
+            "project-only builds bypass workspace SwiftPM mirrors and can resolve incompatible upstream pins"
+        )
+    }
+
     @Test("AppDelegate leaves DSV4 cache topology to vmlx")
     func appDelegateDoesNotForceDSV4DiagnosticCacheMode() throws {
         let source = try Self.source("AppDelegate.swift")
@@ -359,12 +374,14 @@ struct RuntimePolicySourceTests {
         // Qwen3.6 native-MTP alias recognition, and expanded loaded
         // cache-topology snapshotting for server-side cache autodetect, and
         // quantization-bound native-MTP tuning for MXFP8 launch safety, and
-        // ZAYA1-VL reasoning-parser fallback separation.
+        // ZAYA1-VL reasoning-parser fallback separation, tuned native-MTP
+        // server autodetect by default, and MXFP8 artifact-evidence tuning
+        // acceptance.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "e766882df8ffd0c347e3a29c3b2989e3dc73ca73"
+        let currentVmlxRevision = "4356ef1985344757a4326dd08ba27b5cbff230ab"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
