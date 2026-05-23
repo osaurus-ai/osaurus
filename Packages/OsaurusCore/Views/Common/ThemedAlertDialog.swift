@@ -84,6 +84,10 @@ public struct ThemedAlertRequest: Identifiable {
     /// the close X (if `showsCloseButton`) still render. Use for multi-
     /// page chooser flows that need their own state and navigation.
     public let customContent: AnyView?
+    /// Optional fixed width override for the dialog. Defaults to the
+    /// standard alert width (340). Useful for `customContent` flows
+    /// that need more breathing room than a text alert.
+    public let width: CGFloat?
 
     /// Callback invoked when the alert is dismissed
     public let onDismiss: () -> Void
@@ -96,6 +100,7 @@ public struct ThemedAlertRequest: Identifiable {
         buttons: [AlertButtonConfig],
         showsCloseButton: Bool = false,
         customContent: AnyView? = nil,
+        width: CGFloat? = nil,
         onDismiss: @escaping () -> Void
     ) {
         self.id = id
@@ -105,6 +110,7 @@ public struct ThemedAlertRequest: Identifiable {
         self.buttons = buttons
         self.showsCloseButton = showsCloseButton
         self.customContent = customContent
+        self.width = width
         self.onDismiss = onDismiss
     }
 }
@@ -162,6 +168,7 @@ private struct ThemedAlertDialogContent: View {
     let buttons: [AlertButtonConfig]
     let showsCloseButton: Bool
     let customContent: AnyView?
+    let width: CGFloat?
     let presentationStyle: ThemedAlertPresentationStyle
     let onDismiss: () -> Void
 
@@ -246,7 +253,7 @@ private struct ThemedAlertDialogContent: View {
         .padding(.top, 24)
         .padding(.horizontal, 24)
         .padding(.bottom, 16)
-        .frame(width: 340)
+        .frame(width: width ?? 340)
         .background(dialogBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(
@@ -484,6 +491,7 @@ private struct ThemedAlertModifier: ViewModifier {
                         buttons: buttons,
                         showsCloseButton: false,
                         customContent: nil,
+                        width: nil,
                         presentationStyle: presentationStyle,
                         onDismiss: {
                             isPresented = false
@@ -572,6 +580,7 @@ public struct ThemedAlertHost: View {
                     buttons: request.buttons,
                     showsCloseButton: request.showsCloseButton,
                     customContent: request.customContent,
+                    width: request.width,
                     presentationStyle: .window,
                     onDismiss: { request.onDismiss() }
                 )
@@ -690,6 +699,7 @@ private extension View {
                     ],
                     showsCloseButton: false,
                     customContent: nil,
+                    width: nil,
                     presentationStyle: .window,
                     onDismiss: {}
                 )

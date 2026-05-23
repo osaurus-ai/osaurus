@@ -538,6 +538,7 @@ private struct SessionRow: View {
                 buttons: [.cancel(L("Cancel"))],
                 showsCloseButton: true,
                 customContent: AnyView(sheet),
+                width: 420,
                 onDismiss: {
                     ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
                 }
