@@ -66,6 +66,7 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("AppDelegate.swift")
         let serverTask = try #require(source.range(of: "let serverStartupTask = Task { @MainActor in"))
         let serverStart = try #require(source.range(of: "await serverController.startServer()"))
+        let storagePrewarm = try #require(source.range(of: "prewarmCurrentKeyOffCooperativeExecutor()"))
         let modelCachePrewarm = try #require(source.range(of: "await ModelPickerItemCache.shared.prewarmModelCache()"))
         let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
         let speechAutoload = try #require(source.range(of: "await SpeechService.shared.autoLoadIfNeeded()"))
@@ -73,6 +74,7 @@ struct RuntimePolicySourceTests {
         #expect(serverTask.lowerBound < modelCachePrewarm.lowerBound)
         #expect(serverStart.lowerBound < schedulerStart.lowerBound)
         #expect(serverStart.lowerBound < speechAutoload.lowerBound)
+        #expect(serverStart.lowerBound < storagePrewarm.lowerBound)
         #expect(source.contains("await serverStartupTask.value"))
         #expect(source.contains("MCPProviderManager.shared.connectEnabledProviders()"))
         #expect(source.contains("RemoteProviderManager.shared.connectEnabledProviders()"))
@@ -85,8 +87,9 @@ struct RuntimePolicySourceTests {
         let storageGate = try #require(source.range(of: "StorageKeyManager.shared.hasCachedKey"))
 
         #expect(storageGate.lowerBound < firstDatabaseOpen.lowerBound)
-        #expect(!source.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
-        #expect(!source.contains("let storageKeyPrewarmTask"))
+        #expect(!source.contains("try? StorageKeyManager.shared.prewarmCurrentKey()"))
+        #expect(source.contains("Task.detached(priority: .utility)"))
+        #expect(source.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
     }
 
     @Test("chat session list does not unlock storage key on init")
@@ -149,13 +152,12 @@ struct RuntimePolicySourceTests {
         let appDelegate = try Self.source("AppDelegate.swift")
         // The migrator used to be the implicit key-cache warmer via its
         // own `currentKey()` call, but `runIfNeeded` short-circuits on
-        // launches with no pending migration. The synchronous prewarm
-        // here is the explicit guarantee that downstream `hasCachedKey`
-        // guards (chat history, memory, schedulers) never fail closed
-        // simply because nothing happened to read the key first.
-        #expect(appDelegate.contains("StorageKeyManager.shared.prewarmCurrentKey()"))
-        #expect(!appDelegate.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
-        #expect(!appDelegate.contains("let storageKeyPrewarmTask"))
+        // launches with no pending migration. The explicit prewarm must
+        // stay off the launch-critical main-actor path so a slow Keychain
+        // read cannot prevent the local HTTP server from binding.
+        #expect(!appDelegate.contains("try? StorageKeyManager.shared.prewarmCurrentKey()"))
+        #expect(appDelegate.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
+        #expect(appDelegate.contains("Task.detached(priority: .utility)"))
         #expect(appDelegate.contains("Storage-dependent search/index services disabled"))
         #expect(appDelegate.contains("guard StorageKeyManager.shared.hasCachedKey else"))
 
