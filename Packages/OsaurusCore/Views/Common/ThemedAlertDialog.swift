@@ -79,6 +79,11 @@ public struct ThemedAlertRequest: Identifiable {
     /// corner instead of inline. Useful for chooser-style alerts where the
     /// inline row would just be padding.
     public let showsCloseButton: Bool
+    /// When set, replaces the standard message + accessory + divider +
+    /// button-row section with this view. The header (icon / title) and
+    /// the close X (if `showsCloseButton`) still render. Use for multi-
+    /// page chooser flows that need their own state and navigation.
+    public let customContent: AnyView?
 
     /// Callback invoked when the alert is dismissed
     public let onDismiss: () -> Void
@@ -90,6 +95,7 @@ public struct ThemedAlertRequest: Identifiable {
         accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
         showsCloseButton: Bool = false,
+        customContent: AnyView? = nil,
         onDismiss: @escaping () -> Void
     ) {
         self.id = id
@@ -98,6 +104,7 @@ public struct ThemedAlertRequest: Identifiable {
         self.accessory = accessory
         self.buttons = buttons
         self.showsCloseButton = showsCloseButton
+        self.customContent = customContent
         self.onDismiss = onDismiss
     }
 }
@@ -154,6 +161,7 @@ private struct ThemedAlertDialogContent: View {
     let accessory: AnyView?
     let buttons: [AlertButtonConfig]
     let showsCloseButton: Bool
+    let customContent: AnyView?
     let presentationStyle: ThemedAlertPresentationStyle
     let onDismiss: () -> Void
 
@@ -208,26 +216,31 @@ private struct ThemedAlertDialogContent: View {
             // Header with icon
             headerSection
 
-            // Message
-            if let message = message {
-                messageSection(message)
-            }
-
-            // Optional accessory (e.g. "Don't ask again" toggle)
-            if let accessory = accessory {
-                accessory
-                    .padding(.top, 12)
-            }
-
-            if !inlineButtons.isEmpty {
-                // Divider
-                Rectangle()
-                    .fill(theme.primaryBorder.opacity(0.3))
-                    .frame(height: 1)
+            if let customContent {
+                customContent
                     .padding(.top, 16)
+            } else {
+                // Message
+                if let message = message {
+                    messageSection(message)
+                }
 
-                // Buttons
-                buttonSection
+                // Optional accessory (e.g. "Don't ask again" toggle)
+                if let accessory = accessory {
+                    accessory
+                        .padding(.top, 12)
+                }
+
+                if !inlineButtons.isEmpty {
+                    // Divider
+                    Rectangle()
+                        .fill(theme.primaryBorder.opacity(0.3))
+                        .frame(height: 1)
+                        .padding(.top, 16)
+
+                    // Buttons
+                    buttonSection
+                }
             }
         }
         .padding(.top, 24)
@@ -236,12 +249,17 @@ private struct ThemedAlertDialogContent: View {
         .frame(width: 340)
         .background(dialogBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(dialogBorder)
         .shadow(
-            color: theme.shadowColor.opacity(theme.shadowOpacity * 2),
-            radius: 24,
+            color: theme.shadowColor.opacity(theme.shadowOpacity * 2.4),
+            radius: 36,
             x: 0,
-            y: 12
+            y: 18
+        )
+        .shadow(
+            color: theme.shadowColor.opacity(theme.shadowOpacity * 1.2),
+            radius: 8,
+            x: 0,
+            y: 2
         )
     }
 
@@ -393,18 +411,6 @@ private struct ThemedAlertDialogContent: View {
         )
     }
 
-    private var dialogBorder: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
-    }
-
     private var iconName: String {
         hasDestructiveButton ? "exclamationmark.triangle.fill" : "questionmark.circle.fill"
     }
@@ -477,6 +483,7 @@ private struct ThemedAlertModifier: ViewModifier {
                         accessory: nil,
                         buttons: buttons,
                         showsCloseButton: false,
+                        customContent: nil,
                         presentationStyle: presentationStyle,
                         onDismiss: {
                             isPresented = false
@@ -564,6 +571,7 @@ public struct ThemedAlertHost: View {
                     accessory: request.accessory,
                     buttons: request.buttons,
                     showsCloseButton: request.showsCloseButton,
+                    customContent: request.customContent,
                     presentationStyle: .window,
                     onDismiss: { request.onDismiss() }
                 )
@@ -681,6 +689,7 @@ private extension View {
                         .cancel("Keep Running"),
                     ],
                     showsCloseButton: false,
+                    customContent: nil,
                     presentationStyle: .window,
                     onDismiss: {}
                 )
