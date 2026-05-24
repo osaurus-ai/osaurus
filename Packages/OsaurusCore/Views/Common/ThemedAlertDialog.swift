@@ -477,6 +477,7 @@ private struct ThemedAlertModifier: ViewModifier {
     let title: String
     @Binding var isPresented: Bool
     let message: String?
+    let accessory: AnyView?
     let buttons: [AlertButtonConfig]
     let presentationStyle: ThemedAlertPresentationStyle
 
@@ -487,7 +488,7 @@ private struct ThemedAlertModifier: ViewModifier {
                     ThemedAlertDialogContent(
                         title: title,
                         message: message,
-                        accessory: nil,
+                        accessory: accessory,
                         buttons: buttons,
                         showsCloseButton: false,
                         customContent: nil,
@@ -510,6 +511,7 @@ private struct ThemedAlertPresenterModifier: ViewModifier {
     let title: String
     @Binding var isPresented: Bool
     let message: String?
+    let accessory: AnyView?
     let buttons: [AlertButtonConfig]
 
     @State private var requestId = UUID()
@@ -524,6 +526,7 @@ private struct ThemedAlertPresenterModifier: ViewModifier {
                                 id: requestId,
                                 title: title,
                                 message: message,
+                                accessory: accessory,
                                 buttons: buttons,
                                 onDismiss: { isPresented = false }
                             ),
@@ -544,6 +547,7 @@ private struct ThemedAlertPresenterModifier: ViewModifier {
                                 id: requestId,
                                 title: title,
                                 message: message,
+                                accessory: accessory,
                                 buttons: buttons,
                                 onDismiss: { isPresented = false }
                             ),
@@ -605,6 +609,7 @@ extension View {
         _ title: String,
         isPresented: Binding<Bool>,
         message: String? = nil,
+        accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
         presentationStyle: ThemedAlertPresentationStyle = .window
     ) -> some View {
@@ -614,6 +619,7 @@ extension View {
                     title: title,
                     isPresented: isPresented,
                     message: message,
+                    accessory: accessory,
                     buttons: buttons,
                     presentationStyle: .contained
                 )
@@ -625,6 +631,7 @@ extension View {
                     title: title,
                     isPresented: isPresented,
                     message: message,
+                    accessory: accessory,
                     buttons: buttons
                 )
             )
