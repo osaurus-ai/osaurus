@@ -292,7 +292,9 @@ struct ChatSessionSidebar: View {
             ThemedAlertRequest(
                 id: requestId,
                 title: "Save Renamed Title?",
-                message: "You were renaming a conversation titled \"\(oldTitle)\" to \"\(newTitle)\" but haven't saved it yet.",
+                message: L(
+                    "You were renaming a conversation titled \"\(oldTitle)\" to \"\(newTitle)\" but haven't saved it yet."
+                ),
                 buttons: [
                     .destructive(L("Discard")) {
                         dismissEditing()
