@@ -4,6 +4,70 @@
     "" : {
 
     },
+    "Requests will run with no time limit. Before enabling:" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anfragen werden ohne Zeitlimit ausgeführt. Vor dem Aktivieren:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请求将在无时间限制下运行。启用前请注意："
+          }
+        }
+      }
+    },
+    "A stalled provider or dropped connection can hang a request indefinitely. You'll have to stop it manually" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein hängender Anbieter oder eine abgebrochene Verbindung kann eine Anfrage unbegrenzt blockieren. Du musst sie manuell stoppen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停滞的提供方或断开的连接可能使请求无限期挂起。你需要手动停止它"
+          }
+        }
+      }
+    },
+    "Upstream timeouts (LM Studio, proxies, tunnels) still apply" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorgelagerte Zeitlimits (LM Studio, Proxys, Tunnel) gelten weiterhin"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上游超时（LM Studio、代理、隧道）仍然适用"
+          }
+        }
+      }
+    },
+    "Only use this on trusted hardware for long-running work" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur auf vertrauenswürdiger Hardware für lang laufende Aufgaben verwenden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在受信任的硬件上用于长时间运行的任务"
+          }
+        }
+      }
+    },
     " — %@" : {
 
     },
@@ -1027,6 +1091,9 @@
       }
     },
     "A device wants to pair with **%@**.\nAllow this device to connect?" : {
+
+    },
+    "A different dino for every job. Your memories stick around, ready when you need them." : {
 
     },
     "A microphone button will appear in the chat input when voice is ready" : {
@@ -3786,6 +3853,16 @@
         }
       }
     },
+    "Choose a format to export this conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Choose a format to export this conversation."
+          }
+        }
+      }
+    },
     "Choose a passphrase (≥ 8 characters) to encrypt this agent's bundle. You'll need the same passphrase to import it on another Mac." : {
 
     },
@@ -5464,9 +5541,6 @@
         }
       }
     },
-    "Create Dino" : {
-
-    },
     "Create custom assistant personalities with unique behaviors" : {
       "localizations" : {
         "de" : {
@@ -5482,6 +5556,9 @@
           }
         }
       }
+    },
+    "Create Dino" : {
+
     },
     "Create Plugin" : {
       "localizations" : {
@@ -6484,6 +6561,16 @@
         }
       }
     },
+    "Deltas" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Deltas"
+          }
+        }
+      }
+    },
     "Deny" : {
       "localizations" : {
         "de" : {
@@ -6654,6 +6741,41 @@
           }
         }
       }
+    },
+    "Disable request timeout?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeitlimit für Anfragen deaktivieren?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "禁用请求超时？"
+          }
+        }
+      }
+    },
+    "Disable timeout" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zeitlimit deaktivieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "禁用超时"
+          }
+        }
+      }
+    },
+    "Disable Timeout" : {
+
     },
     "Disable tools" : {
       "localizations" : {
@@ -8052,36 +8174,6 @@
         }
       }
     },
-    "Export failed" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Export failed"
-          }
-        }
-      }
-    },
-    "Export complete" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Export complete"
-          }
-        }
-      }
-    },
-    "Reveal in Finder" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Reveal in Finder"
-          }
-        }
-      }
-    },
     "Export Bundle…" : {
       "comment" : "Swift localization key; translations need review.",
       "localizations" : {
@@ -8105,6 +8197,26 @@
         }
       }
     },
+    "Export complete" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export complete"
+          }
+        }
+      }
+    },
+    "Export Conversation" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export Conversation"
+          }
+        }
+      }
+    },
     "Export CSV" : {
       "comment" : "Swift localization key; translations need review.",
       "localizations" : {
@@ -8124,6 +8236,16 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Export CSV"
+          }
+        }
+      }
+    },
+    "Export failed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Export failed"
           }
         }
       }
@@ -8183,112 +8305,12 @@
     "Export Zip" : {
 
     },
-    "Export Conversation" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Export Conversation"
-          }
-        }
-      }
-    },
     "Export…" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
             "value" : "Export…"
-          }
-        }
-      }
-    },
-    "Choose a format to export this conversation." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Choose a format to export this conversation."
-          }
-        }
-      }
-    },
-    "Markdown" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Markdown"
-          }
-        }
-      }
-    },
-    "Include in export" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Include in export"
-          }
-        }
-      }
-    },
-    "Timestamps" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Timestamps"
-          }
-        }
-      }
-    },
-    "Deltas" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Deltas"
-          }
-        }
-      }
-    },
-    "Token usage" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Token usage"
-          }
-        }
-      }
-    },
-    "No timing data captured for this conversation." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "No timing data captured for this conversation."
-          }
-        }
-      }
-    },
-    "PDF" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "PDF"
-          }
-        }
-      }
-    },
-    "Zip Bundle" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Zip Bundle"
           }
         }
       }
@@ -10296,6 +10318,16 @@
         }
       }
     },
+    "Include in export" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Include in export"
+          }
+        }
+      }
+    },
     "Indefinitely" : {
       "localizations" : {
         "de" : {
@@ -11099,6 +11131,22 @@
         }
       }
     },
+    "Let requests run with no time limit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anfragen ohne Zeitlimit ausführen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "让请求在无时间限制下运行"
+          }
+        }
+      }
+    },
     "Let tools in without sharing your password" : {
 
     },
@@ -11547,9 +11595,6 @@
         }
       }
     },
-    "A different dino for every job. Your memories stick around, ready when you need them." : {
-
-    },
     "Make My Signature" : {
 
     },
@@ -11738,6 +11783,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "地图"
+          }
+        }
+      }
+    },
+    "Markdown" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Markdown"
           }
         }
       }
@@ -13051,6 +13106,22 @@
     "No invites issued yet" : {
 
     },
+    "No limit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein Limit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无限制"
+          }
+        }
+      }
+    },
     "No local models fit this Mac" : {
 
     },
@@ -13396,6 +13467,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未找到主题"
+          }
+        }
+      }
+    },
+    "No timing data captured for this conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No timing data captured for this conversation."
           }
         }
       }
@@ -14708,6 +14789,16 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Paused — %@"
+          }
+        }
+      }
+    },
+    "PDF" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "PDF"
           }
         }
       }
@@ -20917,6 +21008,16 @@
         }
       }
     },
+    "Timestamps" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Timestamps"
+          }
+        }
+      }
+    },
     "Title" : {
 
     },
@@ -20995,6 +21096,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "切换模型推理模式"
+          }
+        }
+      }
+    },
+    "Token usage" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Token usage"
           }
         }
       }
@@ -23051,6 +23162,16 @@
     },
     "Your signature (preview)" : {
 
+    },
+    "Zip Bundle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Zip Bundle"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"
