@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HANDLER="$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift"
 HELPER="$ROOT/Packages/OsaurusCore/Networking/HTTPLoopHelpers.swift"
+RUNTIME="$ROOT/Packages/OsaurusCore/Services/ModelRuntime.swift"
+RUNTIME_TESTS="$ROOT/Packages/OsaurusCore/Tests/Service/RuntimePolicySourceTests.swift"
 CHAT_STOP_TESTS="$ROOT/Packages/OsaurusCore/Tests/Chat/ChatSessionStopTests.swift"
 HTTP_TESTS="$ROOT/Packages/OsaurusCore/Tests/Networking/HTTPHandlerChatStreamingTests.swift"
 
@@ -59,6 +61,8 @@ require_count_at_least() {
 
 require_file "$HANDLER" "HTTPHandler"
 require_file "$HELPER" "HTTPLoopHelpers"
+require_file "$RUNTIME" "ModelRuntime"
+require_file "$RUNTIME_TESTS" "RuntimePolicySourceTests"
 require_file "$CHAT_STOP_TESTS" "ChatSessionStopTests"
 require_file "$HTTP_TESTS" "HTTPHandlerChatStreamingTests"
 
@@ -109,6 +113,42 @@ require_text "$HANDLER" 'let logTemperature = req\.temperature' \
   "OpenAI logging preserves nil temperature"
 reject_text "$HANDLER" 'temperature \?\? 0\.7' \
   "no hidden temperature fallback remains in HTTPHandler"
+
+echo "--- model cold-load cancellation/drain ---"
+require_text "$RUNTIME" 'private struct LoadingTaskRecord' \
+  "ModelRuntime tracks cold-load task records"
+require_text "$RUNTIME" 'private var loadingTasks: \[String: LoadingTaskRecord\]' \
+  "ModelRuntime owns per-model loading task registry"
+require_text "$RUNTIME" 'private func cancelAndDrainLoadingTasks' \
+  "ModelRuntime has cold-load cancel-and-drain helper"
+require_text "$RUNTIME" 'record\.task\.cancel\(\)' \
+  "cold-load drain cancels loader task"
+require_text "$RUNTIME" 'try\? await record\.task\.value' \
+  "cold-load drain awaits cancelled loader task"
+require_text "$RUNTIME" 'holder\.container\.disableCaching\(\)' \
+  "cancelled/superseded load disables cache state"
+require_text "$RUNTIME" 'Stream\.gpu\.synchronize\(\)' \
+  "cold-load drain synchronizes GPU before returning"
+require_text "$RUNTIME" 'Memory\.clearCache\(\)' \
+  "cold-load drain clears MLX memory cache"
+require_text "$RUNTIME" 'private func cancelLoadingTask\(name: String, loadID: UInt64\) async' \
+  "ModelRuntime exposes loadID-scoped cancellation helper"
+require_text "$RUNTIME" 'withTaskCancellationHandler' \
+  "loadContainer forwards caller cancellation"
+require_text "$RUNTIME" 'onCancel:' \
+  "loadContainer installs cancellation handler"
+require_text "$RUNTIME" 'cancelLoadingTask\(name: name, loadID: loadID\)' \
+  "cancellation handler targets the matching cold-load task"
+require_text "$RUNTIME" 'Task\.isCancelled' \
+  "load task checks Swift cancellation during setup"
+require_text "$RUNTIME" 'await cancelAndDrainLoadingTasks\(\[\(otherName, otherRecord\)\]\)' \
+  "strict replacement loads drain the previous cold load"
+require_text "$RUNTIME_TESTS" 'new model loads forward caller cancellation into loader task' \
+  "source test covers forwarding caller cancellation into loader task"
+require_text "$RUNTIME_TESTS" 'cancelled cold load is unloaded before stream setup' \
+  "source test covers cancelled cold-load unload before streaming"
+require_text "$RUNTIME_TESTS" 'ModelRuntime drains superseded cold loads before starting replacements' \
+  "source test covers draining superseded cold loads"
 
 require_text "$CHAT_STOP_TESTS" 'stop_cancelsEngineSetupBeforeStreamIsReturned' \
   "ChatSession stop-before-stream cancellation regression exists"
