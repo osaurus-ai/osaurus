@@ -58,7 +58,9 @@ Startup bootstrap is domain-aware. `preflight` suites load installed native plug
 and rebuild search indices so they mirror the host app. `capability_search`
 suites initialize only the selected tool / method / skill index lanes without
 loading native plugins; those index-only runs use isolated temporary storage so
-fixtures never touch the user's real encrypted databases or Keychain.
+fixtures never touch the user's real encrypted databases. Debug builds also use
+a deterministic in-process storage key; release builds still use OsaurusCore's
+normal noninteractive storage-key path against the isolated database files.
 Plugin-required cases are skipped unless you pass `--bootstrap-plugins`. A
 filtered run that only selects plugin-required cases skips without index
 bootstrap.

@@ -40,6 +40,11 @@ public enum PluginInstallError: Error, CustomStringConvertible, LocalizedError {
 
 public final class PluginInstallManager: @unchecked Sendable {
     public static let shared = PluginInstallManager()
+    /// Plugin archives should stay small enough that signature verification can map the file
+    /// safely while still blocking accidental or malicious multi-gigabyte installs.
+    static let maximumArtifactArchiveBytes: Int64 = 256 * 1024 * 1024
+    static let hashReadChunkBytes = 1024 * 1024
+    static let unzipExecutablePath = "/usr/bin/unzip"
     private init() {}
 
     public struct InstallResult: Sendable {
@@ -106,11 +111,10 @@ public final class PluginInstallManager: @unchecked Sendable {
             throw PluginInstallError.downloadFailed("Invalid URL: \(artifact.url)")
         }
 
-        let (tmpZip, bytes) = try await download(toTempFileFrom: url)
+        let tmpZip = try await download(toTempFileFrom: url, declaredSize: artifact.size)
         defer { try? FileManager.default.removeItem(at: tmpZip) }
 
-        let digest = SHA256.hash(data: bytes)
-        let checksum = Data(digest).map { String(format: "%02x", $0) }.joined()
+        let checksum = try Self.sha256Hex(ofFile: tmpZip)
         if checksum.lowercased() != artifact.sha256.lowercased() {
             throw PluginInstallError.checksumMismatch
         }
@@ -119,6 +123,7 @@ public final class PluginInstallManager: @unchecked Sendable {
             throw PluginInstallError.signatureRequired
         }
         do {
+            let bytes = try Self.mappedFileData(at: tmpZip)
             _ = try MinisignVerifier.verify(publicKey: pubKey, signature: ms.signature, data: bytes)
         } catch {
             NSLog("[Osaurus] Minisign verification failed for \(pluginId): \(error)")
@@ -182,9 +187,7 @@ public final class PluginInstallManager: @unchecked Sendable {
             }
         }
 
-        let dylibData = try Data(contentsOf: finalDylibURL)
-        let dylibDigest = SHA256.hash(data: dylibData)
-        let dylibSha = Data(dylibDigest).map { String(format: "%02x", $0) }.joined()
+        let dylibSha = try Self.sha256Hex(ofFile: finalDylibURL)
 
         let receipt = PluginReceipt(
             plugin_id: spec.plugin_id,
@@ -338,20 +341,46 @@ public final class PluginInstallManager: @unchecked Sendable {
     }
 
     // MARK: - Download / unzip
-    private func download(toTempFileFrom url: URL) async throws -> (fileURL: URL, data: Data) {
-        let (data, response) = try await URLSession.shared.data(from: url)
+    private func download(toTempFileFrom url: URL, declaredSize: Int?) async throws -> URL {
+        let boundedDeclaredSize = try Self.validatedDeclaredArtifactSize(declaredSize)
+        let (downloadedURL, response) = try await URLSession.shared.download(from: url)
+        var movedDownloadedFile = false
+        defer {
+            if !movedDownloadedFile {
+                try? FileManager.default.removeItem(at: downloadedURL)
+            }
+        }
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             throw PluginInstallError.downloadFailed("HTTP error")
         }
+        try Self.validateArtifactSize(
+            declaredSize: boundedDeclaredSize,
+            responseSize: http.expectedContentLength >= 0 ? http.expectedContentLength : nil,
+            actualSize: nil
+        )
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".zip")
-        try data.write(to: tmp)
-        return (tmp, data)
+        do {
+            try FileManager.default.moveItem(at: downloadedURL, to: tmp)
+            movedDownloadedFile = true
+            let actualSize = try Self.fileSize(at: tmp)
+            try Self.validateArtifactSize(
+                declaredSize: boundedDeclaredSize,
+                responseSize: nil,
+                actualSize: actualSize
+            )
+            return tmp
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            throw error
+        }
     }
 
+    /// Use the system unzip binary directly so plugin installation does not depend on
+    /// a user-controlled PATH lookup through `/usr/bin/env`.
     private func unzip(zipURL: URL, to destination: URL) throws {
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        task.arguments = ["unzip", "-o", zipURL.path, "-d", destination.path]
+        task.executableURL = URL(fileURLWithPath: Self.unzipExecutablePath)
+        task.arguments = ["-o", "-q", zipURL.path, "-d", destination.path]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
@@ -362,6 +391,76 @@ public final class PluginInstallManager: @unchecked Sendable {
             let s = String(data: data, encoding: .utf8) ?? ""
             throw PluginInstallError.unzipFailed(s)
         }
+    }
+
+    /// Normalizes registry-provided sizes before download so a malformed catalog cannot
+    /// request an archive that exceeds the installer resource budget.
+    static func validatedDeclaredArtifactSize(_ declaredSize: Int?) throws -> Int64? {
+        guard let declaredSize else { return nil }
+        guard declaredSize >= 0 else {
+            throw PluginInstallError.downloadFailed("Artifact declared a negative size")
+        }
+        let normalized = Int64(declaredSize)
+        guard normalized <= maximumArtifactArchiveBytes else {
+            throw PluginInstallError.downloadFailed(
+                "Artifact is larger than the \(maximumArtifactArchiveBytes)-byte install limit"
+            )
+        }
+        return normalized
+    }
+
+    /// Checks each size signal independently because registries, HTTP headers, and the
+    /// downloaded file are observed at different points in the install trust boundary.
+    static func validateArtifactSize(declaredSize: Int64?, responseSize: Int64?, actualSize: Int64?) throws {
+        if let responseSize, responseSize > maximumArtifactArchiveBytes {
+            throw PluginInstallError.downloadFailed(
+                "Artifact response is larger than the \(maximumArtifactArchiveBytes)-byte install limit"
+            )
+        }
+        if let actualSize, actualSize > maximumArtifactArchiveBytes {
+            throw PluginInstallError.downloadFailed(
+                "Artifact archive is larger than the \(maximumArtifactArchiveBytes)-byte install limit"
+            )
+        }
+        if let declaredSize, let responseSize, declaredSize != responseSize {
+            throw PluginInstallError.downloadFailed(
+                "Artifact response size mismatch: expected \(declaredSize) bytes, got \(responseSize)"
+            )
+        }
+        if let declaredSize, let actualSize, declaredSize != actualSize {
+            throw PluginInstallError.downloadFailed(
+                "Artifact archive size mismatch: expected \(declaredSize) bytes, got \(actualSize)"
+            )
+        }
+    }
+
+    /// Hash from disk so the archive download path stays bounded by chunk size instead of
+    /// copying the entire zip into process memory before checksum validation.
+    static func sha256Hex(ofFile url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer {
+            try? handle.close()
+        }
+
+        var hasher = SHA256()
+        while true {
+            let chunk = try handle.read(upToCount: hashReadChunkBytes) ?? Data()
+            if chunk.isEmpty { break }
+            hasher.update(data: chunk)
+        }
+        return Data(hasher.finalize()).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func fileSize(at url: URL) throws -> Int64 {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        guard let fileSize = values.fileSize else {
+            throw PluginInstallError.downloadFailed("Could not determine artifact archive size")
+        }
+        return Int64(fileSize)
+    }
+
+    static func mappedFileData(at url: URL) throws -> Data {
+        try Data(contentsOf: url, options: [.mappedIfSafe])
     }
 
     private func makeTempDirectory() throws -> URL {
@@ -386,7 +485,7 @@ public final class PluginInstallManager: @unchecked Sendable {
         }
         let target = filename.lowercased()
         for case let fileURL as URL in enumerator {
-            if fileURL.lastPathComponent.lowercased() == target {
+            if fileURL.lastPathComponent.lowercased() == target && Self.isRegularPayloadFile(fileURL) {
                 return fileURL
             }
         }
@@ -407,7 +506,7 @@ public final class PluginInstallManager: @unchecked Sendable {
         }
         var results: [URL] = []
         for case let fileURL as URL in enumerator {
-            if fileURL.lastPathComponent.uppercased() == "SKILL.MD" {
+            if fileURL.lastPathComponent.uppercased() == "SKILL.MD" && Self.isRegularPayloadFile(fileURL) {
                 results.append(fileURL)
             }
         }
@@ -426,11 +525,22 @@ public final class PluginInstallManager: @unchecked Sendable {
             return nil
         }
         for case let fileURL as URL in enumerator {
-            if fileURL.pathExtension == "dylib" {
+            if fileURL.pathExtension == "dylib" && Self.isRegularPayloadFile(fileURL) {
                 return fileURL
             }
         }
         return nil
+    }
+
+    /// Signed archives should contribute real files only; symlinked payload files would let
+    /// an artifact point the installer at bytes outside the extracted archive tree.
+    static func isRegularPayloadFile(_ url: URL) -> Bool {
+        guard
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        else {
+            return false
+        }
+        return values.isRegularFile == true && values.isSymbolicLink != true
     }
 
 }

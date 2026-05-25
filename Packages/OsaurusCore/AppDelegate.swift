@@ -266,6 +266,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await serverController.startServer()
         }
 
+        Task.detached(priority: .utility) {
+            try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+        }
+
         Task { @MainActor in
             await MCPProviderManager.shared.connectEnabledProviders()
             await RemoteProviderManager.shared.connectEnabledProviders()

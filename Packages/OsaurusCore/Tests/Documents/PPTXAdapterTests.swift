@@ -86,6 +86,56 @@ struct PPTXAdapterTests {
         #expect(document.textFallback.contains("Template title"))
     }
 
+    @Test func parse_reportsExternallyAddressedRelationshipsWithoutValidTargetMode() async throws {
+        let fixture = try makePresentationFixture(
+            fileExtension: "pptx",
+            slides: [1: ["External relationships"]],
+            slideOrder: [1],
+            externalRelationships: [
+                RelationshipFixture(
+                    id: "urlMissingMode",
+                    type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    target: "https://example.com/no-target-mode"
+                ),
+                RelationshipFixture(
+                    id: "fileMalformedMode",
+                    type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+                    target: "file:///tmp/linked-image.png",
+                    targetMode: "Externall"
+                ),
+                RelationshipFixture(
+                    id: "schemeRelativeMissingMode",
+                    type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/video",
+                    target: "//cdn.example.com/clip.mp4"
+                ),
+            ],
+            compression: .stored
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let document = try await PPTXAdapter().parse(url: fixture.url, sizeLimit: 100_000)
+        let references = document.security.externalReferences
+        let targets = Set(references.map(\.urlString))
+
+        #expect(
+            targets
+                == Set([
+                    "https://example.com/no-target-mode",
+                    "file:///tmp/linked-image.png",
+                    "//cdn.example.com/clip.mp4",
+                ])
+        )
+        #expect(document.security.activeContentTypes.contains(.externalReference))
+        #expect(references.first { $0.relationshipId == "urlMissingMode" }?.kind == .hyperlink)
+        #expect(references.first { $0.relationshipId == "fileMalformedMode" }?.kind == .image)
+        #expect(references.first { $0.relationshipId == "schemeRelativeMissingMode" }?.kind == .media)
+        #expect(
+            document.security.findings.contains {
+                $0.kind == .externalReference && $0.metadata["count"] == "3"
+            }
+        )
+    }
+
     @Test func parse_refusesFilesAboveSizeLimit() async throws {
         let root = try makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -137,6 +187,7 @@ struct PPTXAdapterTests {
         slideOrder: [Int],
         notes: [Int: [String]] = [:],
         externalTargets: [String] = [],
+        externalRelationships: [RelationshipFixture] = [],
         compression: FixtureCompression
     ) throws -> (root: URL, url: URL) {
         let root = try makeTempDirectory()
@@ -152,7 +203,8 @@ struct PPTXAdapterTests {
             let slideRelationships = slideRelationshipsXML(
                 slideNumber: number,
                 hasNotes: notes[number] != nil,
-                externalTargets: number == slideOrder.first ? externalTargets : []
+                externalTargets: number == slideOrder.first ? externalTargets : [],
+                externalRelationships: number == slideOrder.first ? externalRelationships : []
             )
             if !slideRelationships.isEmpty {
                 entries.append(("ppt/slides/_rels/slide\(number).xml.rels", Data(slideRelationships.utf8)))
@@ -203,7 +255,8 @@ struct PPTXAdapterTests {
     private func slideRelationshipsXML(
         slideNumber: Int,
         hasNotes: Bool,
-        externalTargets: [String]
+        externalTargets: [String],
+        externalRelationships: [RelationshipFixture]
     ) -> String {
         var relationships: [RelationshipFixture] = []
         if hasNotes {
@@ -225,6 +278,7 @@ struct PPTXAdapterTests {
                 )
             }
         )
+        relationships.append(contentsOf: externalRelationships)
         guard !relationships.isEmpty else { return "" }
         return relationshipsXML(relationships)
     }

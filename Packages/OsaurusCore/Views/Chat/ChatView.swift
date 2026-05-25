@@ -156,6 +156,9 @@ final class ChatSession: ObservableObject {
     var sourcePluginId: String?
     var externalSessionKey: String?
     var dispatchTaskId: UUID?
+    /// Mirrors `ChatSessionData.archived`. Required here so `toSessionData()`
+    /// round-trips the flag instead of stamping `false` on every save.
+    var archived: Bool = false
 
     /// Tracks if session has unsaved content changes
     private var isDirty: Bool = false
@@ -864,6 +867,7 @@ final class ChatSession: ObservableObject {
         sourcePluginId = nil
         externalSessionKey = nil
         dispatchTaskId = nil
+        archived = false
         isDirty = false
 
         // Reset agent-loop UI state.
@@ -1053,7 +1057,9 @@ final class ChatSession: ObservableObject {
             source: source,
             sourcePluginId: sourcePluginId,
             externalSessionKey: externalSessionKey,
-            dispatchTaskId: dispatchTaskId
+            dispatchTaskId: dispatchTaskId,
+            archived: archived,
+            capabilities: SessionCapability.derive(from: turnData)
         )
     }
 
@@ -1098,6 +1104,7 @@ final class ChatSession: ObservableObject {
         sourcePluginId = data.sourcePluginId
         externalSessionKey = data.externalSessionKey
         dispatchTaskId = data.dispatchTaskId
+        archived = data.archived
 
         // Restore the persisted model when it's still valid; otherwise
         // fall back to the agent's preferred model. `isLoadingModel`
@@ -1793,6 +1800,11 @@ final class ChatSession: ObservableObject {
                 currentTurn.generationTokenCount = rollingRate.totalTokens
             }
         }
+        // Stamp stream-end wall-clock for opt-in export timing. Set
+        // unconditionally so cancelled and zero-token streams still get
+        // a timestamp — the token count tells the consumer how much was
+        // actually generated.
+        currentTurn.completedAt = Date()
 
         let totalTime = Date().timeIntervalSince(streamStartTime)
         print(
@@ -2730,16 +2742,31 @@ struct ChatView: View {
                                 windowState.startNewChat()
                             },
                             onDelete: { id in
-                                ChatSessionsManager.shared.delete(id: id)
-                                // If we deleted the current session, reset
                                 if session.sessionId == id {
                                     session.reset()
                                 }
+                                ChatSessionsManager.shared.delete(id: id)
                                 windowState.refreshSessions()
                             },
                             onRename: { id, title in
                                 ChatSessionsManager.shared.rename(id: id, title: title)
                                 windowState.refreshSessions()
+                            },
+                            onSetArchived: { id, archived in
+                                ChatSessionsManager.shared.setArchived(id: id, archived: archived)
+                                // Keep the open view-model in sync so the
+                                // next auto-save doesn't clobber the flag.
+                                if session.sessionId == id {
+                                    session.archived = archived
+                                }
+                                windowState.refreshSessions()
+                            },
+                            onExport: { metadata, format in
+                                ChatSessionExportCoordinator.run(
+                                    metadataSession: metadata,
+                                    format: format,
+                                    scope: .chat(windowState.windowId)
+                                )
                             },
                             onOpenInNewWindow: { sessionData in
                                 // Open session in a new window via ChatWindowManager

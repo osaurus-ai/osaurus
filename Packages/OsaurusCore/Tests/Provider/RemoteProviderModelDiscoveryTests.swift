@@ -94,6 +94,28 @@ struct RemoteProviderModelDiscoveryTests {
         #expect(provider.url(for: "/models")?.absoluteString == "http://127.0.0.1:8000/api/v1/models")
     }
 
+    @Test func modelDiscoveryRequest_carriesBoundedTimeoutAndProviderHeaders() throws {
+        let url = try #require(URL(string: "http://127.0.0.1:8000/v1/models"))
+
+        let request = RemoteProviderService.modelDiscoveryRequest(
+            url: url,
+            headers: ["Authorization": "Bearer test", "X-Test": "one"],
+            timeout: 45
+        )
+
+        #expect(request.httpMethod == "GET")
+        #expect(request.timeoutInterval == 30)
+        #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test")
+        #expect(request.value(forHTTPHeaderField: "X-Test") == "one")
+    }
+
+    @Test func modelDiscoveryTimeout_clampsInvalidAndTinyValues() {
+        #expect(RemoteProviderService.modelDiscoveryTimeout(.infinity) == 30)
+        #expect(RemoteProviderService.modelDiscoveryTimeout(0) == 1)
+        #expect(RemoteProviderService.modelDiscoveryTimeout(10) == 10)
+    }
+
     @Test func lemonadeModelsResponse_parsesOpenAIListWithExtraFields() throws {
         let provider = makeProvider(basePath: "/api/v1")
         let body = Data(

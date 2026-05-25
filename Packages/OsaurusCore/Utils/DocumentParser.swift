@@ -101,7 +101,12 @@ enum DocumentParser {
 
     static func canParse(url: URL) -> Bool {
         let ext = url.pathExtension.lowercased()
-        return isPlainText(ext: ext) || richDocumentExtensions.contains(ext)
+        if isPlainText(ext: ext) || richDocumentExtensions.contains(ext) {
+            return true
+        }
+
+        let uti = UTType(filenameExtension: ext)?.identifier
+        return DocumentFormatRegistry.shared.adapter(for: url, uti: uti) != nil
     }
 
     static func isImageFile(url: URL) -> Bool {
@@ -123,8 +128,14 @@ enum DocumentParser {
             UTType("public.swift-source") ?? .data,
             UTType("com.netscape.javascript-source") ?? .data,
             UTType("public.shell-script") ?? .data,
-        ].compactMap { $0 }
+        ].compactMap { $0 } + structuredDocumentTypes
     }
+
+    private static let structuredDocumentTypes: [UTType] = [
+        UTType(filenameExtension: "xlsx"),
+        UTType(filenameExtension: "pptx"),
+        UTType(filenameExtension: "potx"),
+    ].compactMap { $0 }
 
     // MARK: - Plain Text
 

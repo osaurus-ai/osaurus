@@ -56,10 +56,10 @@ struct SandboxSetupBody: View {
     var body: some View {
         OnboardingTwoColumnBody(
             illustrationAsset: "osaurus-sandbox",
-            leftHeadline: "A safety net for your agent",
+            leftHeadline: "A safety net for your dino",
             leftBody:
-                "When your agent installs packages, runs scripts, or fiddles with files, it does that in a tiny, walled-off workspace — separate from your Mac.",
-            subtitle: "Where your agent runs anything that touches your system."
+                "When your dino installs packages, runs scripts, or fiddles with files, it does that in a tiny, walled-off workspace — separate from your Mac.",
+            subtitle: "Where your dino runs anything that touches your system."
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 explainerCard
@@ -82,7 +82,7 @@ struct SandboxSetupBody: View {
                 bulletRow(
                     icon: "terminal.fill",
                     title: L("Real code, safely"),
-                    detail: L("Lets your agent install packages, run scripts, and work with files like a real machine.")
+                    detail: L("Lets your dino install packages, run scripts, and work with files like a real machine.")
                 )
                 bulletRow(
                     icon: "arrow.uturn.backward.circle.fill",

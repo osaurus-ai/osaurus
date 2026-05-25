@@ -950,7 +950,7 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     private static let progressInterval: CFAbsoluteTime = 0.25
 
     private lazy var session: URLSession = {
-        URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        GlobalProxySettings.makeSession(base: .default, delegate: self, delegateQueue: nil)
     }()
 
     func download(

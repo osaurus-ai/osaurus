@@ -1,8 +1,10 @@
 import Foundation
+import OsaurusCore
 import Testing
 
 @testable import OsaurusEvalsKit
 
+@Suite(.serialized)
 struct EvalBootstrapPlanTests {
     @Test func pluginRequiredCapabilitySearchSkipsBootstrapByDefault() {
         let suite = makeSuite(
@@ -147,6 +149,55 @@ struct EvalBootstrapPlanTests {
                     searchIndexScope: EvalSearchIndexBootstrapScope(methods: true)
                 )
         )
+    }
+
+    @MainActor
+    @Test func isolatedSearchStorageOverridesOsaurusRoot() {
+        let previousRoot = OsaurusPaths.overrideRoot
+        var isolatedRoot: URL?
+        defer {
+            OsaurusPaths.overrideRoot = previousRoot
+            StorageKeyManager.shared.wipeCache()
+            if let isolatedRoot {
+                try? FileManager.default.removeItem(at: isolatedRoot)
+            }
+        }
+
+        let root = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(
+            for: EvalBootstrapPlan(
+                loadInstalledPlugins: false,
+                searchIndexScope: EvalSearchIndexBootstrapScope(methods: true)
+            )
+        )
+        isolatedRoot = root
+
+        #expect(root != nil)
+        #expect(OsaurusPaths.overrideRoot == root)
+        #expect(root?.lastPathComponent.hasPrefix("osaurus-evals-") == true)
+
+        if let root {
+            var isDirectory: ObjCBool = false
+            #expect(FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory))
+            #expect(isDirectory.boolValue)
+        }
+    }
+
+    @MainActor
+    @Test func nonIsolatedBootstrapDoesNotReplaceExistingRootOverride() {
+        let previousRoot = OsaurusPaths.overrideRoot
+        let existingRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-evals-existing-\(UUID().uuidString)", isDirectory: true)
+        OsaurusPaths.overrideRoot = existingRoot
+        defer {
+            OsaurusPaths.overrideRoot = previousRoot
+        }
+
+        let root = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(
+            for: EvalBootstrapPlan(loadInstalledPlugins: true, initializeSearchIndices: false)
+        )
+
+        #expect(root == nil)
+        #expect(OsaurusPaths.overrideRoot == existingRoot)
     }
 
     private func makeSuite(cases: [EvalCase]) -> EvalSuite {

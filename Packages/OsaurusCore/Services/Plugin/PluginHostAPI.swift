@@ -70,19 +70,16 @@ final class PluginHostContext: @unchecked Sendable {
     /// than copying the struct.
     private(set) var hostAPIPtr: UnsafeMutablePointer<osr_host_api>?
 
-    /// Shared URLSession for plugin HTTP requests (thread-safe).
-    private static let httpSession: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.httpMaximumConnectionsPerHost = 10
-        return URLSession(configuration: config)
-    }()
-
-    /// Shared URLSession that suppresses redirects. Singleton to avoid per-request session leaks.
+    /// Shared URLSession that suppresses redirects. `http_request`
+    /// follows redirects manually so every `Location` target can pass
+    /// through the same SSRF guard before the host connects.
     private static let noRedirectSession: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.httpMaximumConnectionsPerHost = 10
         return URLSession(configuration: config, delegate: NoRedirectDelegate.shared, delegateQueue: nil)
     }()
+
+    private static let maxHTTPRedirects = 20
 
     /// Sliding window timestamps for dispatch rate limiting, keyed by agent ID.
     /// The bucket is **per (plugin, agent) pair** — each plugin keeps its own
@@ -2143,51 +2140,76 @@ final class PluginHostContext: @unchecked Sendable {
         let existing = request.value(forHTTPHeaderField: "User-Agent")
         request.setValue(existing.map { "\($0) \(suffix)" } ?? suffix, forHTTPHeaderField: "User-Agent")
 
-        let session = followRedirects ? Self.httpSession : Self.noRedirectSession
         let finalRequest = request
 
         return Self.blockingAsync {
             let startTime = Date()
             do {
-                let (responseData, urlResponse) = try await session.data(for: finalRequest)
-                let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
+                var currentRequest = finalRequest
+                var redirectCount = 0
 
-                guard let httpResponse = urlResponse as? HTTPURLResponse else {
-                    return Self.jsonString([
-                        "error": "invalid_response", "message": "Non-HTTP response", "elapsed_ms": elapsed,
-                    ])
-                }
+                while true {
+                    let (responseData, urlResponse) = try await Self.noRedirectSession.data(for: currentRequest)
+                    let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
 
-                if responseData.count > 50_000_000 {
-                    return Self.jsonString([
-                        "error": "response_too_large", "message": "Response body exceeds 50MB limit",
+                    guard let httpResponse = urlResponse as? HTTPURLResponse else {
+                        return Self.jsonString([
+                            "error": "invalid_response", "message": "Non-HTTP response", "elapsed_ms": elapsed,
+                        ])
+                    }
+
+                    if followRedirects {
+                        let redirect = Self.checkedHTTPRedirectRequest(from: currentRequest, response: httpResponse)
+                        if let ssrfError = redirect.ssrfError {
+                            return Self.jsonString([
+                                "error": "ssrf_blocked", "message": ssrfError, "elapsed_ms": elapsed,
+                            ])
+                        }
+                        if let nextRequest = redirect.request {
+                            redirectCount += 1
+                            guard redirectCount <= Self.maxHTTPRedirects else {
+                                return Self.jsonString([
+                                    "error": "too_many_redirects",
+                                    "message": "HTTP redirect limit exceeded",
+                                    "elapsed_ms": elapsed,
+                                ])
+                            }
+                            currentRequest = nextRequest
+                            continue
+                        }
+                    }
+
+                    if responseData.count > 50_000_000 {
+                        return Self.jsonString([
+                            "error": "response_too_large", "message": "Response body exceeds 50MB limit",
+                            "elapsed_ms": elapsed,
+                        ])
+                    }
+
+                    var responseHeaders: [String: String] = [:]
+                    for (key, value) in httpResponse.allHeaderFields {
+                        responseHeaders[String(describing: key).lowercased()] = String(describing: value)
+                    }
+
+                    let bodyStr: String
+                    let bodyEncoding: String
+                    if let str = String(data: responseData, encoding: .utf8) {
+                        bodyStr = str
+                        bodyEncoding = "utf8"
+                    } else {
+                        bodyStr = responseData.base64EncodedString()
+                        bodyEncoding = "base64"
+                    }
+
+                    let response: [String: Any] = [
+                        "status": httpResponse.statusCode,
+                        "headers": responseHeaders,
+                        "body": bodyStr,
+                        "body_encoding": bodyEncoding,
                         "elapsed_ms": elapsed,
-                    ])
+                    ]
+                    return Self.jsonString(response)
                 }
-
-                var responseHeaders: [String: String] = [:]
-                for (key, value) in httpResponse.allHeaderFields {
-                    responseHeaders[String(describing: key).lowercased()] = String(describing: value)
-                }
-
-                let bodyStr: String
-                let bodyEncoding: String
-                if let str = String(data: responseData, encoding: .utf8) {
-                    bodyStr = str
-                    bodyEncoding = "utf8"
-                } else {
-                    bodyStr = responseData.base64EncodedString()
-                    bodyEncoding = "base64"
-                }
-
-                let response: [String: Any] = [
-                    "status": httpResponse.statusCode,
-                    "headers": responseHeaders,
-                    "body": bodyStr,
-                    "body_encoding": bodyEncoding,
-                    "elapsed_ms": elapsed,
-                ]
-                return Self.jsonString(response)
             } catch let error as URLError {
                 let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
                 let errorType: String
@@ -2469,6 +2491,88 @@ extension PluginHostContext {
 
     private static func ssrfBlocked(_ target: String) -> String {
         "Requests to \(target) are blocked (SSRF protection)"
+    }
+
+    static func checkedHTTPRedirectRequest(
+        from request: URLRequest,
+        response: HTTPURLResponse
+    ) -> (request: URLRequest?, ssrfError: String?) {
+        guard (300 ... 399).contains(response.statusCode),
+            let location = redirectLocation(from: response),
+            let baseURL = response.url ?? request.url,
+            let redirectURL = URL(string: location, relativeTo: baseURL)?.absoluteURL
+        else {
+            return (nil, nil)
+        }
+
+        if let ssrfError = checkSSRF(url: redirectURL) {
+            return (nil, ssrfError)
+        }
+
+        var redirected = request
+        redirected.url = redirectURL
+        normalizeRedirectMethod(on: &redirected, originalRequest: request, statusCode: response.statusCode)
+        stripCrossOriginCredentials(on: &redirected, originalURL: request.url, redirectURL: redirectURL)
+        return (redirected, nil)
+    }
+
+    /// Extracts `Location` without depending on Foundation's header
+    /// key casing. Some local test responses use lowercase while
+    /// remote servers commonly title-case it.
+    private static func redirectLocation(from response: HTTPURLResponse) -> String? {
+        for (key, value) in response.allHeaderFields {
+            guard String(describing: key).lowercased() == "location" else { continue }
+            return String(describing: value)
+        }
+        return nil
+    }
+
+    /// Matches normal user-agent redirect semantics for unsafe
+    /// methods: 301/302/303 drop the request body and become GET,
+    /// while 307/308 preserve method and body.
+    private static func normalizeRedirectMethod(
+        on request: inout URLRequest,
+        originalRequest: URLRequest,
+        statusCode: Int
+    ) {
+        let method = originalRequest.httpMethod?.uppercased()
+        guard [301, 302, 303].contains(statusCode), method != "GET", method != "HEAD" else { return }
+        request.httpMethod = "GET"
+        request.httpBody = nil
+        request.setValue(nil, forHTTPHeaderField: "Content-Length")
+        request.setValue(nil, forHTTPHeaderField: "Content-Type")
+    }
+
+    /// Cross-origin redirects should not carry credentials intended
+    /// for the original host. `URLSession` does this for automatic
+    /// redirects; manual redirect following has to preserve it here.
+    private static func stripCrossOriginCredentials(
+        on request: inout URLRequest,
+        originalURL: URL?,
+        redirectURL: URL
+    ) {
+        guard originFingerprint(originalURL) != originFingerprint(redirectURL) else { return }
+        request.setValue(nil, forHTTPHeaderField: "Authorization")
+        request.setValue(nil, forHTTPHeaderField: "Cookie")
+    }
+
+    private static func originFingerprint(_ url: URL?) -> String? {
+        guard let url,
+            let scheme = url.scheme?.lowercased(),
+            let host = url.host?.lowercased()
+        else {
+            return nil
+        }
+        return "\(scheme)://\(host):\(normalizedPort(for: url, scheme: scheme))"
+    }
+
+    private static func normalizedPort(for url: URL, scheme: String) -> Int {
+        if let port = url.port { return port }
+        switch scheme {
+        case "http": return 80
+        case "https": return 443
+        default: return -1
+        }
     }
 }
 

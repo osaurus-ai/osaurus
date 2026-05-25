@@ -53,6 +53,7 @@ public struct XLSXEmitter: DocumentFormatEmitter {
     private static func packageData(for workbook: Workbook) throws -> Data {
         let sheets = try validatedSheets(workbook.sheets)
         try rejectFormulaCells(in: sheets)
+        try requireRenderableContent(in: sheets)
 
         var sharedStrings = SharedStringTable()
         var worksheetEntries: [(path: String, xml: String)] = []
@@ -342,6 +343,19 @@ public struct XLSXEmitter: DocumentFormatEmitter {
                     throw writeFailed("XLSX emitter does not write formulas yet (\(sheet.name)!\(cell.reference))")
                 }
             }
+        }
+    }
+
+    private static func requireRenderableContent(in sheets: [Workbook.Sheet]) throws {
+        let hasRenderableCell = sheets.contains { sheet in
+            sheet.rows.contains { row in
+                row.cells.contains { cell in
+                    !cell.value.fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+            }
+        }
+        guard hasRenderableCell else {
+            throw DocumentAdapterError.emptyContent
         }
     }
 

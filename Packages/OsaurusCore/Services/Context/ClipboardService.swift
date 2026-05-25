@@ -24,6 +24,18 @@ public final class ClipboardService: ObservableObject {
             if case .text = self { return true }
             return false
         }
+
+        /// A privacy-preserving description for diagnostics that never includes clipboard payloads.
+        public var redactedDiagnosticDescription: String {
+            switch self {
+            case .text(let text):
+                "text(characters: \(text.count))"
+            case .image(let data):
+                "image(bytes: \(data.count))"
+            case .file(let url):
+                "file(extension: \(url.pathExtension.isEmpty ? "unknown" : url.pathExtension.lowercased()))"
+            }
+        }
     }
 
     /// The current content on the pasteboard
@@ -76,7 +88,7 @@ public final class ClipboardService: ObservableObject {
         if let content = newContent {
             // Only update if content actually changed
             if content != currentContent {
-                print("[ClipboardService] New content detected: \(content)")
+                print("[ClipboardService] New content detected: \(content.redactedDiagnosticDescription)")
                 currentContent = content
                 hasNewContent = true
 

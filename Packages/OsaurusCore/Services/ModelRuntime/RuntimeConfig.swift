@@ -18,6 +18,10 @@ struct RuntimeConfig: Sendable {
     /// Generation defaults projected from `runtimeSettings.generation`.
     let generation: VMLXServerGenerationDefaults
 
+    /// Concurrency/runtime batch controls projected from
+    /// `runtimeSettings.concurrency`.
+    let concurrency: VMLXServerConcurrencySettings
+
     /// Captures a generation config snapshot from
     /// `VMLXServerRuntimeSettings`. Falls back to `ServerConfiguration`
     /// when the runtime store hasn't been seeded yet.
@@ -34,7 +38,10 @@ struct RuntimeConfig: Sendable {
         {
             generation.topP = Double(legacy.genTopP)
         }
-        return RuntimeConfig(generation: generation)
+        return RuntimeConfig(
+            generation: generation,
+            concurrency: runtime.concurrency
+        )
     }
 
     private static func diskBackedServerConfiguration() -> ServerConfiguration? {

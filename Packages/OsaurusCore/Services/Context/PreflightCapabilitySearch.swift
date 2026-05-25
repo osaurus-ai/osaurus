@@ -358,7 +358,7 @@ enum CapabilitySearch {
 
         logger.notice(
             """
-            CapabilitySearch query=\(query, privacy: .public)
+            CapabilitySearch query=\(query, privacy: .private(mask: .hash))
             methodsThreshold=\(methodsThreshold, privacy: .public) skillsThreshold=\(skillsThreshold, privacy: .public) fusedCutoff=\(fusedCutoff, privacy: .public)
             health=\(healthSummary, privacy: .public)
             methods raw=\(formatHits(methodDiag.rawHits), privacy: .public)
@@ -841,7 +841,7 @@ enum PreflightCapabilitySearch {
             let fallback = safeFallbackSlice(catalog: catalog, topK: topK)
             let sliceNames = fallback.map(\.name)
             logger.notice(
-                "rankCatalog fallback: query=\(query, privacy: .public) catalogSize=\(catalog.count) topK=\(topK) sliceNames=\(sliceNames.joined(separator: ","), privacy: .public) reason=empty-hits"
+                "rankCatalog fallback: query=\(query, privacy: .private(mask: .hash)) catalogSize=\(catalog.count) topK=\(topK) sliceNames=\(sliceNames.joined(separator: ","), privacy: .public) reason=empty-hits"
             )
             return fallback
         }
@@ -868,7 +868,7 @@ enum PreflightCapabilitySearch {
             let fallback = safeFallbackSlice(catalog: catalog, topK: topK)
             let sliceNames = fallback.map(\.name)
             logger.notice(
-                "rankCatalog fallback: query=\(query, privacy: .public) catalogSize=\(catalog.count) topK=\(topK) sliceNames=\(sliceNames.joined(separator: ","), privacy: .public) reason=no-mappable-hits"
+                "rankCatalog fallback: query=\(query, privacy: .private(mask: .hash)) catalogSize=\(catalog.count) topK=\(topK) sliceNames=\(sliceNames.joined(separator: ","), privacy: .public) reason=no-mappable-hits"
             )
             return fallback
         }
@@ -1108,7 +1108,7 @@ enum PreflightCapabilitySearch {
         cap: Int
     ) -> [String] {
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        logger.info("Pre-flight: raw LLM response: \(trimmed)")
+        logger.info("Pre-flight: raw LLM response: \(trimmed, privacy: .private(mask: .hash))")
         guard !trimmed.isEmpty else { return [] }
 
         let validNames = Dictionary(

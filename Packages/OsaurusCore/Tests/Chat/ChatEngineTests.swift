@@ -464,6 +464,87 @@ struct ChatEngineTests {
         )
     }
 
+    @Test func completeChat_usesMaxCompletionTokensAlias() async throws {
+        actor Capture {
+            var params: GenerationParameters?
+            func set(_ params: GenerationParameters) { self.params = params }
+        }
+        struct CaptureService: ModelService {
+            let capture: Capture
+            var id: String { "fake" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { requestedModel == "fake" }
+            func generateOneShot(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?
+            ) async throws -> String {
+                await capture.set(parameters)
+                return "ok"
+            }
+            func streamDeltas(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?,
+                stopSequences: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                await capture.set(parameters)
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("ok")
+                    continuation.finish()
+                }
+            }
+        }
+
+        let capture = Capture()
+        let engine = ChatEngine(services: [CaptureService(capture: capture)], installedModelsProvider: { [] })
+        var req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: nil,
+            max_tokens: nil,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+        req.max_completion_tokens = 24
+
+        _ = try await engine.completeChat(request: req)
+        let params = await capture.params
+        #expect(params?.maxTokens == 24)
+        #expect(params?.maxTokensExplicit == true)
+    }
+
+    @Test func chatCompletionRequest_withModelPreservesMaxCompletionTokensAlias() {
+        var req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: nil,
+            max_tokens: nil,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+        req.max_completion_tokens = 48
+
+        let routed = req.withModel("provider/fake")
+
+        #expect(routed.max_completion_tokens == 48)
+        #expect(routed.resolvedMaxTokens == 48)
+    }
+
     @Test func completeChat_mapsHy3LegacyThinkingBoolToReasoningEffort() async throws {
         actor Capture {
             var params: GenerationParameters?

@@ -65,6 +65,39 @@ extension HTTPHandler {
         }
     }
 
+    /// Coalesces text deltas according to `generation.streamInterval`.
+    ///
+    /// Non-text control events (reasoning, stats, tool sentinels, finish)
+    /// should call `flush()` before writing so ordering stays faithful. An
+    /// interval of nil/1 preserves legacy per-delta streaming.
+    struct StreamDeltaCoalescer {
+        private let minTokens: Int
+        private var bufferedText = ""
+        private var bufferedTokens = 0
+
+        init(interval: Int?) {
+            self.minTokens = max(1, interval ?? 1)
+        }
+
+        mutating func append(_ delta: String) -> String? {
+            guard !delta.isEmpty else { return nil }
+            guard minTokens > 1 else { return delta }
+
+            bufferedText += delta
+            bufferedTokens += TokenEstimator.estimate(delta)
+            guard bufferedTokens >= minTokens else { return nil }
+            return flush()
+        }
+
+        mutating func flush() -> String? {
+            guard !bufferedText.isEmpty else { return nil }
+            let text = bufferedText
+            bufferedText = ""
+            bufferedTokens = 0
+            return text
+        }
+    }
+
     /// Write a single-shot JSON response (non-streaming) and close the
     /// connection. Centralizes the boilerplate around `Content-Type` /
     /// `Content-Length` / `Connection: close` so each non-streaming

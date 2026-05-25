@@ -548,22 +548,29 @@ curl http://127.0.0.1:1337/v1/responses \
 
 ## Memory API
 
-Osaurus provides a persistent memory system that can be used via the API. The v2 system distills sessions in the background, then injects at most one compact memory section (~800 tokens by default) into requests where the user's query actually needs it. See [docs/MEMORY.md](MEMORY.md) for the full architecture.
+Osaurus provides a persistent memory system that can be used by the app chat and agent APIs. The v2 system distills sessions in the background, then composed agent context can include at most one compact memory section (~800 tokens by default) when the user's query actually needs it. See [docs/MEMORY.md](MEMORY.md) for the full architecture.
 
-### Memory Context Injection — `X-Osaurus-Agent-Id` Header
+### Agent Context and `/chat/completions`
 
-Add the `X-Osaurus-Agent-Id` header to any `POST /chat/completions` request. Osaurus runs a relevance gate against the latest user message, picks at most one memory section (identity, pinned facts, episodes, or transcript), and prepends it — together with always-on identity overrides — to the user message.
+`POST /chat/completions` is a strict OpenAI-compatible inference endpoint. It does not inject Osaurus agent prompts, memory, skills, or tools into the request. Client-supplied `messages`, `tools`, and `tool_choice` are passed through as the server-side inference contract.
 
-The header value is an arbitrary string that identifies the agent or user session whose memory should be retrieved.
+Use these surfaces when you want Osaurus-composed agent context:
+
+- App chat windows: system prompt, memory, folder/sandbox context, selected skills, and tools are composed by the app before inference.
+- `POST /agents/{id}/run`: runs a server-side autonomous agent loop with that agent's context and tool execution.
+- Plugin host inference APIs: carry the plugin's active agent context by design.
+
+`X-Osaurus-Agent-Id` on `/chat/completions` may still be used to associate persisted HTTP chat history with an agent/session, but it is not a prompt/context injection switch.
+
+Strict pass-through example:
 
 ```bash
 curl http://127.0.0.1:1337/chat/completions \
   -H "Content-Type: application/json" \
-  -H "X-Osaurus-Agent-Id: my-agent" \
   -d '{
     "model": "your-model-name",
     "messages": [
-      {"role": "user", "content": "What did we talk about last time?"}
+      {"role": "user", "content": "Answer using only these messages."}
     ]
   }'
 ```
@@ -576,17 +583,14 @@ from openai import OpenAI
 client = OpenAI(
     base_url="http://127.0.0.1:1337/v1",
     api_key="osaurus",
-    default_headers={"X-Osaurus-Agent-Id": "my-agent"},
 )
 
 response = client.chat.completions.create(
     model="your-model-name",
-    messages=[{"role": "user", "content": "What did we talk about last time?"}],
+    messages=[{"role": "user", "content": "Answer using only these messages."}],
 )
 print(response.choices[0].message.content)
 ```
-
-When the header is absent or empty, the request is processed normally without memory injection.
 
 ### Memory Ingestion — `POST /memory/ingest`
 

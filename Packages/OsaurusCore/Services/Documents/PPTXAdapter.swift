@@ -636,12 +636,7 @@ public struct PPTXAdapter: DocumentFormatAdapter {
 
     private static func resolveRelationshipTarget(from sourcePart: String, target: String) -> String? {
         guard !target.contains("\\") else { return nil }
-        let lowercased = target.lowercased()
-        guard !lowercased.hasPrefix("http://"),
-            !lowercased.hasPrefix("https://"),
-            !lowercased.hasPrefix("file://"),
-            !lowercased.hasPrefix("//")
-        else {
+        guard !isExternallyAddressedRelationshipTarget(target) else {
             return nil
         }
 
@@ -779,6 +774,14 @@ private enum Constants {
     static let maxTextPartUTF16 = 1_000_000
     static let maxXMLDepth = 512
     static let maxRelationshipFiles = 512
+}
+
+private func isExternallyAddressedRelationshipTarget(_ target: String) -> Bool {
+    let lowercased = target.lowercased()
+    return lowercased.hasPrefix("http://")
+        || lowercased.hasPrefix("https://")
+        || lowercased.hasPrefix("file://")
+        || lowercased.hasPrefix("//")
 }
 
 private struct OpenXMLRelationship: Sendable {
@@ -979,6 +982,7 @@ private final class OpenXMLRelationshipCollector: NSObject, XMLParserDelegate {
 
         let mode =
             OpenXMLName.attribute("TargetMode", in: attributeDict)?.lowercased() == "external"
+                || isExternallyAddressedRelationshipTarget(target)
             ? OpenXMLRelationship.TargetMode.external
             : .internalPackage
         relationships.append(

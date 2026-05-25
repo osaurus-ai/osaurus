@@ -66,6 +66,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// List of allowed origins for CORS. Empty disables CORS. Use "*" to allow any origin.
     public var allowedOrigins: [String]
 
+    /// Optional validated proxy endpoint used by outbound URLSession traffic.
+    public var globalProxyURL: String?
+
     /// Memory management policy for loaded models
     public var modelEvictionPolicy: ModelEvictionPolicy
 
@@ -94,6 +97,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case genTopP
         case genMaxKVSize
         case allowedOrigins
+        case globalProxyURL
         case modelEvictionPolicy
         case modelIdleResidencyPolicy
         case maxRequestBodyBytes
@@ -120,6 +124,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.allowedOrigins =
             try container.decodeIfPresent([String].self, forKey: .allowedOrigins)
             ?? defaults.allowedOrigins
+        self.globalProxyURL = try container.decodeIfPresent(String.self, forKey: .globalProxyURL)
         self.modelEvictionPolicy =
             try container.decodeIfPresent(ModelEvictionPolicy.self, forKey: .modelEvictionPolicy)
             ?? defaults.modelEvictionPolicy
@@ -145,6 +150,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genTopP: Float,
         genMaxKVSize: Int?,
         allowedOrigins: [String] = [],
+        globalProxyURL: String? = nil,
         modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel,
         modelIdleResidencyPolicy: ModelIdleResidencyPolicy = .defaultWarm,
         maxRequestBodyBytes: Int = 32 * 1024 * 1024,
@@ -160,6 +166,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genTopP = genTopP
         self.genMaxKVSize = genMaxKVSize
         self.allowedOrigins = allowedOrigins
+        self.globalProxyURL = globalProxyURL
         self.modelEvictionPolicy = modelEvictionPolicy
         self.modelIdleResidencyPolicy = modelIdleResidencyPolicy
         self.maxRequestBodyBytes = maxRequestBodyBytes
@@ -179,6 +186,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             genTopP: 1.0,
             genMaxKVSize: nil,
             allowedOrigins: [],
+            globalProxyURL: nil,
             modelEvictionPolicy: .strictSingleModel,
             modelIdleResidencyPolicy: .defaultWarm,
             maxRequestBodyBytes: 32 * 1024 * 1024,

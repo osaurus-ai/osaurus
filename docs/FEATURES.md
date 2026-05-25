@@ -166,6 +166,9 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - `Services/Inference/MLXService.swift` — MLX model loading, warm-up orchestration
 - `Services/ModelRuntime/` — Single MLX entry point (`MLXBatchAdapter`) wrapping vmlx-swift's `BatchEngine`, plus the `GenerationEventMapper` bridge to typed runtime events
 - `Services/Inference/ModelService.swift` — Model lifecycle management
+- Native Swift image generation is not wired as a supported local MLX feature
+  yet. See `NATIVE_SWIFT_IMAGE_GENERATION_INTEGRATION.md` for the pending
+  `vMLXFlux` lane and release gate.
 
 **Runtime behavior:**
 
@@ -1216,7 +1219,7 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 
 **Tool API:** `search_memory(scope, query)` with three scopes: `pinned`, `episodes`, `transcript`. Replaces v1's five-scope tool.
 
-**HTTP API:** Same `X-Osaurus-Agent-Id` header for read-side context injection. `POST /memory/ingest` writes transcripts and triggers an immediate distillation flush after the batch (no need to wait for the writer's debounce).
+**HTTP API:** `POST /memory/ingest` writes transcripts and triggers an immediate distillation flush after the batch (no need to wait for the writer's debounce). Strict `/chat/completions` requests do not inject read-side memory; app chat, `POST /agents/{id}/run`, and plugin host inference own composed agent context.
 
 **Storage:** `~/.osaurus/memory/memory.sqlite` (SQLite with WAL mode), `~/.osaurus/memory/vectura/` (vector index)
 

@@ -12,6 +12,7 @@
 
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 
 @testable import OsaurusCore
 
@@ -89,6 +90,25 @@ struct DocumentParserShimTests {
         #expect(ids.contains("pptx"))
         #expect(ids.contains("richdoc"))
         #expect(ids.contains("xlsx"))
+    }
+
+    @Test func canParse_acceptsRegisteredStructuredOfficeFormats() {
+        DocumentAdaptersBootstrap.registerBuiltIns()
+
+        for ext in ["xlsx", "pptx", "potx"] {
+            #expect(DocumentParser.canParse(url: URL(fileURLWithPath: "/tmp/fixture.\(ext)")))
+        }
+    }
+
+    @Test func supportedDocumentTypes_includeStructuredOfficePickerTypes() throws {
+        let xlsx = try #require(UTType(filenameExtension: "xlsx"))
+        let pptx = try #require(UTType(filenameExtension: "pptx"))
+        let potx = try #require(UTType(filenameExtension: "potx"))
+        let supported = Set(DocumentParser.supportedDocumentTypes)
+
+        #expect(supported.contains(xlsx))
+        #expect(supported.contains(pptx))
+        #expect(supported.contains(potx))
     }
 
     // MARK: - Fixtures

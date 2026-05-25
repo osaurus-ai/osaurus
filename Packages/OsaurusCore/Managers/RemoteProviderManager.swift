@@ -551,22 +551,17 @@ public final class RemoteProviderManager: ObservableObject {
 
         // Add headers
         for (key, value) in testHeaders {
-            // Don't log the full auth header for security
-            let lowercasedKey = key.lowercased()
-            let shouldRedact =
-                lowercasedKey == "authorization"
-                || lowercasedKey == "x-api-key"
-                || lowercasedKey == "x-goog-api-key"
-            if shouldRedact {
-                print("[Osaurus] Test Connection: Adding header \(key)=***")
-            } else {
-                print("[Osaurus] Test Connection: Adding header \(key)=\(value)")
-            }
+            let logValue = RemoteProviderHeaderRedactor.valueForLogging(
+                headerName: key,
+                value: value,
+                configuredSecretHeaderKeys: tempProvider.secretHeaderKeys
+            )
+            print("[Osaurus] Test Connection: Adding header \(key)=\(logValue)")
             request.setValue(value, forHTTPHeaderField: key)
         }
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await GlobalProxySettings.makeSession().data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 print("[Osaurus] Test Connection: Invalid response type")
