@@ -208,6 +208,15 @@ require_text "$ROOT/Packages/OsaurusCore/Tests/Service/DSV4ParserPipelineTests.s
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/DSV4ParserPipelineTests.swift" \
   'DSML markup must not leak as visible text' \
   "DSV4 parser pipeline prevents DSML markup leak"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/DSV4ParserPipelineTests.swift" \
+  'malformed live DSV4 DSML aliases route to tools without visible leakage' \
+  "DSV4 parser pipeline covers live malformed DSML alias leak"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/DSV4ParserPipelineTests.swift" \
+  'tool_ccalls' \
+  "DSV4 parser pipeline covers tool_ccalls alias"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/DSV4ParserPipelineTests.swift" \
+  'tool_cs' \
+  "DSV4 parser pipeline covers tool_cs alias"
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenizerLoaderTests.swift" \
   'DSV4 canonical template path must use DSML tool-call blocks' \
   "DSV4 canonical tokenizer path renders DSML tool-call blocks"

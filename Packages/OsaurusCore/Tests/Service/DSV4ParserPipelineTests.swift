@@ -71,4 +71,50 @@ struct DSV4ParserPipelineTests {
         #expect(call.function.name == "get_weather")
         #expect(call.function.arguments["location"] == .string("Paris"))
     }
+
+    @Test("malformed live DSV4 DSML aliases route to tools without visible leakage")
+    func malformedLiveDSMLAliasesRouteToToolsWithoutVisibleLeakage() throws {
+        let toolCallProcessor = ToolCallProcessor(format: .dsml)
+        var events: [Generation] = []
+
+        func route(_ text: String) {
+            events.append(
+                contentsOf: routeGenerationText(
+                    text,
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+
+        for raw in [
+            "<\u{FF5C}DSML\u{FF5C}tool_ccalls>\n",
+            "<\u{FF5C}DSML\u{FF5C}invoke name=\"file_read\">\n",
+            "<\u{FF5C}DSML\u{FF5C}parameter name=\"path\" string=\"true\">/Users/eric/Desktop/testmandel/mandelbrot.py</\u{FF5C}DSML\u{FF5C}parameter>\n",
+            "</\u{FF5C}DSML\u{FF5C}inv>\n",
+            "</\u{FF5C}DSML\u{FF5C}tool_cs>",
+        ] {
+            route(raw)
+        }
+        if let visible = toolCallProcessor.processEOS() {
+            route(visible)
+        }
+        events.append(contentsOf: drainToolCallEvents(from: toolCallProcessor))
+
+        let visible = events.compactMap(\.chunk).joined()
+        let calls = events.compactMap(\.toolCall)
+
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(!visible.contains("DSML"), "Malformed DSML must not leak as visible text: \(visible)")
+        #expect(!visible.contains("tool_ccalls"))
+        #expect(!visible.contains("tool_cs"))
+        #expect(!visible.contains("invoke name"))
+        #expect(calls.count == 1)
+        let call = try #require(calls.first)
+        #expect(call.function.name == "file_read")
+        #expect(
+            call.function.arguments["path"]
+                == .string("/Users/eric/Desktop/testmandel/mandelbrot.py")
+        )
+    }
 }
