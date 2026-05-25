@@ -290,6 +290,20 @@ struct SwiftTransformersTokenizerLoaderTests {
             "DSV4 canonical template path must teach DSML invocation syntax. Decoded: \(decoded)"
         )
         #expect(
+            decoded.contains("For tools with no parameters"),
+            "DSV4 canonical template path must explain no-arg tool invocations. Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.contains(
+                "<\u{FF5C}DSML\u{FF5C}invoke name=\"$TOOL_NAME_WITHOUT_PARAMETERS\">\n</\u{FF5C}DSML\u{FF5C}invoke>"
+            ),
+            "DSV4 canonical template path must show an empty DSML invoke for no-arg tools. Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.contains("Do not emit JSON objects for tool calls"),
+            "DSV4 canonical template path must reject JSON-shaped tool calls. Decoded: \(decoded)"
+        )
+        #expect(
             decoded.contains("\"name\":\"get_weather\""),
             "DSV4 canonical template path must include the Osaurus-provided tool schema. Decoded: \(decoded)"
         )
