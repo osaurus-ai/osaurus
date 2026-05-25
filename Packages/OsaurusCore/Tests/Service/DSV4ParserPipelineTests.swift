@@ -313,6 +313,58 @@ struct DSV4ParserPipelineTests {
         )
     }
 
+    @Test("DSV4 schema-less JSON tool fallback routes built-in tool attempts without visible leakage")
+    func schemaLessJSONToolFallbackRoutesBuiltInToolAttemptsWithoutVisibleLeakage() throws {
+        let toolCallProcessor = ToolCallProcessor(format: .dsml)
+        var events: [Generation] = []
+        let output = """
+            {"tool":"file_read","r":"np.clip(esc * 4.0 - 1.0, 0.0, 1.0)","g":"np.clip(1.0 - np.abs(esc * 2.0 - 1.0), 0.0, 1.0)","b":"np.clip(1.0 - esc * 2.0, 0.0, 1.0)"}
+            """
+
+        for ch in output {
+            events.append(
+                contentsOf: routeGenerationText(
+                    String(ch),
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        if let visible = toolCallProcessor.processEOS() {
+            events.append(
+                contentsOf: routeGenerationText(
+                    visible,
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        events.append(contentsOf: drainToolCallEvents(from: toolCallProcessor))
+
+        let visible = events.compactMap(\.chunk).joined()
+        let calls = events.compactMap(\.toolCall)
+
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(!visible.contains("\"tool\":\"file_read\""))
+        #expect(!visible.contains("np.clip"))
+        #expect(calls.count == 1)
+        let call = try #require(calls.first)
+        #expect(call.function.name == "file_read")
+        #expect(call.function.arguments["path"] == nil)
+        #expect(
+            call.function.arguments["r"]
+                == .string("np.clip(esc * 4.0 - 1.0, 0.0, 1.0)")
+        )
+        #expect(
+            call.function.arguments["g"]
+                == .string("np.clip(1.0 - np.abs(esc * 2.0 - 1.0), 0.0, 1.0)")
+        )
+        #expect(
+            call.function.arguments["b"]
+                == .string("np.clip(1.0 - esc * 2.0, 0.0, 1.0)")
+        )
+    }
+
     private struct DSMLToolFixture {
         let name: String
         let parameters: [DSMLParameterFixture]
