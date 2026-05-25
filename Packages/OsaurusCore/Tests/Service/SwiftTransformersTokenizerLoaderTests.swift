@@ -85,6 +85,51 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("<|vision_end|>"), "Decoded: \(decoded)")
     }
 
+    @Test func gemma4LocalTokenizerRendersUnionToolSchemaTypeNatively() async throws {
+        let defaultPath = "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            ),
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("chat_template.jinja").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "write_probe_file",
+                description: "Write a small probe file.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "path": .object([
+                            "type": .array([.string("string"), .string("null")]),
+                            "description": .string("Optional path to write."),
+                        ])
+                    ]),
+                    "required": .array([.string("path")]),
+                ])
+            )
+        )
+
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": "Create the probe file."]],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: ["enable_thinking": false]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("write_probe_file"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Create the probe file."), "Decoded: \(decoded)")
+    }
+
     @Test func dsv4LocalTokenizerUsesCanonicalNoChatTemplatePath() async throws {
         let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath

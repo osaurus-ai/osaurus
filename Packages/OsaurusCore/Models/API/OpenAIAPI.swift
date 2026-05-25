@@ -946,6 +946,50 @@ public enum JSONValue: Codable, Sendable, Equatable {
 // MARK: - JSONValue Conversions
 
 extension JSONValue {
+    /// Convert JSON Schema into the shape expected by local chat templates.
+    ///
+    /// Some local templates, notably Gemma-4's native tool template, treat
+    /// `type` as a scalar and run string filters over it. OpenAI/MCP schemas
+    /// commonly spell nullable fields as `type: ["string", "null"]`. That is
+    /// valid JSON Schema, but it is not renderable by those templates. The
+    /// transformation below is the lossless OpenAPI spelling of the same
+    /// schema: `type: "string", nullable: true`.
+    var chatTemplateSchemaValue: JSONValue {
+        switch self {
+        case .object(let obj):
+            var normalized = obj.mapValues { $0.chatTemplateSchemaValue }
+            Self.normalizeNullableTypeUnion(&normalized)
+            return .object(normalized)
+        case .array(let arr):
+            return .array(arr.map { $0.chatTemplateSchemaValue })
+        case .null, .bool, .number, .string:
+            return self
+        }
+    }
+
+    private static func normalizeNullableTypeUnion(_ object: inout [String: JSONValue]) {
+        guard case .array(let entries) = object["type"] else { return }
+
+        var hasNull = false
+        var scalar: String?
+        for entry in entries {
+            guard case .string(let typeName) = entry else { return }
+            if typeName == "null" {
+                hasNull = true
+            } else if scalar == nil {
+                scalar = typeName
+            } else {
+                return
+            }
+        }
+
+        guard let scalar else { return }
+        object["type"] = .string(scalar)
+        if hasNull {
+            object["nullable"] = .bool(true)
+        }
+    }
+
     /// Convert JSONValue to Sendable-compatible value for Jinja chat templates.
     /// Null values are dropped from dictionaries because Jinja's `Value(any:)` cannot
     /// handle `NSNull` and throws a runtime error. JSON Schema treats a missing key
@@ -1005,7 +1049,7 @@ extension ToolFunction {
             fn["description"] = description
         }
         if let parameters {
-            fn["parameters"] = parameters.sendableValue
+            fn["parameters"] = parameters.chatTemplateSchemaValue.sendableValue
         }
         return fn
     }
