@@ -220,6 +220,7 @@ struct IsKnownHybridModelMCDCTests {
             "minimax-m2.7-small-jangtq",
             "foundation",  // Apple's built-in
             "deepseekv4-flash-jangtq",  // DSV4 has its own cache topology
+            "DeepSeek-V4-Flash-JANGTQ2",  // DSV4 JANGTQ2 has its own hybrid-pool cache
             "",  // empty string edge case
         ]
         for name in denseFamilies {

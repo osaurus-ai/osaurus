@@ -163,6 +163,8 @@ struct ModelRuntimeIsHybridTests {
     func dsv4Flash_isNotMambaHybrid() {
         for id in [
             "JANGQ-AI/DeepSeekV4-Flash-JANGTQ",
+            "JANGQ-AI/DeepSeek-V4-Flash-JANGTQ2",
+            "DeepSeek-V4-Flash-JANGTQ2",
             "deepseekv4-flash-jangtq",
         ] {
             #expect(

@@ -169,9 +169,27 @@ require_text "$ROOT/Packages/OsaurusCore/Tests/Service/RuntimePolicySourceTests.
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/ModelRuntimeIsHybridTests.swift" \
   'dealignai/Qwen3\.6-35B-A3B-MXFP4-CRACK-MTP' \
   "ModelRuntime hybrid detection covers reported dealignai Qwen3.6 MXFP4 MTP slug"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/ModelRuntimeIsHybridTests.swift" \
+  'DeepSeek-V4-Flash-JANGTQ2' \
+  "ModelRuntime hybrid detection keeps DSV4 JANGTQ2 out of SSM-family matcher"
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/IsKnownHybridModelMCDCTests.swift" \
   'dealignai/Qwen3\.6-35B-A3B-MXFP4-CRACK-MTP' \
   "MC/DC hybrid detection covers reported dealignai Qwen3.6 MXFP4 MTP slug"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/IsKnownHybridModelMCDCTests.swift" \
+  'DeepSeek-V4-Flash-JANGTQ2' \
+  "MC/DC hybrid detection keeps DSV4 JANGTQ2 out of SSM-family matcher"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/MLXBatchAdapterTests.swift" \
+  'modelName: "DeepSeek-V4-Flash-JANGTQ2"' \
+  "cache model-key test covers exact DSV4 JANGTQ2 name"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/MLXBatchAdapterTests.swift" \
+  'layers=deepseekV4' \
+  "cache model-key test tags DSV4 layers"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/MLXBatchAdapterTests.swift" \
+  'prefix=hybrid-pool-disk' \
+  "cache model-key test tags DSV4 hybrid pool disk prefix"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/MLXBatchAdapterTests.swift" \
+  '!dsv4\.contains\("layers=hybrid-ssm"\)' \
+  "cache model-key test rejects SSM-family tag for DSV4"
 require_text "$ROOT/Packages/OsaurusCore/Models/Configuration/ModelMediaCapabilities.swift" \
   '"qwen3_6", "qwen3_6_moe"' \
   "Qwen3.6 config-based media detection preserves video-capable model types"

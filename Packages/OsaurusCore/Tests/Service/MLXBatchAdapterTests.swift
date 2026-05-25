@@ -575,7 +575,7 @@ struct MLXBatchAdapterTests {
 
     @Test func cacheCoordinatorModelKey_namespacesPathDependentCacheTopologies() {
         let dsv4 = ModelRuntime.cacheCoordinatorModelKey(
-            modelName: "deepseek-v4-flash-jangtq-k",
+            modelName: "DeepSeek-V4-Flash-JANGTQ2",
             kvModeTag: "fp16"
         )
         let zaya = ModelRuntime.cacheCoordinatorModelKey(
@@ -601,6 +601,7 @@ struct MLXBatchAdapterTests {
         #expect(dsv4.contains("layers=deepseekV4"))
         #expect(dsv4.contains("prefix=hybrid-pool-disk"))
         #expect(dsv4.contains("decode=max-rp110"))
+        #expect(!dsv4.contains("layers=hybrid-ssm"))
 
         #expect(zaya.contains("layers=zayaCCA"))
         #expect(zaya.contains("prefix=path-dependent-disk"))
