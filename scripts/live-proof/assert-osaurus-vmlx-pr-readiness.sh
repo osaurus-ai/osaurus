@@ -126,6 +126,16 @@ if [[ -n "$pkg_pin" && -n "$core_pin" && -n "$workspace_pin" && -n "$app_pin" ]]
 fi
 
 echo "--- wired vMLX checkout parser proof ---"
+if checkout_head="$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null)"; then
+  if [[ -n "$pkg_pin" && "$checkout_head" == "$pkg_pin" ]]; then
+    pass "SwiftPM checkout HEAD matches Package.swift vMLX pin"
+  else
+    fail_msg "SwiftPM checkout HEAD $checkout_head does not match Package.swift vMLX pin $pkg_pin"
+  fi
+else
+  fail_msg "SwiftPM checkout HEAD not readable"
+fi
+
 if [[ -f "$PARSER" ]]; then
   pass "SwiftPM checkout parser exists"
   require_text "$PARSER" 'stripIdentifierOnlyAtEnd: true\)' \

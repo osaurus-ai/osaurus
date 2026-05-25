@@ -57,6 +57,11 @@ fi
 
 if [[ -f "$PARSER" ]]; then
   pass "SwiftPM checkout ReasoningParser.swift exists"
+  if checkout_head="$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null)" && [[ "$checkout_head" == "$EXPECTED_VMLX_REVISION" ]]; then
+    pass "SwiftPM checkout HEAD matches expected vMLX revision"
+  else
+    fail_msg "SwiftPM checkout HEAD does not match expected vMLX revision $EXPECTED_VMLX_REVISION"
+  fi
   if rg -q 'stripIdentifierOnlyAtEnd: true\)' "$PARSER"; then
     pass "SwiftPM checkout contains Gemma4 empty thought-channel fix"
   else
