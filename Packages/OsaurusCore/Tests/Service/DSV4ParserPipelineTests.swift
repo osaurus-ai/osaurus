@@ -307,10 +307,9 @@ struct DSV4ParserPipelineTests {
         let call = try #require(calls.first)
         #expect(call.function.name == "file_read")
         #expect(call.function.arguments["path"] == nil)
-        #expect(
-            call.function.arguments["r"]
-                == .string("np.clip(esc * 4.0 - 1.0, 0.0, 1.0)")
-        )
+        #expect(call.function.arguments["_error"] == .string("invalid_tool_arguments"))
+        #expect(call.function.arguments["_field"] == .string("path"))
+        #expect(call.function.arguments["r"] == nil)
     }
 
     @Test("DSV4 schema-less JSON tool fallback routes built-in tool attempts without visible leakage")

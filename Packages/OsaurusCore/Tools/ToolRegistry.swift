@@ -312,6 +312,12 @@ final class ToolRegistry: ObservableObject {
                 toolName: name
             ).toJSONString()
         }
+        if let invalidArguments = Self.invalidToolArgumentsEnvelope(
+            argumentsJSON,
+            toolName: name
+        ) {
+            return invalidArguments
+        }
         // Permission gating
         if let permissioned = tool as? PermissionedTool {
             let requirements = permissioned.requirements
@@ -423,6 +429,28 @@ final class ToolRegistry: ObservableObject {
                 timeoutSeconds: Self.defaultToolTimeoutSeconds
             )
         }
+    }
+
+    private static func invalidToolArgumentsEnvelope(
+        _ argumentsJSON: String,
+        toolName: String
+    ) -> String? {
+        guard let data = argumentsJSON.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["_error"] as? String == "invalid_tool_arguments"
+        else { return nil }
+
+        let message = object["_message"] as? String ?? "invalid tool arguments"
+        let field = object["_field"] as? String
+        let expected = object["_expected"] as? String
+        return ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: message,
+            field: field,
+            expected: expected,
+            tool: toolName,
+            retryable: true
+        )
     }
 
     /// Bypass-path for streaming-aware tools. Runs the body straight

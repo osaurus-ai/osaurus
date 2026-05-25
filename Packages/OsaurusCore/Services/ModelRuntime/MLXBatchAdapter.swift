@@ -1023,7 +1023,8 @@ struct MLXBatchAdapter {
             trace?.mark("batch_tokenization_start")
             let lmInput: LMInput
             do {
-                lmInput = try await context.processor.prepare(input: userInput)
+                let prepared = try await context.processor.prepare(input: userInput)
+                lmInput = prepared.withToolSchemas(toolsSpec)
             } catch {
                 let detail =
                     (error as? LocalizedError)?.errorDescription

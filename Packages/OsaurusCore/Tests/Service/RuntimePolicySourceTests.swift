@@ -399,7 +399,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "b8f766a8e2da613cefe3d39d0d620c288593d88e"
+        let expectedRuntimeHardenedRevision = "efc8018243dbdec5b3fc86e64b688716c16220b2"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -1587,6 +1587,22 @@ struct RuntimePolicySourceTests {
             toolsView.contains(".available: availableShown + runtimeShown")
                 && toolsView.contains(".sandbox: SandboxPluginLibrary.shared.plugins.count + builtInSandboxToolEntries.count"),
             "Tools tab badges must count the runtime rows they render so Settings cannot show 0 while chat has folder/sandbox tools."
+        )
+    }
+
+    @Test("local decode loop keeps tool schemas for parser-side argument validation")
+    func localDecodeLoopKeepsToolSchemasForParserValidation() throws {
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+        let registry = try Self.source("Tools/ToolRegistry.swift")
+
+        #expect(
+            adapter.contains("lmInput = prepared.withToolSchemas(toolsSpec)"),
+            "MLXBatchAdapter must carry the same tool schemas from prompt rendering into vmlx's decode loop so DSML/JSON fallback parsing can validate required arguments."
+        )
+        #expect(
+            registry.contains("invalidToolArgumentsEnvelope")
+                && registry.contains("\"invalid_tool_arguments\""),
+            "ToolRegistry must turn parser-side invalid tool arguments into a structured invalid_args envelope instead of executing the tool body."
         )
     }
 
