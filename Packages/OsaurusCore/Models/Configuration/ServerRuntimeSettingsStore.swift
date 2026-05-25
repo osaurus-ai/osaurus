@@ -47,7 +47,11 @@ public enum ServerRuntimeSettingsStore {
         let url = fileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
-            let decoded = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: url))
+            let raw = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: Data(contentsOf: url))
+            let decoded = normalizeLoadedSettings(raw)
+            if decoded != raw {
+                save(decoded)
+            }
             cachedSnapshot = decoded
             return decoded
         } catch {
@@ -99,12 +103,19 @@ public enum ServerRuntimeSettingsStore {
         let url = directoryURL().appendingPathComponent(fileName)
         if FileManager.default.fileExists(atPath: url.path),
             let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
+            let raw = try? JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
         {
-            cachedSnapshot = decoded
-            return decoded
+            let normalized = normalizeLoadedSettings(raw)
+            if normalized != raw {
+                save(normalized)
+            }
+            cachedSnapshot = normalized
+            return normalized
         }
-        let fallback = VMLXServerRuntimeSettings()
+        let fallback = migratedFromLegacy(
+            serverConfiguration: diskBackedServerConfiguration() ?? .default,
+            userDefaults: .standard
+        )
         cachedSnapshot = fallback
         return fallback
     }
@@ -113,6 +124,23 @@ public enum ServerRuntimeSettingsStore {
     /// call to re-read from disk.
     public nonisolated static func invalidateSnapshot() {
         cachedSnapshot = nil
+    }
+
+    private nonisolated static func normalizeLoadedSettings(
+        _ settings: VMLXServerRuntimeSettings
+    ) -> VMLXServerRuntimeSettings {
+        var normalized = settings
+        // vmlx-swift e095d0f changed the engine default from "MTP off" to
+        // "auto". Existing Osaurus installs persisted the old default exactly,
+        // so without this repair tuned MXFP8/MTP bundles still never reach the
+        // tensor+tuning-gated autodetect path after upgrade.
+        if normalized.mtp.mode == .off,
+           normalized.mtp.draftTokenLimit == nil,
+           normalized.mtp.keepDraftCacheSeparate,
+           normalized.mtp.acceptedTokensOnlyEnterBaseCache {
+            normalized.mtp.mode = .auto
+        }
+        return normalized
     }
 
     // MARK: - Migration
@@ -259,5 +287,18 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func fileURL() -> URL {
         directoryURL().appendingPathComponent(fileName)
+    }
+
+    private nonisolated static func legacyConfigurationFileURL() -> URL {
+        if let override = overrideDirectory {
+            return override.appendingPathComponent("server.json")
+        }
+        return OsaurusPaths.resolvePath(new: OsaurusPaths.serverConfigFile(), legacy: "ServerConfiguration.json")
+    }
+
+    private nonisolated static func diskBackedServerConfiguration() -> ServerConfiguration? {
+        let url = legacyConfigurationFileURL()
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try? JSONDecoder().decode(ServerConfiguration.self, from: Data(contentsOf: url))
     }
 }

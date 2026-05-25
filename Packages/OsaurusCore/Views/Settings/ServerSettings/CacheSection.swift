@@ -126,6 +126,12 @@ struct CacheSection: View {
                     value: $draft.cache.blockDisk.maxSizeGB,
                     format: "%.1f"
                 )
+                OptionalStringField(
+                    label: "Disk Cache Directory",
+                    placeholder: "Blank = Osaurus default cache directory",
+                    help: "Absolute path or ~/... path for persisted block-cache entries.",
+                    value: $draft.cache.blockDisk.directory
+                )
             } else {
                 SettingsToggle(
                     title: L("Legacy Disk Cache"),
@@ -138,6 +144,12 @@ struct CacheSection: View {
                     help: "Soft cap before older entries are evicted.",
                     value: $draft.cache.legacyDisk.maxSizeGB,
                     format: "%.1f"
+                )
+                OptionalStringField(
+                    label: "Legacy Disk Cache Directory",
+                    placeholder: "Blank = Osaurus default cache directory",
+                    help: "Absolute path or ~/... path for legacy disk-cache entries.",
+                    value: $draft.cache.legacyDisk.directory
                 )
             }
         }

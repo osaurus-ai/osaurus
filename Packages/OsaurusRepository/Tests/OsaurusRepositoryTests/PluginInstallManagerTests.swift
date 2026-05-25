@@ -211,4 +211,114 @@ final class PluginInstallManagerTests: XCTestCase {
         // Must not throw.
         PluginInstallManager.repairDanglingCurrentSymlinks()
     }
+
+    // MARK: - artifact download bounds
+
+    func test_validatedDeclaredArtifactSize_rejectsOversizedManifestValue() {
+        let tooLarge = Int(PluginInstallManager.maximumArtifactArchiveBytes + 1)
+
+        XCTAssertThrowsError(
+            try PluginInstallManager.validatedDeclaredArtifactSize(tooLarge)
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains("install limit"),
+                "Oversized registry values should fail before network or disk work begins"
+            )
+        }
+    }
+
+    func test_validatedDeclaredArtifactSize_rejectsNegativeManifestValue() {
+        XCTAssertThrowsError(
+            try PluginInstallManager.validatedDeclaredArtifactSize(-1)
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains("negative"),
+                "Negative registry sizes are malformed, not an unknown length"
+            )
+        }
+    }
+
+    func test_validateArtifactSize_rejectsOversizedContentLength() {
+        XCTAssertThrowsError(
+            try PluginInstallManager.validateArtifactSize(
+                declaredSize: nil,
+                responseSize: PluginInstallManager.maximumArtifactArchiveBytes + 1,
+                actualSize: nil
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains("response"),
+                "A too-large Content-Length should be rejected before the installer persists the archive"
+            )
+        }
+    }
+
+    func test_validateArtifactSize_rejectsDeclaredResponseMismatch() {
+        XCTAssertThrowsError(
+            try PluginInstallManager.validateArtifactSize(
+                declaredSize: 128,
+                responseSize: 127,
+                actualSize: nil
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains("response size mismatch"),
+                "Registry size and server Content-Length must agree for immutable plugin artifacts"
+            )
+        }
+    }
+
+    func test_validateArtifactSize_rejectsDeclaredActualMismatch() {
+        XCTAssertThrowsError(
+            try PluginInstallManager.validateArtifactSize(
+                declaredSize: 128,
+                responseSize: nil,
+                actualSize: 129
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains("archive size mismatch"),
+                "The final archive size is authoritative when the server omits Content-Length"
+            )
+        }
+    }
+
+    func test_validateArtifactSize_allowsUnknownDeclaredSizeWithinLimit() throws {
+        XCTAssertNoThrow(
+            try PluginInstallManager.validateArtifactSize(
+                declaredSize: nil,
+                responseSize: nil,
+                actualSize: PluginInstallManager.maximumArtifactArchiveBytes
+            )
+        )
+    }
+
+    func test_sha256Hex_readsFileFromDisk() throws {
+        let url = tempRoot.appendingPathComponent("artifact.zip", isDirectory: false)
+        try Data("osaurus".utf8).write(to: url)
+
+        let digest = try PluginInstallManager.sha256Hex(ofFile: url)
+
+        XCTAssertEqual(digest, "76f6ce2a444b4bfcfa21c40ac4df5adc5f4e897fdeb28c3211d69252d09304ca")
+    }
+
+    func test_unzipExecutablePath_usesSystemBinaryDirectly() {
+        XCTAssertEqual(PluginInstallManager.unzipExecutablePath, "/usr/bin/unzip")
+    }
+
+    func test_isRegularPayloadFile_acceptsRegularFiles() throws {
+        let url = tempRoot.appendingPathComponent("Plugin.dylib", isDirectory: false)
+        try Data("binary".utf8).write(to: url)
+
+        XCTAssertTrue(PluginInstallManager.isRegularPayloadFile(url))
+    }
+
+    func test_isRegularPayloadFile_rejectsSymlinkedPayloads() throws {
+        let target = tempRoot.appendingPathComponent("outside.dylib", isDirectory: false)
+        let link = tempRoot.appendingPathComponent("Plugin.dylib", isDirectory: false)
+        try Data("binary".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: target.path)
+
+        XCTAssertFalse(PluginInstallManager.isRegularPayloadFile(link))
+    }
 }

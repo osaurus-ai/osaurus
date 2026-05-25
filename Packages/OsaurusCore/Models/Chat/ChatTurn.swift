@@ -12,6 +12,13 @@ import Foundation
 final class ChatTurn: ObservableObject, Identifiable {
     let id: UUID
     let role: MessageRole
+    /// Wall-clock when the turn was created. Used by the chat-export
+    /// timing flags; persisted via `ChatTurnData`.
+    let createdAt: Date
+    /// Wall-clock when an assistant stream finished. Set by the
+    /// streaming completion site; nil on user / tool turns and on
+    /// assistant turns that were cancelled or errored.
+    var completedAt: Date?
 
     // MARK: - Content with lazy joining
 
@@ -184,13 +191,17 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Capabilities selected by preflight search (ephemeral, not persisted)
     var preflightCapabilities: [PreflightCapabilityItem]? = nil
 
-    // MARK: - Generation Benchmarks (ephemeral, not persisted)
+    // MARK: - Generation Benchmarks
 
-    /// Wall-clock time from request start to first visible token
+    /// Wall-clock time from request start to first visible token.
+    /// Persisted with the turn for billing / latency reporting.
     var timeToFirstToken: TimeInterval?
-    /// Tokens generated per second (GPU-timed for MLX, UI-estimated for remote APIs)
+    /// Tokens generated per second (GPU-timed for MLX, UI-estimated for
+    /// remote APIs). Ephemeral — not persisted. The exporter recomputes
+    /// it from token count and stream duration when needed, which
+    /// avoids storing a number whose precision varies by provider.
     var generationTokensPerSecond: Double?
-    /// Total tokens generated in this turn
+    /// Total tokens generated in this turn. Persisted with the turn.
     var generationTokenCount: Int?
     /// `true` when vmlx's `GenerateCompletionInfo.unclosedReasoning` fired —
     /// the model ended the stream still inside a `<think>` block (trapped
@@ -224,9 +235,16 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     // MARK: - Initializers
 
-    init(role: MessageRole, content: String, attachments: [Attachment] = [], id: UUID = UUID()) {
+    init(
+        role: MessageRole,
+        content: String,
+        attachments: [Attachment] = [],
+        id: UUID = UUID(),
+        createdAt: Date = Date()
+    ) {
         self.id = id
         self.role = role
+        self.createdAt = createdAt
         if !content.isEmpty {
             self.contentChunks = [content]
             self._cachedContent = content

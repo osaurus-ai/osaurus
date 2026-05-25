@@ -3,6 +3,41 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.38</title>
+            <pubDate>Sun, 24 May 2026 12:06:20 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.38</sparkle:version>
+            <sparkle:shortVersionString>0.18.38</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.38/Osaurus-0.18.38.dmg" length="49162612" type="application/octet-stream" sparkle:edSignature="PApOmvCzy4TR+pJkDCK7zbfz48qyJHkf2afHZ2bOjk9VlDwX4R+CLbVQgqNDTjo2vyxdneWCuN9sW3MZtK3DDQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- added no timeout option for remote providers (#1237) by @RaajeevChandran
+- Pin vmlx main runtime and harden server boundaries (#1201) by @jjang-ai
+- persist per turn timing and add two page export options chooser (#1230) by @RaajeevChandran
+- Harden plugin artifact installs (#1223) by @mimeding
+- Harden plugin static file containment (#1222) by @mimeding
+- Redact provider secret header logs (#1221) by @mimeding
+- Reject empty XLSX workbook output (#1218) by @mimeding
+- Redact clipboard diagnostics (#1217) by @mimeding
+- improved export chat UI (#1227) by @RaajeevChandran
+- Harden XLSX ZIP package parsing (#1216) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed HF import not surfacing models in the models page (#1234) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- add chat rename guard (#1238) by @RaajeevChandran
+- onboarding screen language changes (#1229) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.37...0.18.38
+]]></description>
+        </item>
+        <item>
             <title>0.18.37</title>
             <pubDate>Fri, 22 May 2026 13:00:19 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

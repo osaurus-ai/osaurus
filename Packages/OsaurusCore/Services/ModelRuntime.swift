@@ -638,9 +638,10 @@ public actor ModelRuntime {
 
         // Tool-call format + reasoning parser are stamped automatically by
         // vmlx-swift's LLM/VLM factories from `jang_config.json` capabilities
-        // and `config.json.model_type`. Osaurus no longer resolves them at
-        // the app layer — `BatchEngine.generate` reads them directly from
-        // the resolved `ModelConfiguration` to emit `.toolCall` events.
+        // and `config.json.model_type`. Server Runtime Settings may layer an
+        // explicit parser override on top; the resulting ModelConfiguration
+        // still enters through vmlx's factory registry, so BatchEngine remains
+        // the single owner of parser execution and `.toolCall` emission.
 
         let loadID = allocateLoadingTaskID()
         let task = Task<SessionHolder, Error> {
@@ -649,13 +650,18 @@ public actor ModelRuntime {
                 "loadContainer: task start model=\(name, privacy: .public) loadID=\(loadID, privacy: .public)"
             )
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
-            let mtpPlan = Self.resolveNativeMTPLaunchPlan(modelDirectory: localURL)
+            let serverSettings = ServerRuntimeSettingsStore.snapshot()
+            let mtpPlan = Self.resolveNativeMTPLaunchPlan(
+                modelDirectory: localURL,
+                settings: serverSettings)
             genLog.info(
                 "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public)"
             )
             let container = try await loadModelContainer(
                 from: localURL,
                 using: tokenizerLoader,
+                configuration: serverSettings.resolvedModelConfiguration(
+                    base: ModelConfiguration(directory: localURL)),
                 loadConfiguration: mtpPlan.loadConfiguration
             )
             let isVLM = await container.isVLM
@@ -785,63 +791,150 @@ public actor ModelRuntime {
     /// sizing) plus osaurus's per-environment disk-path config. See the
     /// file-level comment for rationale on each knob.
     private nonisolated static func buildCacheCoordinatorConfig(
-        modelName: String
+        modelName: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> CacheCoordinatorConfig {
-        let diskCacheDir = OsaurusPaths.diskKVCache()
-        OsaurusPaths.ensureExistsSilent(diskCacheDir)
-        let diskDirUsable = isDirectoryWritable(diskCacheDir)
-        if !diskDirUsable {
+        let settings = ServerRuntimeSettingsStore.snapshot()
+        let diskCacheDir = Self.cacheDiskDirectoryOverride(for: settings.cache)
+        if let diskCacheDir {
+            OsaurusPaths.ensureExistsSilent(diskCacheDir)
+        }
+        let diskDirUsable = diskCacheDir.map(isDirectoryWritable) ?? false
+        if let diskCacheDir, !diskDirUsable {
             genLog.warning(
                 "buildCacheCoordinatorConfig: disk cache dir not writable, forcing memory-only: \(diskCacheDir.path, privacy: .public)"
             )
         }
 
-        // L2 disk-cache modelKey fingerprint includes the KV mode tag so a
-        // mid-session change to `defaultKVMode` (or to a per-request override
-        // via the OpenAI extension) cannot serve stale entries that were
-        // encoded under a different mode. Without this, a user who switches
-        // from `.none` (fp16) to `.turboQuant(4,4)` would hit a `.miss` on
-        // disk for fresh entries but a `.hit` on the OLD fp16 entries —
-        // attention would receive the wrong KV layout for the codebook
-        // encoder state and produce undefined behavior. The fingerprint is
-        // a string (stable across processes) and is appended to the model
-        // name so the L1 paged cache (per-model isolation) is unaffected.
-        let settings = ServerRuntimeSettingsStore.snapshot()
+        // The Metal `notifyExternalReferencesNonZeroOnDealloc` crash on the
+        // `Cache disk hit … prefilling 0 remaining` path is fixed upstream
+        // in vmlx-swift `0756dc0` ("close trim-path Metal lifecycle crash
+        // on full disk-cache hit") — the trimmed compiled-cache list is now
+        // forced to realize before its underlying Metal buffers go out of
+        // scope. Now wired in through the `0e22eba` pin. The
+        // `eval_http_stability.py` suite is the regression check; re-run on
+        // any future pin bump that touches the CacheCoordinator restore path.
+        //
+        // L2 disk-cache modelKey fingerprint includes the KV mode tag and
+        // native cache-topology tags so runtime upgrades cannot serve stale
+        // entries encoded under a different serializer contract. This matters
+        // for path-dependent caches such as DSV4's SWA+CSA+HSA pool and
+        // ZAYA's CCA state: a content hash alone proves prompt identity, not
+        // cache-layout compatibility.
         let kvModeTag = cacheKVModeTag(for: settings.cache)
-        let scopedKey = "\(modelName)|kv=\(kvModeTag)"
+        let scopedKey = Self.cacheCoordinatorModelKey(
+            modelName: modelName,
+            kvModeTag: kvModeTag,
+            cacheTopology: cacheTopology
+        )
 
         // Delegate the full coordinator config to vmlx's spec'd builder
         // so every cache field set in the Server → Settings panel
         // (prefix, paged, block disk, legacy disk, SSM rederive, KV
         // codec, defaultMaxKVSize, longPromptMultiplier) flows into
-        // BatchEngine. The diskCacheDirectory override is the writable
-        // Osaurus path; pass `nil` when the dir is unwritable so the
-        // coordinator falls back to memory-only without crashing.
-        return settings.cacheCoordinatorConfig(
+        // BatchEngine. The diskCacheDirectory override is either the
+        // user-configured disk directory or the writable Osaurus default;
+        // when that path is unusable, disable disk cache instead of letting
+        // vmlx fall back to a different implicit location.
+        var config = settings.cacheCoordinatorConfig(
             modelKey: scopedKey,
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
             ssmMaxEntries: 50
         )
+        if diskCacheDir != nil, !diskDirUsable {
+            config.enableDiskCache = false
+            config.diskCacheDir = nil
+        }
+        return config
     }
 
-    /// Stable fingerprint for the live KV codec choice. Appended to
+    nonisolated static func cacheDiskDirectoryOverride(
+        for cache: VMLXServerCacheSettings
+    ) -> URL? {
+        guard cache.prefix.enabled else { return nil }
+
+        let directory: String?
+        if cache.pagedKV.enabled {
+            guard cache.blockDisk.enabled else { return nil }
+            directory = cache.blockDisk.directory
+        } else {
+            guard cache.legacyDisk.enabled else { return nil }
+            directory = cache.legacyDisk.directory
+        }
+
+        return resolvedServerRuntimeDirectory(directory) ?? OsaurusPaths.diskKVCache()
+    }
+
+    private nonisolated static func resolvedServerRuntimeDirectory(_ path: String?) -> URL? {
+        guard let path = path?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !path.isEmpty
+        else { return nil }
+        if path == "~" {
+            return FileManager.default.homeDirectoryForCurrentUser
+        }
+        if path.hasPrefix("~/") {
+            let suffix = String(path.dropFirst(2))
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(suffix, isDirectory: true)
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    /// Stable fingerprint for the effective live KV codec. Appended to
     /// the L2 disk-cache model key so a mid-session change to the
-    /// codec doesn't serve stale entries.
-    private nonisolated static func cacheKVModeTag(
+    /// actual KV representation doesn't serve stale entries.
+    nonisolated static func cacheKVModeTag(
         for cache: VMLXServerCacheSettings
     ) -> String {
-        switch cache.liveKVCodec {
+        switch cache.defaultKVMode {
         case .none:
             return "fp16"
-        case .engineSelected:
-            return "engineSelected"
-        case .native:
-            return "native"
-        case .turboQuant:
-            let keyBits = cache.turboQuantKeyBits ?? 0
-            let valueBits = cache.turboQuantValueBits ?? 0
+        case .affine(let bits, let groupSize):
+            return "affine(\(bits),\(groupSize))"
+        case .turboQuant(let keyBits, let valueBits):
             return "turbo(\(keyBits),\(valueBits))"
         }
+    }
+
+    nonisolated static func cacheCoordinatorModelKey(
+        modelName: String,
+        kvModeTag: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> String {
+        var tags = [
+            modelName,
+            "kv=\(kvModeTag)",
+            // vmlx `TQDiskSerializer.currentFormatVersion == 2` at the
+            // pinned runtime. Keep this in the host key so older L2 records
+            // cannot cross serializer generations after an app update.
+            "cachefmt=2",
+            // Restore semantics are part of the cache contract too. The
+            // paired vmlx fix materializes full-hit trim mutations before
+            // the one-token seed forward on the B=1 TokenIterator path.
+            "restore=fullhit-trim-eval1",
+        ]
+
+        if let cacheTopology {
+            tags.append("topology=real")
+            tags.append(contentsOf: cacheTopology.topologyTags)
+        }
+
+        if ModelFamilyNames.isDSV4Family(modelName) {
+            tags.append("layers=deepseekV4")
+            tags.append("prefix=hybrid-pool-disk")
+            tags.append("decode=max-rp110")
+        } else if ModelFamilyNames.isZayaFamily(modelName) {
+            tags.append("layers=zayaCCA")
+            tags.append("prefix=path-dependent-disk")
+        } else if Self.isKnownHybridModel(name: modelName) {
+            tags.append("layers=hybrid-ssm")
+        }
+
+        if ModelFamilyNames.isNemotronOmniFamily(modelName) {
+            tags.append("media=omni-audio-video")
+        }
+
+        return tags.joined(separator: "|")
     }
 
     /// Best-effort writability probe for the disk cache directory. Uses a
@@ -859,35 +952,17 @@ public actor ModelRuntime {
     }
 
     /// Installs the cache coordinator on a freshly-loaded holder.
-    ///
-    /// `enableCaching(config:)` constructs the coordinator with our
-    /// recommended knobs (paged + L2 disk, fp16 KV by default, 64K rotating
-    /// cap for callers that do not provide `maxKVSize`).
-    /// vmlx's `BatchEngine.admitPendingRequests` auto-flips
-    /// `coordinator.isHybrid` on first slot admission for any model whose
-    /// per-layer cache list contains a `MambaCache` or `ArraysCache` — that
-    /// covers the BatchEngine path osaurus uses today.
-    ///
-    /// **Eager `setHybrid(true)` for known hybrid families**: per
-    /// `OMNI-OSAURUS-HOOKUP.md` §5.1 the eager-set is harmless on any
-    /// admission path and avoids a one-frame stale-flag window if a request
-    /// ever lands via the single-slot `Evaluate` path before BatchEngine
-    /// has had a chance to flip it. We tag known hybrid model_types here
-    /// instead of inspecting the model's cache list (which would require an
-    /// async `context.read` round-trip just to check for an `is MambaCache`
-    /// match) — the family list is short, drift is caught by tests, and
-    /// the auto-flip remains the source of truth for any model_type the
-    /// list misses.
     private func installCacheCoordinator(on holder: SessionHolder) async {
-        let cacheConfig = Self.buildCacheCoordinatorConfig(modelName: holder.name)
-        holder.container.enableCaching(config: cacheConfig)
-
-        if Self.isKnownHybridModel(name: holder.name) {
-            holder.container.cacheCoordinator?.setHybrid(true)
-        }
+        let cacheTopology = await holder.container.cacheTopologySnapshot()
+        let cacheConfig = Self.buildCacheCoordinatorConfig(
+            modelName: holder.name,
+            cacheTopology: cacheTopology
+        )
+        await holder.container.enableCachingAsync(config: cacheConfig)
+        let topologyTags = cacheTopology.topologyTags.joined(separator: ",")
 
         genLog.info(
-            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(Self.isKnownHybridModel(name: holder.name), privacy: .public) (sizing left to vmlx defaults)"
+            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(cacheTopology.requiresSSMCompanionState, privacy: .public) topology=\(topologyTags, privacy: .public) (sizing left to vmlx defaults)"
         )
     }
 
@@ -914,8 +989,10 @@ public actor ModelRuntime {
         // Qwen 3.5 / 3.6 MoE family (qwen3_5_moe model_type) covers Holo3 too.
         // vmlx `Models/Qwen35.swift` + `Qwen35JANGTQ.swift` allocate
         // `ArraysCache` for the linear-attention slots.
-        if lower.contains("qwen3.5") || lower.contains("qwen3.6") || lower.contains("holo3")
-            || lower.contains("holo-3")
+        if lower.contains("qwen3.5") || lower.contains("qwen3.6")
+            || lower.contains("qwen3_5") || lower.contains("qwen3_6")
+            || lower.contains("qwen35") || lower.contains("qwen36")
+            || lower.contains("holo3") || lower.contains("holo-3")
         {
             return true
         }
@@ -1336,7 +1413,8 @@ public actor ModelRuntime {
         repetitionPenalty: Float?,
         stopSequences: [String] = [],
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
-        enableCompiledBatchDecode: Bool = true
+        enableCompiledBatchDecode: Bool = true,
+        prefillStepSize: Int? = nil
     ) -> MLXLMCommon.GenerateParameters {
         var params = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
@@ -1350,11 +1428,15 @@ public actor ModelRuntime {
             extraStopStrings: stopSequences
         )
         params.draftStrategy = draftStrategy
+        if let prefillStepSize, prefillStepSize > 0 {
+            params.prefillStepSize = prefillStepSize
+        }
         return params
     }
 
     private nonisolated static func resolveNativeMTPLaunchPlan(
-        modelDirectory: URL
+        modelDirectory: URL,
+        settings: VMLXServerRuntimeSettings
     ) -> NativeMTPLaunchPlan {
         let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
         let jangConfig = try? JangLoader.loadConfig(at: modelDirectory)
@@ -1376,8 +1458,6 @@ public actor ModelRuntime {
             )
         }
 
-        var settings = VMLXServerRuntimeSettings()
-        settings.mtp.mode = .auto
         let launch = settings.resolvedMTPLaunch(
             configData: configData,
             jangConfig: jangConfig,

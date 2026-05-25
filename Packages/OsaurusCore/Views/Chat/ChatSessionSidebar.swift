@@ -42,8 +42,10 @@ struct ChatSessionSidebar: View {
     }
 
     @Environment(\.theme) private var theme
+    @Environment(\.themedAlertScope) private var alertScope
     @ObservedObject private var agentManager = AgentManager.shared
     @State private var editingSessionId: UUID?
+    @State private var editingBuffer: String = ""
     @State private var searchQuery: String = ""
     @State private var sourceFilter: SourceFilter = .all
     @State private var hoveredFilter: SourceFilter?
@@ -99,7 +101,9 @@ struct ChatSessionSidebar: View {
             if SearchService.matches(query: searchQuery, in: session.title) { return true }
             if let key = session.externalSessionKey,
                 SearchService.matches(query: searchQuery, in: key)
-            { return true }
+            {
+                return true
+            }
             // Match capability labels so "vision" / "code" finds tagged chats.
             return session.capabilities.contains { cap in
                 SearchService.matches(query: searchQuery, in: cap.label)
@@ -250,6 +254,64 @@ struct ChatSessionSidebar: View {
     /// matching the Esc behavior.
     private func dismissEditing() {
         editingSessionId = nil
+        editingBuffer = ""
+    }
+
+    // MARK: - Navigate-Away Rename Guard
+
+    private func handleSelect(_ session: ChatSessionData) {
+        guard let editingId = editingSessionId, editingId != session.id else {
+            onSelect(session)
+            return
+        }
+        let original = sessions.first { $0.id == editingId }?.title ?? ""
+        let trimmed = editingBuffer.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed != original else {
+            // No real change — drop the buffer and switch right away.
+            dismissEditing()
+            onSelect(session)
+            return
+        }
+        presentUnsavedRenameAlert(
+            editingId: editingId,
+            oldTitle: original,
+            newTitle: trimmed,
+            pending: session
+        )
+    }
+
+    private func presentUnsavedRenameAlert(
+        editingId: UUID,
+        oldTitle: String,
+        newTitle: String,
+        pending: ChatSessionData
+    ) {
+        let requestId = UUID()
+        let scope = alertScope
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Save Renamed Title?",
+                message: L(
+                    "You were renaming a conversation titled \"\(oldTitle)\" to \"\(newTitle)\" but haven't saved it yet."
+                ),
+                buttons: [
+                    .destructive(L("Discard")) {
+                        dismissEditing()
+                        onSelect(pending)
+                    },
+                    .primary(L("Save")) {
+                        onRename(editingId, newTitle)
+                        dismissEditing()
+                        onSelect(pending)
+                    },
+                ],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
     }
 
     // MARK: - Header
@@ -303,16 +365,14 @@ struct ChatSessionSidebar: View {
                         isSelected: session.id == currentSessionId,
                         isEditing: editingSessionId == session.id,
                         onSelect: {
-                            if editingSessionId != nil && editingSessionId != session.id {
-                                dismissEditing()
-                            }
-                            onSelect(session)
+                            handleSelect(session)
                         },
                         onStartRename: {
                             if editingSessionId != nil && editingSessionId != session.id {
                                 dismissEditing()
                             }
                             editingSessionId = session.id
+                            editingBuffer = session.title
                         },
                         onConfirmRename: { newTitle in
                             let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
@@ -324,6 +384,7 @@ struct ChatSessionSidebar: View {
                         onCancelRename: {
                             editingSessionId = nil
                         },
+                        onBufferChange: { editingBuffer = $0 },
                         onDelete: {
                             if editingSessionId != nil {
                                 dismissEditing()
@@ -363,6 +424,7 @@ private struct SessionRow: View {
     /// Parent owns trim and persist.
     let onConfirmRename: (String) -> Void
     let onCancelRename: () -> Void
+    var onBufferChange: ((String) -> Void)? = nil
     let onDelete: () -> Void
     let onToggleArchive: () -> Void
     let onExport: (ChatSessionSidebar.ExportFormat) -> Void
@@ -519,23 +581,31 @@ private struct SessionRow: View {
 
     private func requestExport() {
         let requestId = UUID()
+        let scope = alertScope
+        let metadata = session
+        let sheet = ExportChooserSheet(session: session) { format, options in
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            ChatSessionExportCoordinator.run(
+                metadataSession: metadata,
+                format: format,
+                options: options,
+                scope: scope
+            )
+        }
         ThemedAlertCenter.shared.present(
             ThemedAlertRequest(
                 id: requestId,
                 title: "Export Conversation",
-                message: L("Choose a format to export this conversation."),
-                buttons: [
-                    .primary(L("Markdown")) { onExport(.markdown) },
-                    .primary(L("PDF")) { onExport(.pdf) },
-                    .primary(L("Zip Bundle")) { onExport(.zip) },
-                    .cancel(L("Cancel")),
-                ],
+                message: nil,
+                buttons: [.cancel(L("Cancel"))],
                 showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 420,
                 onDismiss: {
-                    ThemedAlertCenter.shared.dismiss(scope: alertScope, id: requestId)
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
                 }
             ),
-            scope: alertScope
+            scope: scope
         )
     }
 
@@ -743,7 +813,11 @@ private struct SessionRow: View {
         }
         .onAppear {
             editBuffer = session.title
+            onBufferChange?(session.title)
             isTextFieldFocused = true
+        }
+        .onChange(of: editBuffer) { _, newValue in
+            onBufferChange?(newValue)
         }
     }
 

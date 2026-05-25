@@ -7,7 +7,7 @@
 //    - `CreateAgentState`: ObservableObject holding form state (lives in
 //      OnboardingView via @StateObject, so values survive slide transitions).
 //    - `CreateAgentBody`: the body slot (template strip + name + mascot).
-//    - `CreateAgentCTA`: the primary "Create Agent" footer button.
+//    - `CreateAgentCTA`: the primary "Create Dino" footer button.
 //    - `CreateAgentSecondary`: the leading "Skip for now" text link.
 //
 
@@ -238,13 +238,13 @@ struct CreateAgentBody: View {
     }
 
     private var previewName: String {
-        state.trimmedName.isEmpty ? "Your agent" : state.trimmedName
+        state.trimmedName.isEmpty ? "Your dino" : state.trimmedName
     }
 
     private var previewPrompt: String {
         let trimmedPrompt = state.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedPrompt.isEmpty {
-            return "Start blank, or choose a starter to give your agent a clear role."
+            return "Start blank, or pick a starter to give your dino a clear role."
         }
         return trimmedPrompt
     }
@@ -323,10 +323,10 @@ struct CreateAgentBody: View {
             // matches the friendly tone of the rest of the step.
             OnboardingTextEditor(
                 label: "",
-                placeholder: "Instructions for this agent…",
+                placeholder: "Instructions for this dino…",
                 text: $state.systemPrompt,
                 isMonospaced: false,
-                height: 116
+                height: 110
             )
             .onChange(of: state.systemPrompt) { _, newValue in
                 // Track edits so switching starters won't overwrite the
@@ -434,7 +434,7 @@ struct CreateAgentCTA: View {
 
     var body: some View {
         OnboardingBrandButton(
-            title: "Create Agent",
+            title: "Create Dino",
             action: { if state.saveAgent() { onContinue() } },
             isEnabled: state.canSave
         )

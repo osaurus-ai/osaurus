@@ -148,23 +148,30 @@ struct OnboardingTextEditor: View {
                 OnboardingFieldLabel(text: label)
             }
 
+            // `height` sizes the chrome — not the inner `TextEditor` —
+            // so the field's outer footprint is deterministic. Applying
+            // `.frame(height:)` to the editor itself and then wrapping
+            // it in `.padding(...)` causes the underlying NSTextView's
+            // last-line descender to be clipped against its own scroll
+            // clip rect, which read as "textarea cuts off at the bottom".
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
                     Text(LocalizedStringKey(placeholder), bundle: .module)
                         .font(font)
                         .foregroundColor(theme.placeholderText)
-                        .padding(.top, 11)
-                        .padding(.leading, 15)
+                        .padding(.top, 8)
+                        .padding(.leading, 14)
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $text)
                     .font(font)
                     .foregroundColor(theme.primaryText)
                     .scrollContentBackground(.hidden)
-                    .frame(height: height)
-                    .padding(10)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
                     .focused($isFocused)
             }
+            .frame(height: height)
             .onboardingFieldChrome(isFocused: isFocused)
         }
     }

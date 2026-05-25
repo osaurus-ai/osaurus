@@ -2,9 +2,9 @@
 //  ToolsTemplatesSection.swift
 //  osaurus
 //
-//  Tool / template parser overrides for the Server → Settings tab.
-//  Persisted today; Osaurus auto-selects parsers from the loaded model
-//  so these are display-and-persist only until a host bridge lands.
+//  Tool / template controls for the Server → Settings tab. Parser overrides
+//  are engine-wired through vmlx; host/tool-provider controls are persisted
+//  but remain planned until their Osaurus bridges land.
 //
 
 @preconcurrency import MLXLMCommon
@@ -17,9 +17,9 @@ struct ToolsTemplatesSection: View {
     var body: some View {
         ServerSettingsCard(
             section: .tools,
-            status: .needsBridge,
+            status: .partial,
             blurb:
-                "Override the auto-selected tool-call and reasoning parsers. Persisted today; Osaurus reads from the loaded model until the host bridge ships."
+                "Parser overrides are applied at model load. Tool-provider and template controls are persisted here until their host bridges land."
         ) {
             SettingsToggle(
                 title: L("Allow Implicit Tool Calls"),
@@ -27,18 +27,21 @@ struct ToolsTemplatesSection: View {
                     "Let the model invoke tools without an explicit `tool_choice` from the client.",
                 isOn: $draft.tools.enableAutoToolChoice
             )
+            ServerSettingsPlannedBanner(
+                blurb: "Implicit tool-choice policy is persisted only; OpenAI-compatible requests still use the request's explicit tool choice and Osaurus chat-agent policy."
+            )
 
             OptionalStringField(
                 label: "Tool Parser Override",
                 placeholder: "Blank = auto-pick from the model",
-                help: "Known names include: hermes, openai_function.",
+                help: "Applied by vmlx at local model load. Known names include: qwen3_6, dsml, minimax_m2.",
                 value: $draft.tools.toolParserOverride
             )
 
             OptionalStringField(
                 label: "Reasoning Parser Override",
                 placeholder: "Blank = auto-pick from the model",
-                help: "Known names include: deepseek_r1, qwen3.",
+                help: "Applied by vmlx at local model load. Use off to disable reasoning parsing.",
                 value: $draft.tools.reasoningParserOverride
             )
 
@@ -47,6 +50,9 @@ struct ToolsTemplatesSection: View {
                 placeholder: "Blank = use providers/mcp.json",
                 help: "Path to an alternative MCP configuration file.",
                 value: $draft.tools.mcpConfigFile
+            )
+            ServerSettingsPlannedBanner(
+                blurb: "MCP config-file override is persisted only; the current tool registry still owns provider loading."
             )
 
             SettingsField(
@@ -68,6 +74,9 @@ struct ToolsTemplatesSection: View {
                             )
                     )
             }
+            ServerSettingsPlannedBanner(
+                blurb: "Custom chat templates are persisted only; vmlx still renders with the loaded tokenizer's template."
+            )
         }
     }
 

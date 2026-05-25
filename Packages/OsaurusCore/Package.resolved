@@ -1,5 +1,5 @@
 {
-  "originHash" : "6da1375545b8379e20eac3075f62d81b7ede4d7c37334a70d73978917577e104",
+  "originHash" : "accd0efb2ee94b665d6b2a971ad22024e78a64a7d08bbbb79f980e76e629f223",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -355,7 +355,7 @@
     {
       "identity" : "swift-service-lifecycle",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swift-server/swift-service-lifecycle",
+      "location" : "https://github.com/swift-server/swift-service-lifecycle.git",
       "state" : {
         "revision" : "9829955b385e5bb88128b73f1b8389e9b9c3191a",
         "version" : "2.11.0"
@@ -410,7 +410,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/osaurus-ai/vmlx-swift",
       "state" : {
-        "revision" : "3cdd9f38ef4a57b53cbac434261b6bac8e038b31"
+        "revision" : "4356ef1985344757a4326dd08ba27b5cbff230ab"
       }
     },
     {

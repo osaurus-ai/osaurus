@@ -261,10 +261,15 @@ final class ServerController: ObservableObject {
     /// changes (consumed by `RuntimeConfig.snapshot()` on the next
     /// request).
     func saveRuntimeSettings(_ settings: VMLXServerRuntimeSettings) async {
+        let previousRuntimeSettings = runtimeSettings
         let previousConfig = configuration
         let projected = ServerRuntimeSettingsStore.projectIntoLegacy(
             settings,
             base: previousConfig
+        )
+        let loadedModelRefreshNeeded = Self.loadedModelRuntimeInputsRequireRefresh(
+            previous: previousRuntimeSettings,
+            next: settings
         )
 
         runtimeSettings = settings
@@ -282,12 +287,27 @@ final class ServerController: ObservableObject {
             saveConfiguration()
         }
 
+        if loadedModelRefreshNeeded {
+            await ModelRuntime.shared.clearAll()
+        }
         if restartNeeded, isRunning {
             await restartServer()
         }
         if runtimeConfigChanged {
             await ModelRuntime.shared.invalidateConfig()
         }
+    }
+
+    /// Settings that are captured by a loaded `ModelContainer` or the
+    /// container-owned `BatchEngine` must force a model refresh. Plain network
+    /// and sampling defaults are applied elsewhere on the next request.
+    nonisolated static func loadedModelRuntimeInputsRequireRefresh(
+        previous: VMLXServerRuntimeSettings,
+        next: VMLXServerRuntimeSettings
+    ) -> Bool {
+        previous.cache != next.cache
+            || previous.multimodal != next.multimodal
+            || previous.mtp != next.mtp
     }
 
     // MARK: - Private Helpers

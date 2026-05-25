@@ -4,6 +4,7 @@
 //
 
 import Foundation
+@preconcurrency import MLXLMCommon
 import Testing
 
 @testable import OsaurusCore
@@ -32,5 +33,66 @@ struct ServerControllerConfigLoadingTests {
         let controller = ServerController()
         #expect(controller.configuration.port == 4242)
         #expect(controller.configuration.exposeToNetwork == true)
+    }
+
+    @Test func loadedModelRefreshInputs_coverCacheMultimodalAndMTP() {
+        let base = VMLXServerRuntimeSettings()
+
+        var cacheChanged = base
+        cacheChanged.cache.blockDisk.enabled = false
+        #expect(ServerController.loadedModelRuntimeInputsRequireRefresh(
+            previous: base,
+            next: cacheChanged
+        ))
+
+        var turboQuantChanged = base
+        turboQuantChanged.cache.liveKVCodec = .turboQuant
+        turboQuantChanged.cache.turboQuantKeyBits = 4
+        turboQuantChanged.cache.turboQuantValueBits = 4
+        #expect(ServerController.loadedModelRuntimeInputsRequireRefresh(
+            previous: base,
+            next: turboQuantChanged
+        ))
+
+        var multimodalChanged = base
+        multimodalChanged.multimodal.requireMediaSaltForCache = false
+        #expect(ServerController.loadedModelRuntimeInputsRequireRefresh(
+            previous: base,
+            next: multimodalChanged
+        ))
+
+        var mtpChanged = base
+        mtpChanged.mtp.mode = .off
+        #expect(ServerController.loadedModelRuntimeInputsRequireRefresh(
+            previous: base,
+            next: mtpChanged
+        ))
+    }
+
+    @Test func loadedModelRefreshInputs_ignoreNetworkAndSamplingOnlyChanges() {
+        let base = VMLXServerRuntimeSettings()
+
+        var networkChanged = base
+        networkChanged.network.port = 9999
+        networkChanged.network.host = "0.0.0.0"
+        #expect(!ServerController.loadedModelRuntimeInputsRequireRefresh(
+            previous: base,
+            next: networkChanged
+        ))
+
+        var generationChanged = base
+        generationChanged.generation.topP = 0.42
+        generationChanged.generation.temperature = 0.1
+        #expect(!ServerController.loadedModelRuntimeInputsRequireRefresh(
+            previous: base,
+            next: generationChanged
+        ))
+
+        var concurrencyChanged = base
+        concurrencyChanged.concurrency.maxConcurrentSequences = 4
+        #expect(!ServerController.loadedModelRuntimeInputsRequireRefresh(
+            previous: base,
+            next: concurrencyChanged
+        ))
     }
 }

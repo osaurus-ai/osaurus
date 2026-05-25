@@ -86,8 +86,9 @@ final class ChatSessionsManager: ObservableObject {
     /// flushed to `ChatSessionStore` after their first turn writes, so a
     /// rename issued before that flush would otherwise be dropped.
     func rename(id: UUID, title: String) {
-        guard var session = sessions.first(where: { $0.id == id })
-            ?? ChatSessionStore.load(id: id)
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
         else { return }
         session.title = title
         session.updatedAt = Date()
@@ -100,8 +101,9 @@ final class ChatSessionsManager: ObservableObject {
     /// Does not touch `updatedAt` so an archive doesn't bubble the row to
     /// the top of the recent list and confuse the user.
     func setArchived(id: UUID, archived: Bool) {
-        guard var session = sessions.first(where: { $0.id == id })
-            ?? ChatSessionStore.load(id: id)
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
         else { return }
         guard session.archived != archived else { return }
         session.archived = archived

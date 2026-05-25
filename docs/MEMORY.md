@@ -210,9 +210,11 @@ The MMR reranker uses 4-character word shingles for cheap content overlap — mu
 
 ## API Integration
 
-### Memory Context Injection — `X-Osaurus-Agent-Id`
+### Runtime Context Injection
 
-Add the `X-Osaurus-Agent-Id` header to any `POST /chat/completions` request. Osaurus runs the relevance gate against the user's message, picks at most one memory section, and prepends it (along with always-on identity overrides) to the request.
+Memory context is injected only by Osaurus-composed agent surfaces: app chat windows, `POST /agents/{id}/run`, and plugin host inference. Those paths run the relevance gate against the user's message, pick at most one memory section, and prepend it to the latest user message.
+
+Strict `POST /chat/completions` requests do not inject Osaurus memory, agent prompts, skills, or tools. `X-Osaurus-Agent-Id` may associate persisted HTTP history with an agent/session, but it is not a memory injection switch.
 
 ```python
 from openai import OpenAI
@@ -220,7 +222,6 @@ from openai import OpenAI
 client = OpenAI(
     base_url="http://127.0.0.1:1337/v1",
     api_key="osaurus",
-    default_headers={"X-Osaurus-Agent-Id": "my-agent"},
 )
 
 response = client.chat.completions.create(
@@ -228,8 +229,6 @@ response = client.chat.completions.create(
     messages=[{"role": "user", "content": "What did we talk about last week?"}],
 )
 ```
-
-Header values are arbitrary strings.
 
 ### Memory Ingestion — `POST /memory/ingest`
 

@@ -6,7 +6,9 @@ SCHEME_CLI := osaurus-cli
 SCHEME_APP := osaurus
 CONFIG := Release
 PROJECT := App/osaurus.xcodeproj
+WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
+XCODEBUILD_FLAGS ?=
 
 .PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report
 
@@ -34,11 +36,11 @@ help:
 
 cli:
 	@echo "Building CLI ($(SCHEME_CLI))…"
-	xcodebuild -project $(PROJECT) -scheme $(SCHEME_CLI) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet
+	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_CLI) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
 
 app: cli
 	@echo "Building app ($(SCHEME_APP))…"
-	xcodebuild -project $(PROJECT) -scheme $(SCHEME_APP) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet
+	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_APP) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
 	@echo "Embedding CLI into App Bundle (Helpers)…"
 	# Copy osaurus-cli to osaurus.app/Contents/Helpers/osaurus
 	mkdir -p "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers"

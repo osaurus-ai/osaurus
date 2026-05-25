@@ -34,6 +34,21 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("Makefile builds through workspace resolver mirrors")
+    func makefileUsesWorkspaceResolver() throws {
+        let source = try Self.source("../../Makefile")
+
+        #expect(source.contains("WORKSPACE := osaurus.xcworkspace"))
+        #expect(source.contains("XCODEBUILD_FLAGS ?="))
+        #expect(source.contains("xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_CLI)"))
+        #expect(source.contains("xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_APP)"))
+        #expect(source.contains("$(XCODEBUILD_FLAGS)"))
+        #expect(
+            !source.contains("xcodebuild -project $(PROJECT)"),
+            "project-only builds bypass workspace SwiftPM mirrors and can resolve incompatible upstream pins"
+        )
+    }
+
     @Test("AppDelegate leaves DSV4 cache topology to vmlx")
     func appDelegateDoesNotForceDSV4DiagnosticCacheMode() throws {
         let source = try Self.source("AppDelegate.swift")
@@ -66,6 +81,7 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("AppDelegate.swift")
         let serverTask = try #require(source.range(of: "let serverStartupTask = Task { @MainActor in"))
         let serverStart = try #require(source.range(of: "await serverController.startServer()"))
+        let storagePrewarm = try #require(source.range(of: "prewarmCurrentKeyOffCooperativeExecutor()"))
         let modelCachePrewarm = try #require(source.range(of: "await ModelPickerItemCache.shared.prewarmModelCache()"))
         let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
         let speechAutoload = try #require(source.range(of: "await SpeechService.shared.autoLoadIfNeeded()"))
@@ -73,6 +89,7 @@ struct RuntimePolicySourceTests {
         #expect(serverTask.lowerBound < modelCachePrewarm.lowerBound)
         #expect(serverStart.lowerBound < schedulerStart.lowerBound)
         #expect(serverStart.lowerBound < speechAutoload.lowerBound)
+        #expect(serverStart.lowerBound < storagePrewarm.lowerBound)
         #expect(source.contains("await serverStartupTask.value"))
         #expect(source.contains("MCPProviderManager.shared.connectEnabledProviders()"))
         #expect(source.contains("RemoteProviderManager.shared.connectEnabledProviders()"))
@@ -85,8 +102,9 @@ struct RuntimePolicySourceTests {
         let storageGate = try #require(source.range(of: "StorageKeyManager.shared.hasCachedKey"))
 
         #expect(storageGate.lowerBound < firstDatabaseOpen.lowerBound)
-        #expect(!source.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
-        #expect(!source.contains("let storageKeyPrewarmTask"))
+        #expect(!source.contains("try? StorageKeyManager.shared.prewarmCurrentKey()"))
+        #expect(source.contains("Task.detached(priority: .utility)"))
+        #expect(source.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
     }
 
     @Test("chat session list does not unlock storage key on init")
@@ -149,13 +167,12 @@ struct RuntimePolicySourceTests {
         let appDelegate = try Self.source("AppDelegate.swift")
         // The migrator used to be the implicit key-cache warmer via its
         // own `currentKey()` call, but `runIfNeeded` short-circuits on
-        // launches with no pending migration. The synchronous prewarm
-        // here is the explicit guarantee that downstream `hasCachedKey`
-        // guards (chat history, memory, schedulers) never fail closed
-        // simply because nothing happened to read the key first.
-        #expect(appDelegate.contains("StorageKeyManager.shared.prewarmCurrentKey()"))
-        #expect(!appDelegate.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
-        #expect(!appDelegate.contains("let storageKeyPrewarmTask"))
+        // launches with no pending migration. The explicit prewarm must
+        // stay off the launch-critical main-actor path so a slow Keychain
+        // read cannot prevent the local HTTP server from binding.
+        #expect(!appDelegate.contains("try? StorageKeyManager.shared.prewarmCurrentKey()"))
+        #expect(appDelegate.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
+        #expect(appDelegate.contains("Task.detached(priority: .utility)"))
         #expect(appDelegate.contains("Storage-dependent search/index services disabled"))
         #expect(appDelegate.contains("guard StorageKeyManager.shared.hasCachedKey else"))
 
@@ -351,12 +368,20 @@ struct RuntimePolicySourceTests {
 
         // This revision keeps the consolidated vmlx-swift pin for Osaurus
         // with vendored Jinja/Hub/Tokenizers/Transformers exposed through
-        // VMLX-prefixed products, plus the Qwen3.6 MXFP affine metadata and
-        // MoE router-gate load hardening. That avoids Xcode PIF
+        // VMLX-prefixed products, plus the Qwen3.6 MXFP affine metadata,
+        // MoE router-gate load hardening, native-MTP speedup proof gate,
+        // parser override load bridge, complete SSM companion-cache guard,
+        // Qwen3.6 native-MTP alias recognition, and expanded loaded
+        // cache-topology snapshotting for server-side cache autodetect, and
+        // quantization-bound native-MTP tuning for MXFP8 launch safety, and
+        // ZAYA1-VL reasoning-parser fallback separation, tuned native-MTP
+        // server autodetect by default, and MXFP8 artifact-evidence tuning
+        // acceptance.
+        // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "3cdd9f38ef4a57b53cbac434261b6bac8e038b31"
+        let currentVmlxRevision = "4356ef1985344757a4326dd08ba27b5cbff230ab"
         #expect(manifest.contains(currentVmlxRevision))
         #expect(workspaceResolved.contains(currentVmlxRevision))
         #expect(appResolved.contains(currentVmlxRevision))
@@ -598,6 +623,91 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Runtime cache telemetry keeps paged-prefix and disk-L2 counters separate")
+    func cacheTelemetryDoesNotFoldDiskL2IntoPrefixCounters() throws {
+        let httpHandler = try Self.source("Networking/HTTPHandler.swift")
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+
+        #expect(httpHandler.contains(#""paged_cache""#))
+        #expect(httpHandler.contains(#""block_disk_store""#))
+        #expect(httpHandler.contains(#""disk_l2_hits""#))
+        #expect(httpHandler.contains(#""prefix_hits""#))
+        #expect(!httpHandler.contains(#"aggregate["prefix_hits", default: 0] += diskStats.hits"#))
+        #expect(!httpHandler.contains(#"aggregate["prefix_misses", default: 0] += diskStats.misses"#))
+
+        #expect(adapter.contains("diskL2Hits += diskStats.hits"))
+        #expect(adapter.contains("diskL2Misses += diskStats.misses"))
+        #expect(!adapter.contains("prefixHits += diskStats.hits"))
+        #expect(!adapter.contains("prefixMisses += diskStats.misses"))
+
+        let cacheSection = try Self.source("Views/Settings/ServerSettings/CacheSection.swift")
+        #expect(cacheSection.contains(#"value: $draft.cache.blockDisk.directory"#))
+        #expect(cacheSection.contains(#"value: $draft.cache.legacyDisk.directory"#))
+    }
+
+    @Test("Server settings cache changes clear loaded model runtime")
+    func cacheSettingsChangesClearLoadedModelRuntime() throws {
+        let controller = try Self.source("Networking/ServerController.swift")
+
+        #expect(controller.contains("loadedModelRuntimeInputsRequireRefresh"))
+        #expect(controller.contains("previous.cache != next.cache"))
+        #expect(controller.contains("previous.multimodal != next.multimodal"))
+        #expect(controller.contains("previous.mtp != next.mtp"))
+        #expect(controller.contains("await ModelRuntime.shared.clearAll()"))
+    }
+
+    @Test("Server settings concurrency UI does not advertise false restart or runtime wiring")
+    func serverSettingsConcurrencyUIDoesNotAdvertiseFalseRestartOrRuntimeWiring() throws {
+        let tab = try Self.source("Views/Settings/ServerSettingsTabContent.swift")
+        let concurrency = try Self.source("Views/Settings/ServerSettings/ConcurrencySection.swift")
+
+        guard let restartStart = tab.range(of: "private var pendingRestart: Bool"),
+            let restartEnd = tab.range(
+                of: "private var hasUnsavedChanges: Bool",
+                range: restartStart.lowerBound ..< tab.endIndex
+            )
+        else {
+            Issue.record("Could not locate pendingRestart in ServerSettingsTabContent.swift")
+            return
+        }
+        let pendingRestart = tab[restartStart.lowerBound ..< restartEnd.lowerBound]
+        #expect(!pendingRestart.contains("concurrency.maxConcurrentSequences"))
+
+        #expect(concurrency.contains("`maxConcurrentSequences` hot-resizes"))
+        #expect(concurrency.contains("runtime consumers are not yet implemented"))
+        #expect(concurrency.contains("Reserved contract flag for explicit scheduler gating"))
+        #expect(concurrency.contains("Concurrent Sessions"))
+        #expect(concurrency.contains("Prompt Prefill Chunk Size"))
+    }
+
+    @Test("Tools settings panel separates wired parser overrides from planned host bridges")
+    func toolsSettingsPanelSeparatesWiredParserOverridesFromPlannedHostBridges() throws {
+        let toolsSection = try Self.source("Views/Settings/ServerSettings/ToolsTemplatesSection.swift")
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(toolsSection.contains("status: .partial"))
+        #expect(!toolsSection.contains("status: .engineReady"))
+        #expect(toolsSection.contains("Parser overrides are applied at model load"))
+        #expect(toolsSection.contains("Applied by vmlx at local model load"))
+        #expect(toolsSection.contains("Implicit tool-choice policy is persisted only"))
+        #expect(toolsSection.contains("MCP config-file override is persisted only"))
+        #expect(toolsSection.contains("Custom chat templates are persisted only"))
+
+        #expect(runtime.contains("resolvedModelConfiguration("))
+        #expect(runtime.contains("ServerRuntimeSettingsStore.snapshot()"))
+    }
+
+    @Test("Server model-load cache setup uses loaded vmlx topology, not only name heuristics")
+    func modelLoadCacheSetupUsesLoadedVMLXTopologySnapshot() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(runtime.contains("await holder.container.cacheTopologySnapshot()"))
+        #expect(runtime.contains("cacheTopology: cacheTopology"))
+        #expect(runtime.contains("await holder.container.enableCachingAsync(config: cacheConfig)"))
+        #expect(!runtime.contains("holder.container.enableCaching(config: cacheConfig)"))
+        #expect(!runtime.contains("holder.container.cacheCoordinator?.setHybrid(true)"))
+    }
+
     @Test("Flexible model residency respects load-time memory budget")
     func flexibleModelResidencyEvictsBeforeOversizedLoads() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
@@ -831,6 +941,73 @@ struct RuntimePolicySourceTests {
         #expect(agentRun.contains("ChatMessage(role: \"tool\""))
     }
 
+    @Test("OpenAI chat completions endpoint does not inject agent context")
+    func openAIChatCompletionsEndpointDoesNotInjectAgentContext() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        guard let start = handler.range(of: "private func handleChatCompletions("),
+            let end = handler.range(
+                of: "private func handleChatNDJSON(",
+                range: start.lowerBound ..< handler.endIndex
+            )
+        else {
+            Issue.record("Could not locate handleChatCompletions in HTTPHandler.swift")
+            return
+        }
+
+        let chatCompletions = handler[start.lowerBound ..< end.lowerBound]
+        #expect(chatCompletions.contains("let enrichedReq = req"))
+        #expect(chatCompletions.contains("http_context_passthrough_done"))
+        #expect(chatCompletions.contains("X-Osaurus-Agent-Id"))
+        #expect(chatCompletions.contains("agentId: resolvedAgentUUID"))
+        #expect(!chatCompletions.contains("enrichWithAgentContext("))
+        #expect(!chatCompletions.contains("composeChatContext("))
+        #expect(!chatCompletions.contains("injectMemoryPrefix("))
+        #expect(!chatCompletions.contains("mergeAgentContextTools("))
+    }
+
+    @Test("Open Responses endpoint has v1 alias and does not inject agent context")
+    func openResponsesEndpointHasV1AliasAndDoesNotInjectAgentContext() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        let serverView = try Self.source("Views/Settings/ServerView.swift")
+
+        #expect(handler.contains(#"path == "/responses" || path == "/v1/responses""#))
+        #expect(serverView.contains(#"path: "/v1/responses""#))
+
+        guard let start = handler.range(of: "private func handleOpenResponses("),
+            let end = handler.range(
+                of: "private func handleOpenResponsesStreaming(",
+                range: start.lowerBound ..< handler.endIndex
+            )
+        else {
+            Issue.record("Could not locate handleOpenResponses in HTTPHandler.swift")
+            return
+        }
+
+        let responses = handler[start.lowerBound ..< end.lowerBound]
+        #expect(responses.contains("toChatCompletionRequest()"))
+        #expect(!responses.contains("enrichWithAgentContext("))
+        #expect(!responses.contains("composeChatContext("))
+        #expect(!responses.contains("injectMemoryPrefix("))
+        #expect(!responses.contains("mergeAgentContextTools("))
+    }
+
+    @Test("server streaming endpoints honor runtime stream interval")
+    func serverStreamingEndpointsHonorRuntimeStreamInterval() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        let helper = try Self.source("Networking/HTTPLoopHelpers.swift")
+
+        #expect(helper.contains("struct StreamDeltaCoalescer"))
+        #expect(helper.contains("TokenEstimator.estimate(delta)"))
+
+        let bridge = "ServerRuntimeSettingsStore.snapshot().generation.streamInterval"
+        #expect(
+            handler.components(separatedBy: bridge).count == 7,
+            "Expected six streaming server paths to bridge generation.streamInterval through StreamDeltaCoalescer"
+        )
+        #expect(handler.contains("writerBound.value.writeContent(\n                                    chunk"))
+        #expect(handler.contains("writerBound.value.writeTextDelta(chunk"))
+    }
+
     /// Lock the removal of the `activeGenerationTask?.value` gate at
     /// the entry of `generateEventStream`. The gate was serializing
     /// every same-model overlapping request before vmlx's `BatchEngine`
@@ -916,11 +1093,14 @@ struct RuntimePolicySourceTests {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
         #expect(runtime.contains("MTPBundleInspector.inspect("))
-        #expect(runtime.contains("VMLXServerRuntimeSettings()"))
-        #expect(runtime.contains("settings.mtp.mode = .auto"))
+        #expect(runtime.contains("let serverSettings = ServerRuntimeSettingsStore.snapshot()"))
+        #expect(runtime.contains("settings: serverSettings"))
+        #expect(!runtime.contains("settings.mtp.mode = .auto"))
         #expect(runtime.contains("resolvedMTPLaunch("))
         #expect(runtime.contains("resolvedLoadConfiguration("))
         #expect(runtime.contains("resolvedMTPDraftStrategy("))
+        #expect(runtime.contains("resolvedModelConfiguration("))
+        #expect(runtime.contains("configuration: serverSettings.resolvedModelConfiguration("))
         #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
         #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
         #expect(runtime.contains("draftStrategy: holder.draftStrategy"))

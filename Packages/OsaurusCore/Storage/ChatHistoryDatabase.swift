@@ -126,6 +126,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 2 { try migrateToV2() }
         if current < 3 { try migrateToV3() }
         if current < 4 { try migrateToV4() }
+        if current < 5 { try migrateToV5() }
     }
 
     private func getSchemaVersion() throws -> Int {
@@ -214,6 +215,19 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV4() throws {
         try executeRaw("ALTER TABLE sessions ADD COLUMN capabilities TEXT NOT NULL DEFAULT ''")
         try setSchemaVersion(4)
+    }
+
+    /// v5: per-turn timing for opt-in inclusion in exports (billing /
+    /// reporting). All four columns are nullable so legacy turns just
+    /// surface no timing data, matching the exporter's "leave blank"
+    /// behavior. `created_at` and `completed_at` are stored as REAL
+    /// (timeIntervalSince1970), consistent with the session timestamps.
+    private func migrateToV5() throws {
+        try executeRaw("ALTER TABLE turns ADD COLUMN created_at REAL")
+        try executeRaw("ALTER TABLE turns ADD COLUMN completed_at REAL")
+        try executeRaw("ALTER TABLE turns ADD COLUMN generation_token_count INTEGER")
+        try executeRaw("ALTER TABLE turns ADD COLUMN time_to_first_token REAL")
+        try setSchemaVersion(5)
     }
 
     // MARK: - Public API: sessions
@@ -655,6 +669,21 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if let results = try? encoder.encode(turn.toolResults) {
             hasher.update(data: results)
         }
+        // Timing fields are part of the hash so that a turn whose
+        // `completedAt` / token-count lands after the initial save still
+        // triggers `upsertTurnsIncrementally` to write the updated row.
+        if let created = turn.createdAt {
+            hasher.update(data: Data(String(created.timeIntervalSince1970).utf8))
+        }
+        if let completed = turn.completedAt {
+            hasher.update(data: Data(String(completed.timeIntervalSince1970).utf8))
+        }
+        if let tokens = turn.generationTokenCount {
+            hasher.update(data: Data(String(tokens).utf8))
+        }
+        if let ttft = turn.timeToFirstToken {
+            hasher.update(data: Data(String(ttft).utf8))
+        }
         let digest = hasher.finalize()
         return digest.map { String(format: "%02x", $0) }.joined()
     }
@@ -751,23 +780,29 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private static let insertTurnSQL = """
         INSERT INTO turns
             (id, session_id, seq, role, content, attachments,
-             tool_calls, tool_call_id, tool_results, thinking, content_hash)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             tool_calls, tool_call_id, tool_results, thinking, content_hash,
+             created_at, completed_at, generation_token_count, time_to_first_token)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         ON CONFLICT(id) DO UPDATE SET
-            session_id   = excluded.session_id,
-            seq          = excluded.seq,
-            role         = excluded.role,
-            content      = excluded.content,
-            attachments  = excluded.attachments,
-            tool_calls   = excluded.tool_calls,
-            tool_call_id = excluded.tool_call_id,
-            tool_results = excluded.tool_results,
-            thinking     = excluded.thinking,
-            content_hash = excluded.content_hash
+            session_id             = excluded.session_id,
+            seq                    = excluded.seq,
+            role                   = excluded.role,
+            content                = excluded.content,
+            attachments            = excluded.attachments,
+            tool_calls             = excluded.tool_calls,
+            tool_call_id           = excluded.tool_call_id,
+            tool_results           = excluded.tool_results,
+            thinking               = excluded.thinking,
+            content_hash           = excluded.content_hash,
+            created_at             = excluded.created_at,
+            completed_at           = excluded.completed_at,
+            generation_token_count = excluded.generation_token_count,
+            time_to_first_token    = excluded.time_to_first_token
         """
 
     private static let selectTurnsSQL = """
-        SELECT id, role, content, attachments, tool_calls, tool_call_id, tool_results, thinking
+        SELECT id, role, content, attachments, tool_calls, tool_call_id, tool_results, thinking,
+               created_at, completed_at, generation_token_count, time_to_first_token
         FROM turns
         WHERE session_id = ?1
         ORDER BY seq ASC
@@ -824,6 +859,10 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             .map { String(cString: $0) }
             .flatMap(decodeJSON) ?? [:]
         let thinking = String(cString: sqlite3_column_text(stmt, 7))
+        let createdAt = readNullableDate(stmt, index: 8)
+        let completedAt = readNullableDate(stmt, index: 9)
+        let tokenCount = readNullableInt(stmt, index: 10)
+        let timeToFirstToken = readNullableDouble(stmt, index: 11)
         return ChatTurnData(
             id: UUID(uuidString: idStr) ?? UUID(),
             role: role,
@@ -832,8 +871,27 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             toolCalls: toolCalls,
             toolCallId: toolCallId,
             toolResults: toolResults,
-            thinking: thinking
+            thinking: thinking,
+            createdAt: createdAt,
+            completedAt: completedAt,
+            generationTokenCount: tokenCount,
+            timeToFirstToken: timeToFirstToken
         )
+    }
+
+    private static func readNullableDate(_ stmt: OpaquePointer, index: Int32) -> Date? {
+        guard sqlite3_column_type(stmt, index) != SQLITE_NULL else { return nil }
+        return Date(timeIntervalSince1970: sqlite3_column_double(stmt, index))
+    }
+
+    private static func readNullableDouble(_ stmt: OpaquePointer, index: Int32) -> Double? {
+        guard sqlite3_column_type(stmt, index) != SQLITE_NULL else { return nil }
+        return sqlite3_column_double(stmt, index)
+    }
+
+    private static func readNullableInt(_ stmt: OpaquePointer, index: Int32) -> Int? {
+        guard sqlite3_column_type(stmt, index) != SQLITE_NULL else { return nil }
+        return Int(sqlite3_column_int64(stmt, index))
     }
 
     private static func bindTurn(
@@ -854,6 +912,26 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindText(stmt, index: 9, value: encodeJSON(turn.toolResults))
         bindText(stmt, index: 10, value: turn.thinking)
         bindText(stmt, index: 11, value: contentHash ?? Self.contentHash(for: turn))
+        bindNullableDouble(stmt, index: 12, value: turn.createdAt?.timeIntervalSince1970)
+        bindNullableDouble(stmt, index: 13, value: turn.completedAt?.timeIntervalSince1970)
+        bindNullableInt(stmt, index: 14, value: turn.generationTokenCount)
+        bindNullableDouble(stmt, index: 15, value: turn.timeToFirstToken)
+    }
+
+    static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {
+        if let value {
+            sqlite3_bind_double(stmt, Int32(index), value)
+        } else {
+            sqlite3_bind_null(stmt, Int32(index))
+        }
+    }
+
+    static func bindNullableInt(_ stmt: OpaquePointer, index: Int, value: Int?) {
+        if let value {
+            sqlite3_bind_int64(stmt, Int32(index), Int64(value))
+        } else {
+            sqlite3_bind_null(stmt, Int32(index))
+        }
     }
 
     // MARK: - JSON helpers
