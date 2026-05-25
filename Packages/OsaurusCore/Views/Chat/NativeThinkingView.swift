@@ -118,6 +118,7 @@ final class NativeThinkingView: NSView {
         isExpanded: Bool,
         theme: any ThemeProtocol,
         blockId: String,
+        sessionRedactions: [String: String] = [:],
         onToggle: @escaping () -> Void,
         onHeightChanged: @escaping () -> Void
     ) {
@@ -155,6 +156,19 @@ final class NativeThinkingView: NSView {
                 theme: theme,
                 cacheKey: "\(blockId)-thinking",
                 isStreaming: isStreaming
+            )
+            // Reasoning text is assistant-side restored content
+            // (the unscrubber rewrote any placeholders before the
+            // string reached this view), so direction is always
+            // `.inbound`. Empty `sessionRedactions` short-circuits
+            // inside the highlighter so non-Privacy chats stay
+            // allocation-free.
+            mdv.setRedactionHighlights(
+                RedactionHighlight.buildDictionary(
+                    from: sessionRedactions,
+                    direction: .inbound
+                ),
+                theme: theme
             )
             mdv.onHeightChanged = { [weak self] in self?.applyHeight() }
         }

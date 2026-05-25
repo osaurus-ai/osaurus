@@ -653,7 +653,8 @@ public actor ModelRuntime {
             let serverSettings = ServerRuntimeSettingsStore.snapshot()
             let mtpPlan = Self.resolveNativeMTPLaunchPlan(
                 modelDirectory: localURL,
-                settings: serverSettings)
+                settings: serverSettings
+            )
             genLog.info(
                 "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public)"
             )
@@ -661,7 +662,8 @@ public actor ModelRuntime {
                 from: localURL,
                 using: tokenizerLoader,
                 configuration: serverSettings.resolvedModelConfiguration(
-                    base: ModelConfiguration(directory: localURL)),
+                    base: ModelConfiguration(directory: localURL)
+                ),
                 loadConfiguration: mtpPlan.loadConfiguration
             )
             let isVLM = await container.isVLM

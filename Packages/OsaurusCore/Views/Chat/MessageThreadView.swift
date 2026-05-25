@@ -46,6 +46,13 @@ struct MessageThreadView: View {
     var scrollToTurnId: UUID? = nil
     var scrollToTurnTrigger: Int = 0
 
+    /// Window-local `original -> placeholder` map from the Privacy
+    /// Filter. Forwarded into `MessageTableRepresentable` so each
+    /// cell's renderer can inline-highlight matching spans. Default
+    /// empty so callers without a chat session (preview / mock)
+    /// don't have to thread it.
+    var sessionRedactions: [String: String] = [:]
+
     @Environment(\.theme) private var theme
 
     private var resolvedGroupHeaderMap: [UUID: UUID] {
@@ -101,7 +108,8 @@ struct MessageThreadView: View {
             onUserImagePreview: onUserImagePreview,
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
-            scrollToTurnTrigger: scrollToTurnTrigger
+            scrollToTurnTrigger: scrollToTurnTrigger,
+            sessionRedactions: sessionRedactions
         )
     }
 }

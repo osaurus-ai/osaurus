@@ -59,6 +59,21 @@ final class NativeMarkdownView: NSView {
     private var lastThemeFingerprint: String = ""
     private var lastIsStreaming: Bool = false
     private var parseTask: Task<Void, Never>?
+    /// Cell-supplied original -> redaction map. Re-applied via
+    /// `RedactionHighlighter` after every textStorage edit on the
+    /// pure-text path, the mixed-segment text path, and any nested
+    /// `NativeMarkdownView` (math/image segments don't carry text).
+    /// Empty dict short-circuits the highlighter, so the property
+    /// has no perf cost in chats that never trigger the filter.
+    private var redactionHighlights: [String: RedactionHighlight] = [:]
+    /// Last set of applied highlight ranges, in textStorage
+    /// coordinates. The hover controller reads this list (instead of
+    /// re-scanning the storage) when picking the popover target.
+    private(set) var appliedHighlightRanges: [AppliedRedactionRange] = []
+    /// Hover controller attached to `textView`. Created lazily the
+    /// first time `redactionHighlights` becomes non-empty; reused
+    /// across updates so the NSTrackingArea stays installed.
+    private var hoverController: RedactionHoverController?
     /// cancels stale loads when segment id is reused with a new URL or view is removed
     private var imageLoadTasks: [String: (UUID, Task<Void, Never>)] = [:]
     /// invalid until first layout pass with positive width — drives remeasure in `layout()`
@@ -107,6 +122,80 @@ final class NativeMarkdownView: NSView {
     }
 
     // MARK: Configure (text-based entry point)
+
+    /// Set the cell's current original -> placeholder map. Stored
+    /// on the view so streaming updates re-apply the highlighter
+    /// pass on every textStorage edit. Cell layer also forwards
+    /// this into nested `NativeMarkdownView`s via the mixed-segment
+    /// path. Idempotent — re-setting the same dict triggers a
+    /// re-paint, which is harmless because the highlighter is
+    /// keyed on character ranges.
+    func setRedactionHighlights(
+        _ highlights: [String: RedactionHighlight],
+        theme: any ThemeProtocol
+    ) {
+        let changed = highlights != redactionHighlights
+        redactionHighlights = highlights
+        if changed || !highlights.isEmpty {
+            applyRedactionHighlightsIfNeeded(theme: theme)
+        }
+        // Propagate to mixed-segment children so a code/text/image
+        // assistant turn highlights uniformly across all segments.
+        for entry in segmentViews {
+            if let child = entry.view as? NativeMarkdownView {
+                child.setRedactionHighlights(highlights, theme: theme)
+            }
+        }
+    }
+
+    /// Re-paint highlights on the current textStorage. Called from
+    /// `setRedactionHighlights` and from every place we mutate
+    /// `textStorage` (pure text + configureWithBlocks paths).
+    private func applyRedactionHighlightsIfNeeded(theme: any ThemeProtocol) {
+        guard let tv = textView, let storage = tv.textStorage else {
+            appliedHighlightRanges = []
+            return
+        }
+        if redactionHighlights.isEmpty {
+            appliedHighlightRanges = []
+            hoverController?.detach()
+            hoverController = nil
+            return
+        }
+        let accent = NSColor(theme.accentColor)
+        let applied = RedactionHighlighter.apply(
+            on: storage,
+            highlights: redactionHighlights,
+            accentColor: accent,
+            a11yLabelBuilder: { highlight in
+                Self.accessibilityLabel(for: highlight)
+            }
+        )
+        appliedHighlightRanges = applied
+
+        // Install hover controller lazily — chats without privacy
+        // hits never allocate the tracking area or popover machinery.
+        if hoverController == nil {
+            hoverController = RedactionHoverController()
+        }
+        hoverController?.attach(to: tv, theme: theme, ranges: applied)
+    }
+
+    /// Localized a11y label for VoiceOver. Outbound: "Redacted before
+    /// sending. Sent to cloud as [TOKEN]". Inbound: "Restored from
+    /// [TOKEN]". Falls back to the placeholder token when the
+    /// xcstrings catalog is missing.
+    private static func accessibilityLabel(for highlight: RedactionHighlight) -> String {
+        let key: String
+        switch highlight.direction {
+        case .outbound: key = "privacy.highlight.a11y.outbound"
+        case .inbound: key = "privacy.highlight.a11y.inbound"
+        case .preview: key = "privacy.highlight.a11y.preview"
+        }
+        let format = String(localized: String.LocalizationValue(key), bundle: .module)
+        if format == key { return highlight.placeholderToken }
+        return String(format: format, highlight.placeholderToken)
+    }
 
     func configure(
         text: String,
@@ -212,6 +301,7 @@ final class NativeMarkdownView: NSView {
             if !incrementalPath {
                 tv.needsDisplay = true
             }
+            applyRedactionHighlightsIfNeeded(theme: theme)
         }
 
         // nested NativeMarkdownView (text segment inside mixed content) must update heightConstraint
@@ -376,6 +466,7 @@ final class NativeMarkdownView: NSView {
             if !incrementalPath {
                 tv.needsDisplay = true
             }
+            applyRedactionHighlightsIfNeeded(theme: theme)
         }
 
         // must update heightConstraint — init leaves 100pt; otherwise user bubbles stay artificially tall
@@ -613,6 +704,9 @@ final class NativeMarkdownView: NSView {
 
     private func removeTextView() {
         fader.reset()
+        hoverController?.detach()
+        hoverController = nil
+        appliedHighlightRanges = []
         textView?.removeFromSuperview()
         textView = nil
         lastBlocks = []

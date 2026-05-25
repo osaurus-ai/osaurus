@@ -8,6 +8,7 @@
 
 import AppKit
 import QuartzCore
+import SwiftUI
 
 // MARK: - Cell Rendering Context
 
@@ -40,6 +41,12 @@ struct CellRenderingContext {
     var onSpeak: ((UUID) -> Void)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
+    /// Window-local accumulator of `original -> placeholder` pairs
+    /// from the Privacy Filter. Used by `NativeMarkdownView` to
+    /// inline-highlight matching spans inside user + assistant
+    /// bubbles. Empty dict means no privacy redactions in this
+    /// session yet (the highlight pass short-circuits).
+    var sessionRedactions: [String: String] = [:]
 }
 
 // MARK: - Cell-Isolated ExpandedBlocksStore Proxy
@@ -1306,6 +1313,19 @@ final class NativeMessageCellView: NSTableCellView {
         )
     }
 
+    /// Convert the cell's session redaction dict (`original ->
+    /// placeholder` from the Privacy Filter) into the form
+    /// `RedactionHighlighter` consumes (`original -> (token,
+    /// direction)`). Pulled out of `configureAsParagraph` /
+    /// `configureAsUserMessage` because both call sites need the
+    /// same conversion with a different direction.
+    static func buildHighlights(
+        from sessionRedactions: [String: String],
+        direction: RedactionHighlight.Direction
+    ) -> [String: RedactionHighlight] {
+        RedactionHighlight.buildDictionary(from: sessionRedactions, direction: direction)
+    }
+
     // MARK: - Paragraph (native NSTextView)
 
     private func configureAsParagraph(
@@ -1340,6 +1360,16 @@ final class NativeMessageCellView: NSTableCellView {
             theme: context.theme,
             cacheKey: block.id,
             isStreaming: isStreaming
+        )
+        // Assistant bubble: any placeholder the cloud emitted has
+        // already been swapped back to the original by the
+        // unscrubber, so the user is reading their own PII. Flag
+        // every matching span as `.inbound` so the popover reads
+        // "Restored from [TOKEN]" — that's the trust signal that
+        // proves the wire actually saw the token, not the original.
+        mv.setRedactionHighlights(
+            Self.buildHighlights(from: context.sessionRedactions, direction: .inbound),
+            theme: context.theme
         )
 
         // Apply assistant bubble background only when the target value actually changes —
@@ -1416,6 +1446,7 @@ final class NativeMessageCellView: NSTableCellView {
             isExpanded: isExpanded,
             theme: context.theme,
             blockId: block.id,
+            sessionRedactions: context.sessionRedactions,
             onToggle: { [weak self] in
                 guard let self else { return }
                 context.onToggleExpand(block.id)
@@ -1502,7 +1533,9 @@ final class NativeMessageCellView: NSTableCellView {
         }()
 
         let needsUserMessageRebuild =
-            !sameKind || userMessageContainer == nil || userMessageInlineEditActive != wantsInlineEdit
+            !sameKind
+            || userMessageContainer == nil
+            || userMessageInlineEditActive != wantsInlineEdit
 
         if needsUserMessageRebuild {
             removeAllContentViews()
@@ -1615,8 +1648,10 @@ final class NativeMessageCellView: NSTableCellView {
                 userTextView = nil
             }
 
-            // Hover action buttons — positioned to the left of the bubble (or attachments).
-            // Anchor vertically to the bubble if it exists, otherwise to the first attachment stack.
+            // Hover action buttons + redaction badge both anchor off
+            // the same view: the bubble when present, the first
+            // attachment stack otherwise. Captured once so the two
+            // layouts stay in sync if we ever reorder the stack.
             let anchorView = userMessageContainer ?? userImageStack ?? userDocumentStack
             if let anchorView {
                 let hv = NativeHeaderView()
@@ -1632,6 +1667,7 @@ final class NativeMessageCellView: NSTableCellView {
             } else {
                 nativeHeaderView = nil
             }
+
         }
 
         // Update width constraint even when not rebuilding (e.g. sidebar toggle changes available width)
@@ -1683,6 +1719,14 @@ final class NativeMessageCellView: NSTableCellView {
                 theme: theme,
                 cacheKey: block.id,
                 isStreaming: context.isStreaming
+            )
+            // User bubble: the verbatim string in `ChatTurn.content`
+            // is what the user TYPED, but the wire saw the
+            // placeholder. Flag every matching span as `.outbound`
+            // so the popover reads "Sent to cloud as [TOKEN]".
+            mv.setRedactionHighlights(
+                Self.buildHighlights(from: context.sessionRedactions, direction: .outbound),
+                theme: theme
             )
         }
 

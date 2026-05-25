@@ -98,6 +98,13 @@ struct MessageTableRepresentable: NSViewRepresentable {
     var scrollToTurnId: UUID? = nil
     var scrollToTurnTrigger: Int = 0
 
+    /// Window-local `original -> placeholder` map from the Privacy
+    /// Filter. Threaded into every `CellRenderingContext` so the
+    /// markdown renderer can inline-highlight any matching spans in
+    /// user + assistant bubbles. Empty when the filter hasn't
+    /// scrubbed anything in this window yet.
+    var sessionRedactions: [String: String] = [:]
+
     // MARK: - NSViewRepresentable Lifecycle
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -210,7 +217,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onEdit: onEdit,
             onDelete: onDelete,
             onSpeak: onSpeak,
-            onUserImagePreview: onUserImagePreview
+            onUserImagePreview: onUserImagePreview,
+            sessionRedactions: sessionRedactions
         )
     }
 
@@ -235,7 +243,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onEdit: onEdit,
             onDelete: onDelete,
             onSpeak: onSpeak,
-            onUserImagePreview: onUserImagePreview
+            onUserImagePreview: onUserImagePreview,
+            sessionRedactions: sessionRedactions
         )
     }
 

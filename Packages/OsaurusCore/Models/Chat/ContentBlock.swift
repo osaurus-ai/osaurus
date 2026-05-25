@@ -204,9 +204,12 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
-    static func userMessage(turnId: UUID, text: String, attachments: [Attachment], position: BlockPosition)
-        -> ContentBlock
-    {
+    static func userMessage(
+        turnId: UUID,
+        text: String,
+        attachments: [Attachment],
+        position: BlockPosition
+    ) -> ContentBlock {
         ContentBlock(
             id: "usermsg-\(turnId.uuidString)",
             turnId: turnId,

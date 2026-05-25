@@ -93,7 +93,25 @@ final class ChatSession: ObservableObject {
             }
         }
     }
+
+    /// True between `send()` and the first inbound delta when the
+    /// Privacy Filter is engaged and the user is being asked to
+    /// confirm redactions. We don't want the Stop button to show
+    /// during this window — the cancel path lives on the review sheet
+    /// itself, and double-firing Stop would race the
+    /// `withTaskCancellationHandler` we now wire in
+    /// `PrivacyReviewService`. Flipped to false the first time
+    /// `firstDeltaTime` is set in the streaming loop, or in the catch
+    /// handler when the review is cancelled / errors out.
+    @Published var isAwaitingPrivacyReview: Bool = false
     @Published var lastStreamError: String?
+
+    /// Last typed draft preserved when a send is cancelled
+    /// (Cancel-send button in review sheet, or Task cancel during
+    /// review). The chat view re-reads this in the cancel branch and
+    /// puts the text back in the input field so the user can edit and
+    /// resend without retyping. Cleared on the next successful send.
+    var savedDraftOnCancel: (text: String, attachments: [Attachment])? = nil
 
     /// Single-slot FIFO queue for in-chat prompt overlays (secrets,
     /// clarify, …). Both prompt types share the same on-screen real
@@ -260,6 +278,27 @@ final class ChatSession: ObservableObject {
     private var isLoadingModel: Bool = false
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
+    /// Observer for `.privacyFilterRedactionsApproved`. Folds every
+    /// approved (original, placeholder) pair into this window's
+    /// `sessionRedactions` dict so user + assistant bubbles can
+    /// inline-highlight the matching spans on rebuild. Filtered by
+    /// this session's `sessionId.uuidString` to avoid cross-window
+    /// leakage when multiple chats are open.
+    nonisolated(unsafe) private var privacyRedactionsObserver: NSObjectProtocol?
+
+    /// Accumulated original -> placeholder map for THIS window's
+    /// session, populated by the privacy filter notification. Drives
+    /// inline highlighting in the chat bubbles via
+    /// `CellRenderingContext.sessionRedactions`. FIFO-capped (see
+    /// `Self.maxSessionRedactions`) so a long-running window doesn't
+    /// grow this dict unbounded; oldest entries evict first because
+    /// the most recently-redacted spans are the ones the user is
+    /// looking at right now in the transcript.
+    @Published private(set) var sessionRedactions: [String: String] = [:]
+    /// Insertion-order log for `sessionRedactions`. Append-only;
+    /// eviction is by `removeFirst` when the count exceeds the cap.
+    private var sessionRedactionOrder: [String] = []
+    static let maxSessionRedactions: Int = 256
 
     init() {
         let cache = ModelPickerItemCache.shared
@@ -308,6 +347,52 @@ final class ChatSession: ObservableObject {
             Task { @MainActor in
                 guard let self, sid == self.expectedTodoSessionId else { return }
                 self.currentTodo = await AgentTodoStore.shared.todo(for: sid)
+            }
+        }
+
+        // Fold the (original, placeholder) pairs from this approved
+        // send into `sessionRedactions` so subsequent chat-block
+        // rebuilds can inline-highlight any matching spans in user
+        // and assistant bubbles. We match by sessionId so opening
+        // two chat windows and sending from one doesn't leak
+        // placeholder metadata into the other window's transcript.
+        privacyRedactionsObserver = NotificationCenter.default.addObserver(
+            forName: .privacyFilterRedactionsApproved,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard
+                let sid = note.userInfo?["sessionId"] as? String,
+                let pairs = note.userInfo?["redactions"] as? [[String: String]],
+                !pairs.isEmpty
+            else { return }
+            Task { @MainActor in
+                guard let self else { return }
+                guard self.sessionId?.uuidString == sid else { return }
+                var didChange = false
+                for pair in pairs {
+                    guard
+                        let original = pair["original"],
+                        let placeholder = pair["placeholder"],
+                        !original.isEmpty
+                    else { continue }
+                    if self.sessionRedactions[original] == placeholder { continue }
+                    if self.sessionRedactions[original] == nil {
+                        self.sessionRedactionOrder.append(original)
+                    }
+                    self.sessionRedactions[original] = placeholder
+                    didChange = true
+                }
+                // FIFO cap: drop oldest originals so the dict can't
+                // grow unbounded in a long-running window.
+                while self.sessionRedactionOrder.count > Self.maxSessionRedactions {
+                    let oldest = self.sessionRedactionOrder.removeFirst()
+                    self.sessionRedactions.removeValue(forKey: oldest)
+                    didChange = true
+                }
+                if didChange {
+                    self.rebuildVisibleBlocks()
+                }
             }
         }
 
@@ -381,6 +466,9 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = agentTodoObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = privacyRedactionsObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         modelSelectionCancellable = nil
@@ -858,6 +946,9 @@ final class ChatSession: ObservableObject {
         if let prev = sessionId {
             let key = sessionStateKey(prev)
             Task { await SessionToolStateStore.shared.invalidate(key) }
+            // Drop the privacy-filter RedactionMap interned for this
+            // chat so a fresh conversation starts with a clean slate.
+            Task { await SessionRedactionStore.shared.invalidate(prev.uuidString) }
         }
         sessionId = nil
         title = "New Chat"
@@ -1441,6 +1532,11 @@ final class ChatSession: ObservableObject {
     private func completeRunCleanup() {
         currentTask = nil
         isStreaming = false
+        isAwaitingPrivacyReview = false
+        // Successful run finished — drop the saved draft so a later
+        // unrelated cancel doesn't accidentally repopulate the input
+        // with a turn the user already sent.
+        savedDraftOnCancel = nil
         budgetTracker.clear()
         ServerController.signalGenerationEnd()
         trimTrailingEmptyAssistantTurn()
@@ -1722,6 +1818,11 @@ final class ChatSession: ObservableObject {
                     let now = Date()
                     if firstDeltaTime == nil {
                         firstDeltaTime = now
+                        // Network response started — Stop button can
+                        // come back. Setting unconditionally is safe
+                        // because the flag is only meaningful while
+                        // `isStreaming` is true.
+                        isAwaitingPrivacyReview = false
                         ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
                         ttftTrace?.mark("first_text_delta")
                         ttftTrace?.set("model", selectedModel ?? "unknown")
@@ -1743,6 +1844,7 @@ final class ChatSession: ObservableObject {
                     let now = Date()
                     if firstDeltaTime == nil {
                         firstDeltaTime = now
+                        isAwaitingPrivacyReview = false
                         ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
                         ttftTrace?.mark("first_text_delta")
                         ttftTrace?.set("model", selectedModel ?? "unknown")
@@ -1847,6 +1949,12 @@ final class ChatSession: ObservableObject {
 
         if hasContent {
             turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
+            // Stash the draft so we can put it back if the user cancels
+            // out of the privacy review sheet. The text and attachments
+            // arrive cleared (the input bar wipes them as part of its
+            // own send animation) so we have to capture them here at
+            // the only point where we still know what they were.
+            savedDraftOnCancel = (text: trimmed, attachments: attachments)
             isDirty = true
             rebuildVisibleBlocks()
 
@@ -1885,6 +1993,12 @@ final class ChatSession: ObservableObject {
             debugLog("send: task started runId=\(runId) model=\(self.selectedModel ?? "nil")")
             lastStreamError = nil
             isStreaming = true
+            // Privacy Filter is about to run (potentially showing the
+            // review sheet) — gate the Stop button off until the first
+            // delta arrives so the user can't accidentally cancel a
+            // half-prepared request. Flipped false the first time
+            // `firstDeltaTime` becomes non-nil in the streaming loops.
+            isAwaitingPrivacyReview = true
             ServerController.signalGenerationStart()
             defer {
                 finalizeRun(runId: runId, persistConversationArtifacts: true)
@@ -2545,11 +2659,75 @@ final class ChatSession: ObservableObject {
                         debugLog("send: final wrap-up call failed: \(error.localizedDescription)")
                     }
                 }
+            } catch is CancellationError {
+                // Either the user dismissed the privacy review sheet
+                // (RemoteProviderService maps `reviewCanceled` →
+                // `CancellationError`) or the streaming Task was
+                // explicitly cancelled before any byte arrived. We
+                // want the same UX in both cases: drop the empty
+                // assistant turn we already appended, remove the
+                // user turn this run was attached to, and restore the
+                // original draft to the input box so the user can
+                // edit and resend without retyping.
+                debugLog("send: cancelled before any delta — restoring draft")
+                lastStreamError = nil
+                handleCancelledBeforeFirstDelta()
+            } catch let pfError as PrivacyFilterPipelineError {
+                // Privacy filter blocked the send because it couldn't
+                // safely scrub (engine unavailable, substitution no-op,
+                // etc.). Distinct from `reviewCanceled` which is the
+                // user's deliberate Cancel and is mapped to
+                // `CancellationError` upstream. The user turn stays
+                // visible so they have the failed message in context;
+                // the assistant bubble surfaces the localized
+                // explanation (e.g. "Open Settings → Privacy to re-
+                // download…") instead of a generic "Error:" prefix.
+                debugLog("send: privacy filter blocked send — \(pfError.localizedDescription)")
+                assistantTurn.content = pfError.localizedDescription
+                lastStreamError = pfError.localizedDescription
+                isAwaitingPrivacyReview = false
             } catch {
                 assistantTurn.content = "Error: \(error.localizedDescription)"
                 lastStreamError = error.localizedDescription
+                // Drop the awaiting flag on error too so the Stop
+                // button stops looking pinned-on once the run
+                // finalises.
+                isAwaitingPrivacyReview = false
             }
         }
+    }
+
+    /// Drop the just-appended user + (empty) assistant turns when a
+    /// send is cancelled before the network produced any data, and
+    /// hand the original draft back to the input field. Called only
+    /// from the streaming Task's `catch is CancellationError` branch
+    /// so the user-visible result is: privacy review cancel ⇒ text
+    /// reappears in the composer, no error bubble.
+    private func handleCancelledBeforeFirstDelta() {
+        isAwaitingPrivacyReview = false
+        // Remove the trailing empty assistant turn (we always append
+        // one before entering the stream — see `send(_:attachments:)`).
+        if let last = turns.last, last.role == .assistant, last.contentIsEmpty {
+            turns.removeLast()
+        }
+        // Remove the user turn this run was attached to, if it's the
+        // current trailing turn. Don't blindly drop the last turn —
+        // queued sends or auxiliary turns might have landed between
+        // the append and the cancel.
+        if let last = turns.last, last.role == .user {
+            turns.removeLast()
+        }
+        rebuildVisibleBlocks()
+        // Restore the typed draft. Concatenating onto whatever the
+        // user has half-typed since hitting Send would be surprising,
+        // so we just overwrite — in practice the input box is empty
+        // (the composer wipes it on Send) and overwriting is exactly
+        // the "put my text back" outcome the user expects.
+        if let draft = savedDraftOnCancel {
+            input = draft.text
+            pendingAttachments = draft.attachments
+        }
+        savedDraftOnCancel = nil
     }
 }
 
@@ -2582,6 +2760,19 @@ struct ChatView: View {
     // What's New modal
     @State private var pendingWhatsNew: WhatsNewRelease? = nil
     @State private var showAutoSpeakPrompt: Bool = false
+    /// Privacy-filter review sheet payload. Set by the
+    /// `PrivacyReviewService` presenter registration in `.onAppear`;
+    /// presented via `.sheet(item:)` below. Identifiable so SwiftUI
+    /// re-presents the sheet on subsequent reviews in the same
+    /// window without us having to manually clear it first.
+    @State private var pendingRedactionReview: RedactionReviewState? = nil
+    /// Opaque handle for this window's presenter registration with
+    /// `PrivacyReviewService`. Kept in `@State` because the service is
+    /// global and we must hand the same token back at teardown to
+    /// avoid clobbering another window's registration (the previous
+    /// implementation just called `unregisterPresenter()` with no
+    /// arg, which silently disabled review for any other open window).
+    @State private var privacyPresenterToken: PresenterToken? = nil
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -2826,6 +3017,7 @@ struct ChatView: View {
                                 pickerItems: filteredPickerItems,
                                 activeModelOptions: $observedSession.activeModelOptions,
                                 isStreaming: observedSession.isStreaming,
+                                isAwaitingPrivacyReview: observedSession.isAwaitingPrivacyReview,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
@@ -3052,6 +3244,45 @@ struct ChatView: View {
                     pendingDiscoveredAgent = nil
                 }
                 .environment(\.theme, windowState.theme)
+            }
+        }
+        // Privacy-filter redaction review. The presenter closure is
+        // registered in `.task` below; when the pipeline detects PII
+        // it suspends on a continuation in `RedactionReviewState`,
+        // which we surface here via SwiftUI's standard sheet machinery.
+        // The state's `onResolve` continuation is finished by the
+        // sheet's Approve / Cancel actions (or `sheetDismissed()` if
+        // the user dismisses with Escape).
+        .sheet(item: $pendingRedactionReview) { state in
+            // The sheet's `onDisappear` calls `state.sheetDismissed()`
+            // which resolves the continuation as `.canceled` unless an
+            // explicit Approve / Cancel button already resolved it.
+            // We just need to clear our local payload so the next
+            // review can present.
+            RedactionReviewSheet(state: state)
+                .environment(\.theme, windowState.theme)
+                .onDisappear { pendingRedactionReview = nil }
+        }
+        .task {
+            // Register this window as the presenter for redaction
+            // reviews. The service keeps every registration alive but
+            // only routes through the most-recent one, so multiple
+            // open windows still behave as last-write-wins; the token
+            // is how we drop *this* window's registration at teardown
+            // without disturbing whichever window is currently active.
+            let token = PrivacyReviewService.shared.registerPresenter { state in
+                pendingRedactionReview = state
+            }
+            privacyPresenterToken = token
+        }
+        .onDisappear {
+            // Drop only this window's registration — by passing the
+            // token, other windows that registered after us stay
+            // intact. Fixes the original bug where a stale onDisappear
+            // would silently disable review for the focused window.
+            if let token = privacyPresenterToken {
+                PrivacyReviewService.shared.unregisterPresenter(token)
+                privacyPresenterToken = nil
             }
         }
     }
@@ -3291,7 +3522,8 @@ struct ChatView: View {
                     activeMinimapTurnId = turnId
                 },
                 scrollToTurnId: scrollToTurnId,
-                scrollToTurnTrigger: scrollToTurnTrigger
+                scrollToTurnTrigger: scrollToTurnTrigger,
+                sessionRedactions: session.sessionRedactions
             )
             .safeAreaInset(edge: .top, spacing: 0) {
                 Color.clear
@@ -3453,6 +3685,12 @@ private struct IsolatedThreadView: View {
     var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
     var scrollToTurnId: UUID? = nil
     var scrollToTurnTrigger: Int = 0
+    /// Window-local original -> placeholder map populated by the
+    /// Privacy Filter notification. Forwarded into MessageThreadView
+    /// for inline highlighting in chat bubbles. Placed after the
+    /// scroll controls so existing call sites stay backward-
+    /// compatible (it's a defaulted property with an empty map).
+    var sessionRedactions: [String: String] = [:]
 
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.IsolatedThreadView")
@@ -3481,7 +3719,8 @@ private struct IsolatedThreadView: View {
             onUserImagePreview: onUserImagePreview,
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
-            scrollToTurnTrigger: scrollToTurnTrigger
+            scrollToTurnTrigger: scrollToTurnTrigger,
+            sessionRedactions: sessionRedactions
         )
     }
 }

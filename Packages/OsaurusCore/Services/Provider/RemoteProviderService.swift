@@ -327,6 +327,34 @@ public actor RemoteProviderService: ToolCapableService {
         return model
     }
 
+    /// Privacy Filter preflight shared by every cloud-bound entrypoint
+    /// (`generateOneShot`, `streamDeltas`, `respondWithTools`,
+    /// `streamWithTools`). Wraps the pipeline call so the four call
+    /// sites stay one-liners and the cancel translation lives in one
+    /// place. Returns the (possibly scrubbed) messages plus the
+    /// redaction map needed for inbound unscrubbing — `nil` when the
+    /// filter is disabled, the engine is unloaded, or the provider
+    /// override is off (all handled in `applyOutbound`).
+    ///
+    /// `PrivacyFilterPipelineError.reviewCanceled` is rethrown as
+    /// `CancellationError` so the chat layer can apply uniform
+    /// cancel UX (remove turns, restore draft) without caring whether
+    /// the cancel came from the review sheet or from `Task.cancel()`.
+    private func applyPrivacyOutbound(
+        messages: [ChatMessage],
+        parameters: GenerationParameters
+    ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
+        do {
+            return try await PrivacyFilterPipeline.applyOutbound(
+                messages: messages,
+                sessionId: parameters.sessionId,
+                providerId: provider.id
+            )
+        } catch PrivacyFilterPipelineError.reviewCanceled {
+            throw CancellationError()
+        }
+    }
+
     func generateOneShot(
         messages: [ChatMessage],
         parameters: GenerationParameters,
@@ -352,8 +380,16 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
-        let request = buildChatRequest(
+        // Privacy Filter preflight — see `applyPrivacyOutbound` for
+        // the no-op / cancel semantics. Map is nil when filtering
+        // didn't run; downstream paths short-circuit cheaply on nil.
+        let (scrubbedMessages, redactionMap) = try await applyPrivacyOutbound(
             messages: messages,
+            parameters: parameters
+        )
+
+        let request = buildChatRequest(
+            messages: scrubbedMessages,
             parameters: parameters,
             model: modelName,
             stream: false,
@@ -363,6 +399,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        WireTransportProbe.current?.replaceResponseBody(data)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
@@ -378,7 +415,12 @@ public actor RemoteProviderService: ToolCapableService {
             request: request
         )
         let (content, _) = try parseResponse(data, providerType: responseProviderType)
-        return content ?? ""
+        let (unscrubbedContent, _) = await PrivacyFilterPipeline.unscrubInbound(
+            content: content,
+            toolCalls: nil,
+            map: redactionMap
+        )
+        return unscrubbedContent ?? ""
     }
 
     func streamDeltas(
@@ -391,26 +433,35 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
+        // Privacy Filter preflight — outbound scrub, capture map for
+        // the streaming unscrubber wrap below.
+        let (scrubbedMessages, redactionMap) = try await applyPrivacyOutbound(
+            messages: messages,
+            parameters: parameters
+        )
+
         // Gemini image models don't support streamGenerateContent; fall back to generateContent.
         if provider.providerType == .gemini && Self.isImageCapableModel(modelName) {
-            return try geminiImageGenerateContent(
-                messages: messages,
+            let inner = try geminiImageGenerateContent(
+                messages: scrubbedMessages,
                 parameters: parameters,
                 model: modelName,
                 stopSequences: stopSequences,
                 tools: nil,
                 toolChoice: nil
             )
+            return PrivacyFilterPipeline.wrapInboundStream(inner, map: redactionMap)
         }
 
-        return try await _streamRemote(
+        let inner = try await _streamRemote(
             modelName: modelName,
-            messages: messages,
+            messages: scrubbedMessages,
             parameters: parameters,
             stopSequences: stopSequences,
             tools: nil,
             toolChoice: nil
         )
+        return PrivacyFilterPipeline.wrapInboundStream(inner, map: redactionMap)
     }
 
     // MARK: - ToolCapableService Protocol
@@ -437,8 +488,14 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
-        var request = buildChatRequest(
+        // Privacy Filter preflight (tool-capable one-shot).
+        let (scrubbedMessages, redactionMap) = try await applyPrivacyOutbound(
             messages: messages,
+            parameters: parameters
+        )
+
+        var request = buildChatRequest(
+            messages: scrubbedMessages,
             parameters: parameters,
             model: modelName,
             stream: false,
@@ -452,6 +509,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        WireTransportProbe.current?.replaceResponseBody(data)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
@@ -467,9 +525,14 @@ public actor RemoteProviderService: ToolCapableService {
             request: request
         )
         let (content, toolCalls) = try parseResponse(data, providerType: responseProviderType)
+        let (unscrubbedContent, unscrubbedToolCalls) = await PrivacyFilterPipeline.unscrubInbound(
+            content: content,
+            toolCalls: toolCalls,
+            map: redactionMap
+        )
 
         // Check for tool calls
-        if let toolCalls = toolCalls, let firstCall = toolCalls.first {
+        if let toolCalls = unscrubbedToolCalls, let firstCall = toolCalls.first {
             throw ServiceToolInvocation(
                 toolName: firstCall.function.name,
                 jsonArguments: firstCall.function.arguments,
@@ -478,7 +541,7 @@ public actor RemoteProviderService: ToolCapableService {
             )
         }
 
-        return content ?? ""
+        return unscrubbedContent ?? ""
     }
 
     func streamWithTools(
@@ -505,26 +568,34 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
+        // Privacy Filter preflight (tool-capable streaming).
+        let (scrubbedMessages, redactionMap) = try await applyPrivacyOutbound(
+            messages: messages,
+            parameters: parameters
+        )
+
         // Gemini image models don't support streamGenerateContent; fall back to generateContent.
         if provider.providerType == .gemini && Self.isImageCapableModel(modelName) {
-            return try geminiImageGenerateContent(
-                messages: messages,
+            let inner = try geminiImageGenerateContent(
+                messages: scrubbedMessages,
                 parameters: parameters,
                 model: modelName,
                 stopSequences: stopSequences,
                 tools: tools.isEmpty ? nil : tools,
                 toolChoice: toolChoice
             )
+            return PrivacyFilterPipeline.wrapInboundStream(inner, map: redactionMap)
         }
 
-        return try await _streamRemote(
+        let inner = try await _streamRemote(
             modelName: modelName,
-            messages: messages,
+            messages: scrubbedMessages,
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools.isEmpty ? nil : tools,
             toolChoice: toolChoice
         )
+        return PrivacyFilterPipeline.wrapInboundStream(inner, map: redactionMap)
     }
 
     // MARK: - Private Helpers
@@ -1376,6 +1447,12 @@ public actor RemoteProviderService: ToolCapableService {
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
+        // The producer runs in a `Task` whose closure inherits the
+        // calling task's locals (unlike `Task.detached`). Snapshot
+        // the probe here so the read happens once on producer
+        // entry and we don't re-touch the task-local on every chunk.
+        let probe = WireTransportProbe.current
+
         let producerTask = Task {
             do {
                 // Idempotent connect-phase retry: only retries the
@@ -1442,6 +1519,14 @@ public actor RemoteProviderService: ToolCapableService {
 
                     if let chunk = chunk {
                         lineParser.append(chunk)
+                        // Wire-verification tap. Capture the raw
+                        // pre-unscrub bytes before they're parsed
+                        // into SSE events. We tap inside the
+                        // stream loop (not at the bytes(for:) site)
+                        // so the inactivity timeout / cancel paths
+                        // still get their last delivered chunk in
+                        // the snapshot. No-op when no probe is set.
+                        probe?.appendResponseChunk(chunk)
                     } else {
                         // Stream ended naturally or inactivity timeout fired.
                         // Flush any unterminated trailing bytes as a final line.
@@ -1858,9 +1943,12 @@ public actor RemoteProviderService: ToolCapableService {
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
+        let probe = WireTransportProbe.current
+
         let producerTask = Task {
             do {
                 let (data, response) = try await currentSession.data(for: urlRequest)
+                probe?.replaceResponseBody(data)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
@@ -2068,6 +2156,12 @@ public actor RemoteProviderService: ToolCapableService {
             bodyData = try encoder.encode(outbound)
         }
         urlRequest.httpBody = bodyData
+        // Wire-verification capture: record the post-scrub bytes
+        // BEFORE we hand them to URLSession. Idempotent inside the
+        // probe (only the first write wins) so request retries
+        // don't stomp the original snapshot. No-op when no probe
+        // is set (every non-chatUI path).
+        WireTransportProbe.current?.recordRequestBody(bodyData)
         return urlRequest
     }
 

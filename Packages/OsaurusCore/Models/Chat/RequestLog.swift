@@ -77,6 +77,22 @@ struct RequestLog: Identifiable, Sendable {
     let finishReason: FinishReason?
     let errorMessage: String?
 
+    /// Verbatim HTTP request body the remote provider actually saw,
+    /// AFTER `PrivacyFilterPipeline.applyOutbound` (re)wrote any
+    /// approved spans to placeholders. Nil when the request never
+    /// went out on the wire (MLX / Foundation routes, or a privacy-
+    /// cancel before send). Used by the Insights "Wire Request" tab
+    /// so users can verify the cloud body matches what they
+    /// approved in the review sheet — `requestBody` above is the
+    /// pre-scrub local copy and is intentionally NOT used here.
+    let wireRequestBody: String?
+    /// Raw bytes received from the network, captured BEFORE the
+    /// unscrubber rewrote placeholders back to originals. Nil for
+    /// non-chatUI sources and local routes. Lossy-truncated at
+    /// `WireTransportProbe.maxResponseBytes` (1 MiB); the truncated
+    /// marker is implicit in the size.
+    let wireResponseBody: String?
+
     init(
         id: UUID = UUID(),
         timestamp: Date = Date(),
@@ -96,7 +112,9 @@ struct RequestLog: Identifiable, Sendable {
         maxTokens: Int? = nil,
         toolCalls: [ToolCallLog]? = nil,
         finishReason: FinishReason? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        wireRequestBody: String? = nil,
+        wireResponseBody: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -117,6 +135,8 @@ struct RequestLog: Identifiable, Sendable {
         self.toolCalls = toolCalls
         self.finishReason = finishReason
         self.errorMessage = errorMessage
+        self.wireRequestBody = wireRequestBody
+        self.wireResponseBody = wireResponseBody
 
         // Calculate tokens per second if we have inference data
         if let outputTokens = outputTokens, durationMs > 0 {
@@ -225,6 +245,50 @@ struct RequestLog: Identifiable, Sendable {
         guard let body = responseBody, let data = body.data(using: .utf8) else { return responseBody }
         if let json = try? JSONSerialization.jsonObject(with: data, options: []),
             let prettyData = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
+            let prettyString = String(data: prettyData, encoding: .utf8)
+        {
+            return prettyString
+        }
+        return body
+    }
+
+    /// Pretty-printed wire request body if JSON. Same algorithm as
+    /// `formattedRequestBody`. Wire bodies are always JSON for the
+    /// providers we support (anthropic / openai / gemini / responses
+    /// + osaurus-native); the SSE-framed response goes through
+    /// `formattedWireResponseBody` instead.
+    var formattedWireRequestBody: String? {
+        guard
+            let body = wireRequestBody,
+            let data = body.data(using: .utf8)
+        else { return wireRequestBody }
+        if let json = try? JSONSerialization.jsonObject(with: data, options: []),
+            let prettyData = try? JSONSerialization.data(
+                withJSONObject: json,
+                options: [.prettyPrinted, .sortedKeys]
+            ),
+            let prettyString = String(data: prettyData, encoding: .utf8)
+        {
+            return prettyString
+        }
+        return body
+    }
+
+    /// Pretty-printed wire response body. Streaming responses arrive
+    /// as SSE frames (`data: {...}\n\n`), which JSONSerialization
+    /// won't parse as a whole. We return the bytes verbatim in that
+    /// case — that's exactly the format the user is trying to
+    /// inspect ("did the cloud see the placeholder?").
+    var formattedWireResponseBody: String? {
+        guard
+            let body = wireResponseBody,
+            let data = body.data(using: .utf8)
+        else { return wireResponseBody }
+        if let json = try? JSONSerialization.jsonObject(with: data, options: []),
+            let prettyData = try? JSONSerialization.data(
+                withJSONObject: json,
+                options: [.prettyPrinted, .sortedKeys]
+            ),
             let prettyString = String(data: prettyData, encoding: .utf8)
         {
             return prettyString

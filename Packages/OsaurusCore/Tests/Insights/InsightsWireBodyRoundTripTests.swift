@@ -1,0 +1,172 @@
+//
+//  InsightsWireBodyRoundTripTests.swift
+//  osaurusTests
+//
+//  Verifies that `InsightsService.logInference` / `logRequest`
+//  propagate the wire request + response bodies through to the
+//  resulting `RequestLog` and that the formatted-body computed
+//  properties pretty-print JSON the same way the existing
+//  request/response surfaces do.
+//
+//  Marked `.serialized` because `InsightsService.shared` is a
+//  process-wide singleton; concurrent tests would mutate the same
+//  log ring buffer and race on `await MainActor.run` settles.
+//
+
+import Foundation
+import Testing
+
+@testable import OsaurusCore
+
+@MainActor
+@Suite("Insights WireBody RoundTrip", .serialized)
+struct InsightsWireBodyRoundTripTests {
+
+    /// Wait for the next main-actor hop so a `Task { @MainActor in ... }`
+    /// posted by `InsightsService.logRequest` lands into `logs`
+    /// before the assertion fires. `InsightsService` posts the
+    /// append asynchronously to keep callers off the actor; we
+    /// have to flush that hop deterministically here.
+    private func settle() async {
+        await Task.yield()
+        // A second yield + small sleep handles the case where the
+        // posted Task has been enqueued but not yet drained — the
+        // 5 ms is well under any reasonable CI runtime budget.
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        await Task.yield()
+    }
+
+    private func resetService() {
+        InsightsService.shared.clear()
+    }
+
+    @Test func logInference_propagatesWireBodies() async {
+        resetService()
+        let reqJSON = #"{"model":"gpt-4o","messages":[]}"#
+        let respJSON = #"{"id":"abc","object":"chat.completion"}"#
+        InsightsService.logInference(
+            source: .chatUI,
+            model: "gpt-4o",
+            inputTokens: 12,
+            outputTokens: 3,
+            durationMs: 80,
+            temperature: 0.7,
+            maxTokens: 1024,
+            wireRequestBody: reqJSON.data(using: .utf8),
+            wireResponseBody: respJSON.data(using: .utf8)
+        )
+        await settle()
+        guard let log = InsightsService.shared.logs.first else {
+            Issue.record("Expected a log entry")
+            return
+        }
+        #expect(log.wireRequestBody == reqJSON)
+        #expect(log.wireResponseBody == respJSON)
+    }
+
+    @Test func formattedWireRequestBody_prettyPrintsJSON() async {
+        resetService()
+        let reqJSON = #"{"b":2,"a":1}"#
+        InsightsService.logInference(
+            source: .chatUI,
+            model: "gpt-4o",
+            inputTokens: 1,
+            outputTokens: 1,
+            durationMs: 10,
+            temperature: nil,
+            maxTokens: 1,
+            wireRequestBody: reqJSON.data(using: .utf8)
+        )
+        await settle()
+        guard let log = InsightsService.shared.logs.first else {
+            Issue.record("Expected a log entry")
+            return
+        }
+        // Sorted keys + newline indentation. `\` quoting is
+        // standard JSONSerialization output.
+        let formatted = log.formattedWireRequestBody
+        #expect(formatted?.contains("\"a\" : 1") == true)
+        #expect(formatted?.contains("\"b\" : 2") == true)
+        #expect(formatted?.contains("\n") == true)
+        // "a" must precede "b" — keys are sorted.
+        if let formatted,
+            let aRange = formatted.range(of: "\"a\""),
+            let bRange = formatted.range(of: "\"b\"")
+        {
+            #expect(aRange.lowerBound < bRange.lowerBound)
+        }
+    }
+
+    @Test func formattedWireResponseBody_passesThroughSSEBodyVerbatim() async {
+        resetService()
+        // SSE bodies aren't valid JSON in aggregate — formatter must
+        // return them verbatim instead of dropping them.
+        let sse =
+            "data: {\"id\":\"1\"}\n\ndata: {\"id\":\"2\"}\n\ndata: [DONE]\n\n"
+        InsightsService.logInference(
+            source: .chatUI,
+            model: "gpt-4o",
+            inputTokens: 1,
+            outputTokens: 1,
+            durationMs: 10,
+            temperature: nil,
+            maxTokens: 1,
+            wireResponseBody: sse.data(using: .utf8)
+        )
+        await settle()
+        guard let log = InsightsService.shared.logs.first else {
+            Issue.record("Expected a log entry")
+            return
+        }
+        #expect(log.formattedWireResponseBody == sse)
+    }
+
+    @Test func absentWireBodies_leaveLogFieldsNil() async {
+        resetService()
+        InsightsService.logInference(
+            source: .chatUI,
+            model: "gpt-4o",
+            inputTokens: 1,
+            outputTokens: 1,
+            durationMs: 10,
+            temperature: nil,
+            maxTokens: 1
+        )
+        await settle()
+        guard let log = InsightsService.shared.logs.first else {
+            Issue.record("Expected a log entry")
+            return
+        }
+        #expect(log.wireRequestBody == nil)
+        #expect(log.wireResponseBody == nil)
+        #expect(log.formattedWireRequestBody == nil)
+        #expect(log.formattedWireResponseBody == nil)
+    }
+
+    // MARK: - Sub-toggle default source
+
+    /// When both bodies exist, the Request/Response tab must
+    /// default to the Server view — that's the trust artifact the
+    /// user opened the tab for. Used by `BodyTab.init` when the
+    /// sheet first appears.
+    @Test func bodyTab_defaultsToServer_whenWireBodyPresent() {
+        let result = InsightsBodySource.defaultSource(local: "local", server: "server")
+        #expect(result == .server)
+    }
+
+    /// When no wire body was captured (MLX / Foundation / plugin
+    /// rows), the sub-toggle hides anyway, but the default source
+    /// must still fall back to Local so the body view isn't empty.
+    @Test func bodyTab_defaultsToLocal_whenNoWireBody() {
+        let result = InsightsBodySource.defaultSource(local: "local", server: nil)
+        #expect(result == .local)
+    }
+
+    /// Edge case: nothing captured at all (e.g. a failed request
+    /// before the body materialized). Default still resolves
+    /// deterministically; the BodyTab's empty-state takes over.
+    @Test func bodyTab_defaultsToLocal_whenBothNil() {
+        let result = InsightsBodySource.defaultSource(local: nil, server: nil)
+        #expect(result == .local)
+    }
+}
