@@ -63,14 +63,16 @@ public enum InferenceFeatureFlags {
     }
 
     /// Preferred entry point. The Server → Settings panel writes
-    /// `concurrency.maxConcurrentSequences`, which wins over the
-    /// legacy `UserDefaults` key. Tests that have a runtime override
-    /// pass it explicitly so we don't depend on `ServerRuntimeSettingsStore`'s
-    /// on-disk state.
+    /// `concurrency.continuousBatching` and
+    /// `concurrency.maxConcurrentSequences`; the former gates the multi-slot
+    /// scheduler and the latter wins over the legacy `UserDefaults` key.
+    /// Tests that have a runtime override pass it explicitly so we don't
+    /// depend on `ServerRuntimeSettingsStore`'s on-disk state.
     static func mlxBatchEngineMaxBatchSize(
         in userDefaults: UserDefaults,
         runtime: VMLXServerRuntimeSettings
     ) -> Int {
+        guard runtime.concurrency.continuousBatching else { return 1 }
         if let value = runtime.concurrency.maxConcurrentSequences, value > 0 {
             return min(value, 32)
         }

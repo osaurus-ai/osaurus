@@ -713,47 +713,15 @@ public actor ModelRuntime {
     //
     //   - `usePagedCache: true`            — content-addressed paged blocks
     //                                        (multi-turn cache reuse path)
-    //   - `defaultKVMode: .none`             — fp16 KV by default. Both
-    //                                        `.turboQuant(3, 3)` (committed
-    //                                        in #995, reverted in e202cbbe)
-    //                                        AND `.turboQuant(4, 4)` (per
-    //                                        the OSAURUS-INTEGRATION-2026-
-    //                                        05-01.md §"3-bit KV verdict"
-    //                                        recommendation, committed in
-    //                                        db3179fe) reproduce the same
-    //                                        degenerate-repetition failure
-    //                                        mode in real-bundle testing:
-    //                                        Qwen3.6 27B MXFP4 emitted
-    //                                        `!!!!!!!!!` in the thinking
-    //                                        channel with 3-bit; Gemma-4
-    //                                        31B JANG_4M emitted
-    //                                        `idea idea idea` and other
-    //                                        family bundles drifted into
-    //                                        looping after a few turns
-    //                                        with 4-bit. Vmlx's `1173822`
-    //                                        paged-cache fix closed the
-    //                                        cross-turn handoff
-    //                                        re-encoding bug, but the
-    //                                        underlying codebook
-    //                                        quantization error still
-    //                                        compounds across long
-    //                                        thinking-mode preambles
-    //                                        (longer prefix → more
-    //                                        compression rounds → more
-    //                                        accumulated error → attention
-    //                                        latches onto a high-prob low-
-    //                                        info token and loops).
-    //                                        The vmlx team's BENCH harness
-    //                                        didn't toggle thinking on
-    //                                        every family it verified, so
-    //                                        the integration guide's
-    //                                        4-bit recommendation under-
-    //                                        tested the failure mode.
-    //                                        Default to fp16; users who
-    //                                        need the memory savings can
-    //                                        submit `kvMode:
-    //                                        .turboQuant(...)` explicitly
-    //                                        per request.
+    //   - `defaultKVMode`                   — owned by vmlx
+    //                                        `VMLXServerRuntimeSettings`.
+    //                                        `engine_selected` resolves to
+    //                                        automatic TurboQuant KV for
+    //                                        ordinary full-history KV layers;
+    //                                        DSV4/ZAYA/SSM/rotating caches
+    //                                        keep their typed companion-state
+    //                                        serializers and are not replaced
+    //                                        by generic KV compression.
     //   - `defaultMaxKVSize: 65536`        — 64K ring window for slots that
     //                                        submit `maxKVSize: nil`. Matches
     //                                        the vmlx OSAURUS-PRODUCTION-
@@ -768,13 +736,14 @@ public actor ModelRuntime {
     //                                        2 bytes (fp16) × 2 (K+V) ≈
     //                                        2.4 GB per slot on Mistral 3.5
     //                                        (largest layer count we ship);
-    //                                        on .turboQuant(4,4) steady
-    //                                        state ~26× smaller (~95 MB).
-    //                                        With `defaultKVMode: .none` the
-    //                                        cold path is fp16 but the
-    //                                        rotating cap only kicks in for
-    //                                        prompts past 131K (65536 × 2.0)
-    //                                        — small chats unaffected.
+    //                                        on TurboQuant KV steady state is
+    //                                        much smaller. With
+    //                                        `engine_selected`, ordinary KV
+    //                                        layers use the vmlx automatic
+    //                                        codec; the rotating cap only
+    //                                        kicks in for prompts past 131K
+    //                                        (65536 × 2.0), so small chats
+    //                                        are unaffected.
     //   - `longPromptMultiplier: 2.0`      — cap kicks in only past 131K
     //                                        (65536 * 2.0) prompt tokens,
     //                                        so short and medium prompts
@@ -841,6 +810,9 @@ public actor ModelRuntime {
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
             ssmMaxEntries: 50
         )
+        if settings.cache.liveKVCodec == .engineSelected {
+            config.defaultKVMode = .turboQuant()
+        }
         if diskCacheDir != nil, !diskDirUsable {
             config.enableDiskCache = false
             config.diskCacheDir = nil
@@ -886,12 +858,15 @@ public actor ModelRuntime {
     nonisolated static func cacheKVModeTag(
         for cache: VMLXServerCacheSettings
     ) -> String {
-        switch cache.defaultKVMode {
-        case .none:
+        switch cache.liveKVCodec {
+        case .engineSelected:
+            return "turbo(3,3)"
+        case .native, .none:
             return "fp16"
-        case .affine(let bits, let groupSize):
-            return "affine(\(bits),\(groupSize))"
-        case .turboQuant(let keyBits, let valueBits):
+        case .turboQuant:
+            guard case .turboQuant(let keyBits, let valueBits) = cache.defaultKVMode else {
+                return "fp16"
+            }
             return "turbo(\(keyBits),\(valueBits))"
         }
     }

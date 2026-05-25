@@ -200,11 +200,10 @@ public enum ServerRuntimeSettingsStore {
             smeltMode: .engineSelected
         )
 
-        // Cache: mirror the previously-hardcoded
-        // `ModelRuntime.buildCacheCoordinatorConfig` defaults so the
-        // first migrated config reproduces today's behavior exactly.
-        // Paged KV + block disk on, legacy disk off, SSM rederive off,
-        // fp16 KV, 64K rotating window, 2.0 long-prompt multiplier.
+        // Cache: seed the engine-owned automatic topology. Prefix, paged KV,
+        // block-disk L2, automatic KV codec selection, and SSM rederive are
+        // on by default; architecture-specific caches still decide which
+        // companion state is valid at runtime.
         settings.cache = VMLXServerCacheSettings(
             prefix: VMLXPrefixCacheSettings(
                 enabled: true,
@@ -218,7 +217,7 @@ public enum ServerRuntimeSettingsStore {
                 blockSize: nil,
                 maxBlocks: nil
             ),
-            liveKVCodec: .none,
+            liveKVCodec: .engineSelected,
             turboQuantKeyBits: nil,
             turboQuantValueBits: nil,
             defaultMaxKVSize: 65536,
@@ -234,7 +233,7 @@ public enum ServerRuntimeSettingsStore {
                 maxSizeGB: nil,
                 directory: nil
             ),
-            enableSSMReDerive: false
+            enableSSMReDerive: true
         )
 
         // Multimodal: keep media-salt requirement on (paired with any

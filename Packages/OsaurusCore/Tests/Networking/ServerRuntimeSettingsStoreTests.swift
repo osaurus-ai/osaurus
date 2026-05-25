@@ -39,8 +39,10 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.cache.pagedKV.enabled == true)
             #expect(migrated.cache.blockDisk.enabled == true)
             #expect(migrated.cache.legacyDisk.enabled == false)
+            #expect(migrated.cache.liveKVCodec == .engineSelected)
             #expect(migrated.cache.defaultMaxKVSize == 65536)
             #expect(migrated.cache.longPromptMultiplier == 2.0)
+            #expect(migrated.cache.enableSSMReDerive == true)
             #expect(migrated.mtp.mode == .auto)
 
             // File should now exist.
@@ -63,10 +65,10 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.cache.pagedKV.enabled == true)
             #expect(snapshot.cache.blockDisk.enabled == true)
             #expect(snapshot.cache.legacyDisk.enabled == false)
-            #expect(snapshot.cache.liveKVCodec == .none)
+            #expect(snapshot.cache.liveKVCodec == .engineSelected)
             #expect(snapshot.cache.defaultMaxKVSize == 65536)
             #expect(snapshot.cache.longPromptMultiplier == 2.0)
-            #expect(snapshot.cache.enableSSMReDerive == false)
+            #expect(snapshot.cache.enableSSMReDerive == true)
             #expect(snapshot.mtp.mode == .auto)
         }
     }

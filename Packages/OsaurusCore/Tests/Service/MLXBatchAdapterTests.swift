@@ -72,6 +72,23 @@ struct MLXBatchAdapterTests {
         )
     }
 
+    @Test func maxBatchSize_continuousBatchingTogglePinsSingleSlotWhenOff() {
+        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
+        let defaults = isolatedDefaults()
+        defaults.set(8, forKey: key)
+
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.concurrency.maxConcurrentSequences = 6
+        runtime.concurrency.continuousBatching = false
+
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+                in: defaults,
+                runtime: runtime
+            ) == 1
+        )
+    }
+
     @Test func maxBatchSize_runtimeSettingsClampsAndFallsBackOnNil() {
         let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
         let defaults = isolatedDefaults()
@@ -579,7 +596,7 @@ struct MLXBatchAdapterTests {
         var settings = VMLXServerRuntimeSettings()
 
         settings.cache.liveKVCodec = .engineSelected
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
+        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "turbo(3,3)")
 
         settings.cache.liveKVCodec = .native
         #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
