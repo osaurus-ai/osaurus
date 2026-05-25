@@ -54,6 +54,14 @@ struct PromptWhitespaceTests {
         )
     }
 
+    @Test("deepSeekGuidance has no whitespace continuation artifacts")
+    func deepSeekGuidanceRendersClean() {
+        assertNoContinuationLeak(
+            ModelFamilyGuidance.deepSeekGuidance,
+            label: "deepSeekGuidance"
+        )
+    }
+
     @Test("capabilityDiscoveryNudge has no whitespace continuation artifacts")
     func capabilityNudgeRendersClean() {
         assertNoContinuationLeak(

@@ -327,6 +327,20 @@ struct ContextBudgetPreviewTests {
         }
     }
 
+    @Test("preview: DSV4 model triggers act-now Model Family Guidance row")
+    func toolsOn_dsv4Model_includesModelFamilyGuidance() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "JANGQ/DeepSeek-V4-Flash-JANGTQ2"
+            )
+            let ids = sectionIds(preview)
+            #expect(ids.contains("modelFamilyGuidance"))
+            #expect(preview.prompt.contains("Do not say you will do it and then stop."))
+        }
+    }
+
     /// Negative path: a model with no family marker (e.g. a generic
     /// llama finetune) should not get a guidance block. Locks the
     /// "silence is the default" rule so future entries to
