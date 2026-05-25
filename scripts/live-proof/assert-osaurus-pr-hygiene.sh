@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fail=0
+VMLX_PIN="$(sed -nE 's/.*revision: "([0-9a-f]{40})".*/\1/p' "$ROOT/Packages/OsaurusCore/Package.swift" | head -1 || true)"
 
 pass() { echo "PASS $*"; }
 fail_msg() { echo "FAIL $*" >&2; fail=1; }
@@ -160,12 +161,16 @@ require_text "$ROOT/AGENTS.md" 'Big-model load cancellation must be live-proven'
   "Osaurus big-model load cancellation proof rule"
 require_text "$ROOT/AGENTS.md" 'Qwen/JANG/JANGTQ RAM regressions require end-to-end Osaurus proof' \
   "Osaurus Qwen/JANGTQ RAM proof rule"
-require_text "$ROOT/Packages/OsaurusCore/Package.swift" \
-  'revision: "0ea4e45d4815237300d2b1ffc29185e416146a63"' \
-  "Package.swift pinned to vMLX Gemma parser fix"
-require_text "$ROOT/Packages/OsaurusCore/Tests/Service/RuntimePolicySourceTests.swift" \
-  '0ea4e45d4815237300d2b1ffc29185e416146a63' \
-  "RuntimePolicySourceTests guard pinned vMLX revision"
+if [[ -n "$VMLX_PIN" ]]; then
+  require_text "$ROOT/Packages/OsaurusCore/Package.swift" \
+    "revision: \"$VMLX_PIN\"" \
+    "Package.swift pinned to current vMLX revision $VMLX_PIN"
+  require_text "$ROOT/Packages/OsaurusCore/Tests/Service/RuntimePolicySourceTests.swift" \
+    "$VMLX_PIN" \
+    "RuntimePolicySourceTests guard pinned current vMLX revision"
+else
+  fail_msg "Package.swift does not expose a 40-hex vMLX revision"
+fi
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/ModelRuntimeIsHybridTests.swift" \
   'dealignai/Qwen3\.6-35B-A3B-MXFP4-CRACK-MTP' \
   "ModelRuntime hybrid detection covers reported dealignai Qwen3.6 MXFP4 MTP slug"

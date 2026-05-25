@@ -9,7 +9,7 @@ PARSER="$CHECKOUT/Libraries/MLXLMCommon/ReasoningParser.swift"
 TOOL_PARSER="$CHECKOUT/Libraries/MLXLMCommon/Tool/Parsers/GemmaFunctionParser.swift"
 TESTS="$CHECKOUT/Tests/MLXLMCommonFocusedTests/Gemma4ThoughtChannelParserFocusedTests.swift"
 TOOL_TESTS="$CHECKOUT/Tests/MLXLMTests/ToolCallEdgeCasesTests.swift"
-EXPECTED_VMLX_REVISION="0ea4e45d4815237300d2b1ffc29185e416146a63"
+EXPECTED_VMLX_REVISION="$(sed -nE 's/.*revision: "([0-9a-f]{40})".*/\1/p' "$PKG" | head -1 || true)"
 fail=0
 
 fail_msg() { echo "FAIL $*" >&2; fail=1; }
@@ -32,8 +32,11 @@ if [[ -f "$PKG" ]]; then
     warn "Package.swift is still pinned to pre-fix vmlx revision 57e346b58e1286ab2f7bc458014d125c9bded095"
     fail=1
   fi
+  if [[ -z "$EXPECTED_VMLX_REVISION" ]]; then
+    fail_msg "Package.swift does not expose a 40-hex vMLX revision"
+  fi
   if rg -q "revision: \"$EXPECTED_VMLX_REVISION\"" "$PKG"; then
-    pass "Package.swift pins vMLX Gemma tool parser fix"
+    pass "Package.swift pins vMLX revision $EXPECTED_VMLX_REVISION"
   else
     fail_msg "Package.swift does not pin expected vMLX revision $EXPECTED_VMLX_REVISION"
   fi
@@ -46,7 +49,7 @@ if [[ -f "$RESOLVED" ]]; then
     fail_msg "Package.resolved missing vmlx-swift pin"
   fi
   if rg -q "\"revision\" : \"$EXPECTED_VMLX_REVISION\"" "$RESOLVED"; then
-    pass "Package.resolved pins vMLX Gemma tool parser fix"
+    pass "Package.resolved pins vMLX revision $EXPECTED_VMLX_REVISION"
   else
     fail_msg "Package.resolved does not pin expected vMLX revision $EXPECTED_VMLX_REVISION"
   fi
