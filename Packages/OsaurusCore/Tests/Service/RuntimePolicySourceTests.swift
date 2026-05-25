@@ -1559,6 +1559,37 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Tools settings renders runtime-managed folder and sandbox tools")
+    func toolsSettingsShowsRuntimeManagedToolRows() throws {
+        let toolsView = try Self.source("Views/Plugin/ToolsManagerView.swift")
+
+        #expect(
+            toolsView.contains("@State private var runtimeManagedToolEntries"),
+            "Tools settings must keep a visible runtime-managed tool snapshot so folder/sandbox chat tools do not look unavailable."
+        )
+        #expect(
+            toolsView.contains("ToolRegistry.shared.runtimeManagedToolNames")
+                && toolsView.contains("ToolRegistry.shared.builtInSandboxToolNamesSnapshot"),
+            "Tools settings must source runtime-managed and built-in sandbox tools from ToolRegistry, not plugin/provider catalogs."
+        )
+        #expect(
+            toolsView.contains("Runtime Tools")
+                && toolsView.contains("Built-in Sandbox Tools"),
+            "Tools settings must render explicit rows for chat-visible runtime tools."
+        )
+        #expect(
+            toolsView.contains("RuntimeManagedToolEntryRow")
+                && toolsView.contains("badge: runtimeBadge(for: entry)")
+                && toolsView.contains("badge: \"Sandbox\""),
+            "Runtime-managed tools must be visible as operational rows without pretending they are normal plugin toggle rows."
+        )
+        #expect(
+            toolsView.contains(".available: availableShown + runtimeShown")
+                && toolsView.contains(".sandbox: SandboxPluginLibrary.shared.plugins.count + builtInSandboxToolEntries.count"),
+            "Tools tab badges must count the runtime rows they render so Settings cannot show 0 while chat has folder/sandbox tools."
+        )
+    }
+
     @Test("ModelRuntime does not block model-ready on hidden Hy3 warmup generation")
     func modelRuntimeDoesNotBlockModelReadyOnHy3WarmupGeneration() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
