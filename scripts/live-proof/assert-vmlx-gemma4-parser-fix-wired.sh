@@ -74,8 +74,8 @@ else
 fi
 
 if [[ "$fail" -ne 0 ]]; then
-  echo "Osaurus is NOT wired to the fixed Gemma4 parser yet." >&2
-  echo "Required next step after vmlx-swift is pushed: update Osaurus vmlx-swift revision/pin and refresh checkout with keychain-safe approval." >&2
+  echo "Osaurus vmlx-swift parser wiring guard failed or is process-blocked." >&2
+  echo "If source assertions above pass and only the process gate fails, do not classify this as a pin/checkout mismatch." >&2
   exit 1
 fi
 
