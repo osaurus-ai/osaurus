@@ -130,6 +130,63 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("Create the probe file."), "Decoded: \(decoded)")
     }
 
+    @Test func gemma4LocalTokenizerRendersFirstTurnChatUIToolSurface() async throws {
+        let defaultPath = "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            ),
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("chat_template.jinja").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let snapshot = AgentConfigSnapshot(
+            toolsDisabled: false,
+            memoryDisabled: false,
+            autonomousConfig: nil,
+            toolMode: .auto,
+            model: "Gemma 4 26B A4B it JANG_4M CRACK",
+            manualToolNames: nil,
+            systemPrompt: "",
+            dbEnabled: false
+        )
+        let resolvedTools = await MainActor.run {
+            SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .sandbox
+            )
+        }
+        let tokenizerTools = ModelRuntime.makeTokenizerTools(
+            tools: resolvedTools,
+            toolChoice: .auto
+        )
+
+        #expect(!(tokenizerTools?.isEmpty ?? true))
+        let arrayTypedPaths = collectArrayTypedSchemaPaths(tokenizerTools as Any)
+        #expect(arrayTypedPaths.isEmpty, "Array-valued schema type paths: \(arrayTypedPaths)")
+
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                [
+                    "role": "user",
+                    "content": "Create a file named osaurus_live_probe.txt containing ok.",
+                ]
+            ],
+            tools: tokenizerTools,
+            additionalContext: ["enable_thinking": false]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("Create a file named osaurus_live_probe.txt"), "Decoded: \(decoded)")
+        #expect(decoded.contains("capabilities_search"), "Decoded: \(decoded)")
+    }
+
     @Test func dsv4LocalTokenizerUsesCanonicalNoChatTemplatePath() async throws {
         let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
@@ -342,4 +399,148 @@ struct SwiftTransformersTokenizerLoaderTests {
             "DSV4 high reasoning must not receive the raw max preface. Decoded: \(highDecoded)"
         )
     }
+
+    @Test func downloadedFamilyTokenizersRenderCapabilitiesSearchToolSurface() async throws {
+        let rows = [
+            LocalTokenizerRow(
+                family: "gemma4",
+                label: "Gemma 4 26B JANG_4M CRACK",
+                path: "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"),
+            LocalTokenizerRow(
+                family: "qwen36-27b",
+                label: "Qwen3.6 27B source",
+                path: "/Users/eric/models/Sources/Qwen/Qwen3.6-27B"),
+            LocalTokenizerRow(
+                family: "qwen36-27b",
+                label: "Qwen3.6 27B JANG_4M CRACK",
+                path: "/Users/eric/models/dealign.ai/Qwen3.6-27B-JANG_4M-CRACK"),
+            LocalTokenizerRow(
+                family: "qwen36-27b",
+                label: "Qwen3.6 27B MXFP4 CRACK",
+                path: "/Users/eric/models/dealign.ai/Qwen3.6-27B-MXFP4-CRACK"),
+            LocalTokenizerRow(
+                family: "qwen36-35b",
+                label: "Qwen3.6 35B source",
+                path: "/Users/eric/models/Sources/Qwen/Qwen3.6-35B-A3B"),
+            LocalTokenizerRow(
+                family: "qwen36-35b",
+                label: "Qwen3.6 35B JANGTQ CRACK",
+                path: "/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-JANGTQ-CRACK"),
+            LocalTokenizerRow(
+                family: "qwen36-35b",
+                label: "Qwen3.6 35B MXFP4 CRACK MTP",
+                path: "/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-MXFP4-CRACK-MTP"),
+            LocalTokenizerRow(
+                family: "qwen36-35b",
+                label: "Qwen3.6 35B mxfp4 OsaurusAI",
+                path: "/Users/eric/models/OsaurusAI/Qwen3.6-35B-A3B-mxfp4"),
+            LocalTokenizerRow(
+                family: "minimax-m2",
+                label: "MiniMax M2.7 Small JANGTQ",
+                path: "/Users/eric/models/JANGQ/MiniMax-M2.7-Small-JANGTQ"),
+            LocalTokenizerRow(
+                family: "minimax-m2",
+                label: "MiniMax M2.7 JANGTQ_K CRACK",
+                path: "/Users/eric/models/dealign.ai/MiniMax-M2.7-JANGTQ_K-CRACK"),
+            LocalTokenizerRow(
+                family: "minimax-m2",
+                label: "MiniMax M2.7 JANG_K CRACK",
+                path: "/Users/eric/models/dealign.ai/MiniMax-M2.7-JANG_K-CRACK"),
+            LocalTokenizerRow(
+                family: "dsv4",
+                label: "DeepSeek V4 Flash JANG",
+                path: "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANG"),
+            LocalTokenizerRow(
+                family: "dsv4",
+                label: "DeepSeek V4 Flash JANGTQ-K",
+                path: "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"),
+            LocalTokenizerRow(
+                family: "dsv4",
+                label: "DeepSeek V4 Flash JANGTQ2",
+                path: "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ2"),
+        ]
+
+        let tool = CapabilitiesSearchTool().asOpenAITool().toTokenizerToolSpec()
+        var renderedFamilies: Set<String> = []
+
+        for row in rows where row.hasTokenizer {
+            let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: row.url)
+            let tokenIds = try tokenizer.applyChatTemplate(
+                messages: [["role": "user", "content": "Search capabilities for file writing."]],
+                tools: [tool],
+                additionalContext: ["enable_thinking": false]
+            )
+            let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+            #expect(!decoded.isEmpty, "\(row.label) rendered an empty prompt")
+            #expect(
+                decoded.contains("capabilities_search"),
+                "\(row.label) must render the Osaurus tool surface. Decoded: \(decoded)"
+            )
+            #expect(
+                !decoded.contains("Runtime error") && !decoded.contains("upper filter"),
+                "\(row.label) must not render a chat-template runtime error. Decoded: \(decoded)"
+            )
+            renderedFamilies.insert(row.family)
+        }
+
+        #expect(renderedFamilies.contains("gemma4"), "No downloaded Gemma 4 tokenizer row rendered")
+        #expect(renderedFamilies.contains("qwen36-27b"), "No downloaded Qwen3.6 27B tokenizer row rendered")
+        #expect(renderedFamilies.contains("qwen36-35b"), "No downloaded Qwen3.6 35B tokenizer row rendered")
+        #expect(renderedFamilies.contains("minimax-m2"), "No downloaded MiniMax M2 tokenizer row rendered")
+        #expect(renderedFamilies.contains("dsv4"), "No downloaded DSV4 tokenizer row rendered")
+    }
+}
+
+private struct LocalTokenizerRow {
+    let family: String
+    let label: String
+    let path: String
+
+    var url: URL { URL(fileURLWithPath: path) }
+    var hasTokenizer: Bool {
+        FileManager.default.fileExists(atPath: url.appendingPathComponent("tokenizer.json").path)
+    }
+}
+
+private func collectArrayTypedSchemaPaths(_ value: Any, path: String = "$") -> [String] {
+    if let object = value as? [String: Any] {
+        var paths: [String] = []
+        if let type = object["type"], isArrayValue(type) {
+            paths.append("\(path).type")
+        }
+        for (key, child) in object {
+            paths.append(contentsOf: collectArrayTypedSchemaPaths(child, path: "\(path).\(key)"))
+        }
+        return paths
+    }
+
+    if let object = value as? [String: any Sendable] {
+        var paths: [String] = []
+        if let type = object["type"], isArrayValue(type) {
+            paths.append("\(path).type")
+        }
+        for (key, child) in object {
+            paths.append(contentsOf: collectArrayTypedSchemaPaths(child, path: "\(path).\(key)"))
+        }
+        return paths
+    }
+
+    if let array = value as? [Any] {
+        return array.enumerated().flatMap { index, child in
+            collectArrayTypedSchemaPaths(child, path: "\(path)[\(index)]")
+        }
+    }
+
+    if let array = value as? [any Sendable] {
+        return array.enumerated().flatMap { index, child in
+            collectArrayTypedSchemaPaths(child, path: "\(path)[\(index)]")
+        }
+    }
+
+    return []
+}
+
+private func isArrayValue(_ value: Any) -> Bool {
+    value is [Any] || value is [any Sendable] || value is NSArray
 }

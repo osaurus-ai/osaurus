@@ -73,6 +73,21 @@ struct CapabilitiesSearchToolTests {
         #expect(result.contains("No capabilities found") || result.contains("Found"))
     }
 
+    @Test func capabilitiesSearchSchemaIsGemmaRenderable() throws {
+        let spec = CapabilitiesSearchTool().asOpenAITool().toTokenizerToolSpec()
+        let fn = try #require(spec["function"] as? [String: any Sendable])
+        let parameters = try #require(fn["parameters"] as? [String: any Sendable])
+        let properties = try #require(parameters["properties"] as? [String: any Sendable])
+        let query = try #require(properties["query"] as? [String: any Sendable])
+        let queries = try #require(properties["queries"] as? [String: any Sendable])
+
+        #expect(query["type"] as? String == "string")
+        #expect(queries["type"] as? String == "string")
+        #expect(queries["anyOf"] == nil)
+        #expect(queries["oneOf"] == nil)
+        #expect(queries["items"] == nil)
+    }
+
     @Test @MainActor
     func registryAcceptsStringifiedQueriesFromSmallModels() async throws {
         let result = try await ToolRegistry.shared.execute(

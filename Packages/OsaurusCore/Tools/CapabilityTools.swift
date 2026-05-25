@@ -38,7 +38,7 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         "Find additional tools or skills the current schema does not include. "
         + "Use ONLY when your existing tools cannot do the task — your initial set was pre-selected for relevance. "
         + "Returns ranked IDs (e.g. `tool/sandbox_exec`, `skill/plot-data`) you then pass to `capabilities_load`. "
-        + "Example: `{\"queries\": [\"convert csv to json\", \"send http request\"]}`."
+        + "Example: `{\"query\": \"convert csv to json\"}`."
 
     let agentId: UUID?
 
@@ -52,17 +52,11 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         "properties": .object([
             "query": .object([
                 "type": .string("string"),
-                "description": .string("Single search query. Prefer `queries` for new calls."),
+                "description": .string("Single search query describing what you need"),
             ]),
             "queries": .object([
-                "anyOf": .array([
-                    .object([
-                        "type": .string("array"),
-                        "items": .object(["type": .string("string")]),
-                    ]),
-                    .object(["type": .string("string")]),
-                ]),
-                "description": .string("One or more search queries describing what you need"),
+                "type": .string("string"),
+                "description": .string("Compatibility alias for a single search query. Prefer `query`."),
             ]),
         ]),
     ])
@@ -236,15 +230,21 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         }
     }
 
-    /// Accept the canonical `queries` array plus the legacy singular
-    /// `query` spelling that older prompt text taught models to emit.
-    /// This recovery is local to the discovery tool so other array
-    /// arguments keep the stricter validator behavior.
+    /// Accept the template-safe singular `query` spelling plus older
+    /// `queries` arrays. This recovery is local to the discovery tool so
+    /// other array arguments keep the stricter validator behavior.
     private static func requireQueries(
         _ args: [String: Any],
         tool: CapabilitiesSearchTool
     ) -> ArgumentRequirement<[String]> {
         if args["queries"] != nil {
+            if let stringified = args["queries"] as? String {
+                let parsed = parseStringifiedQueries(stringified)
+                if !parsed.isEmpty {
+                    return .value(parsed)
+                }
+            }
+
             let req = tool.requireStringArray(
                 args,
                 "queries",
@@ -261,9 +261,9 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             return .failure(
                 ToolEnvelope.failure(
                     kind: .invalidArgs,
-                    message: "Missing required argument `queries` (non-empty array of search query strings).",
-                    field: "queries",
-                    expected: "non-empty array of search query strings",
+                    message: "Missing required argument `query` (search string). Legacy `queries` arrays are still accepted.",
+                    field: "query",
+                    expected: "single search query string",
                     tool: tool.name
                 )
             )
@@ -279,6 +279,33 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             return .failure(req.failureEnvelope ?? "")
         }
         return .value([query])
+    }
+
+    private static func parseStringifiedQueries(_ raw: String) -> [String] {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let normalized = trimmed.replacingOccurrences(of: #"<|"|>"#, with: #"""#)
+        if let data = normalized.data(using: .utf8),
+           let array = try? JSONSerialization.jsonObject(with: data) as? [String] {
+            return array
+        }
+
+        let body: String
+        if normalized.hasPrefix("[") && normalized.hasSuffix("]") {
+            body = String(normalized.dropFirst().dropLast())
+        } else {
+            body = normalized
+        }
+
+        return body
+            .split(separator: ",")
+            .map {
+                String($0)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            }
+            .filter { !$0.isEmpty }
     }
 
     // MARK: - Merge
