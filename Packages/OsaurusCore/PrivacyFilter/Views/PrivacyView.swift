@@ -227,7 +227,7 @@ struct PrivacyView: View {
 ///
 /// `Hashable` is synthesized from the `String` raw value, which is
 /// what `AnimatedTabItem`'s `ForEach(id: \.self)` needs.
-fileprivate enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
+private enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
     case overview
     case rules
     case providers
@@ -251,7 +251,7 @@ fileprivate enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
 /// machine (idle → enumerating → downloading → verifying → ready /
 /// failed) is folded INTO the same hero rather than swapping cards,
 /// so the user never sees layout jank as install progresses.
-fileprivate struct PrivacyInstallHero: View {
+private struct PrivacyInstallHero: View {
     @Environment(\.theme) private var theme
     let state: PrivacyFilterDownloadState
     let hasAppeared: Bool
@@ -571,7 +571,7 @@ fileprivate struct PrivacyInstallHero: View {
 /// review behavior (always-approve / skip code), confidence threshold,
 /// and the conversation-level Forget Redactions verb. These are the
 /// most-touched controls so they live one tap away from the header.
-fileprivate struct PrivacyOverviewTab: View {
+private struct PrivacyOverviewTab: View {
     @Environment(\.theme) private var theme
     @Binding var configuration: PrivacyFilterConfiguration
     let save: () -> Void
@@ -689,7 +689,7 @@ fileprivate struct PrivacyOverviewTab: View {
 /// "what does the matcher look for" controls in one place so users
 /// don't have to hop between sub-tabs to enable a preset and then
 /// add a custom regex.
-fileprivate struct PrivacyRulesTab: View {
+private struct PrivacyRulesTab: View {
     @Environment(\.theme) private var theme
     @Binding var configuration: PrivacyFilterConfiguration
     let save: () -> Void
@@ -782,11 +782,11 @@ fileprivate struct PrivacyRulesTab: View {
     }
 
     private var presetsHeaderRow: some View {
-        Button(action: {
+        Button {
             withAnimation(.easeInOut(duration: 0.18)) {
                 presetsExpanded.toggle()
             }
-        }) {
+        } label: {
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(
@@ -914,9 +914,9 @@ fileprivate struct PrivacyRulesTab: View {
     }
 
     private var addCustomRuleButton: some View {
-        Button(action: {
+        Button {
             customRuleEditorContext = CustomRuleEditorContext(rule: nil)
-        }) {
+        } label: {
             HStack(spacing: 4) {
                 Image(systemName: "plus.circle.fill")
                 Text("Add Rule", bundle: .module)
@@ -954,21 +954,18 @@ fileprivate struct PrivacyRulesTab: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
 
-                Button(action: {
+                Button {
                     customRuleEditorContext = CustomRuleEditorContext(rule: rule)
-                }) {
+                } label: {
                     Image(systemName: "pencil")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .localizedHelp("Edit this rule.")
 
-                Button(
-                    role: .destructive,
-                    action: {
-                        onDeleteCustomRule(rule.id)
-                    }
-                ) {
+                Button(role: .destructive) {
+                    onDeleteCustomRule(rule.id)
+                } label: {
                     Image(systemName: "trash")
                 }
                 .buttonStyle(.bordered)
@@ -995,7 +992,7 @@ fileprivate struct PrivacyRulesTab: View {
 /// manager. Keeping the tab visible (rather than hiding it from the
 /// tab bar) means the tab count stays stable and the user can
 /// discover the feature even before configuring a provider.
-fileprivate struct PrivacyProvidersTab: View {
+private struct PrivacyProvidersTab: View {
     @Environment(\.theme) private var theme
     let providers: [RemoteProvider]
     @Binding var configuration: PrivacyFilterConfiguration
@@ -1071,7 +1068,7 @@ fileprivate struct PrivacyProvidersTab: View {
 /// destructive-leaning action (re-runs SHA-256 on the entire ~2.8GB
 /// bundle) is one click away but never accidentally triggered while
 /// the user is reaching for the header.
-fileprivate struct PrivacyModelTab: View {
+private struct PrivacyModelTab: View {
     @Environment(\.theme) private var theme
     let onReverify: () -> Void
 
@@ -1123,7 +1120,7 @@ fileprivate struct PrivacyModelTab: View {
 /// of the old in-line helper so both `PrivacyRulesTab.presetRow` and
 /// `customRuleRow` use the same component without re-passing a theme
 /// instance.
-fileprivate struct PrivacyCategoryBadge: View {
+private struct PrivacyCategoryBadge: View {
     @Environment(\.theme) private var theme
     let category: EntityCategory
 
@@ -1155,7 +1152,7 @@ fileprivate struct PrivacyCategoryBadge: View {
 /// edit (`rule != nil`) modes with one binding. The `id` is a fresh
 /// `UUID` per presentation so the sheet animates correctly when
 /// editing different rules back-to-back.
-fileprivate struct CustomRuleEditorContext: Identifiable {
+private struct CustomRuleEditorContext: Identifiable {
     let id = UUID()
     let rule: PrivacyRule?
 }

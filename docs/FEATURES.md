@@ -21,6 +21,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
 | Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/PreflightCapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
 | Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
+| Privacy Filter                   | Experimental | "Key Features"  | PRIVACY_FILTER.md             | PrivacyFilter/Core/PrivacyFilterPipeline.swift, PrivacyFilter/Core/PrivacyFilterEngine.swift, PrivacyFilter/Core/RegexEntityDetector.swift, PrivacyFilter/Store/PrivacyFilterStore.swift, PrivacyFilter/Views/PrivacyView.swift, PrivacyFilter/Views/RedactionReviewSheet.swift, Services/Provider/WireTransportProbe.swift, Views/Chat/RedactionHighlighter.swift, Views/Chat/RedactionHoverController.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
 | Agent DB & Self-Scheduling       | Stable    | "Agents"           | AGENT_DB.md                   | Storage/AgentDatabase.swift, Storage/SchedulerDatabase.swift, Managers/NextRunScheduler.swift, Tools/Database/, Views/Agent/AgentDBTabViews.swift, Views/Agent/NextRunPanelView.swift |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
@@ -71,6 +72,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
 │  │   ├── VoiceView (Voice Input & VAD Settings)                          │
+│  │   ├── PrivacyView (Privacy Filter: install + 4 sub-tabs)              │
 │  │   └── ConfigurationView (Settings)                                    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Services Layer                                                          │
@@ -138,6 +140,17 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── MemorySearchService (Hybrid BM25 + vector search)               │
 │  │   ├── MemoryContextAssembler (Gate + planner facade)                  │
 │  │   └── MemoryDatabase (SQLite storage with migrations)                 │
+│  ├── Privacy Filter                                                      │
+│  │   ├── PrivacyFilterPipeline (Outbound scrub + inbound unscrub)        │
+│  │   ├── PrivacyFilterEngine (Regex + classifier detection ensemble)     │
+│  │   ├── RegexEntityDetector (Built-in + preset + custom patterns)       │
+│  │   ├── RedactionMap (Per-conversation original ↔ placeholder intern)   │
+│  │   ├── SessionRedactionStore (Per-session RedactionMap + auto-approve) │
+│  │   ├── PrivacyReviewService (Modal review presenter registry)          │
+│  │   ├── StreamingUnscrubber (Splices inbound stream + rewrites tokens)  │
+│  │   ├── PrivacyFilterModelDownloader (HF bundle install + verify)       │
+│  │   ├── PrivacyFilterStore (Synchronous JSON config persistence)        │
+│  │   └── WireTransportProbe (Captures post-scrub bytes for Insights)     │
 │  └── Utilities                                                           │
 │      ├── InsightsService (Request logging)                               │
 │      ├── HuggingFaceService (Model downloads)                            │
@@ -1225,6 +1238,80 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 
 ---
 
+### Privacy Filter
+
+**Purpose:** Scrub sensitive content from cloud-bound requests on the way out and unscrub the placeholders on the way back. Detection runs entirely on-device via OpenAI's `openai/privacy-filter` (Apache-2.0, 1.5B / 50M-active sparse-MoE token classifier), served through the MLX conversion `mlx-community/openai-privacy-filter-bf16` (~2.8 GB). Fail-closed on every write path — model unavailable, no substitutions applied, or post-scrub leak detected all block the send with a typed error instead of silently sending the original. See [PRIVACY_FILTER.md](PRIVACY_FILTER.md) for the full architecture.
+
+**Components:**
+
+- `PrivacyFilter/Core/PrivacyFilterPipeline.swift` — `applyOutbound` / `wrapInboundStream` / `unscrubInbound` orchestration with typed `PrivacyFilterPipelineError`
+- `PrivacyFilter/Core/PrivacyFilterEngine.swift` — Ensemble of regex + classifier detection over a message history
+- `PrivacyFilter/Core/RegexEntityDetector.swift` — Built-in + preset + custom regex detection, with `safeCompile` validation
+- `PrivacyFilter/Core/PrivacyRulePresets.swift` — Ship-list of opt-in preset rules (driver's license, passport, IBAN, AWS keys, GitHub tokens)
+- `PrivacyFilter/Core/Placeholder.swift` — `EntityCategory` enum + `[CATEGORY_N]` wire format
+- `PrivacyFilter/Core/RedactionMap.swift` — Per-conversation `original ↔ placeholder` intern
+- `PrivacyFilter/Core/CodeBlockMasker.swift` — Skip-code-blocks pass for the `skipCodeBlocks` config
+- `PrivacyFilter/Core/StreamingUnscrubber.swift` — Splices into the inbound byte stream and rewrites placeholders on the fly
+- `PrivacyFilter/Store/SessionRedactionStore.swift` — Actor holding one `RedactionMap` per `sessionId` + auto-approve session set
+- `PrivacyFilter/Core/PrivacyReviewService.swift` — Modal review presenter registry + `withTaskCancellationHandler` continuation contract
+- `PrivacyFilter/Vendor/PrivacyFilterKit/` — Vendored detection kit (BIOES decoder, Viterbi calibration, label vocabulary)
+- `PrivacyFilter/Model/PrivacyFilterModelBundle.swift` — On-disk layout + SHA-256 verifier
+- `PrivacyFilter/Model/PrivacyFilterModelDownloader.swift` — Hugging Face streaming download + manifest synthesis
+- `PrivacyFilter/Store/PrivacyFilterConfiguration.swift` — Persisted user settings (Codable, hand-rolled decoder for forward-compat defaults)
+- `PrivacyFilter/Store/PrivacyFilterStore.swift` — JSON-on-disk persistence + lock-protected in-memory snapshot (synchronous `save`)
+- `PrivacyFilter/Views/PrivacyView.swift` — Settings UI: install hero (pre-install) + 4 sub-tabs (Overview / Rules / Providers / Model) post-install
+- `PrivacyFilter/Views/RedactionReviewSheet.swift` — Modal review with scrubbed preview + hover-reveal
+- `PrivacyFilter/Views/RedactionPreviewBuilder.swift` — Pure helper that scrubs text and builds the highlight map for the preview pane
+- `PrivacyFilter/Views/RedactionPreviewTextView.swift` — `NSViewRepresentable` that reuses the chat highlighter inside the review sheet
+- `PrivacyFilter/Views/PrivacyCustomRuleEditor.swift` — Custom-rule editor sheet with regex validation
+- `Views/Chat/RedactionHighlighter.swift` — Walks `NSTextStorage` and applies underline + accent to placeholder ranges (chat bubbles + preview)
+- `Views/Chat/RedactionHoverController.swift` — Hover-tracked `NSPopover` tooltip with direction-aware copy (outbound / inbound / preview)
+- `Services/Provider/WireTransportProbe.swift` — Captures the post-scrub HTTP body + pre-unscrub inbound stream for the Insights surface
+
+**Detection layers (run sequentially, union by `(category, range)`):**
+
+| Layer | Source | Default |
+|-------|--------|---------|
+| Built-in regex | `RegexEntityDetector` | Phone / email / URL / account number — all on, toggled per-category |
+| Preset rules | `PrivacyRulePresets.all` | Driver's license, passport, IBAN, AWS keys, GitHub tokens — all opt-in |
+| Custom rules | `PrivacyFilterConfiguration.customRules` | User-defined; validated through `safeCompile` before save |
+| On-device classifier | `PrivacyFilterKit` over OpenAI's `openai/privacy-filter` (MLX BF16 conversion) | BIOES decoder + Viterbi calibration; emits 8 categories (`person`, `email`, `phone`, `url`, `address`, `date`, `accountNumber`, `secret`) |
+
+**Placeholder wire format:** `[PERSON_1]`, `[EMAIL_2]`, `[PHONE_1]`, `[URL_1]`, `[ADDR_1]`, `[ACCT_1]`, `[DATE_1]`, `[SECRET_1]`. Per-category, per-conversation indexing. `RedactionMap` interns by original so the same value across turns reuses one placeholder.
+
+**Fail-closed errors:**
+
+| Case | When it fires |
+|------|---------------|
+| `.reviewCanceled` | User dismissed the review sheet (or task cancelled while suspended on it) |
+| `.engineUnavailable(detail)` | Master toggle on, model bundle missing / failed to load |
+| `.scrubNoOp(approvedCount)` | Approved entities produced zero substitutions (almost certainly a wiring bug) |
+| `.scrubLeaked(categoryCounts)` | Post-scrub re-scan found PII the substitution missed; send is blocked |
+
+The post-scrub invariant only re-scans categories whose built-in regex toggle is enabled — same source of truth as detection, so turning a category off in settings turns off both halves.
+
+**Configuration:**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | false | Master toggle (synchronous persistence; survives Cmd-Q) |
+| `skipCodeBlocks` | true | Skip fenced + inline code spans |
+| `alwaysApproveByDefault` | false | Skip the review sheet per-session |
+| `confidenceThreshold` | 0.5 | Reserved for the classifier; persisted for future kit versions |
+| `builtinPatternEnabled` | all on | Per-category regex toggle (controls detection + leak check) |
+| `presetRules` | `{}` | Opt-in preset rule map |
+| `customRules` | `[]` | User-defined `PrivacyRule` array |
+| `providerOverrides` | `{}` | Per-`RemoteProvider.id` enable map; missing keys → true |
+
+**Storage:**
+
+- `~/.osaurus/config/privacy-filter.json` — User configuration (plaintext, atomic write)
+- `~/.osaurus/aux-models/openai-privacy-filter-bf16-v1/` — Model bundle + locally-generated `osaurus-manifest.json` for SHA-256 re-verify
+
+**Verification surface:** Open **Insights** (`⌘ Shift I`) → pick a request → **Request** / **Response** tabs. The **Server Request** / **Server Response** sub-sections show the exact bytes captured by `WireTransportProbe` (post-scrub on the way out, pre-unscrub on the way in) so users can confirm at a glance that placeholders actually made it onto the wire.
+
+---
+
 ## Documentation Index
 
 | Document                                                       | Purpose                                           |
@@ -1241,6 +1328,7 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 | [SKILLS.md](SKILLS.md)                                         | Skills, methods, and context management guide    |
 | [CLAUDE_PLUGINS.md](CLAUDE_PLUGINS.md)                         | Importing Claude plugins from GitHub             |
 | [MEMORY.md](MEMORY.md)                                         | Memory system and configuration guide            |
+| [PRIVACY_FILTER.md](PRIVACY_FILTER.md)                         | Privacy Filter architecture, detection layers, settings, and verification |
 | [SANDBOX.md](SANDBOX.md)                                       | Sandbox VM and plugin guide                       |
 | [plugins/README.md](plugins/README.md)                         | Creating custom plugins                           |
 | [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                |

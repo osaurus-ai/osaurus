@@ -156,7 +156,7 @@ struct PrivacyCustomRuleEditor: View {
             Text("privacy.custom.editor.pattern", bundle: .module)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.primaryText)
-            TextField(L("e.g. CUST-\\d{6}"), text: $pattern, axis: .vertical)
+            TextField(L("e.g. CUST-[0-9]{6}"), text: $pattern, axis: .vertical)
                 .lineLimit(3 ... 6)
                 .font(.system(size: 12, design: .monospaced))
                 .textFieldStyle(.roundedBorder)

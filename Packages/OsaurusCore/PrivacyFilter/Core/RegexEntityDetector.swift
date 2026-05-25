@@ -225,7 +225,7 @@ extension RegexEntityDetector {
         /// pattern's semantic check (e.g. Luhn for credit cards).
         let accepts: @Sendable (String) -> Bool
 
-        nonisolated(unsafe) static let all: [Pattern] = [
+        static let all: [Pattern] = [
             // Email — RFC-flavored, deliberately liberal in the local
             // part since real-world addresses are messy.
             Pattern(
@@ -293,6 +293,7 @@ extension RegexEntityDetector {
             // Patterns are static, hand-written, and tested — force-try
             // is appropriate here. A bad pattern would be a programmer
             // error caught immediately on first use.
+            // swiftlint:disable:next force_try
             return try! NSRegularExpression(pattern: pattern, options: [])
         }
     }
