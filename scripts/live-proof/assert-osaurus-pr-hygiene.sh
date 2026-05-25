@@ -190,6 +190,21 @@ require_text "$ROOT/Packages/OsaurusCore/Tests/Service/MLXBatchAdapterTests.swif
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/MLXBatchAdapterTests.swift" \
   '!dsv4\.contains\("layers=hybrid-ssm"\)' \
   "cache model-key test rejects SSM-family tag for DSV4"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/DSV4ParserPipelineTests.swift" \
+  'think_xml reasoning and DSML tool calls route to separate events' \
+  "DSV4 parser pipeline separates reasoning and DSML tool calls"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/DSV4ParserPipelineTests.swift" \
+  'DSML markup must not leak as visible text' \
+  "DSV4 parser pipeline prevents DSML markup leak"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenizerLoaderTests.swift" \
+  'DSV4 canonical template path must use DSML tool-call blocks' \
+  "DSV4 canonical tokenizer path renders DSML tool-call blocks"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenizerLoaderTests.swift" \
+  'DSV4 canonical template path must not use the generic tool dialect' \
+  "DSV4 canonical tokenizer path rejects generic tool dialect"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenizerLoaderTests.swift" \
+  'DSV4 canonical template path must render assistant tool history as a DSML block' \
+  "DSV4 canonical tokenizer path preserves DSML tool history"
 require_text "$ROOT/Packages/OsaurusCore/Models/Configuration/ModelMediaCapabilities.swift" \
   '"qwen3_6", "qwen3_6_moe"' \
   "Qwen3.6 config-based media detection preserves video-capable model types"
