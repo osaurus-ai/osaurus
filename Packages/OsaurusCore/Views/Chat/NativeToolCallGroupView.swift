@@ -868,7 +868,6 @@ final class NativeToolCallRowView: NSView {
             return ""
         }
         if let payload = ToolEnvelope.successPayload(result) as? [String: Any],
-            payload.count == 1,
             let text = payload["text"] as? String
         {
             return text
