@@ -115,10 +115,10 @@ require_file "$ROOT/AGENTS.md" "Osaurus AGENTS keychain rules"
 require_text "$ROOT/AGENTS.md" 'Do not run Osaurus SwiftPM/Xcode validation lanes' \
   "Osaurus no SwiftPM/Xcode validation rule"
 require_text "$ROOT/Packages/OsaurusCore/Package.swift" \
-  'revision: "c95cf6431ddb7503f75122daa07b082a85303b9f"' \
+  'revision: "52af37d5d4d5b7279ef627b505ca1f186b383cc8"' \
   "Package.swift pinned to vMLX Gemma parser fix"
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/RuntimePolicySourceTests.swift" \
-  'c95cf6431ddb7503f75122daa07b082a85303b9f' \
+  '52af37d5d4d5b7279ef627b505ca1f186b383cc8' \
   "RuntimePolicySourceTests guard pinned vMLX revision"
 require_text "$ROOT/Packages/OsaurusCore/Services/ModelRuntime/MLXBatchAdapter.swift" \
   'let engineDefaults = MLXLMCommon\.GenerateParameters\(\)' \
@@ -137,7 +137,7 @@ require_text "$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/Concurren
   "Server settings expose continuous batching toggle"
 
 active_forbidden="$({ ps -axo pid,ppid,rss,etime,command || true; } \
-  | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
+  | rg -i 'CodeSigningHelper|xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
   | rg -v 'rg -i|assert-osaurus-pr-hygiene|assert-keychain-free-proof-path|assert-osaurus-vmlx-pr-readiness|assert-vmlx-gemma4-parser-fix-wired|assert-no-hidden-local-sampler-defaults|assert-openresponses-cache-proof-wiring|assert-osaurus-no-forced-behavior-pr|assert-server-settings-runtime-wiring' || true)"
 if [[ -n "$active_forbidden" ]]; then
   echo "$active_forbidden" >&2
