@@ -61,10 +61,11 @@ RESPONSES_GUARD="$ROOT/scripts/live-proof/assert-openresponses-cache-proof-wirin
 NO_FORCED_GUARD="$ROOT/scripts/live-proof/assert-osaurus-no-forced-behavior-pr.sh"
 SERVER_SETTINGS_GUARD="$ROOT/scripts/live-proof/assert-server-settings-runtime-wiring.sh"
 CHAT_REASONING_GUARD="$ROOT/scripts/live-proof/assert-chat-reasoning-delta-routing.sh"
+CHAT_UI_REASONING_GUARD="$ROOT/scripts/live-proof/assert-chat-ui-reasoning-routing.sh"
 HTTP_CANCEL_GUARD="$ROOT/scripts/live-proof/assert-http-channel-load-cancellation.sh"
 TOOL_CHOICE_GUARD="$ROOT/scripts/live-proof/assert-tool-choice-required-routing.sh"
 
-for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD" "$CHAT_REASONING_GUARD" "$HTTP_CANCEL_GUARD" "$TOOL_CHOICE_GUARD"; do
+for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD" "$CHAT_REASONING_GUARD" "$CHAT_UI_REASONING_GUARD" "$HTTP_CANCEL_GUARD" "$TOOL_CHOICE_GUARD"; do
   require_file "$file" "${file#$ROOT/}"
 done
 
@@ -112,6 +113,12 @@ else
   fail_msg "chat reasoning delta routing guard failed"
 fi
 
+if "$CHAT_UI_REASONING_GUARD"; then
+  pass "chat UI reasoning routing"
+else
+  fail_msg "chat UI reasoning routing guard failed"
+fi
+
 if "$HTTP_CANCEL_GUARD"; then
   pass "HTTP channel/load cancellation"
 else
@@ -154,10 +161,10 @@ require_text "$ROOT/AGENTS.md" 'Big-model load cancellation must be live-proven'
 require_text "$ROOT/AGENTS.md" 'Qwen/JANG/JANGTQ RAM regressions require end-to-end Osaurus proof' \
   "Osaurus Qwen/JANGTQ RAM proof rule"
 require_text "$ROOT/Packages/OsaurusCore/Package.swift" \
-  'revision: "8f472016664631ccb9d6f876b848a50f74b7ed86"' \
+  'revision: "74677a913568e0eee1e7c599399b6a4df0bbe7ff"' \
   "Package.swift pinned to vMLX Gemma parser fix"
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/RuntimePolicySourceTests.swift" \
-  '8f472016664631ccb9d6f876b848a50f74b7ed86' \
+  '74677a913568e0eee1e7c599399b6a4df0bbe7ff' \
   "RuntimePolicySourceTests guard pinned vMLX revision"
 require_text "$ROOT/Packages/OsaurusCore/Services/ModelRuntime/MLXBatchAdapter.swift" \
   'let engineDefaults = MLXLMCommon\.GenerateParameters\(\)' \
@@ -177,7 +184,7 @@ require_text "$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/Concurren
 
 active_forbidden="$({ ps -axo pid,ppid,rss,etime,command || true; } \
   | rg -i 'CodeSigningHelper|xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
-  | rg -v 'rg -i|assert-osaurus-pr-hygiene|assert-keychain-free-proof-path|assert-osaurus-vmlx-pr-readiness|assert-vmlx-gemma4-parser-fix-wired|assert-no-hidden-local-sampler-defaults|assert-openresponses-cache-proof-wiring|assert-osaurus-no-forced-behavior-pr|assert-server-settings-runtime-wiring' || true)"
+  | rg -v 'rg -i|assert-osaurus-pr-hygiene|assert-keychain-free-proof-path|assert-osaurus-vmlx-pr-readiness|assert-vmlx-gemma4-parser-fix-wired|assert-no-hidden-local-sampler-defaults|assert-openresponses-cache-proof-wiring|assert-osaurus-no-forced-behavior-pr|assert-server-settings-runtime-wiring|assert-chat-reasoning-delta-routing|assert-chat-ui-reasoning-routing|assert-http-channel-load-cancellation' || true)"
 if [[ -n "$active_forbidden" ]]; then
   echo "$active_forbidden" >&2
   fail_msg "active Osaurus keychain-sensitive validation process detected"
