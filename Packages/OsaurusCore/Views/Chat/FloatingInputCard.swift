@@ -1350,6 +1350,10 @@ extension FloatingInputCard {
                             onEdit: attachment.isPastedContent
                                 ? {
                                     pastedContentEdit = attachment
+                                } : nil,
+                            onInline: attachment.isPastedContent
+                                ? {
+                                    inlinePastedContent(attachment)
                                 } : nil
                         )
                     case .audio, .audioRef, .video, .videoRef:
@@ -1385,6 +1389,25 @@ extension FloatingInputCard {
                 }
             )
         }
+    }
+
+    private func inlinePastedContent(_ attachment: Attachment) {
+        guard let content = attachment.loadDocumentContent(), !content.isEmpty else { return }
+        let existing = localText
+        let combined: String
+        if existing.isEmpty {
+            combined = content
+        } else if existing.hasSuffix("\n") {
+            combined = existing + content
+        } else {
+            combined = existing + "\n" + content
+        }
+        withAnimation(theme.springAnimation()) {
+            pendingAttachments.removeAll { $0.id == attachment.id }
+        }
+        localText = combined
+        text = combined
+        isFocused = true
     }
 
     // MARK: - Selector Row (Model + Tools)

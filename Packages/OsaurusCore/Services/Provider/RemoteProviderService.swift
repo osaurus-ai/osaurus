@@ -95,8 +95,15 @@ public actor RemoteProviderService: ToolCapableService {
         let config = URLSessionConfiguration.default
         // Request timeout must be generous: thinking models can pause for minutes
         // between tokens. The app-level streamInactivityTimeout handles stall detection.
-        config.timeoutIntervalForRequest = max(provider.timeout, 300)
-        config.timeoutIntervalForResource = max(provider.timeout * 2, 600)
+        // When the user opts into no-timeout mode, every limit is lifted (see
+        // RemoteProvider.unboundedTimeout) so long-running turns are never interrupted.
+        if provider.disableTimeout {
+            config.timeoutIntervalForRequest = RemoteProvider.unboundedTimeout
+            config.timeoutIntervalForResource = RemoteProvider.unboundedTimeout
+        } else {
+            config.timeoutIntervalForRequest = max(provider.timeout, 300)
+            config.timeoutIntervalForResource = max(provider.timeout * 2, 600)
+        }
         self.session = GlobalProxySettings.makeSession(base: config)
     }
 
@@ -247,7 +254,9 @@ public actor RemoteProviderService: ToolCapableService {
     /// Inactivity timeout for streaming: if no bytes arrive within this interval,
     /// assume the provider has stalled and end the stream. Floor of 120s accommodates
     /// thinking models that pause between tokens during reasoning.
-    private var streamInactivityTimeout: TimeInterval { max(provider.timeout, 120) }
+    private var streamInactivityTimeout: TimeInterval {
+        provider.disableTimeout ? RemoteProvider.unboundedTimeout : max(provider.timeout, 120)
+    }
 
     /// Invalidate the URLSession to release its strong delegate reference.
     /// Must be called before discarding this service instance to avoid leaking.
@@ -2001,7 +2010,10 @@ public actor RemoteProviderService: ToolCapableService {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         if Self.isImageCapableModel(request.model) {
-            urlRequest.timeoutInterval = max(provider.timeout, Self.imageModelMinTimeout)
+            urlRequest.timeoutInterval =
+                provider.disableTimeout
+                ? RemoteProvider.unboundedTimeout
+                : max(provider.timeout, Self.imageModelMinTimeout)
         }
 
         // Set Accept header based on streaming mode

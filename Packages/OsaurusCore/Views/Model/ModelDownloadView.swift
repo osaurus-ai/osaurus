@@ -1078,10 +1078,17 @@ struct ModelDownloadView: View {
     private func computeGridLists() -> GridLists {
         let mem = systemMonitor.totalMemoryGB
 
-        let osaurusOnly = modelManager.availableModels.filter { Self.isOsaurusAI($0) }
+        // All tab = OsaurusAI catalog + models the user owns/is downloading +
+        // (when searching) anything matching the query. without the latter two,
+        // imported/pasted repos inserted into `availableModels` are filtered
+        // out and never appear
+        let hasQuery = !debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let allTabBase = modelManager.availableModels.filter { model in
+            Self.isOsaurusAI(model) || isUserModel(model) || hasQuery
+        }
         let osaurusSuggested = modelManager.suggestedModels.filter { Self.isOsaurusAI($0) }
 
-        let availSearched = SearchService.filterModels(osaurusOnly, with: debouncedSearchText)
+        let availSearched = SearchService.filterModels(allTabBase, with: debouncedSearchText)
         let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
         let allFiltered = applySort(to: availFiltered)
 
@@ -1217,6 +1224,16 @@ struct ModelDownloadView: View {
 
     private static func isOsaurusAI(_ model: MLXModel) -> Bool {
         model.id.lowercased().hasPrefix("osaurusai/")
+    }
+
+    /// True when the model is on disk or actively downloading/paused — keeps
+    /// imported/non-curated models visible in the All tab.
+    private func isUserModel(_ model: MLXModel) -> Bool {
+        if model.isDownloaded { return true }
+        switch modelManager.downloadStates[model.id] ?? .notStarted {
+        case .downloading, .paused: return true
+        default: return false
+        }
     }
 
     private func compatibilityRank(_ model: MLXModel) -> Int {
@@ -1528,6 +1545,7 @@ private struct HuggingFaceImportSheet: View {
                     .background(Circle().fill(theme.tertiaryBackground))
             }
             .buttonStyle(PlainButtonStyle())
+            .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
@@ -1607,14 +1625,6 @@ private struct HuggingFaceImportSheet: View {
     private var footer: some View {
         HStack {
             Spacer()
-            Button(action: { dismiss() }) {
-                Text("Cancel", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.cancelAction)
-
             Button(action: submit) {
                 HStack(spacing: 6) {
                     if isResolving {

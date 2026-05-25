@@ -16,6 +16,7 @@ struct DocumentChip: View {
     var onRemove: (() -> Void)? = nil
     var onTap: (() -> Void)? = nil
     var onEdit: (() -> Void)? = nil
+    var onInline: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
@@ -51,6 +52,11 @@ struct DocumentChip: View {
             } else {
                 labelStack
             }
+        }
+
+        if let onInline {
+            circularButton(systemName: "text.insert", action: onInline)
+                .localizedHelp("Insert into message")
         }
 
         if let onEdit {

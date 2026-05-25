@@ -153,7 +153,18 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     public var enabled: Bool
     public var autoConnect: Bool
     public var timeout: TimeInterval
+    /// When true, requests run effectively unbounded — the request, resource, and
+    /// stream inactivity limits are all lifted. Intended for trusted long-running
+    /// workloads  where time doesn't matter.
+    /// Discovery/probe timeouts are deliberately unaffected and stay short.
+    public var disableTimeout: Bool
     public var manualModelIds: [String]
+
+    /// Sentinel applied at runtime when `disableTimeout` is set. Finite by design:
+    /// `.infinity` / `.greatestFiniteMagnitude` would crash the streaming path
+    /// (`UInt64(timeout * 1e9)` overflows) and can't be JSON encoded. One year is
+    /// no limit for any real request while staying safely within those bounds.
+    public static let unboundedTimeout: TimeInterval = 60 * 60 * 24 * 365
 
     // Keys for headers that should be stored in Keychain (not persisted in config)
     public var secretHeaderKeys: [String]
@@ -167,7 +178,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, host, providerProtocol, port, basePath
-        case customHeaders, authType, providerType, enabled, autoConnect, timeout
+        case customHeaders, authType, providerType, enabled, autoConnect, timeout, disableTimeout
         case manualModelIds
         case secretHeaderKeys, remoteAgentId, remoteAgentAddress
     }
@@ -185,6 +196,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         enabled: Bool = true,
         autoConnect: Bool = true,
         timeout: TimeInterval = 60,
+        disableTimeout: Bool = false,
         manualModelIds: [String] = [],
         secretHeaderKeys: [String] = [],
         remoteAgentId: UUID? = nil,
@@ -202,6 +214,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         self.enabled = enabled
         self.autoConnect = autoConnect
         self.timeout = timeout
+        self.disableTimeout = disableTimeout
         self.manualModelIds = manualModelIds
         self.secretHeaderKeys = secretHeaderKeys
         self.remoteAgentId = remoteAgentId
@@ -225,6 +238,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         autoConnect = try container.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
         timeout = try container.decodeIfPresent(TimeInterval.self, forKey: .timeout) ?? 60
+        disableTimeout = try container.decodeIfPresent(Bool.self, forKey: .disableTimeout) ?? false
         manualModelIds = try container.decodeIfPresent([String].self, forKey: .manualModelIds) ?? []
         secretHeaderKeys = try container.decodeIfPresent([String].self, forKey: .secretHeaderKeys) ?? []
         remoteAgentId = try container.decodeIfPresent(UUID.self, forKey: .remoteAgentId)
