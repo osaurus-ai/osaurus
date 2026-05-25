@@ -61,8 +61,9 @@ RESPONSES_GUARD="$ROOT/scripts/live-proof/assert-openresponses-cache-proof-wirin
 NO_FORCED_GUARD="$ROOT/scripts/live-proof/assert-osaurus-no-forced-behavior-pr.sh"
 SERVER_SETTINGS_GUARD="$ROOT/scripts/live-proof/assert-server-settings-runtime-wiring.sh"
 CHAT_REASONING_GUARD="$ROOT/scripts/live-proof/assert-chat-reasoning-delta-routing.sh"
+HTTP_CANCEL_GUARD="$ROOT/scripts/live-proof/assert-http-channel-load-cancellation.sh"
 
-for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD" "$CHAT_REASONING_GUARD"; do
+for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD" "$CHAT_REASONING_GUARD" "$HTTP_CANCEL_GUARD"; do
   require_file "$file" "${file#$ROOT/}"
 done
 
@@ -108,6 +109,12 @@ if "$CHAT_REASONING_GUARD"; then
   pass "chat reasoning delta routing"
 else
   fail_msg "chat reasoning delta routing guard failed"
+fi
+
+if "$HTTP_CANCEL_GUARD"; then
+  pass "HTTP channel/load cancellation"
+else
+  fail_msg "HTTP channel/load cancellation guard failed"
 fi
 
 echo "--- PR artifact hygiene ---"

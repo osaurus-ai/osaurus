@@ -20,6 +20,19 @@ private final class SendableBool: @unchecked Sendable {
     }
 }
 
+private final class ChannelCloseFutureBox: @unchecked Sendable {
+    private var future: EventLoopFuture<Void>?
+    private let lock = NSLock()
+
+    func set(_ value: EventLoopFuture<Void>) {
+        lock.withLock { future = value }
+    }
+
+    func snapshot() -> EventLoopFuture<Void>? {
+        lock.withLock { future }
+    }
+}
+
 private final class LockedStringAccumulator: @unchecked Sendable {
     private let lock = NSLock()
     private var storage = ""
@@ -150,6 +163,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private let chatEngine: ChatEngineProtocol
     private let trustLoopback: Bool
     private let _isChannelActive = SendableBool(false)
+    private let requestTasks = HTTPRequestTaskRegistry()
+    private let channelCloseFuture = ChannelCloseFutureBox()
     private static let openResponsesContextStore = OpenResponsesContextStore()
     /// Per-request scratch state. `internal` so peer-file helpers (e.g.
     /// `HTTPRequestParse.readRequestBody()`) can drain the buffered body
@@ -191,12 +206,39 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     func channelActive(context: ChannelHandlerContext) {
         _isChannelActive.value = true
+        channelCloseFuture.set(context.channel.closeFuture)
         context.fireChannelActive()
     }
 
     func channelInactive(context: ChannelHandlerContext) {
         _isChannelActive.value = false
+        requestTasks.cancelAll()
         context.fireChannelInactive()
+    }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if case ChannelEvent.inputClosed = event {
+            _isChannelActive.value = false
+            requestTasks.cancelAll()
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
+
+    private func runRequestTask(
+        priority: TaskPriority? = nil,
+        operation: @escaping () async -> Void
+    ) {
+        let id = UUID()
+        let requestTasks = requestTasks
+        let operationBox = RequestTaskOperation(operation)
+        let task = Task(priority: priority) {
+            defer { requestTasks.remove(id: id) }
+            await operationBox.run()
+        }
+        channelCloseFuture.snapshot()?.whenComplete { _ in
+            task.cancel()
+        }
+        requestTasks.insert(id: id, task: task)
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -589,7 +631,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logMethod = method
         let logPath = path
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let cached = await ModelRuntime.shared.cachedModelSummaries()
             var aggregate: [String: Int] = [
                 "prefix_hits": 0,
@@ -1786,6 +1828,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         // Log and close the connection to avoid NIO debug preconditions crashing the app
         print("[Osaurus][NIO] errorCaught: \(error)")
+        requestTasks.cancelAll()
         context.close(promise: nil)
     }
 
@@ -2005,7 +2048,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let db = MemoryDatabase.shared
             guard await MemoryDatabase.waitForSharedOpen(timeoutSeconds: 8) else {
                 let responseBody = #"{"error":"memory_database_unavailable","message":"Memory database is not ready"}"#
@@ -2248,7 +2291,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             (head.headers.first(name: "Host") ?? "unknown")
             .components(separatedBy: ":").first ?? "unknown"
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // 1. Verify the connector's signature over the nonce.
             let hexSig = req.signature.hasPrefix("0x") ? String(req.signature.dropFirst(2)) : req.signature
             guard let sigBytes = Data(hexEncoded: hexSig),
@@ -2548,7 +2591,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // 1. Resolve a local agent that matches the invite address. The
             //    receiver only ever connects via the relay tunnel, so the
             //    address has to belong to an agent on THIS device.
@@ -2670,7 +2713,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let agents = await MainActor.run { AgentManager.shared.agents }
 
             let db = MemoryDatabase.shared
@@ -2773,7 +2816,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             guard let agent = await MainActor.run(body: { AgentManager.shared.agent(for: agentId) }) else {
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -2911,7 +2954,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // Resolve model: client sends "default" when no specific model was known
             let model: String
             if req.model.isEmpty || req.model == "default" {
@@ -3226,7 +3269,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
         let agentIdentifier = String(components[1])
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // Resolve identifier: try UUID first, then crypto address
             guard let agentId = await MainActor.run(body: { AgentManager.shared.resolveAgentId(agentIdentifier) })
             else {
@@ -3374,7 +3417,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let (responseBody, found) = await MainActor.run {
                 guard let state = BackgroundTaskManager.shared.taskState(for: taskId) else {
                     return (#"{"error":"not_found","message":"Task not found"}"#, false)
@@ -3440,7 +3483,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             await MainActor.run {
                 BackgroundTaskManager.shared.cancelTask(taskId)
             }
@@ -3513,7 +3556,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let response = json["response"] as? String
             else {
@@ -3619,7 +3662,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
                 let embeddings = try await EmbeddingService.shared.embed(texts: texts)
 
@@ -3813,9 +3856,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logUserAgent = userAgent
             let logRequestBody = requestBodyString
             let logModel = model
-            let logTemperature = req.temperature ?? 0.7
+            let logTemperature = req.temperature
             let logMaxTokens = req.resolvedMaxTokens ?? 1024
             let logSelf = self
+            let disconnected = SendableBool(false)
+            let channelClosed = SendableBool(false)
+            context.channel.closeFuture.whenComplete { _ in
+                channelClosed.value = true
+                disconnected.value = true
+            }
             // SSE keepalive: emit a `: ping` comment line every 15s so
             // intermediate proxies / load balancers do not idle out long
             // tool-execution / reasoning pauses. Cancelled when the
@@ -3824,10 +3873,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 writer: writerBound,
                 channel: context.channel,
                 loop: loop,
-                ctx: ctx
+                ctx: ctx,
+                disconnected: disconnected,
+                intervalNanoseconds: 250_000_000
             )
-            Task(priority: .userInitiated) {
+            runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
+                let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
+                var emittedSemanticDelta = false
+                func markSemanticDeltaIfConnected() {
+                    if self._isChannelActive.value && !disconnected.value && !channelClosed.value {
+                        emittedSemanticDelta = true
+                    }
+                }
+                defer {
+                    if !wasResidentBeforeStream && !emittedSemanticDelta
+                        && (disconnected.value || channelClosed.value)
+                    {
+                        Task {
+                            await ModelRuntime.shared.unload(name: model)
+                        }
+                    }
+                }
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
@@ -3859,8 +3926,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.mark("http_sse_role_written")
 
                     httpTrace.mark("http_stream_chat_start")
+                    try Task.checkCancellation()
                     let stream = try await chatEngine.streamChat(request: enrichedReq)
                     httpTrace.mark("http_stream_chat_ready")
+                    if disconnected.value { throw CancellationError() }
                     var accumulatedContent = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
@@ -3868,8 +3937,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var authoritativeCompletionTokens: Int?
                     var streamFinishReason = "stop"
                     for try await delta in stream {
+                        try Task.checkCancellation()
+                        if disconnected.value { throw CancellationError() }
                         if let reasoning = StreamingReasoningHint.decode(delta) {
                             httpTrace.markFirstSemanticDelta("reasoning")
+                            markSemanticDeltaIfConnected()
                             if let pending = contentCoalescer.flush() {
                                 hop {
                                     writerBound.value.writeContent(
@@ -3901,6 +3973,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         if StreamingToolHint.isSentinel(delta) { continue }
                         httpTrace.markFirstSemanticDelta("content")
+                        markSemanticDeltaIfConnected()
                         accumulatedContent += delta
                         if let chunk = contentCoalescer.append(delta) {
                             hop {
@@ -3913,7 +3986,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 )
                             }
                         }
+                        if disconnected.value { throw CancellationError() }
                     }
+                    if disconnected.value { throw CancellationError() }
                     if let pending = contentCoalescer.flush() {
                         hop {
                             writerBound.value.writeContent(
@@ -3987,6 +4062,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // per invocation, sharing one finish_reason="tool_calls".
                     // OpenAI clients deduplicate by `index`.
                     httpTrace.markFirstSemanticDelta("tool_calls")
+                    markSemanticDeltaIfConnected()
                     httpTrace.set("http_tool_call_count", invs.invocations.count)
                     let includeUsage = req.stream_options?.include_usage == true
                     // Use `req.messages` here (not `enrichedReq.messages`)
@@ -4048,6 +4124,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } catch let inv as ServiceToolInvocation {
                     // Single tool invocation — same emission as above.
                     httpTrace.markFirstSemanticDelta("tool_calls")
+                    markSemanticDeltaIfConnected()
                     httpTrace.set("http_tool_call_count", 1)
                     let includeUsage = req.stream_options?.include_usage == true
                     let promptTokens = Self.estimatePromptTokens(req.messages)
@@ -4138,10 +4215,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logUserAgent = userAgent
             let logRequestBody = requestBodyString
             let logModel = model
-            let logTemperature = req.temperature ?? 0.7
+            let logTemperature = req.temperature
             let logMaxTokens = req.resolvedMaxTokens ?? 1024
             let logSelf = self
-            Task(priority: .userInitiated) {
+            runRequestTask(priority: .userInitiated) {
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
@@ -4355,17 +4432,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         let logModel = req.model
-        let logTemperature = req.temperature ?? 0.7
+        let logTemperature = req.temperature
         let logMaxTokens = req.resolvedMaxTokens ?? 1024
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
+            let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: req.model)
+            var emittedSemanticDelta = false
+            func markSemanticDeltaIfChannelActive() {
+                if self._isChannelActive.value {
+                    emittedSemanticDelta = true
+                }
+            }
+            defer {
+                if !wasResidentBeforeStream && !emittedSemanticDelta
+                    && (!self._isChannelActive.value || Task.isCancelled)
+                {
+                    Task {
+                        await ModelRuntime.shared.unload(name: req.model)
+                    }
+                }
+            }
             do {
                 let chatEngine = self.chatEngine
+                try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: req)
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                 )
                 for try await delta in stream {
+                    try Task.checkCancellation()
                     // Ollama-style NDJSON has no `reasoning` / `thinking`
                     // field today — `StreamingReasoningHint`, along with
                     // `StreamingToolHint` / `StreamingStatsHint`, is
@@ -4377,6 +4472,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if StreamingStatsHint.decode(delta) != nil { continue }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     if let chunk = contentCoalescer.append(delta) {
+                        markSemanticDeltaIfChannelActive()
                         hop {
                             writerBound.value.writeContent(
                                 chunk,
@@ -4497,8 +4593,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
+                try Task.checkCancellation()
                 let response = try await self.chatEngine.completeChat(request: request)
                 let message = response.choices.first?.message
                 let body = Self.ollamaChatJSON(
@@ -4528,7 +4625,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     tokensInput: response.usage.prompt_tokens,
                     tokensOutput: response.usage.completion_tokens,
-                    temperature: request.temperature ?? 0.7,
+                    temperature: request.temperature,
                     maxTokens: request.max_tokens ?? 1024,
                     finishReason: message?.tool_calls?.isEmpty == false ? .toolCalls : .stop
                 )
@@ -4557,7 +4654,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     model: request.model,
                     toolCalls: toolLogs,
-                    temperature: request.temperature ?? 0.7,
+                    temperature: request.temperature,
                     maxTokens: request.max_tokens ?? 1024,
                     finishReason: .toolCalls
                 )
@@ -4584,7 +4681,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     model: request.model,
                     toolCalls: [toolLog],
-                    temperature: request.temperature ?? 0.7,
+                    temperature: request.temperature,
                     maxTokens: request.max_tokens ?? 1024,
                     finishReason: .toolCalls
                 )
@@ -4731,11 +4828,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         let logModel = chatRequest.model
-        let logTemperature = chatRequest.temperature ?? 0.7
+        let logTemperature = chatRequest.temperature
         let logMaxTokens = chatRequest.max_tokens ?? 1024
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
+                try Task.checkCancellation()
                 let stream = try await self.chatEngine.streamChat(request: chatRequest)
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
@@ -4820,8 +4918,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
+                try Task.checkCancellation()
                 let response = try await self.chatEngine.completeChat(request: request)
                 let content = response.choices.first?.message.content ?? ""
                 let body = Self.ollamaGenerateJSON(
@@ -4850,7 +4949,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     tokensInput: response.usage.prompt_tokens,
                     tokensOutput: response.usage.completion_tokens,
-                    temperature: request.temperature ?? 0.7,
+                    temperature: request.temperature,
                     maxTokens: request.max_tokens ?? 1024,
                     finishReason: .stop
                 )
@@ -4984,18 +5083,39 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// but keep intermediate proxies from idling out long
     /// tool-execution or reasoning pauses. Callers must `cancel()` the
     /// returned task when their producer finishes.
-    static func startSSEKeepalive(
+    private static func startSSEKeepalive(
         writer: NIOLoopBound<SSEResponseWriter>,
         channel: Channel,
         loop: EventLoop,
-        ctx: NIOLoopBound<ChannelHandlerContext>
+        ctx: NIOLoopBound<ChannelHandlerContext>,
+        disconnected: SendableBool? = nil,
+        intervalNanoseconds: UInt64 = 15_000_000_000
     ) -> Task<Void, Never> {
         Task<Void, Never>(priority: .background) {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                try? await Task.sleep(nanoseconds: intervalNanoseconds)
                 if Task.isCancelled { return }
-                guard channel.isActive else { return }
-                loop.execute { writer.value.writePing(ctx.value) }
+                guard channel.isActive else {
+                    disconnected?.value = true
+                    return
+                }
+                loop.execute {
+                    guard channel.isActive else {
+                        disconnected?.value = true
+                        return
+                    }
+                    var buf = channel.allocator.buffer(capacity: 16)
+                    buf.writeString(": ping\n\n")
+                    let promise = loop.makePromise(of: Void.self)
+                    promise.futureResult.whenFailure { _ in
+                        disconnected?.value = true
+                        ctx.value.close(promise: nil)
+                    }
+                    ctx.value.writeAndFlush(
+                        NIOAny(HTTPServerResponsePart.body(.byteBuffer(buf))),
+                        promise: promise)
+                    ctx.value.read()
+                }
             }
         }
     }
@@ -5123,7 +5243,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logMethod = method
         let logPath = path
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let inflight = await ModelLease.shared.snapshot()
             let cached = await ModelRuntime.shared.cachedModelSummaries()
             let residency = await ModelResidencyManager.shared.snapshots()
@@ -5216,7 +5336,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logSelf = self
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // Get local models
             var models = MLXService.getAvailableModels().map { OpenAIModel(modelName: $0) }
             if FoundationModelService.isDefaultModelAvailable() {
@@ -5271,7 +5391,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logSelf = self
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let now = Date().ISO8601Format()
 
             // Get local models
@@ -5449,7 +5569,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
         let modelName = req.model
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // Handle "foundation" model specially
             if modelName.lowercased() == "foundation" || modelName.lowercased() == "default" {
                 if FoundationModelService.isDefaultModelAvailable() {
@@ -5595,7 +5715,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let entries = await MainActor.run {
                 ToolRegistry.shared.listTools().filter { $0.enabled }
             }
@@ -5736,7 +5856,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let toolCallStartTime = Date()
             do {
                 // Validate against schema if available
@@ -5988,18 +6108,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logModel = model
         let logSelf = self
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
+            let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
+            var emittedSemanticDelta = false
+            func markSemanticDeltaIfChannelActive() {
+                if self._isChannelActive.value {
+                    emittedSemanticDelta = true
+                }
+            }
+            defer {
+                if !wasResidentBeforeStream && !emittedSemanticDelta
+                    && (!self._isChannelActive.value || Task.isCancelled)
+                {
+                    Task {
+                        await ModelRuntime.shared.unload(name: model)
+                    }
+                }
+            }
             do {
                 let chatEngine = self.chatEngine
+                try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                 )
                 for try await delta in stream {
+                    try Task.checkCancellation()
                     // Reasoning sentinel must be decoded BEFORE the
                     // generic `isSentinel` filter, otherwise it gets
                     // dropped together with tool/stats hints.
                     if let reasoning = StreamingReasoningHint.decode(delta) {
+                        markSemanticDeltaIfChannelActive()
                         if let pending = contentCoalescer.flush() {
                             hop {
                                 writerBound.value.writeTextDelta(pending, context: ctx.value)
@@ -6018,12 +6157,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     if let chunk = contentCoalescer.append(delta) {
+                        markSemanticDeltaIfChannelActive()
                         hop {
                             writerBound.value.writeTextDelta(chunk, context: ctx.value)
                         }
                     }
                 }
                 if let pending = contentCoalescer.flush() {
+                    markSemanticDeltaIfChannelActive()
                     hop {
                         writerBound.value.writeTextDelta(pending, context: ctx.value)
                     }
@@ -6045,6 +6186,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } catch let invs as ServiceToolInvocations {
                 // Multi-tool MLX completion: one `tool_use` content block
                 // per invocation, then a single `tool_use` finish.
+                markSemanticDeltaIfChannelActive()
                 hop {
                     for inv in invs.invocations {
                         self.writeAnthropicToolUse(inv, writer: writerBound.value, context: ctx.value)
@@ -6068,6 +6210,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } catch let inv as ServiceToolInvocation {
                 // Single tool invocation — same emission path.
+                markSemanticDeltaIfChannelActive()
                 hop {
                     self.writeAnthropicToolUse(inv, writer: writerBound.value, context: ctx.value)
                     writerBound.value.writeFinish(stopReason: "tool_use", context: ctx.value)
@@ -6130,9 +6273,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logModel = model
         let logSelf = self
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
                 let chatEngine = self.chatEngine
+                try Task.checkCancellation()
                 let resp = try await chatEngine.completeChat(request: internalReq)
 
                 // Convert OpenAI response to Anthropic format
@@ -6415,7 +6559,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let modelParam = parsed.fields["model"]
         let responseFormat = parsed.fields["response_format"] ?? "json"
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
                 // Write audio data to temp file
                 let tempDir = FileManager.default.temporaryDirectory
@@ -6732,18 +6876,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let messageItemOpen = AtomicBoolBox()
         let outputText = LockedStringAccumulator()
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
+            let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
+            var emittedSemanticDelta = false
+            func markSemanticDeltaIfChannelActive() {
+                if self._isChannelActive.value {
+                    emittedSemanticDelta = true
+                }
+            }
+            defer {
+                if !wasResidentBeforeStream && !emittedSemanticDelta
+                    && (!self._isChannelActive.value || Task.isCancelled)
+                {
+                    Task {
+                        await ModelRuntime.shared.unload(name: model)
+                    }
+                }
+            }
             do {
                 let chatEngine = self.chatEngine
+                try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                 )
                 for try await delta in stream {
+                    try Task.checkCancellation()
                     // Reasoning sentinel must be decoded BEFORE the
                     // generic `isSentinel` filter, otherwise it gets
                     // dropped together with tool/stats hints.
                     if let reasoning = StreamingReasoningHint.decode(delta) {
+                        markSemanticDeltaIfChannelActive()
                         if let pending = contentCoalescer.flush() {
                             outputText.append(pending)
                             hop {
@@ -6777,6 +6940,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     if StreamingToolHint.isSentinel(delta) { continue }
                     if let chunk = contentCoalescer.append(delta) {
+                        markSemanticDeltaIfChannelActive()
                         outputText.append(chunk)
                         hop {
                             // First non-reasoning chunk: close the reasoning
@@ -6793,6 +6957,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
                 if let pending = contentCoalescer.flush() {
+                    markSemanticDeltaIfChannelActive()
                     outputText.append(pending)
                     hop {
                         // First non-reasoning chunk: close the reasoning
@@ -6838,6 +7003,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                markSemanticDeltaIfChannelActive()
                 // Multi-tool MLX completion: emit one function_call item
                 // per invocation. Use the lazy `messageItemOpen` flag so
                 // we don't close an item that was never opened.
@@ -6876,6 +7042,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                markSemanticDeltaIfChannelActive()
                 // Single tool invocation — same flow with one item.
                 hop {
                     writerBound.value.writeReasoningItemDone(context: ctx.value)
@@ -7125,9 +7292,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logModel = model
         let logSelf = self
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
                 let chatEngine = self.chatEngine
+                try Task.checkCancellation()
                 let resp = try await chatEngine.completeChat(request: internalReq)
 
                 // Convert to Open Responses format
