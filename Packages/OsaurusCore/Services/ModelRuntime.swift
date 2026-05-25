@@ -39,6 +39,7 @@ public actor ModelRuntime {
         let nativeMTPDepth: Int?
         let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
+        let cacheTopology: ModelCacheTopologySnapshot?
     }
 
     struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
@@ -64,6 +65,7 @@ public actor ModelRuntime {
         let weightsSizeBytes: Int64
         let isVLM: Bool
         let draftStrategy: MLXLMCommon.DraftStrategy?
+        var cacheTopology: ModelCacheTopologySnapshot?
         init(
             name: String,
             container: ModelContainer,
@@ -146,7 +148,8 @@ public actor ModelRuntime {
                 draftStrategyDescription: Self.describeDraftStrategy(holder.draftStrategy),
                 nativeMTPDepth: Self.nativeMTPDepth(holder.draftStrategy),
                 mlxPressStatus: holder.container.mlxPressStatus(),
-                cacheStats: holder.container.cacheCoordinator?.snapshotStats()
+                cacheStats: holder.container.cacheCoordinator?.snapshotStats(),
+                cacheTopology: holder.cacheTopology
             )
         }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
@@ -955,6 +958,7 @@ public actor ModelRuntime {
     /// Installs the cache coordinator on a freshly-loaded holder.
     private func installCacheCoordinator(on holder: SessionHolder) async {
         let cacheTopology = await holder.container.cacheTopologySnapshot()
+        holder.cacheTopology = cacheTopology
         let cacheConfig = Self.buildCacheCoordinatorConfig(
             modelName: holder.name,
             cacheTopology: cacheTopology

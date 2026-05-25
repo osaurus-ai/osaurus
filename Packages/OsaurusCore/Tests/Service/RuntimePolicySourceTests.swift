@@ -695,6 +695,9 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains(#""block_disk_store""#))
         #expect(httpHandler.contains(#""disk_l2_hits""#))
         #expect(httpHandler.contains(#""prefix_hits""#))
+        #expect(httpHandler.contains(#""cache_topology""#))
+        #expect(httpHandler.contains("hybrid_pool_layer_count"))
+        #expect(httpHandler.contains("requires_disk_backed_restore"))
         #expect(!httpHandler.contains(#"aggregate["prefix_hits", default: 0] += diskStats.hits"#))
         #expect(!httpHandler.contains(#"aggregate["prefix_misses", default: 0] += diskStats.misses"#))
 
