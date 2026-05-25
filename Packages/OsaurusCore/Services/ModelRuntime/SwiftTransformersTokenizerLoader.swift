@@ -274,6 +274,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             let hasNemotronSentinel =
                 upstream.convertTokenToId("<|im_start|>") != nil
                 || upstream.convertTokenToId("<|im_end|>") != nil
+            if isGemma {
+                throw error
+            }
             let ordered: [(label: String, template: String)]
             if hasLagunaSentinel {
                 ordered = [("LagunaMinimal", MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal)]
@@ -284,16 +287,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                         MLXLMCommon.ChatTemplateFallbacks.zayaVLVisionToolMinimal
                     )
                 ]
-            } else if isGemma {
-                ordered = [
-                    ("Gemma4WithTools", MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools),
-                    ("Gemma4Minimal", MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal),
-                ]
             } else if hasNemotronSentinel {
                 ordered = [
                     ("NemotronMinimal", MLXLMCommon.ChatTemplateFallbacks.nemotronMinimal),
-                    ("Gemma4WithTools", MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools),
-                    ("Gemma4Minimal", MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal),
                 ]
             } else {
                 ordered = MLXLMCommon.ChatTemplateFallbacks.orderedFallbacks

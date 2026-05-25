@@ -25,9 +25,10 @@ struct GenerationParameters: Sendable {
     /// them straight through.
     let repetitionPenalty: Float?
     /// True when sampling fields were filled from app/UI defaults rather than
-    /// an explicit client request. Native MTP is lossless only for greedy
-    /// generation, so local MLX may override implicit defaults while still
-    /// preserving explicit API sampling as an AR fallback.
+    /// an explicit client request. Local MLX must treat these as defaults to
+    /// preserve, not as permission to rewrite the sampler into a compatibility
+    /// mode. If an acceleration path cannot honor them, it should fall back to
+    /// normal autoregressive decode.
     let samplingParametersAreImplicit: Bool
     /// Raw OpenAI `frequency_penalty`, forwarded as-is to remote services
     /// that support it (most OpenAI-compatible upstreams).

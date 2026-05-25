@@ -62,7 +62,7 @@ actor FoundationModelService: ToolCapableService {
     /// Falls back to throwing when the framework is unavailable.
     static func generateOneShot(
         prompt: String,
-        temperature: Float,
+        temperature: Float?,
         maxTokens: Int
     ) async throws -> String {
         #if canImport(FoundationModels)
@@ -71,7 +71,7 @@ actor FoundationModelService: ToolCapableService {
 
                 let options = GenerationOptions(
                     sampling: nil,
-                    temperature: Double(temperature),
+                    temperature: temperature.map(Double.init),
                     maximumResponseTokens: maxTokens
                 )
                 let response = try await session.respond(to: prompt, options: options)
@@ -100,7 +100,7 @@ actor FoundationModelService: ToolCapableService {
 
                 let options = GenerationOptions(
                     sampling: nil,
-                    temperature: Double(parameters.temperature ?? 0.7),
+                    temperature: parameters.temperature.map(Double.init),
                     maximumResponseTokens: parameters.maxTokens
                 )
 
@@ -168,7 +168,7 @@ actor FoundationModelService: ToolCapableService {
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
         return try await Self.generateOneShot(
             prompt: prompt,
-            temperature: parameters.temperature ?? 0.7,
+            temperature: parameters.temperature,
             maxTokens: parameters.maxTokens
         )
     }
@@ -196,7 +196,7 @@ actor FoundationModelService: ToolCapableService {
 
                 let options = GenerationOptions(
                     sampling: nil,
-                    temperature: Double(parameters.temperature ?? 0.7),
+                    temperature: parameters.temperature.map(Double.init),
                     maximumResponseTokens: parameters.maxTokens
                 )
 
@@ -249,7 +249,7 @@ actor FoundationModelService: ToolCapableService {
 
                 let options = GenerationOptions(
                     sampling: nil,
-                    temperature: Double(parameters.temperature ?? 0.7),
+                    temperature: parameters.temperature.map(Double.init),
                     maximumResponseTokens: parameters.maxTokens
                 )
 
@@ -522,7 +522,7 @@ actor FoundationModelService: ToolCapableService {
         private func shouldEnableTool(_ tool: Tool, choice: ToolChoiceOption?) -> Bool {
             guard let choice else { return true }
             switch choice {
-            case .auto: return true
+            case .auto, .required: return true
             case .none: return false
             case .function(let n):
                 return n.function.name == tool.function.name

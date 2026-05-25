@@ -72,8 +72,6 @@ struct MLXBatchAdapter {
         let compiledBatchDecode: Bool
     }
 
-    private static let dsv4MaxReasoningRepetitionPenalty: Float = 1.10
-
     static func effectiveGenerationSettings(
         modelName: String,
         generation: GenerationParameters,
@@ -81,8 +79,7 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
-        nativeMTPExplicitSamplingFallback: Bool = false,
-        nativeMTPGreedyFallback: Bool = false
+        nativeMTPExplicitSamplingFallback: Bool = false
     ) -> EffectiveGenerationSettings {
         let defaultTemperature: Float? = {
             if modelDefaults.doSample == false {
@@ -90,14 +87,11 @@ struct MLXBatchAdapter {
             }
             return modelDefaults.temperature
         }()
-        let useNativeMTPGreedyDefaults = shouldApplyNativeMTPGreedyDefaults(
-            generation: generation,
-            draftStrategy: draftStrategy
-        )
+        let engineDefaults = MLXLMCommon.GenerateParameters()
 
         // Merge order (per-request always wins): per-request →
-        // model-shipped defaults → server runtime defaults → static
-        // engine fallback.
+        // model-shipped defaults → server runtime defaults → vmlx engine
+        // defaults. Osaurus must not invent sampler defaults.
         let runtimeTopP: Float? = runtimeDefaults.topP.map { Float($0) }
         let runtimeMinP: Float? = runtimeDefaults.minP.map { Float($0) }
         let runtimeTopK: Int? = runtimeDefaults.topK
@@ -112,30 +106,18 @@ struct MLXBatchAdapter {
         )
 
         return EffectiveGenerationSettings(
-            temperature: useNativeMTPGreedyDefaults || nativeMTPGreedyFallback
-                ? 0
-                : (generation.temperature ?? defaultTemperature ?? runtimeTemperature ?? 0.7),
+            temperature: generation.temperature
+                ?? defaultTemperature
+                ?? runtimeTemperature
+                ?? engineDefaults.temperature,
             maxTokens: generation.maxTokensExplicit
                 ? generation.maxTokens
                 : (modelDefaults.maxTokens ?? runtimeMaxTokens ?? generation.maxTokens),
-            topP: useNativeMTPGreedyDefaults || nativeMTPGreedyFallback
-                ? (generation.topPOverride ?? 1)
-                : (generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? 1.0),
-            topK: useNativeMTPGreedyDefaults || nativeMTPExplicitSamplingFallback || nativeMTPGreedyFallback
-                ? 0
-                : (modelDefaults.topK ?? runtimeTopK ?? 0),
-            minP: useNativeMTPGreedyDefaults || nativeMTPGreedyFallback
-                ? (generation.minPOverride ?? 0)
-                : (generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? 0),
-            repetitionPenalty: {
-                if nativeMTPExplicitSamplingFallback || nativeMTPGreedyFallback {
-                    return nil
-                }
-                return useNativeMTPGreedyDefaults
-                    ? generation.repetitionPenalty
-                    : repetitionPenalty
-            }(),
-            compiledBatchDecode: nativeMTPExplicitSamplingFallback || nativeMTPGreedyFallback
+            topP: generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? engineDefaults.topP,
+            topK: modelDefaults.topK ?? runtimeTopK ?? engineDefaults.topK,
+            minP: generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? engineDefaults.minP,
+            repetitionPenalty: repetitionPenalty,
+            compiledBatchDecode: nativeMTPExplicitSamplingFallback
                 ? false
                 : shouldEnableCompiledBatchDecode(
                     modelName: modelName,
@@ -157,7 +139,7 @@ struct MLXBatchAdapter {
             return nil
         }
         guard
-            shouldApplyNativeMTPGreedyDefaults(
+            requestSamplingIsExplicitGreedy(
                 generation: generation,
                 draftStrategy: draftStrategy
             )
@@ -180,7 +162,7 @@ struct MLXBatchAdapter {
     ) -> String? {
         guard draftStrategy?.usesNativeMTP == true else { return nil }
         if coldWarmup { return "cold_warmup" }
-        if !shouldApplyNativeMTPGreedyDefaults(
+        if !requestSamplingIsExplicitGreedy(
             generation: generation,
             draftStrategy: draftStrategy
         ) {
@@ -192,15 +174,15 @@ struct MLXBatchAdapter {
         return nil
     }
 
-    private static func shouldApplyNativeMTPGreedyDefaults(
+    private static func requestSamplingIsExplicitGreedy(
         generation: GenerationParameters,
         draftStrategy: MLXLMCommon.DraftStrategy?
     ) -> Bool {
         guard draftStrategy?.usesNativeMTP == true else { return false }
         if generation.samplingParametersAreImplicit {
-            return true
+            return false
         }
-        if let temperature = generation.temperature, temperature != 0 { return false }
+        guard generation.temperature == 0 else { return false }
         if let topP = generation.topPOverride, topP < 1 { return false }
         if let minP = generation.minPOverride, minP != 0 { return false }
         if let repetitionPenalty = generation.repetitionPenalty,
@@ -223,20 +205,7 @@ struct MLXBatchAdapter {
         }
 
         let resolved = modelDefault ?? runtimeDefault
-        guard
-            DSV4ReasoningProfile.matches(modelId: modelName),
-            let effort = generation.modelOptions["reasoningEffort"]?.stringValue,
-            DSV4ReasoningProfile.normalizedEffort(effort) == "max",
-            (resolved ?? 1.0) <= 1.0
-        else {
-            return resolved
-        }
-
-        // DSV4 Flash max-reasoning can enter a repeated "thinking" token loop
-        // under the model's shipped no-op penalty. Keep this as a decode policy,
-        // not a parser or stop-condition guard: explicit request penalties still
-        // win, and high/instruct modes keep the bundle defaults.
-        return dsv4MaxReasoningRepetitionPenalty
+        return resolved
     }
 
     /// Same-model gate for the single-slot runtime path. With
@@ -713,13 +682,16 @@ struct MLXBatchAdapter {
             normalizedReasoningEffort != nil && !directRailReasoningEffort
 
         if DSV4ReasoningProfile.matches(modelId: modelName) {
+            guard normalizedReasoningEffort != nil || disableThinking != nil else {
+                return context
+            }
             let effort: String
             if let normalizedReasoningEffort {
                 effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
             } else if let disableThinking {
                 effort = disableThinking ? "instruct" : "high"
             } else {
-                effort = "instruct"
+                return context
             }
 
             switch effort {
@@ -749,7 +721,7 @@ struct MLXBatchAdapter {
         if ModelFamilyNames.isLingFamily(modelName) {
             if let disableThinking {
                 context["enable_thinking"] = !disableThinking
-            } else {
+            } else if normalizedReasoningEffort != nil {
                 context["enable_thinking"] = hasPositiveReasoningEffort
             }
             return context
@@ -767,15 +739,23 @@ struct MLXBatchAdapter {
             return context
         }
         if ModelFamilyNames.isNemotronOmniFamily(modelName) {
-            context["enable_thinking"] = hasPositiveReasoningEffort
+            if directRailReasoningEffort {
+                context["enable_thinking"] = false
+                return context
+            }
             if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["enable_thinking"] = true
                 context["reasoning_effort"] = normalizedReasoningEffort
             }
             return context
         }
         if ModelFamilyNames.isZayaFamily(modelName) {
-            context["enable_thinking"] = hasPositiveReasoningEffort
+            if directRailReasoningEffort {
+                context["enable_thinking"] = false
+                return context
+            }
             if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["enable_thinking"] = true
                 context["reasoning_effort"] = normalizedReasoningEffort
             }
             return context
@@ -783,12 +763,12 @@ struct MLXBatchAdapter {
 
         if let normalizedReasoningEffort, !directRailReasoningEffort {
             context["reasoning_effort"] = normalizedReasoningEffort
+            context["enable_thinking"] = true
         }
         if directRailReasoningEffort {
             context["enable_thinking"] = false
             return context
         }
-        context["enable_thinking"] = true
         return context
     }
 
@@ -886,8 +866,7 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
-            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
-            nativeMTPGreedyFallback: nativeMTPColdWarmup
+            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback
         )
         let mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,
@@ -1027,11 +1006,9 @@ struct MLXBatchAdapter {
             box.toolsBuiltAt = CFAbsoluteTimeGetCurrent()
             box.toolCount = toolsSpec?.count ?? 0
 
-            // Reasoning template context. Hy3 uses `reasoning_effort`
-            // instead of the generic boolean; Ling is force-off; ZAYA is
-            // reasoning-capable but defaults off unless explicitly opted in.
-            // Other thinking-capable families default to a truthy
-            // `enable_thinking` kwarg.
+            // Reasoning template context. Only explicit request controls are
+            // translated into model-specific template kwargs; omitted controls
+            // leave the model template/default contract untouched.
             let additionalContext = additionalContext(for: generation, modelName: modelName)
             box.contextBuiltAt = CFAbsoluteTimeGetCurrent()
             box.contextKeys = additionalContext.keys.sorted()

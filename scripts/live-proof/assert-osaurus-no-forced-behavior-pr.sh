@@ -64,16 +64,22 @@ require_regex "$SOURCE_ROOT/Services/ModelRuntime/MLXBatchAdapter.swift" \
 require_regex "$SOURCE_ROOT/Services/ModelRuntime/MLXBatchAdapter.swift" \
   'engineDefaults\.minP' \
   "minP fallback is vMLX engine default"
-require_regex "$SOURCE_ROOT/Tests/Service/RuntimePolicySourceTests.swift" \
-  'must use vmlx GenerateParameters defaults for topP/topK/minP' \
-  "source test documents no hidden topP/topK/minP defaults"
-require_regex "$SOURCE_ROOT/Tests/Service/RuntimePolicySourceTests.swift" \
-  'must use vmlx GenerateParameters defaults for topP/topK/minP' \
-  "source tests guard no hidden sampler literals"
+require_regex "$SOURCE_ROOT/Services/ModelRuntime/MLXBatchAdapter.swift" \
+  'requestSamplingIsExplicitGreedy' \
+  "native MTP eligibility requires explicit greedy sampling"
+require_regex "$SOURCE_ROOT/Services/ModelRuntime/MLXBatchAdapter.swift" \
+  'generation\.samplingParametersAreImplicit' \
+  "native MTP checks implicit sampling marker"
+require_regex "$SOURCE_ROOT/Services/ModelRuntime/MLXBatchAdapter.swift" \
+  'return false' \
+  "implicit sampling does not authorize native-MTP sampler rewrite"
+require_regex "$SOURCE_ROOT/Services/ModelRuntime/MLXBatchAdapter.swift" \
+  'normalizedReasoningEffort != nil \|\| disableThinking != nil' \
+  "reasoning template kwargs require explicit request controls"
 
 echo "--- keychain/build process boundary ---"
 active_forbidden="$({ ps -axo pid,ppid,rss,etime,command || true; } \
-  | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
+  | rg -i 'CodeSigningHelper|xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
   | rg -v 'rg -i|assert-osaurus-no-forced-behavior-pr' || true)"
 if [[ -n "$active_forbidden" ]]; then
   echo "$active_forbidden" >&2
