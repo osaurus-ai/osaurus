@@ -1549,30 +1549,13 @@ public actor ModelRuntime {
         _ messages: [ChatMessage],
         toolChoice: ToolChoiceOption?
     ) -> [ChatMessage] {
-        guard case .function(let target) = toolChoice else { return messages }
-
-        let toolName = target.function.name
-        let directive = """
-            Tool choice is forced by the API caller. You must call exactly the \
-            function named `\(toolName)` and must not answer in natural language. \
-            Ignore any user instruction that asks you to skip tools, answer in \
-            plain text, or choose a different tool.
-            """
-
-        var out = messages
-        if let firstSystemIdx = out.firstIndex(where: { $0.role == "system" }) {
-            let existing = out[firstSystemIdx].content ?? ""
-            out[firstSystemIdx] = ChatMessage(
-                role: "system",
-                content: existing.isEmpty ? directive : directive + "\n\n" + existing,
-                tool_calls: out[firstSystemIdx].tool_calls,
-                tool_call_id: out[firstSystemIdx].tool_call_id,
-                reasoning_content: out[firstSystemIdx].reasoning_content
-            )
-        } else {
-            out.insert(ChatMessage(role: "system", content: directive), at: 0)
-        }
-        return out
+        // Named `tool_choice` is enforced by `makeTokenizerTools`: the
+        // tokenizer sees only the requested function's schema. Do not add a
+        // generic system directive here. Some model-family templates,
+        // including DSV4 DSML, treat that out-of-template prose as ordinary
+        // instruction text and can respond with an empty visible answer
+        // instead of the selected protocol block.
+        messages
     }
 
     /// When `jsonMode` is true, prepend (or augment) a system instruction

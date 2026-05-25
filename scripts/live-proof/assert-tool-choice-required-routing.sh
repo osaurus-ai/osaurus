@@ -43,9 +43,14 @@ require_text "$REMOTE" "case .required, .function:" "remote Gemini required maps
 require_text "$REMOTE" "openResponsesToolChoice = .required" "remote OpenResponses required preserved"
 
 require_text "$RUNTIME" "case .auto, .required:" "local tokenizer tools preserved for required"
+require_text "$RUNTIME" 'Named `tool_choice` is enforced by `makeTokenizerTools`' \
+  "local named tool_choice uses schema filtering instead of prompt directive"
 
 require_text "$TESTS" "func decodesRequired" "tool_choice required decode regression exists"
 require_text "$TESTS" 'decode("\"required\"")' "required decode regression uses OpenAI string"
 require_text "$TESTS" 'decode("\"any\"")' "Anthropic any is not accepted as OpenAI tool_choice string"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/MLXBatchAdapterTests.swift" \
+  "forcedToolChoiceUsesSchemaFilteringWithoutPromptDirective" \
+  "named tool_choice no-prompt-directive regression exists"
 
 exit "$fail"
