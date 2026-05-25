@@ -17,6 +17,17 @@ struct RuntimePolicySourceTests {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
+    private static func vmlxPinRevision(in source: String) throws -> String {
+        let location = try #require(source.range(of: "https://github.com/osaurus-ai/vmlx-swift"))
+        let end = source.index(location.lowerBound, offsetBy: 800, limitedBy: source.endIndex) ?? source.endIndex
+        let block = String(source[location.lowerBound ..< end])
+        let regex = try NSRegularExpression(pattern: #""?revision"?\s*:\s*"([0-9a-f]{40})""#)
+        let range = NSRange(block.startIndex ..< block.endIndex, in: block)
+        let match = try #require(regex.firstMatch(in: block, range: range))
+        let revisionRange = try #require(Range(match.range(at: 1), in: block))
+        return String(block[revisionRange])
+    }
+
     private static func swiftFiles(under relativePath: String) throws -> [URL] {
         let root = packageRoot().appendingPathComponent(relativePath)
         guard
@@ -320,6 +331,7 @@ struct RuntimePolicySourceTests {
     func keychainReadsUseNonInteractiveAuthenticationContexts() throws {
         let helper = try Self.source("Services/Keychain/KeychainQueryHelpers.swift")
         #expect(helper.contains("context.interactionNotAllowed = true"))
+        #expect(helper.contains("disablesKeychainForProcess"))
 
         for path in [
             "Services/Provider/RemoteProviderKeychain.swift",
@@ -328,6 +340,7 @@ struct RuntimePolicySourceTests {
             "Services/MCP/MCPProviderKeychain.swift",
         ] {
             let source = try Self.source(path)
+            #expect(source.contains("if KeychainQueryHelpers.disablesKeychainForProcess"))
             let queryCount =
                 source.components(separatedBy: "kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip").count
                 - 1
@@ -341,6 +354,8 @@ struct RuntimePolicySourceTests {
         let storageKey = try Self.source("Identity/StorageKeyManager.swift")
         #expect(storageKey.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
         #expect(!storageKey.contains("KeychainQueryHelpers.nonInteractiveContext()"))
+        #expect(storageKey.contains("if Self.disablesKeychainForProcess { return nil }"))
+        #expect(storageKey.contains("if Self.disablesKeychainForProcess { return }"))
     }
 
     @Test("ServerController relies on NIO bind instead of a startup port probe")
@@ -366,7 +381,7 @@ struct RuntimePolicySourceTests {
             "../../App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
         )
 
-        // This revision keeps the consolidated vmlx-swift pin for Osaurus
+        // The synchronized revision keeps the consolidated vmlx-swift pin for Osaurus
         // with vendored Jinja/Hub/Tokenizers/Transformers exposed through
         // VMLX-prefixed products, plus the Qwen3.6 MXFP affine metadata,
         // MoE router-gate load hardening, native-MTP speedup proof gate,
@@ -381,10 +396,16 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let currentVmlxRevision = "52af37d5d4d5b7279ef627b505ca1f186b383cc8"
-        #expect(manifest.contains(currentVmlxRevision))
-        #expect(workspaceResolved.contains(currentVmlxRevision))
-        #expect(appResolved.contains(currentVmlxRevision))
+        let expectedRuntimeHardenedRevision = "52af37d5d4d5b7279ef627b505ca1f186b383cc8"
+        let manifestRevision = try Self.vmlxPinRevision(in: manifest)
+        let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
+        let appRevision = try Self.vmlxPinRevision(in: appResolved)
+        #expect(manifestRevision == workspaceRevision)
+        #expect(manifestRevision == appRevision)
+        #expect(
+            manifestRevision == expectedRuntimeHardenedRevision,
+            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma matrix; an internally-consistent older pin is still not wired"
+        )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/mlx-swift"))
@@ -396,6 +417,42 @@ struct RuntimePolicySourceTests {
         #expect(manifest.contains(".product(name: \"MLXLMCommon\", package: \"vmlx-swift\")"))
         #expect(manifest.contains(".product(name: \"VMLXTokenizers\", package: \"vmlx-swift\")"))
         #expect(manifest.contains(".product(name: \"VMLXJinja\", package: \"vmlx-swift\")"))
+    }
+
+    @Test("new model loads forward caller cancellation into loader task")
+    func modelRuntimeNewLoadsCancelUnderlyingLoaderTask() throws {
+        let source = try Self.source("Services/ModelRuntime.swift")
+        let taskStart = try #require(source.range(of: "let task = Task<SessionHolder, Error>"))
+        let taskStore = try #require(
+            source.range(of: "loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)")
+        )
+        let success = try #require(
+            source.range(of: "return try await finishLoadedContainer", range: taskStore.upperBound ..< source.endIndex)
+        )
+        let loadBody = String(source[taskStart.lowerBound ..< success.lowerBound])
+
+        #expect(loadBody.contains("withTaskCancellationHandler"))
+        #expect(loadBody.contains("try await task.value"))
+        #expect(loadBody.contains("onCancel:"))
+        #expect(loadBody.contains("cancelLoadingTask(name: name, loadID: loadID)"))
+        #expect(source.contains("private func cancelLoadingTask(name: String, loadID: UInt64) async"))
+        #expect(source.contains("await cancelAndDrainLoadingTasks([(name, record)]"))
+    }
+
+    @Test("cancelled cold load is unloaded before stream setup")
+    func cancelledColdLoadUnloadsBeforeStreamSetup() throws {
+        let source = try Self.source("Services/ModelRuntime.swift")
+        let loadDone = try #require(source.range(of: #"trace?.mark("load_container_done")"#))
+        let leaseAcquire = try #require(
+            source.range(of: "await ModelLease.shared.acquire(modelName)", range: loadDone.upperBound ..< source.endIndex)
+        )
+        let postLoadWindow = String(source[loadDone.lowerBound ..< leaseAcquire.lowerBound])
+
+        #expect(postLoadWindow.contains("if Task.isCancelled"))
+        #expect(postLoadWindow.contains("await ModelResidencyManager.shared.cancel(modelName: modelName)"))
+        #expect(postLoadWindow.contains("if shouldReportModelLoad"))
+        #expect(postLoadWindow.contains("await unload(name: modelName)"))
+        #expect(postLoadWindow.contains("throw CancellationError()"))
     }
 
     @Test("DSV4 renderer checklist keeps invalid generic flags out of CLI preview")
@@ -508,6 +565,8 @@ struct RuntimePolicySourceTests {
             #expect(mirrors.contains("\"original\" : \"https://github.com/huggingface/swift-jinja\""))
             #expect(mirrors.contains("\"original\" : \"https://github.com/huggingface/swift-jinja.git\""))
             #expect(mirrors.contains("\"mirror\" : \"https://github.com/osaurus-ai/Jinja.git\""))
+            #expect(!mirrors.contains("vmlx-swift"))
+            #expect(!mirrors.contains("/Users/eric/vmlx-swift"))
         }
 
         #expect(contributing.contains("single consolidated `vmlx-swift` pin"))
@@ -600,26 +659,22 @@ struct RuntimePolicySourceTests {
     /// `enableSSMReDerive=true`. Pre-`b9da180` this ran a FULL second
     /// prefill BEFORE yielding `.info` (the Ling stuck-before-end
     /// symptom). vmlx pin `b9da180` reordered the pass to run AFTER
-    /// `.info`, fixing the stream-stays-open UX. We KEEP the opt-out
-    /// regardless because osaurus's chat workload mutates the system
-    /// prefix every turn (memory injection, preflight capability search,
-    /// dynamic skills) so the SSM cache rarely lands a boundary-matching
-    /// hit on the next turn — re-derive cost is paid without warm-cache
-    /// payoff. If a future refactor drops or inverts the knob, this
-    /// assertion breaks first.
-    @Test("CacheCoordinatorConfig disables SSM re-derive for chat workflow")
-    func cacheConfigDisablesSSMReDerive() throws {
+    /// `.info`, fixing the stream-stays-open UX. Keep this default on so
+    /// hybrid SSM/linear-attention cache rows have their companion state
+    /// rederived and stored by default instead of silently falling back to
+    /// KV-only reuse.
+    @Test("CacheCoordinatorConfig enables SSM re-derive for automatic hybrid cache reuse")
+    func cacheConfigEnablesSSMReDerive() throws {
         // Ownership moved from `ModelRuntime.buildCacheCoordinatorConfig`
         // (which now delegates to `VMLXServerRuntimeSettings.cacheCoordinatorConfig`)
         // to `ServerRuntimeSettingsStore.migratedFromLegacy`. The
-        // migrated default still seeds `enableSSMReDerive: false` so
-        // osaurus's mutating-system-prefix chat workload doesn't pay the
-        // re-derive cost across turns.
+        // migrated default seeds `enableSSMReDerive: true` so Osaurus does
+        // not default hybrid models into KV-only cache reuse.
         let store = try Self.source("Models/Configuration/ServerRuntimeSettingsStore.swift")
 
         #expect(
-            store.contains("enableSSMReDerive: false"),
-            "ServerRuntimeSettingsStore.migratedFromLegacy must seed enableSSMReDerive=false — osaurus's mutating-system-prefix chat workload doesn't amortize the cost across turns"
+            store.contains("enableSSMReDerive: true"),
+            "ServerRuntimeSettingsStore.migratedFromLegacy must seed enableSSMReDerive=true for automatic hybrid cache reuse"
         )
     }
 
@@ -674,9 +729,10 @@ struct RuntimePolicySourceTests {
         #expect(!pendingRestart.contains("concurrency.maxConcurrentSequences"))
 
         #expect(concurrency.contains("`maxConcurrentSequences` hot-resizes"))
-        #expect(concurrency.contains("runtime consumers are not yet implemented"))
-        #expect(concurrency.contains("Reserved contract flag for explicit scheduler gating"))
+        #expect(concurrency.contains("runtime consumers for these fields are not yet implemented"))
+        #expect(concurrency.contains("pins the BatchEngine to one active slot"))
         #expect(concurrency.contains("Concurrent Sessions"))
+        #expect(concurrency.contains("Continuous Batching"))
         #expect(concurrency.contains("Prompt Prefill Chunk Size"))
     }
 
@@ -833,13 +889,14 @@ struct RuntimePolicySourceTests {
     }
 
     /// Preflight tool selection is a background prompt-ranking call, not the user's
-    /// answer. It can fall back to the active chat model, so reasoning families
-    /// must be forced onto their short non-thinking path or they can monopolize
-    /// the single B=1 engine slot before the real chat request starts.
-    @Test("Preflight fallback LLM forces no-think model options")
-    func preflightFallbackLLMForcesNoThinkOptions() throws {
+    /// answer. It can fall back to the active chat model, but must not apply a
+    /// synthetic reasoning mode; runtime/model defaults remain authoritative unless
+    /// a caller explicitly supplies model options.
+    @Test("Preflight fallback LLM does not force no-think model options")
+    func preflightFallbackLLMDoesNotForceNoThinkOptions() throws {
         let coreModel = try Self.source("Services/Inference/CoreModelService.swift")
         let preflight = try Self.source("Services/Context/PreflightCapabilitySearch.swift")
+        let greeting = try Self.source("Services/Chat/GenerativeGreetingService.swift")
 
         #expect(
             coreModel.contains("modelOptions: [String: ModelOptionValue]"),
@@ -850,8 +907,30 @@ struct RuntimePolicySourceTests {
             "CoreModelService.generate must thread modelOptions into GenerationParameters before routing to MLX/remote services"
         )
         #expect(
-            preflight.contains("modelOptions: [\"reasoningEffort\": .string(\"no_think\")]"),
-            "PreflightCapabilitySearch.defaultLLM must force no_think so Hy3/ZAYA/Qwen-style reasoning templates do not spend the tool-ranking timeout generating long reasoning traces"
+            !preflight.contains("modelOptions: [\"reasoningEffort\": .string(\"no_think\")]"),
+            "PreflightCapabilitySearch.defaultLLM must not force no_think; hidden reasoning-mode fixes belong in runtime/model defaults or explicit caller options"
+        )
+        #expect(
+            !greeting.contains("modelOptions: [\"reasoningEffort\": .string(\"no_think\")]"),
+            "GenerativeGreetingService must not force no_think for internal greeting calls; model generation_config/runtime defaults remain authoritative"
+        )
+    }
+
+    @Test("Thinking chip toggles semantic thinking state, not raw inverted booleans")
+    func thinkingChipTogglesSemanticThinkingState() throws {
+        let floatingInput = try Self.source("Views/Chat/FloatingInputCard.swift")
+
+        #expect(
+            floatingInput.contains("ModelProfileRegistry.thinkingEnabled(for: $0, values: activeModelOptions)"),
+            "FloatingInputCard.toggleThinking must derive the current semantic thinking state from the registry so inverted options like disableThinking do not flip the wrong way"
+        )
+        #expect(
+            floatingInput.contains("let newVal = thinkingOpt?.inverted == true ? !newEnabled : newEnabled"),
+            "FloatingInputCard.toggleThinking must write the profile-specific stored value from the semantic enabled state"
+        )
+        #expect(
+            !floatingInput.contains("let current = activeModelOptions[id]?.boolValue ?? false"),
+            "Thinking chip must not toggle the raw stored bool directly; that reintroduces first-click explicit no-thinking for inverted profiles"
         )
     }
 
@@ -1008,6 +1087,114 @@ struct RuntimePolicySourceTests {
         #expect(handler.contains("writerBound.value.writeTextDelta(chunk"))
     }
 
+    @Test("HTTP channel close cancels per-request streaming tasks")
+    func httpChannelCloseCancelsPerRequestStreamingTasks() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        let helper = try Self.source("Networking/HTTPLoopHelpers.swift")
+
+        #expect(helper.contains("final class HTTPRequestTaskRegistry"))
+        #expect(helper.contains("func cancelAll()"))
+        #expect(helper.contains("task.cancel()"))
+        #expect(handler.contains("private let requestTasks = HTTPRequestTaskRegistry()"))
+        #expect(handler.contains("requestTasks.cancelAll()"))
+        #expect(handler.contains("private func runRequestTask("))
+        #expect(handler.contains("requestTasks.insert(id: id, task: task)"))
+        #expect(handler.contains("defer { requestTasks.remove(id: id) }"))
+        #expect(handler.contains("private final class ChannelCloseFutureBox: @unchecked Sendable"))
+        #expect(handler.contains("private let channelCloseFuture = ChannelCloseFutureBox()"))
+        #expect(handler.contains("channelCloseFuture.set(context.channel.closeFuture)"))
+        #expect(handler.contains("channelCloseFuture.snapshot()?.whenComplete { _ in\n            task.cancel()"))
+        #expect(handler.contains("func userInboundEventTriggered(context: ChannelHandlerContext, event: Any)"))
+        #expect(handler.contains("if case ChannelEvent.inputClosed = event"))
+        #expect(handler.contains("context.fireUserInboundEventTriggered(event)"))
+        #expect(handler.contains("intervalNanoseconds: 250_000_000"))
+        #expect(handler.contains("intervalNanoseconds: UInt64 = 15_000_000_000"))
+        #expect(handler.contains("promise.futureResult.whenFailure"))
+        #expect(handler.contains("ctx.value.close(promise: nil)"))
+        #expect(handler.contains("ctx.value.read()"))
+        #expect(handler.contains("let disconnected = SendableBool(false)"))
+        #expect(handler.contains("disconnected: disconnected"))
+        #expect(handler.contains("disconnected?.value = true"))
+        #expect(handler.contains("if disconnected.value { throw CancellationError() }"))
+        #expect(handler.contains("let channelClosed = SendableBool(false)"))
+        #expect(handler.contains("let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)"))
+        #expect(handler.contains("var emittedSemanticDelta = false"))
+        #expect(handler.contains("func markSemanticDeltaIfConnected()"))
+        #expect(handler.contains("if self._isChannelActive.value && !disconnected.value && !channelClosed.value"))
+        #expect(handler.contains("func markSemanticDeltaIfChannelActive()"))
+        #expect(handler.contains("if self._isChannelActive.value {\n                    emittedSemanticDelta = true"))
+        #expect(handler.contains("!wasResidentBeforeStream && !emittedSemanticDelta"))
+        #expect(handler.contains("!self._isChannelActive.value || Task.isCancelled"))
+        #expect(handler.contains("await ModelRuntime.shared.unload(name: model)"))
+        let completionsStart = try #require(handler.range(of: "private func handleChatCompletions("))
+        let completionsEnd = try #require(
+            handler.range(
+                of: "private func handleChatNDJSON(",
+                range: completionsStart.upperBound ..< handler.endIndex
+            )
+        )
+        let chatCompletions = String(handler[completionsStart.lowerBound ..< completionsEnd.lowerBound])
+        #expect(chatCompletions.contains("func markSemanticDeltaIfConnected()"))
+        #expect(chatCompletions.contains("markSemanticDeltaIfConnected()"))
+        #expect(chatCompletions.contains("!disconnected.value && !channelClosed.value"))
+        let ndjsonStart = try #require(handler.range(of: "private func handleChatNDJSON("))
+        let ndjsonEnd = try #require(
+            handler.range(
+                of: "private func handleOllamaChatNonStreaming(",
+                range: ndjsonStart.upperBound ..< handler.endIndex
+            )
+        )
+        let ndjsonStreaming = String(handler[ndjsonStart.lowerBound ..< ndjsonEnd.lowerBound])
+        #expect(ndjsonStreaming.contains("let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: req.model)"))
+        #expect(ndjsonStreaming.contains("func markSemanticDeltaIfChannelActive()"))
+        #expect(ndjsonStreaming.contains("await ModelRuntime.shared.unload(name: req.model)"))
+        #expect(ndjsonStreaming.contains("try Task.checkCancellation()\n                    // Ollama-style NDJSON"))
+        let anthropicStart = try #require(handler.range(of: "private func handleAnthropicMessagesStreaming("))
+        let anthropicEnd = try #require(
+            handler.range(
+                of: "private func handleAnthropicMessagesNonStreaming(",
+                range: anthropicStart.upperBound ..< handler.endIndex
+            )
+        )
+        let anthropicStreaming = String(handler[anthropicStart.lowerBound ..< anthropicEnd.lowerBound])
+        #expect(anthropicStreaming.contains("let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)"))
+        #expect(anthropicStreaming.contains("func markSemanticDeltaIfChannelActive()"))
+        #expect(anthropicStreaming.contains("markSemanticDeltaIfChannelActive()"))
+        #expect(anthropicStreaming.contains("await ModelRuntime.shared.unload(name: model)"))
+        #expect(anthropicStreaming.contains("try Task.checkCancellation()\n                    // Reasoning sentinel"))
+        let responsesStart = try #require(handler.range(of: "private func handleOpenResponsesStreaming("))
+        let responsesEnd = try #require(
+            handler.range(
+                of: "private static func openResponsesNonStreamingBody(",
+                range: responsesStart.upperBound ..< handler.endIndex
+            )
+        )
+        let responsesStreaming = String(handler[responsesStart.lowerBound ..< responsesEnd.lowerBound])
+        #expect(responsesStreaming.contains("let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)"))
+        #expect(responsesStreaming.contains("var emittedSemanticDelta = false"))
+        #expect(responsesStreaming.contains("func markSemanticDeltaIfChannelActive()"))
+        #expect(responsesStreaming.contains("!wasResidentBeforeStream && !emittedSemanticDelta"))
+        #expect(responsesStreaming.contains("await ModelRuntime.shared.unload(name: model)"))
+        #expect(responsesStreaming.contains("try Task.checkCancellation()\n                    // Reasoning sentinel"))
+        let errorStart = try #require(handler.range(of: "func errorCaught"))
+        let errorEnd = try #require(
+            handler.range(of: "    // MARK: - CORS", range: errorStart.upperBound ..< handler.endIndex)
+        )
+        let errorCaught = String(handler[errorStart.lowerBound ..< errorEnd.lowerBound])
+        #expect(errorCaught.contains("requestTasks.cancelAll()"))
+
+        #expect(
+            !handler.contains("\n        Task(priority: .userInitiated)"),
+            "Per-request HTTP work must go through runRequestTask so channelInactive can cancel model loads/generation"
+        )
+        #expect(handler.components(separatedBy: "runRequestTask(priority: .userInitiated)").count >= 8)
+        #expect(handler.contains("try Task.checkCancellation()\n                    let stream = try await chatEngine.streamChat(request: enrichedReq)"))
+        #expect(handler.contains("try Task.checkCancellation()\n                let stream = try await chatEngine.streamChat(request: req)"))
+        #expect(handler.contains("let stream = try await chatEngine.streamChat(request: req)"))
+        #expect(handler.contains("let stream = try await self.chatEngine.streamChat(request: chatRequest)"))
+        #expect(handler.contains("let stream = try await chatEngine.streamChat(request: internalReq)"))
+    }
+
     /// Lock the removal of the `activeGenerationTask?.value` gate at
     /// the entry of `generateEventStream`. The gate was serializing
     /// every same-model overlapping request before vmlx's `BatchEngine`
@@ -1071,6 +1258,53 @@ struct RuntimePolicySourceTests {
             !runtime.contains("loadingTasks[other]?.cancel()"),
             "Strict single-model replacement must not fire-and-forget cancel an in-flight model load"
         )
+    }
+
+    @Test("app termination stops sessions before draining model runtime")
+    func appTerminationStopsSessionsBeforeDrainingModelRuntime() throws {
+        let appDelegate = try Self.source("AppDelegate.swift")
+        let start = try #require(appDelegate.range(of: "public func applicationShouldTerminate"))
+        let end = try #require(
+            appDelegate.range(
+                of: "public func applicationWillTerminate",
+                range: start.upperBound ..< appDelegate.endIndex))
+        let body = String(appDelegate[start.lowerBound ..< end.lowerBound])
+
+        let stopSessions = try #require(body.range(of: "ChatWindowManager.shared.stopAllSessions()"))
+        let clearRuntime = try #require(body.range(of: "await ModelRuntime.shared.clearAll()"))
+        let replyTerminate = try #require(
+            body.range(of: "NSApp.reply(toApplicationShouldTerminate: true)"))
+
+        #expect(stopSessions.lowerBound < clearRuntime.lowerBound)
+        #expect(clearRuntime.lowerBound < replyTerminate.lowerBound)
+        #expect(body.contains("return .terminateLater"))
+    }
+
+    @Test("live proof keychain-disabled mode keeps app startup off user Keychain")
+    func liveProofKeychainDisabledModeKeepsStartupOffUserKeychain() throws {
+        let paths = try Self.source("Utils/OsaurusPaths.swift")
+        let storage = try Self.source("Identity/StorageKeyManager.swift")
+        let appDelegate = try Self.source("AppDelegate.swift")
+        let keychainHelper = try Self.source("Services/Keychain/KeychainQueryHelpers.swift")
+        let agentSecrets = try Self.source("Services/Keychain/AgentSecretsKeychain.swift")
+        let toolSecrets = try Self.source("Services/Keychain/ToolSecretsKeychain.swift")
+        let remoteProvider = try Self.source("Services/Provider/RemoteProviderKeychain.swift")
+        let mcpProvider = try Self.source("Services/MCP/MCPProviderKeychain.swift")
+
+        #expect(paths.contains("OSAURUS_TEST_ROOT"))
+        #expect(storage.contains("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"))
+        #expect(storage.contains("generateInMemoryKey()"))
+        #expect(storage.contains("if Self.disablesKeychainForProcess"))
+        #expect(appDelegate.contains("private var keychainDisabledTestMode"))
+        #expect(appDelegate.contains("if keychainDisabledTestMode {\n            LaunchGuard.markStartupComplete()"))
+        #expect(appDelegate.contains("if !keychainDisabledTestMode {\n                await MCPProviderManager.shared.connectEnabledProviders()"))
+        #expect(appDelegate.contains("if !keychainDisabledTestMode {\n            SandboxToolRegistrar.shared.start()"))
+        #expect(appDelegate.contains("Headless live-proof launches only need the local HTTP server"))
+        #expect(keychainHelper.contains("disablesKeychainForProcess"))
+        #expect(agentSecrets.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
+        #expect(toolSecrets.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
+        #expect(remoteProvider.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
+        #expect(mcpProvider.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
     }
 
     @Test("ModelRuntime uses typed vmlx load configuration")
@@ -1141,6 +1375,53 @@ struct RuntimePolicySourceTests {
         #expect(!runtime.contains("scrubber.flush"))
         #expect(runtime.contains("case .reasoning(let s):"))
         #expect(runtime.contains("StreamingReasoningHint.encode(s)"))
+    }
+
+    @Test("Chat UI routes parsed reasoning only through the reasoning sentinel")
+    func chatUIRoutesParsedReasoningOnlyThroughReasoningSentinel() throws {
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        let processor = try Self.source("Utils/StreamingDeltaProcessor.swift")
+
+        let reasoningDecode = try #require(chatView.range(of: "StreamingReasoningHint.decode(delta)"))
+        let receiveReasoning = try #require(chatView.range(of: "processor.receiveReasoning(reasoning)"))
+        let contentDelta = try #require(chatView.range(of: "processor.receiveDelta(delta)"))
+        #expect(reasoningDecode.lowerBound < receiveReasoning.lowerBound)
+        #expect(receiveReasoning.lowerBound < contentDelta.lowerBound)
+        #expect(!chatView.contains("processor.receiveDelta(reasoning)"))
+        #expect(!chatView.contains("reasoning.contains(\"thought\")"))
+        #expect(!chatView.contains("reasoning.contains(\"<|channel>"))
+
+        let receiveStart = try #require(processor.range(of: "func receiveReasoning(_ text: String)"))
+        let receiveEnd = try #require(
+            processor.range(
+                of: "    }\n\n    /// Force-flush",
+                range: receiveStart.upperBound ..< processor.endIndex
+            )
+        )
+        let receiveBody = String(processor[receiveStart.lowerBound ..< receiveEnd.upperBound])
+        #expect(receiveBody.contains("appendThinking(text)"))
+        #expect(!receiveBody.contains("appendContent"))
+        #expect(!receiveBody.contains("<think"))
+        #expect(!receiveBody.contains("<|channel"))
+        #expect(!receiveBody.contains("thought"))
+    }
+
+    @Test("ChatEngine stream wrapper does not accumulate reasoning sentinels as visible response text")
+    func chatEngineStreamWrapperKeepsReasoningOutOfVisibleAccumulator() throws {
+        let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
+        let reasoningDecode = try #require(chatEngine.range(of: "if let reasoning = StreamingReasoningHint.decode(delta)"))
+        let yieldReasoning = try #require(
+            chatEngine.range(
+                of: "continuation.yield(delta)\n                        continue",
+                range: reasoningDecode.upperBound ..< chatEngine.endIndex
+            )
+        )
+        let visibleAppend = try #require(chatEngine.range(of: "responseAccumulator.append(delta)"))
+        let textEstimate = try #require(chatEngine.range(of: "let estimated = TokenEstimator.estimate(delta)"))
+
+        #expect(reasoningDecode.lowerBound < yieldReasoning.lowerBound)
+        #expect(yieldReasoning.lowerBound < visibleAppend.lowerBound)
+        #expect(yieldReasoning.lowerBound < textEstimate.lowerBound)
     }
 
     @Test("ModelRuntime wires idle residency around model leases")
@@ -1216,8 +1497,8 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("Chat UI sends accumulated history and keeps implicit native MTP sampling")
-    func chatUISendsAccumulatedHistoryAndImplicitNativeMTPSampling() throws {
+    @Test("Chat UI sends accumulated history and marks implicit sampling without forcing native MTP")
+    func chatUISendsAccumulatedHistoryAndMarksImplicitSamplingWithoutForcingNativeMTP() throws {
         let chatView = try Self.source("Views/Chat/ChatView.swift")
 
         let buildMessages = try #require(chatView.range(of: "func buildMessages() -> [ChatMessage]"))
@@ -1242,7 +1523,7 @@ struct RuntimePolicySourceTests {
         #expect(streamRequest.lowerBound < implicitSampling.lowerBound)
         #expect(
             chatView.contains("temperature: effectiveTemp"),
-            "The UI may pass the agent/profile temperature, but it must also mark sampling implicit so native MTP can force greedy defaults."
+            "The UI may pass the agent/profile temperature, but implicit sampling must be preserved by the runtime rather than rewritten to greedy native-MTP defaults."
         )
         #expect(
             chatView.contains("tools: toolSpecs.isEmpty ? nil : toolSpecs"),
@@ -1268,6 +1549,74 @@ struct RuntimePolicySourceTests {
         )
         #expect(!runtime.contains("loadContainer: post-load warmup completed"))
         #expect(!runtime.contains("input.additionalContext = [\"reasoning_effort\": \"no_think\"]"))
+    }
+
+    @Test("MLXBatchAdapter does not force hidden reasoning defaults")
+    func mlxBatchAdapterDoesNotForceHiddenReasoningDefaults() throws {
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+        let modelService = try Self.source("Services/Inference/ModelService.swift")
+        let tokenizerLoader = try Self.source("Services/ModelRuntime/SwiftTransformersTokenizerLoader.swift")
+        let reasoningCapability = try Self.source("Services/LocalReasoningCapability.swift")
+
+        #expect(
+            adapter.contains("normalizedReasoningEffort != nil || disableThinking != nil"),
+            "DSV4 reasoning context should only be synthesized when the client requested reasoning controls."
+        )
+        #expect(
+            !adapter.contains("effort = \"instruct\""),
+            "DSV4 must not silently force instruct/no-thinking mode when the request omitted reasoning controls."
+        )
+        #expect(
+            !adapter.contains("context[\"enable_thinking\"] = true\n        return context"),
+            "Generic local chat must not silently force enable_thinking=true."
+        )
+        #expect(
+            !adapter.contains("context[\"enable_thinking\"] = hasPositiveReasoningEffort\n            if hasPositiveReasoningEffort"),
+            "Family-specific reasoning profiles must not force enable_thinking=false by writing a false boolean when no positive effort was requested."
+        )
+        #expect(
+            !adapter.contains("dsv4MaxReasoningRepetitionPenalty")
+                && !adapter.contains("repeated \"thinking\" token loop"),
+            "Decode-loop problems must not be hidden behind DSV4-specific forced repetition-penalty guards."
+        )
+        #expect(
+            adapter.contains("engineDefaults.temperature")
+                && !adapter.contains("runtimeTemperature ?? 0.7"),
+            "Local chat sampler fallback must use vmlx GenerateParameters defaults, not Osaurus-specific invented temperature defaults."
+        )
+        #expect(
+            adapter.contains("engineDefaults.topP")
+                && adapter.contains("engineDefaults.topK")
+                && adapter.contains("engineDefaults.minP")
+                && !adapter.contains("runtimeTopP ?? 1.0")
+                && !adapter.contains("runtimeTopK ?? 0")
+                && !adapter.contains("runtimeMinP ?? 0"),
+            "Local chat sampler fallback must use vmlx GenerateParameters defaults for topP/topK/minP instead of hardcoded Osaurus literals."
+        )
+        #expect(
+            !adapter.contains("generation.samplingParametersAreImplicit {\n            return true"),
+            "Implicit UI sampling must not authorize native-MTP greedy sampler rewrites."
+        )
+        #expect(
+            !adapter.contains("temperature: useNativeMTPGreedyDefaults")
+                && !adapter.contains("topP: useNativeMTPGreedyDefaults")
+                && !adapter.contains("topK: useNativeMTPGreedyDefaults"),
+            "Native-MTP compatibility must be handled by dropping draft mode, not by rewriting sampler parameters."
+        )
+        #expect(
+            modelService.contains("If an acceleration path cannot honor them, it should fall back to"),
+            "GenerationParameters.samplingParametersAreImplicit documentation must preserve the no-forced-sampler contract."
+        )
+        #expect(
+            tokenizerLoader.contains("if isGemma {\n                throw error\n            }")
+                && !tokenizerLoader.contains("} else if isGemma {\n                ordered = ["),
+            "Gemma-family native template runtime errors must not silently fall back to Gemma4 tool/minimal templates."
+        )
+        #expect(
+            reasoningCapability.contains("runtime code must not synthesize")
+                && !reasoningCapability.contains("streaming prepend-think"),
+            "Reasoning capability detection must not document or imply middleware-prepended thinking tags."
+        )
     }
 
     @Test("Inference docs match max-batch hot-resize semantics")
@@ -1296,7 +1645,7 @@ struct RuntimePolicySourceTests {
         let lingDoc = try Self.source("../../docs/LING_JANGTQ2_LONG_PROMPT_CRASH.md")
 
         #expect(runtimeDoc.contains("BailingLinearAttention.recurrentGLA"))
-        #expect(runtimeDoc.contains("enableSSMReDerive=false"))
+        #expect(runtimeDoc.contains("enableSSMReDerive=true"))
         #expect(runtimeDoc.contains("convertToBFloat16(model:)"))
         #expect(runtimeDoc.contains("mlx::core::Fence::wait"))
         #expect(runtimeDoc.contains("AGX::ComputeContext::endComputePass"))

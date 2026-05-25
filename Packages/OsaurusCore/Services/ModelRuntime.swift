@@ -329,6 +329,11 @@ public actor ModelRuntime {
         Memory.clearCache()
     }
 
+    private func cancelLoadingTask(name: String, loadID: UInt64) async {
+        guard let record = loadingTasks[name], record.id == loadID else { return }
+        await cancelAndDrainLoadingTasks([(name, record)])
+    }
+
     private func finishLoadedContainer(
         name: String,
         holder: SessionHolder,
@@ -524,6 +529,7 @@ public actor ModelRuntime {
     }
 
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
+        try Task.checkCancellation()
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
         genLog.info(
@@ -531,6 +537,7 @@ public actor ModelRuntime {
         )
 
         while true {
+            try Task.checkCancellation()
             if let existing = modelCache[name] {
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
                 genLog.info(
@@ -599,6 +606,7 @@ public actor ModelRuntime {
             break
         }
 
+        try Task.checkCancellation()
         guard let localURL = Self.findLocalDirectory(forModelId: id) else {
             throw NSError(
                 domain: "ModelRuntime",
@@ -612,6 +620,7 @@ public actor ModelRuntime {
 
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
         await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
+        try Task.checkCancellation()
 
         // Preflight: JANGTQ/TurboQuant variants need a `jangtq_runtime.safetensors`
         // sidecar (signs + codebook arrays for the Metal kernels). vmlx's
@@ -628,6 +637,7 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public)"
         )
+        try Task.checkCancellation()
 
         if policy == .manualMultiModel {
             await unloadForFlexibleResidentBudget(
@@ -635,6 +645,7 @@ public actor ModelRuntime {
                 incomingWeightsSizeBytes: weightsBytes
             )
         }
+        try Task.checkCancellation()
 
         // Tool-call format + reasoning parser are stamped automatically by
         // vmlx-swift's LLM/VLM factories from `jang_config.json` capabilities
@@ -649,6 +660,7 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: task start model=\(name, privacy: .public) loadID=\(loadID, privacy: .public)"
             )
+            try Task.checkCancellation()
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
             let serverSettings = ServerRuntimeSettingsStore.snapshot()
             let mtpPlan = Self.resolveNativeMTPLaunchPlan(
@@ -664,7 +676,15 @@ public actor ModelRuntime {
                     base: ModelConfiguration(directory: localURL)),
                 loadConfiguration: mtpPlan.loadConfiguration
             )
+            if Task.isCancelled {
+                container.disableCaching()
+                throw CancellationError()
+            }
             let isVLM = await container.isVLM
+            if Task.isCancelled {
+                container.disableCaching()
+                throw CancellationError()
+            }
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - taskStartedAt) * 1000)
             genLog.info(
                 "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
@@ -681,7 +701,13 @@ public actor ModelRuntime {
         loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)
 
         do {
-            let holder = try await task.value
+            let holder = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                Task {
+                    await ModelRuntime.shared.cancelLoadingTask(name: name, loadID: loadID)
+                }
+            }
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
             genLog.info(
                 "loadContainer: task value returned model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public)"
@@ -1118,6 +1144,16 @@ public actor ModelRuntime {
             InferenceProgressManager.shared.modelLoadDidFinishAsync()
         }
         trace?.mark("load_container_done")
+
+        if Task.isCancelled {
+            await ModelResidencyManager.shared.cancel(modelName: modelName)
+            if shouldReportModelLoad {
+                await unload(name: modelName)
+            } else {
+                await scheduleIdleResidency(for: modelName)
+            }
+            throw CancellationError()
+        }
 
         // Pin the model against eviction for the stream's lifetime.
         await ModelLease.shared.acquire(modelName)
