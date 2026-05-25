@@ -16,6 +16,8 @@ classify() {
   case "$path" in
     scripts/live-proof/assert-*.sh|scripts/live-proof/launch-keychain-free-osaurus.sh|scripts/live-proof/classify-osaurus-pr-dirty-scope.sh)
       echo "release-guard" ;;
+    Packages/OsaurusCore/Package.swift|Packages/OsaurusCore/Package.resolved|osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved|App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved)
+      echo "dependency-pin" ;;
     .agents/vmlx-osaurus/codex/*)
       echo "coordination-doc" ;;
     Packages/OsaurusCore/Services/ModelRuntime/*|Packages/OsaurusCore/Services/ModelRuntime.swift|Packages/OsaurusCore/Models/Configuration/ServerRuntimeSettingsStore.swift|Packages/OsaurusCore/Models/Configuration/ModelOptions.swift|Packages/OsaurusCore/Views/Settings/ServerSettings/*|Packages/OsaurusCore/Views/Settings/ServerSettingsView.swift)
@@ -68,7 +70,7 @@ classify() {
   echo "- tests and docs are PR-scope only if they directly support the changed behavior."
   echo "- local-artifact and unknown paths block publication until removed, ignored, or manually classified."
   echo
-  for category in release-guard coordination-doc keychain-launch-safety runtime-settings-cache api-streaming-responses chat-reasoning-tool-ui model-provider-defaults tests docs local-artifact unknown; do
+  for category in release-guard dependency-pin coordination-doc keychain-launch-safety runtime-settings-cache api-streaming-responses chat-reasoning-tool-ui model-provider-defaults tests docs local-artifact unknown; do
     if awk -F '\t' -v c="$category" 'NR>1 && $1 == c { found=1 } END { exit found ? 0 : 1 }' "$OUT.tsv"; then
       echo "## $category"
       echo
