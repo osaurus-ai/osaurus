@@ -135,7 +135,8 @@ actor HuggingFaceService {
 
     /// Determine if a Hugging Face repo is MLX-compatible using repository metadata.
     /// Prefers explicit tags (e.g., "mlx", "apple-mlx", "library:mlx").
-    /// Falls back to id hints and required file presence when tags are unavailable.
+    /// Falls back to MLX/vMLX artifact-family id hints and required file presence
+    /// when tags are unavailable.
     func isMLXCompatible(repoId: String) async -> Bool {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
@@ -155,8 +156,10 @@ actor HuggingFaceService {
             }
         }
 
-        // Heuristic fallback: repository naming suggests MLX and core files exist
-        if lower.contains("mlx") && hasRequiredFiles(meta: meta) {
+        // Heuristic fallback: repository naming suggests MLX/vMLX-native
+        // artifacts and core files exist. This covers JANG/JANGTQ/MXFP repos
+        // whose display names may not include the literal `MLX` token.
+        if Self.repoIdHasMLXArtifactHint(lower) && hasRequiredFiles(meta: meta) {
             return true
         }
 
@@ -287,6 +290,14 @@ actor HuggingFaceService {
             }
         }
         return hasConfig && hasWeights && hasTokenizer
+    }
+
+    private static func repoIdHasMLXArtifactHint(_ lowerRepoId: String) -> Bool {
+        lowerRepoId.contains("mlx")
+            || lowerRepoId.contains("-mxfp") || lowerRepoId.contains("_mxfp")
+            || lowerRepoId.contains("-jang") || lowerRepoId.contains("_jang")
+            || lowerRepoId.contains("-jangtq") || lowerRepoId.contains("_jangtq")
+            || lowerRepoId.contains("turboquant")
     }
 }
 
