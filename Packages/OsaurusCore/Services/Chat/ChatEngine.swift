@@ -261,7 +261,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             ]
             if let data = try? JSONSerialization.data(
                 withJSONObject: envelope,
-                options: [.prettyPrinted, .sortedKeys]
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             ),
                 let s = String(data: data, encoding: .utf8)
             {
@@ -294,7 +294,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             coerced = normalized
         }
         guard JSONSerialization.isValidJSONObject(coerced),
-            let data = try? JSONSerialization.data(withJSONObject: coerced, options: [.sortedKeys]),
+            let data = try? JSONSerialization.data(withJSONObject: coerced, options: .osaurusCanonical),
             let string = String(data: data, encoding: .utf8)
         else {
             return json
