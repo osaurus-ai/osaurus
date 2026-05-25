@@ -394,12 +394,14 @@ struct RuntimePolicySourceTests {
         // acceptance, plus DSV4 DSML tool protocol hardening for no-arg
         // invokes, schema-valid and schema-less inline JSON fallback,
         // malformed JSON-shaped tool-attempt quarantine, and truncated
-        // schema-less JSON tool-attempt quarantine at EOS.
+        // schema-less JSON tool-attempt quarantine at EOS, plus live
+        // bare-name key/value DSV4 tool attempts such as
+        // `file_read\npath=...` being parsed as tools instead of visible text.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "22e4330b383dc0e980dfed0fa7de5b22f987c5cd"
+        let expectedRuntimeHardenedRevision = "13b9519f0c9dc095075bf566287a25169a190416"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
