@@ -37,6 +37,8 @@ public enum ServerRuntimeSettingsStore {
     /// `VMLXServerRuntimeSettings.contractVersion` controls the JSON
     /// shape so we don't need a separate filename bump for v1.
     private static let fileName = "server-runtime.json"
+    private static let cacheDefaultsMigrationMarkerName =
+        ".server-runtime-cache-defaults-v2-migrated"
 
     // MARK: - Load / Save
 
@@ -140,7 +142,46 @@ public enum ServerRuntimeSettingsStore {
            normalized.mtp.acceptedTokensOnlyEnterBaseCache {
             normalized.mtp.mode = .auto
         }
+        if shouldRepairLegacyCacheDefaults(normalized.cache) {
+            normalized.cache.liveKVCodec = .engineSelected
+            normalized.cache.enableSSMReDerive = true
+            writeCacheDefaultsMigrationMarker()
+        }
         return normalized
+    }
+
+    private nonisolated static func shouldRepairLegacyCacheDefaults(
+        _ cache: VMLXServerCacheSettings
+    ) -> Bool {
+        guard !FileManager.default.fileExists(atPath: cacheDefaultsMigrationMarkerURL().path) else {
+            return false
+        }
+        return cache.prefix.enabled
+            && cache.prefix.legacyEntryCountCache == false
+            && cache.prefix.memoryLimitMB == nil
+            && cache.prefix.memoryPercent == 15.0
+            && cache.prefix.ttlMinutes == nil
+            && cache.pagedKV.enabled
+            && cache.pagedKV.blockSize == nil
+            && cache.pagedKV.maxBlocks == nil
+            && cache.liveKVCodec == .none
+            && cache.turboQuantKeyBits == nil
+            && cache.turboQuantValueBits == nil
+            && cache.defaultMaxKVSize == 65536
+            && cache.longPromptMultiplier == 2.0
+            && cache.storedKVCodec == .auto
+            && cache.legacyDisk.enabled == false
+            && cache.legacyDisk.maxSizeGB == nil
+            && cache.blockDisk.enabled
+            && cache.blockDisk.maxSizeGB == nil
+            && cache.blockDisk.directory == nil
+            && cache.enableSSMReDerive == false
+    }
+
+    private nonisolated static func writeCacheDefaultsMigrationMarker() {
+        let url = cacheDefaultsMigrationMarkerURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        try? Data().write(to: url, options: [.atomic])
     }
 
     // MARK: - Migration
@@ -286,6 +327,10 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func fileURL() -> URL {
         directoryURL().appendingPathComponent(fileName)
+    }
+
+    private nonisolated static func cacheDefaultsMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(cacheDefaultsMigrationMarkerName)
     }
 
     private nonisolated static func legacyConfigurationFileURL() -> URL {

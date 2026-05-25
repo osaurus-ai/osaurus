@@ -130,6 +130,59 @@ struct ServerRuntimeSettingsStoreTests {
         }
     }
 
+    @Test @MainActor func load_repairsLegacyCacheDefaultsToEngineSelected() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var oldDefault = VMLXServerRuntimeSettings()
+            oldDefault.cache.liveKVCodec = .none
+            oldDefault.cache.enableSSMReDerive = false
+            oldDefault.cache.defaultMaxKVSize = 65536
+            oldDefault.cache.longPromptMultiplier = 2.0
+            try writeSettings(oldDefault, to: dir)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+            #expect(loaded.cache.liveKVCodec == .engineSelected)
+            #expect(loaded.cache.enableSSMReDerive == true)
+
+            let data = try Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
+            let persisted = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
+            #expect(persisted.cache.liveKVCodec == .engineSelected)
+            #expect(persisted.cache.enableSSMReDerive == true)
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: dir.appendingPathComponent(".server-runtime-cache-defaults-v2-migrated").path
+                )
+            )
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let snapshot = ServerRuntimeSettingsStore.snapshot()
+            #expect(snapshot.cache.liveKVCodec == .engineSelected)
+            #expect(snapshot.cache.enableSSMReDerive == true)
+        }
+    }
+
+    @Test @MainActor func load_preservesExplicitCacheNoneAfterMigrationMarker() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var explicitNone = VMLXServerRuntimeSettings()
+            explicitNone.cache.liveKVCodec = .none
+            explicitNone.cache.enableSSMReDerive = false
+            explicitNone.cache.defaultMaxKVSize = 65536
+            explicitNone.cache.longPromptMultiplier = 2.0
+            try writeSettings(explicitNone, to: dir)
+            try Data().write(
+                to: dir.appendingPathComponent(".server-runtime-cache-defaults-v2-migrated"),
+                options: [.atomic]
+            )
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+            #expect(loaded.cache.liveKVCodec == .none)
+            #expect(loaded.cache.enableSSMReDerive == false)
+        }
+    }
+
     @Test func migratedFromLegacy_projectsCorsAndPort() async throws {
         var legacy = ServerConfiguration.default
         legacy.port = 9000

@@ -396,7 +396,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "00c4419a3a85f89dcc58d8afcfae02f5f34bbbbc"
+        let expectedRuntimeHardenedRevision = "9ce40d72c9a3c202ea0478b4ef9dc732cf30105d"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -675,6 +675,14 @@ struct RuntimePolicySourceTests {
         #expect(
             store.contains("enableSSMReDerive: true"),
             "ServerRuntimeSettingsStore.migratedFromLegacy must seed enableSSMReDerive=true for automatic hybrid cache reuse"
+        )
+        #expect(
+            store.contains("liveKVCodec: .engineSelected"),
+            "ServerRuntimeSettingsStore.migratedFromLegacy must seed engine-selected TurboQuant KV defaults"
+        )
+        #expect(
+            store.contains("shouldRepairLegacyCacheDefaults"),
+            "ServerRuntimeSettingsStore must repair stale persisted cache defaults from pre-engine-selected installs"
         )
     }
 
