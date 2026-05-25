@@ -172,6 +172,12 @@ require_text "$ROOT/Packages/OsaurusCore/Tests/Service/ModelRuntimeIsHybridTests
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/IsKnownHybridModelMCDCTests.swift" \
   'dealignai/Qwen3\.6-35B-A3B-MXFP4-CRACK-MTP' \
   "MC/DC hybrid detection covers reported dealignai Qwen3.6 MXFP4 MTP slug"
+require_text "$ROOT/Packages/OsaurusCore/Models/Configuration/ModelMediaCapabilities.swift" \
+  '"qwen3_6", "qwen3_6_moe"' \
+  "Qwen3.6 config-based media detection preserves video-capable model types"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/MultiTurnFamilyMatrixTests.swift" \
+  '"qwen3_6", "qwen3_6_moe"' \
+  "multi-turn family matrix covers Qwen3.6 config-based media detection"
 require_text "$ROOT/Packages/OsaurusCore/Services/ModelRuntime/MLXBatchAdapter.swift" \
   'let engineDefaults = MLXLMCommon\.GenerateParameters\(\)' \
   "MLXBatchAdapter uses vMLX engine defaults"
