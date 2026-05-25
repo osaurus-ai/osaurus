@@ -2539,6 +2539,8 @@ struct RemoteChatRequest: Encodable {
                 anthropicToolChoice = .auto
             case .none:
                 anthropicToolChoice = AnthropicToolChoice.none
+            case .required:
+                anthropicToolChoice = .any
             case .function(let fn):
                 anthropicToolChoice = .tool(name: fn.function.name)
             }
@@ -2705,7 +2707,7 @@ struct RemoteChatRequest: Encodable {
                 mode = "AUTO"
             case .none:
                 mode = "NONE"
-            case .function:
+            case .required, .function:
                 mode = "ANY"
             }
             toolConfig = GeminiToolConfig(
@@ -2970,6 +2972,8 @@ struct RemoteChatRequest: Encodable {
                 openResponsesToolChoice = .auto
             case .none:
                 openResponsesToolChoice = OpenResponsesToolChoice.none
+            case .required:
+                openResponsesToolChoice = .required
             case .function(let fn):
                 openResponsesToolChoice = .function(name: fn.function.name)
             }

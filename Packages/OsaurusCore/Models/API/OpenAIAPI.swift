@@ -807,6 +807,7 @@ struct ToolFunction: Codable, Sendable {
 enum ToolChoiceOption: Codable, Sendable {
     case auto
     case none
+    case required
     case function(FunctionName)
 
     struct FunctionName: Codable, Sendable {
@@ -821,11 +822,12 @@ enum ToolChoiceOption: Codable, Sendable {
             switch str {
             case "auto": self = .auto
             case "none": self = .none
+            case "required": self = .required
             default:
                 throw DecodingError.dataCorruptedError(
                     in: container,
                     debugDescription:
-                        "Unsupported tool_choice string '\(str)'. Expected 'auto', 'none', or a typed function selector."
+                        "Unsupported tool_choice string '\(str)'. Expected 'auto', 'none', 'required', or a typed function selector."
                 )
             }
             return
@@ -841,6 +843,8 @@ enum ToolChoiceOption: Codable, Sendable {
             try container.encode("auto")
         case .none:
             try container.encode("none")
+        case .required:
+            try container.encode("required")
         case .function(let obj):
             try container.encode(obj)
         }

@@ -1518,7 +1518,7 @@ public actor ModelRuntime {
             switch toolChoice {
             case .none:
                 return nil
-            case .auto:
+            case .auto, .required:
                 return tools.map { $0.toTokenizerToolSpec() }
             case .function(let target):
                 let name = target.function.name

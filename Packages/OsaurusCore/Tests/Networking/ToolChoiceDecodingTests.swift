@@ -27,6 +27,12 @@ struct ToolChoiceDecodingTests {
         Issue.record("expected .none")
     }
 
+    @Test func decodesRequired() throws {
+        let value = try decode("\"required\"")
+        if case .required = value { return }
+        Issue.record("expected .required")
+    }
+
     @Test func decodesFunction() throws {
         let value = try decode("{\"type\":\"function\",\"function\":{\"name\":\"my_tool\"}}")
         guard case .function(let f) = value else {
@@ -40,14 +46,14 @@ struct ToolChoiceDecodingTests {
     /// Decoding now throws so the bad value surfaces immediately.
     @Test func rejectsUnknownStrings() throws {
         do {
-            _ = try decode("\"required\"")
+            _ = try decode("\"REJECT\"")
             Issue.record("expected DecodingError for unknown string")
         } catch {
             // Expected
         }
 
         do {
-            _ = try decode("\"REJECT\"")
+            _ = try decode("\"any\"")
             Issue.record("expected DecodingError for unknown string")
         } catch {
             // Expected

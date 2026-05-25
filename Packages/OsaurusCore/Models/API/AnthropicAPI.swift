@@ -925,8 +925,7 @@ extension AnthropicMessagesRequest {
             case .none:
                 openAIToolChoice = ToolChoiceOption.none
             case .any:
-                // "any" means the model must call a tool - map to auto as closest equivalent
-                openAIToolChoice = .auto
+                openAIToolChoice = .required
             case .tool(let name):
                 openAIToolChoice = .function(
                     ToolChoiceOption.FunctionName(

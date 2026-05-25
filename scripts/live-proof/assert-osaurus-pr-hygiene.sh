@@ -62,8 +62,9 @@ NO_FORCED_GUARD="$ROOT/scripts/live-proof/assert-osaurus-no-forced-behavior-pr.s
 SERVER_SETTINGS_GUARD="$ROOT/scripts/live-proof/assert-server-settings-runtime-wiring.sh"
 CHAT_REASONING_GUARD="$ROOT/scripts/live-proof/assert-chat-reasoning-delta-routing.sh"
 HTTP_CANCEL_GUARD="$ROOT/scripts/live-proof/assert-http-channel-load-cancellation.sh"
+TOOL_CHOICE_GUARD="$ROOT/scripts/live-proof/assert-tool-choice-required-routing.sh"
 
-for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD" "$CHAT_REASONING_GUARD" "$HTTP_CANCEL_GUARD"; do
+for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD" "$CHAT_REASONING_GUARD" "$HTTP_CANCEL_GUARD" "$TOOL_CHOICE_GUARD"; do
   require_file "$file" "${file#$ROOT/}"
 done
 
@@ -117,6 +118,12 @@ else
   fail_msg "HTTP channel/load cancellation guard failed"
 fi
 
+if "$TOOL_CHOICE_GUARD"; then
+  pass "tool_choice required routing"
+else
+  fail_msg "tool_choice required routing guard failed"
+fi
+
 echo "--- PR artifact hygiene ---"
 reject_dirty_prefix ".spm-cache" "SwiftPM artifact cache"
 reject_dirty_prefix ".claude" "local Claude settings"
@@ -128,6 +135,24 @@ echo "--- required PR files ---"
 require_file "$ROOT/AGENTS.md" "Osaurus AGENTS keychain rules"
 require_text "$ROOT/AGENTS.md" 'Do not run Osaurus SwiftPM/Xcode validation lanes' \
   "Osaurus no SwiftPM/Xcode validation rule"
+require_text "$ROOT/AGENTS.md" 'generation_config\.json' \
+  "Osaurus model defaults must come from generation config"
+require_text "$ROOT/AGENTS.md" 'Native-trained defaults such as top-k matter' \
+  "Osaurus native top-k/defaults rule"
+require_text "$ROOT/AGENTS.md" 'Activity Monitor physical footprint' \
+  "Osaurus physical-footprint RAM proof rule"
+require_text "$ROOT/AGENTS.md" 'Every generation row must record token/s' \
+  "Osaurus token/s proof rule"
+require_text "$ROOT/AGENTS.md" 'Qwen-style hybrid SSM needs KV plus SSM companion rederive/hit proof' \
+  "Osaurus hybrid SSM cache proof rule"
+require_text "$ROOT/AGENTS.md" 'DeepSeek-V4 CSA/HSA/SWA hybrid pool needs prefix/L2' \
+  "Osaurus DSV4 cache proof rule"
+require_text "$ROOT/AGENTS.md" 'VL/video rows require real media payloads' \
+  "Osaurus VL/video media proof rule"
+require_text "$ROOT/AGENTS.md" 'Big-model load cancellation must be live-proven' \
+  "Osaurus big-model load cancellation proof rule"
+require_text "$ROOT/AGENTS.md" 'Qwen/JANG/JANGTQ RAM regressions require end-to-end Osaurus proof' \
+  "Osaurus Qwen/JANGTQ RAM proof rule"
 require_text "$ROOT/Packages/OsaurusCore/Package.swift" \
   'revision: "52af37d5d4d5b7279ef627b505ca1f186b383cc8"' \
   "Package.swift pinned to vMLX Gemma parser fix"
