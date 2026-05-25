@@ -1270,7 +1270,9 @@ extension AppDelegate {
             if await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: modelId) == nil {
                 let alert = NSAlert()
                 alert.messageText = L("Unsupported model")
-                alert.informativeText = L("Osaurus only supports MLX-compatible Hugging Face repositories.")
+                alert.informativeText = L(
+                    "Osaurus supports MLX-compatible Hugging Face repositories, including MLX, MXFP, JANG, JANGTQ, and TurboQuant artifacts when required files are present."
+                )
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
                 alert.runModal()

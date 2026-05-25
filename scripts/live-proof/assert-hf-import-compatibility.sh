@@ -36,10 +36,14 @@ reject_text() {
 
 MODEL_MANAGER="$ROOT/Packages/OsaurusCore/Managers/Model/ModelManager.swift"
 HF_SERVICE="$ROOT/Packages/OsaurusCore/Services/HuggingFaceService.swift"
+APP_DELEGATE="$ROOT/Packages/OsaurusCore/AppDelegate.swift"
+MODEL_DOWNLOAD_VIEW="$ROOT/Packages/OsaurusCore/Views/Model/ModelDownloadView.swift"
 TESTS="$ROOT/Packages/OsaurusCore/Tests/Model/ModelManagerResolveTests.swift"
 
 require_file "$MODEL_MANAGER" "ModelManager"
 require_file "$HF_SERVICE" "HuggingFaceService"
+require_file "$APP_DELEGATE" "AppDelegate"
+require_file "$MODEL_DOWNLOAD_VIEW" "ModelDownloadView"
 require_file "$TESTS" "ModelManagerResolveTests"
 
 require_text "$MODEL_MANAGER" 'static func nameLooksLikeMLX' \
@@ -80,6 +84,13 @@ require_text "$TESTS" 'TurboQuant-4bit' \
   "regression covers TurboQuant family hint"
 require_text "$TESTS" 'Plain-Transformers-Checkpoint' \
   "regression rejects plain non-MLX checkpoint"
+
+require_text "$MODEL_DOWNLOAD_VIEW" 'MLX, MXFP, JANG, JANGTQ, or TurboQuant' \
+  "Model Download UI names accepted artifact-family hints"
+reject_text "$MODEL_DOWNLOAD_VIEW" 'must have .*mlx.*repo name|one with .*-mlx.*in its name' \
+  "literal-MLX-only Model Download error copy"
+require_text "$APP_DELEGATE" 'MLX, MXFP, JANG, JANGTQ, and TurboQuant' \
+  "HF deeplink alert names accepted artifact-family hints"
 
 active="$({ ps -axo pid,ppid,rss,etime,command || true; } \
   | rg -i 'CodeSigningHelper|xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
