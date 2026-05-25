@@ -666,9 +666,13 @@ struct MLXBatchAdapter {
 
     static func additionalContext(
         for generation: GenerationParameters,
-        modelName: String
+        modelName: String,
+        toolChoice: ToolChoiceOption? = nil
     ) -> [String: any Sendable] {
         var context: [String: any Sendable] = [:]
+        if toolChoiceRequiresLocalCall(toolChoice) {
+            context["tool_choice"] = "required"
+        }
         let normalizedReasoningEffort: String? = {
             guard let effort = generation.modelOptions["reasoningEffort"]?.stringValue else {
                 return nil
@@ -772,6 +776,16 @@ struct MLXBatchAdapter {
         return context
     }
 
+    private static func toolChoiceRequiresLocalCall(_ toolChoice: ToolChoiceOption?) -> Bool {
+        guard let toolChoice else { return false }
+        switch toolChoice {
+        case .required, .function(_):
+            return true
+        case .auto, .none:
+            return false
+        }
+    }
+
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
         guard let value else { return false }
         switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
@@ -799,6 +813,7 @@ struct MLXBatchAdapter {
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         generation: GenerationParameters,
+        toolChoice: ToolChoiceOption?,
         stopSequences: [String],
         draftStrategy: MLXLMCommon.DraftStrategy?,
         runtime: RuntimeConfig,
@@ -823,6 +838,7 @@ struct MLXBatchAdapter {
                 buildChat: buildChat,
                 buildToolsSpec: buildToolsSpec,
                 generation: generation,
+                toolChoice: toolChoice,
                 trace: trace
             )
         } catch {
@@ -963,6 +979,7 @@ struct MLXBatchAdapter {
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         generation: GenerationParameters,
+        toolChoice: ToolChoiceOption?,
         trace: TTFTTrace?
     ) async throws -> PreparedInput {
         // Heap-allocated outbox so the throwing closure can hand a value back
@@ -1009,7 +1026,11 @@ struct MLXBatchAdapter {
             // Reasoning template context. Only explicit request controls are
             // translated into model-specific template kwargs; omitted controls
             // leave the model template/default contract untouched.
-            let additionalContext = additionalContext(for: generation, modelName: modelName)
+            let additionalContext = additionalContext(
+                for: generation,
+                modelName: modelName,
+                toolChoice: toolChoice
+            )
             box.contextBuiltAt = CFAbsoluteTimeGetCurrent()
             box.contextKeys = additionalContext.keys.sorted()
             box.contextSummary = Self.safeContextSummary(additionalContext)
@@ -1082,7 +1103,7 @@ struct MLXBatchAdapter {
 
     private static func safeContextSummary(_ context: [String: any Sendable]) -> String {
         context.keys.sorted().compactMap { key in
-            guard key == "enable_thinking" || key == "reasoning_effort" else {
+            guard key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice" else {
                 return nil
             }
             let value = context[key]

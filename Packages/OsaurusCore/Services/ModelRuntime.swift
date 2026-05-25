@@ -1182,6 +1182,7 @@ public actor ModelRuntime {
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
                 generation: parameters,
+                toolChoice: toolChoice,
                 stopSequences: stopSequences,
                 draftStrategy: holder.draftStrategy,
                 runtime: cfg,

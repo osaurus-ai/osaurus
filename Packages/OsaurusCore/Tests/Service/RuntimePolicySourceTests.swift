@@ -399,7 +399,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "ef423a2bd166a0e729b63175014aae2fba3213f0"
+        let expectedRuntimeHardenedRevision = "22e4330b383dc0e980dfed0fa7de5b22f987c5cd"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -1598,6 +1598,15 @@ struct RuntimePolicySourceTests {
         #expect(
             adapter.contains("lmInput = prepared.withToolSchemas(toolsSpec)"),
             "MLXBatchAdapter must carry the same tool schemas from prompt rendering into vmlx's decode loop so DSML/JSON fallback parsing can validate required arguments."
+        )
+        #expect(
+            adapter.contains("toolChoice: toolChoice"),
+            "MLXBatchAdapter must pass the resolved tool_choice into prompt preparation so required local tool calls can reach family templates."
+        )
+        #expect(
+            adapter.contains("context[\"tool_choice\"] = \"required\"")
+                && adapter.contains("case .required, .function(_)"),
+            "Required or named local tool_choice must become template context instead of being reduced to a tools-available-only prompt."
         )
         #expect(
             registry.contains("invalidToolArgumentsEnvelope")

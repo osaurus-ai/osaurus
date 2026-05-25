@@ -1059,6 +1059,50 @@ struct MLXBatchAdapterTests {
         #expect(legacyToggle["reasoning_effort"] as? String == "high")
     }
 
+    @Test func additionalContext_threadsRequiredToolChoiceToLocalTemplates() {
+        let generation = GenerationParameters(temperature: nil, maxTokens: 16)
+        let modelName = "JANGQ-AI/DeepSeek-V4-Flash-JANGTQ2"
+
+        let required = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: modelName,
+            toolChoice: .required
+        )
+        #expect(required["tool_choice"] as? String == "required")
+
+        let namedFunction = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: modelName,
+            toolChoice: .function(
+                ToolChoiceOption.FunctionName(
+                    type: "function",
+                    function: ToolChoiceOption.Name(name: "file_read")
+                )
+            )
+        )
+        #expect(namedFunction["tool_choice"] as? String == "required")
+
+        let auto = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: modelName,
+            toolChoice: .auto
+        )
+        #expect(auto["tool_choice"] == nil)
+
+        let none = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: modelName,
+            toolChoice: ToolChoiceOption.none
+        )
+        #expect(none["tool_choice"] == nil)
+
+        let omitted = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: modelName
+        )
+        #expect(omitted["tool_choice"] == nil)
+    }
+
     @Test func additionalContext_defaultsLingThinkingOffButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
