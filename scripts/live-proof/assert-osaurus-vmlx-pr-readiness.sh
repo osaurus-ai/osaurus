@@ -144,7 +144,7 @@ echo "--- existing Gemma wire guard ---"
 if "$GEMMA_WIRE_GUARD"; then
   pass "Gemma parser fix wired through dependency checkout"
 else
-  warn "Gemma parser fix is not wired through the current Osaurus dependency checkout"
+  warn "Gemma parser wire guard failed or was process-blocked; inspect the guard output above before classifying this as a pin/checkout mismatch"
   fail=1
 fi
 
@@ -162,11 +162,9 @@ if [[ "$fail" -ne 0 ]]; then
   cat >&2 <<'EOF'
 Osaurus vMLX PR readiness is BLOCKED.
 
-Required before PR promotion:
-- push the vMLX parser/cache/default fixes to the vmlx-swift remote branch intended for Osaurus
-- update Package.swift plus all Package.resolved surfaces to that exact revision
-- refresh the SwiftPM checkout under a keychain-safe approved lane
-- rerun this guard and then the live app proof lane only if explicitly approved
+If the source/pin assertions above failed, fix the named vMLX pin/checkout/source mismatch.
+If the source/pin assertions above passed and only the process gate failed, clear the
+keychain/signing helper before rerunning this guard and any live app proof lane.
 EOF
   exit 1
 fi
