@@ -166,6 +166,12 @@ require_text "$ROOT/Packages/OsaurusCore/Package.swift" \
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/RuntimePolicySourceTests.swift" \
   '028cc46ed7e952147d955447359f41f81b6c0c35' \
   "RuntimePolicySourceTests guard pinned vMLX revision"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/ModelRuntimeIsHybridTests.swift" \
+  'dealignai/Qwen3\.6-35B-A3B-MXFP4-CRACK-MTP' \
+  "ModelRuntime hybrid detection covers reported dealignai Qwen3.6 MXFP4 MTP slug"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/IsKnownHybridModelMCDCTests.swift" \
+  'dealignai/Qwen3\.6-35B-A3B-MXFP4-CRACK-MTP' \
+  "MC/DC hybrid detection covers reported dealignai Qwen3.6 MXFP4 MTP slug"
 require_text "$ROOT/Packages/OsaurusCore/Services/ModelRuntime/MLXBatchAdapter.swift" \
   'let engineDefaults = MLXLMCommon\.GenerateParameters\(\)' \
   "MLXBatchAdapter uses vMLX engine defaults"
