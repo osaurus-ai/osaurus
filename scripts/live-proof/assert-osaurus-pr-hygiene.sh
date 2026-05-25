@@ -161,10 +161,10 @@ require_text "$ROOT/AGENTS.md" 'Big-model load cancellation must be live-proven'
 require_text "$ROOT/AGENTS.md" 'Qwen/JANG/JANGTQ RAM regressions require end-to-end Osaurus proof' \
   "Osaurus Qwen/JANGTQ RAM proof rule"
 require_text "$ROOT/Packages/OsaurusCore/Package.swift" \
-  'revision: "028cc46ed7e952147d955447359f41f81b6c0c35"' \
+  'revision: "0ea4e45d4815237300d2b1ffc29185e416146a63"' \
   "Package.swift pinned to vMLX Gemma parser fix"
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/RuntimePolicySourceTests.swift" \
-  '028cc46ed7e952147d955447359f41f81b6c0c35' \
+  '0ea4e45d4815237300d2b1ffc29185e416146a63' \
   "RuntimePolicySourceTests guard pinned vMLX revision"
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/ModelRuntimeIsHybridTests.swift" \
   'dealignai/Qwen3\.6-35B-A3B-MXFP4-CRACK-MTP' \
