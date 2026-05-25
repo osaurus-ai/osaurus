@@ -187,8 +187,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         for model: String,
         requestOptions: [String: ModelOptionValue]?
     ) -> [String: ModelOptionValue] {
+        guard let requestOptions else {
+            return [:]
+        }
         guard ModelProfileRegistry.profile(for: model) != nil else {
-            return requestOptions ?? [:]
+            return requestOptions
         }
         return ModelProfileRegistry.normalizedOptions(for: model, persisted: requestOptions)
     }
@@ -591,6 +594,23 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         print("[Osaurus][Stream] Task cancelled after \(deltaCount) deltas")
                         continuation.finish()
                         return
+                    }
+
+                    if let reasoning = StreamingReasoningHint.decode(delta) {
+                        deltaCount += 1
+                        let estimated = TokenEstimator.estimate(reasoning)
+                        outputTokenCount += estimated
+                        if let bgId, estimated > 0 {
+                            reportedOutputTokens += estimated
+                            Task { @MainActor in
+                                BackgroundTaskManager.shared.recordUsage(
+                                    backgroundId: bgId,
+                                    tokensOutDelta: estimated
+                                )
+                            }
+                        }
+                        continuation.yield(delta)
+                        continue
                     }
 
                     // Pass through tool-hint sentinels without counting as tokens

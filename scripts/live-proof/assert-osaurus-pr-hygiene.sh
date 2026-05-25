@@ -60,8 +60,9 @@ SAMPLER_GUARD="$ROOT/scripts/live-proof/assert-no-hidden-local-sampler-defaults.
 RESPONSES_GUARD="$ROOT/scripts/live-proof/assert-openresponses-cache-proof-wiring.sh"
 NO_FORCED_GUARD="$ROOT/scripts/live-proof/assert-osaurus-no-forced-behavior-pr.sh"
 SERVER_SETTINGS_GUARD="$ROOT/scripts/live-proof/assert-server-settings-runtime-wiring.sh"
+CHAT_REASONING_GUARD="$ROOT/scripts/live-proof/assert-chat-reasoning-delta-routing.sh"
 
-for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD"; do
+for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD" "$CHAT_REASONING_GUARD"; do
   require_file "$file" "${file#$ROOT/}"
 done
 
@@ -101,6 +102,12 @@ if "$SERVER_SETTINGS_GUARD"; then
   pass "server settings runtime wiring"
 else
   fail_msg "server settings runtime wiring guard failed"
+fi
+
+if "$CHAT_REASONING_GUARD"; then
+  pass "chat reasoning delta routing"
+else
+  fail_msg "chat reasoning delta routing guard failed"
 fi
 
 echo "--- PR artifact hygiene ---"
