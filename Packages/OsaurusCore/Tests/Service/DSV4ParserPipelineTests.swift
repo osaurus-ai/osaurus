@@ -229,8 +229,48 @@ struct DSV4ParserPipelineTests {
         }
     }
 
-    @Test("DSV4 top-level JSON tool fallback routes without visible leakage")
-    func topLevelJSONToolFallbackRoutesWithoutVisibleLeakage() throws {
+    @Test("DSV4 top-level JSON tool fallback routes only schema-valid calls")
+    func topLevelJSONToolFallbackRoutesOnlySchemaValidCalls() throws {
+        let toolCallProcessor = ToolCallProcessor(format: .dsml, tools: fileReadToolSchema())
+        var events: [Generation] = []
+        let output = """
+            {"tool":"file_read","path":"mandelbrot.py","start_line":38,"end_line":41}
+            """
+
+        for ch in output {
+            events.append(
+                contentsOf: routeGenerationText(
+                    String(ch),
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        if let visible = toolCallProcessor.processEOS() {
+            events.append(
+                contentsOf: routeGenerationText(
+                    visible,
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        events.append(contentsOf: drainToolCallEvents(from: toolCallProcessor))
+
+        let visible = events.compactMap(\.chunk).joined()
+        let calls = events.compactMap(\.toolCall)
+
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(calls.count == 1)
+        let call = try #require(calls.first)
+        #expect(call.function.name == "file_read")
+        #expect(call.function.arguments["path"] == .string("mandelbrot.py"))
+        #expect(call.function.arguments["start_line"] == .int(38))
+        #expect(call.function.arguments["end_line"] == .int(41))
+    }
+
+    @Test("DSV4 malformed JSON tool-shaped answer is quarantined without visible leakage")
+    func malformedJSONToolShapedAnswerIsQuarantinedWithoutVisibleLeakage() throws {
         let toolCallProcessor = ToolCallProcessor(format: .dsml, tools: fileReadToolSchema())
         var events: [Generation] = []
         let output = """
@@ -327,7 +367,9 @@ struct DSV4ParserPipelineTests {
         let parameters: [String: any Sendable] = [
             "type": "object",
             "properties": [
-                "path": ["type": "string"] as [String: any Sendable]
+                "path": ["type": "string"] as [String: any Sendable],
+                "start_line": ["type": "integer"] as [String: any Sendable],
+                "end_line": ["type": "integer"] as [String: any Sendable],
             ] as [String: any Sendable],
             "required": ["path"],
         ]
