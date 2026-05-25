@@ -1310,12 +1310,9 @@ public actor ModelRuntime {
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            // Collect every tool invocation parsed from this completion. Local
-            // models can emit multiple `<tool_call>` blocks per response;
-            // vmlx-swift's `BatchEngine.generate` surfaces each as its own
-            // `.toolCall` event, so we keep iterating until the stream
-            // finishes naturally instead of bailing on the first invocation.
-            var pendingTools: [ServiceToolInvocation] = []
+            // Chat UI streaming should execute a parsed tool call immediately.
+            // Continuing to drain model text after the tool event can leak the
+            // model's pseudo-tool prose before the app renders/runs the tool.
             do {
                 for try await ev in events {
                     if case .completionInfo(
@@ -1347,32 +1344,21 @@ public actor ModelRuntime {
                     case .toolInvocation(let name, let argsJSON):
                         continuation.yield(StreamingToolHint.encode(name))
                         continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
-                        pendingTools.append(
-                            ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+                        continuation.finish(
+                            throwing: ServiceToolInvocation(
+                                toolName: name,
+                                jsonArguments: argsJSON
+                            )
                         )
+                        return
                     case .completionInfo:
                         continue
                     }
                 }
-                do {
-                    try Self.throwIfTools(pendingTools)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
+                continuation.finish()
             } catch {
                 if Task.isCancelled {
                     continuation.finish()
-                } else if !pendingTools.isEmpty {
-                    // Mid-stream failure with parsed tools — surface them
-                    // so the caller can still execute what we got. The
-                    // upstream error is swallowed in this branch by
-                    // design (parity with the previous behaviour).
-                    do {
-                        try Self.throwIfTools(pendingTools)
-                    } catch let surfaced {
-                        continuation.finish(throwing: surfaced)
-                    }
                 } else {
                     continuation.finish(throwing: error)
                 }

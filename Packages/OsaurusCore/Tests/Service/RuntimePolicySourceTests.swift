@@ -1606,6 +1606,41 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("local streamWithTools terminates on parsed tool invocation before leaking post-tool prose")
+    func localStreamWithToolsTerminatesOnParsedToolInvocationBeforePostToolProseLeak() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let streamStart = try #require(
+            runtime.range(of: "func streamWithTools("),
+            "ModelRuntime must retain the local streamWithTools path used by Chat UI streaming."
+        )
+        let streamEnd = try #require(
+            runtime[streamStart.lowerBound...].range(of: "// MARK: - Static helpers"),
+            "The streamWithTools source slice should end before static helper declarations."
+        )
+        let streamWithTools = runtime[streamStart.lowerBound..<streamEnd.lowerBound]
+        let toolCase = try #require(
+            streamWithTools.range(of: "case .toolInvocation(let name, let argsJSON):"),
+            "ModelRuntime.streamWithTools must handle parsed vMLX toolInvocation events."
+        )
+        let afterToolCase = streamWithTools[toolCase.lowerBound...]
+
+        #expect(
+            afterToolCase.contains("continuation.finish(")
+                && afterToolCase.contains("throwing: ServiceToolInvocation(")
+                && afterToolCase.contains("toolName: name")
+                && afterToolCase.contains("jsonArguments: argsJSON"),
+            "The Chat UI must stop the local stream as soon as vMLX emits a parsed tool invocation; otherwise DSV4 can leak pseudo-tool prose after the tool event before Osaurus executes it."
+        )
+        #expect(
+            afterToolCase.contains("return"),
+            "After finishing with the parsed tool invocation, the producer task must return instead of draining post-tool tokens to natural EOS."
+        )
+        #expect(
+            !afterToolCase.contains("pendingTools.append"),
+            "The local streaming path must not keep collecting tool invocations after a parsed tool event; batch collection belongs to the non-streaming tool response path."
+        )
+    }
+
     @Test("ModelRuntime does not block model-ready on hidden Hy3 warmup generation")
     func modelRuntimeDoesNotBlockModelReadyOnHy3WarmupGeneration() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
