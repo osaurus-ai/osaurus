@@ -154,10 +154,10 @@ require_text "$ROOT/AGENTS.md" 'Big-model load cancellation must be live-proven'
 require_text "$ROOT/AGENTS.md" 'Qwen/JANG/JANGTQ RAM regressions require end-to-end Osaurus proof' \
   "Osaurus Qwen/JANGTQ RAM proof rule"
 require_text "$ROOT/Packages/OsaurusCore/Package.swift" \
-  'revision: "50e9b3378f4516239cf42d524ae3be8e71f6a1e2"' \
+  'revision: "8f472016664631ccb9d6f876b848a50f74b7ed86"' \
   "Package.swift pinned to vMLX Gemma parser fix"
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/RuntimePolicySourceTests.swift" \
-  '50e9b3378f4516239cf42d524ae3be8e71f6a1e2' \
+  '8f472016664631ccb9d6f876b848a50f74b7ed86' \
   "RuntimePolicySourceTests guard pinned vMLX revision"
 require_text "$ROOT/Packages/OsaurusCore/Services/ModelRuntime/MLXBatchAdapter.swift" \
   'let engineDefaults = MLXLMCommon\.GenerateParameters\(\)' \
