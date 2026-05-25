@@ -392,13 +392,14 @@ struct RuntimePolicySourceTests {
         // ZAYA1-VL reasoning-parser fallback separation, tuned native-MTP
         // server autodetect by default, and MXFP8 artifact-evidence tuning
         // acceptance, plus DSV4 DSML tool protocol hardening for no-arg
-        // invokes, schema-valid and schema-less inline JSON fallback, and
-        // malformed JSON-shaped tool-attempt quarantine.
+        // invokes, schema-valid and schema-less inline JSON fallback,
+        // malformed JSON-shaped tool-attempt quarantine, and truncated
+        // schema-less JSON tool-attempt quarantine at EOS.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "c57ed7f591eea881afd540c9d62f0950da5cc49a"
+        let expectedRuntimeHardenedRevision = "b8f766a8e2da613cefe3d39d0d620c288593d88e"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)

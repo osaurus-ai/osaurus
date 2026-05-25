@@ -365,6 +365,43 @@ struct DSV4ParserPipelineTests {
         )
     }
 
+    @Test("DSV4 truncated schema-less JSON tool attempt is quarantined without visible leakage")
+    func truncatedSchemaLessJSONToolAttemptIsQuarantinedWithoutVisibleLeakage() throws {
+        let toolCallProcessor = ToolCallProcessor(format: .dsml)
+        var events: [Generation] = []
+        let output = """
+            {"tool":"file_read","r":"np.clip(esc * 4.0 - 1.0, 0.0, 1.0)","g":"np.clip(1.0 - np.abs(esc * 2.0 - 1.0), 0.0, 1.0)","b":"np.clip(1.0 - esc * 2.0, 0.0, 1.
+            """
+
+        for ch in output {
+            events.append(
+                contentsOf: routeGenerationText(
+                    String(ch),
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        if let visible = toolCallProcessor.processEOS() {
+            events.append(
+                contentsOf: routeGenerationText(
+                    visible,
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        events.append(contentsOf: drainToolCallEvents(from: toolCallProcessor))
+
+        let visible = events.compactMap(\.chunk).joined()
+        let calls = events.compactMap(\.toolCall)
+
+        #expect(calls.isEmpty)
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(!visible.contains("\"tool\":\"file_read\""))
+        #expect(!visible.contains("np.clip"))
+    }
+
     private struct DSMLToolFixture {
         let name: String
         let parameters: [DSMLParameterFixture]
