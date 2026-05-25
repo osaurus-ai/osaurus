@@ -41,6 +41,7 @@ KEYCHAIN_GUARD="$ROOT/scripts/live-proof/assert-keychain-free-proof-path.sh"
 GEMMA_WIRE_GUARD="$ROOT/scripts/live-proof/assert-vmlx-gemma4-parser-fix-wired.sh"
 SAMPLER_GUARD="$ROOT/scripts/live-proof/assert-no-hidden-local-sampler-defaults.sh"
 RESPONSES_CACHE_GUARD="$ROOT/scripts/live-proof/assert-openresponses-cache-proof-wiring.sh"
+SERVER_SETTINGS_GUARD="$ROOT/scripts/live-proof/assert-server-settings-runtime-wiring.sh"
 
 PKG="$ROOT/Packages/OsaurusCore/Package.swift"
 CORE_RESOLVED="$ROOT/Packages/OsaurusCore/Package.resolved"
@@ -50,7 +51,7 @@ CHECKOUT="$ROOT/Packages/OsaurusCore/.build/checkouts/vmlx-swift"
 PARSER="$CHECKOUT/Libraries/MLXLMCommon/ReasoningParser.swift"
 TESTS="$CHECKOUT/Tests/MLXLMCommonFocusedTests/Gemma4ThoughtChannelParserFocusedTests.swift"
 
-for file in "$KEYCHAIN_GUARD" "$GEMMA_WIRE_GUARD" "$SAMPLER_GUARD" "$RESPONSES_CACHE_GUARD" \
+for file in "$KEYCHAIN_GUARD" "$GEMMA_WIRE_GUARD" "$SAMPLER_GUARD" "$RESPONSES_CACHE_GUARD" "$SERVER_SETTINGS_GUARD" \
   "$PKG" "$CORE_RESOLVED" "$WORKSPACE_RESOLVED" "$APP_RESOLVED"; do
   require_file "$file"
 done
@@ -73,6 +74,12 @@ if "$RESPONSES_CACHE_GUARD"; then
   pass "OpenResponses/cache source wiring"
 else
   fail_msg "OpenResponses/cache source guard failed"
+fi
+
+if "$SERVER_SETTINGS_GUARD"; then
+  pass "Server Settings runtime wiring"
+else
+  fail_msg "Server Settings runtime wiring guard failed"
 fi
 
 echo "--- vMLX pin surfaces ---"
@@ -143,7 +150,7 @@ fi
 
 active_forbidden="$({ ps -axo pid,ppid,rss,etime,command || true; } \
   | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
-  | rg -v 'rg -i|assert-osaurus-vmlx-pr-readiness|assert-keychain-free-proof-path|assert-vmlx-gemma4-parser-fix-wired|assert-no-hidden-local-sampler-defaults|assert-openresponses-cache-proof-wiring' || true)"
+  | rg -v 'rg -i|assert-osaurus-vmlx-pr-readiness|assert-keychain-free-proof-path|assert-vmlx-gemma4-parser-fix-wired|assert-no-hidden-local-sampler-defaults|assert-openresponses-cache-proof-wiring|assert-server-settings-runtime-wiring' || true)"
 if [[ -n "$active_forbidden" ]]; then
   echo "$active_forbidden" >&2
   fail_msg "active Osaurus keychain-sensitive validation process detected"

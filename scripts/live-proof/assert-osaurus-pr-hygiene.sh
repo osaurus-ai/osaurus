@@ -58,8 +58,10 @@ KEYCHAIN_GUARD="$ROOT/scripts/live-proof/assert-keychain-free-proof-path.sh"
 VMLX_READY="$ROOT/scripts/live-proof/assert-osaurus-vmlx-pr-readiness.sh"
 SAMPLER_GUARD="$ROOT/scripts/live-proof/assert-no-hidden-local-sampler-defaults.sh"
 RESPONSES_GUARD="$ROOT/scripts/live-proof/assert-openresponses-cache-proof-wiring.sh"
+NO_FORCED_GUARD="$ROOT/scripts/live-proof/assert-osaurus-no-forced-behavior-pr.sh"
+SERVER_SETTINGS_GUARD="$ROOT/scripts/live-proof/assert-server-settings-runtime-wiring.sh"
 
-for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD"; do
+for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD"; do
   require_file "$file" "${file#$ROOT/}"
 done
 
@@ -89,6 +91,18 @@ else
   fail_msg "OpenResponses/cache guard failed"
 fi
 
+if "$NO_FORCED_GUARD"; then
+  pass "no forced behavior / hidden sampler repairs"
+else
+  fail_msg "no-forced-behavior PR guard failed"
+fi
+
+if "$SERVER_SETTINGS_GUARD"; then
+  pass "server settings runtime wiring"
+else
+  fail_msg "server settings runtime wiring guard failed"
+fi
+
 echo "--- PR artifact hygiene ---"
 reject_dirty_prefix ".spm-cache" "SwiftPM artifact cache"
 reject_dirty_prefix ".claude" "local Claude settings"
@@ -112,10 +126,19 @@ require_text "$ROOT/Packages/OsaurusCore/Services/ModelRuntime/MLXBatchAdapter.s
 require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" \
   'ChannelEvent\.inputClosed|requestTasks\.cancelAll|Task\.checkCancellation' \
   "HTTP cancellation source path present"
+require_text "$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/CacheSection.swift" \
+  'isOn: \$draft\.cache\.enableSSMReDerive' \
+  "Server settings expose SSM rederive toggle"
+require_text "$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/CacheSection.swift" \
+  'selection: \$draft\.cache\.liveKVCodec' \
+  "Server settings expose live KV codec selector"
+require_text "$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/ConcurrencySection.swift" \
+  'isOn: \$draft\.concurrency\.continuousBatching' \
+  "Server settings expose continuous batching toggle"
 
 active_forbidden="$({ ps -axo pid,ppid,rss,etime,command || true; } \
   | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
-  | rg -v 'rg -i|assert-osaurus-pr-hygiene|assert-keychain-free-proof-path|assert-osaurus-vmlx-pr-readiness|assert-vmlx-gemma4-parser-fix-wired|assert-no-hidden-local-sampler-defaults|assert-openresponses-cache-proof-wiring' || true)"
+  | rg -v 'rg -i|assert-osaurus-pr-hygiene|assert-keychain-free-proof-path|assert-osaurus-vmlx-pr-readiness|assert-vmlx-gemma4-parser-fix-wired|assert-no-hidden-local-sampler-defaults|assert-openresponses-cache-proof-wiring|assert-osaurus-no-forced-behavior-pr|assert-server-settings-runtime-wiring' || true)"
 if [[ -n "$active_forbidden" ]]; then
   echo "$active_forbidden" >&2
   fail_msg "active Osaurus keychain-sensitive validation process detected"
