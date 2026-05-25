@@ -49,7 +49,9 @@ WORKSPACE_RESOLVED="$ROOT/osaurus.xcworkspace/xcshareddata/swiftpm/Package.resol
 APP_RESOLVED="$ROOT/App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 CHECKOUT="$ROOT/Packages/OsaurusCore/.build/checkouts/vmlx-swift"
 PARSER="$CHECKOUT/Libraries/MLXLMCommon/ReasoningParser.swift"
+TOOL_PARSER="$CHECKOUT/Libraries/MLXLMCommon/Tool/Parsers/GemmaFunctionParser.swift"
 TESTS="$CHECKOUT/Tests/MLXLMCommonFocusedTests/Gemma4ThoughtChannelParserFocusedTests.swift"
+TOOL_TESTS="$CHECKOUT/Tests/MLXLMTests/ToolCallEdgeCasesTests.swift"
 
 for file in "$KEYCHAIN_GUARD" "$GEMMA_WIRE_GUARD" "$SAMPLER_GUARD" "$RESPONSES_CACHE_GUARD" "$SERVER_SETTINGS_GUARD" \
   "$PKG" "$CORE_RESOLVED" "$WORKSPACE_RESOLVED" "$APP_RESOLVED"; do
@@ -132,12 +134,28 @@ else
   fail_msg "SwiftPM checkout parser missing"
 fi
 
+if [[ -f "$TOOL_PARSER" ]]; then
+  pass "SwiftPM checkout Gemma tool parser exists"
+  require_text "$TOOL_PARSER" 'trimmingCharacters\(in: \.whitespacesAndNewlines\)' \
+    "wired checkout contains Gemma tool whitespace parser fix"
+else
+  fail_msg "SwiftPM checkout Gemma tool parser missing"
+fi
+
 if [[ -f "$TESTS" ]]; then
   pass "SwiftPM checkout focused tests exist"
   require_text "$TESTS" 'empty thought channel without newline does not surface thought' \
     "wired checkout contains Gemma empty-thought regression"
 else
   fail_msg "SwiftPM checkout focused tests missing"
+fi
+
+if [[ -f "$TOOL_TESTS" ]]; then
+  pass "SwiftPM checkout Gemma tool tests exist"
+  require_text "$TOOL_TESTS" 'Gemma-4 tool-call parser trims whitespace around function names and keys' \
+    "wired checkout contains Gemma tool whitespace regression"
+else
+  fail_msg "SwiftPM checkout Gemma tool tests missing"
 fi
 
 echo "--- existing Gemma wire guard ---"

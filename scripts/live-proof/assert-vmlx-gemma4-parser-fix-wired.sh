@@ -6,7 +6,10 @@ PKG="$ROOT/Packages/OsaurusCore/Package.swift"
 RESOLVED="$ROOT/Packages/OsaurusCore/Package.resolved"
 CHECKOUT="$ROOT/Packages/OsaurusCore/.build/checkouts/vmlx-swift"
 PARSER="$CHECKOUT/Libraries/MLXLMCommon/ReasoningParser.swift"
+TOOL_PARSER="$CHECKOUT/Libraries/MLXLMCommon/Tool/Parsers/GemmaFunctionParser.swift"
 TESTS="$CHECKOUT/Tests/MLXLMCommonFocusedTests/Gemma4ThoughtChannelParserFocusedTests.swift"
+TOOL_TESTS="$CHECKOUT/Tests/MLXLMTests/ToolCallEdgeCasesTests.swift"
+EXPECTED_VMLX_REVISION="0ea4e45d4815237300d2b1ffc29185e416146a63"
 fail=0
 
 fail_msg() { echo "FAIL $*" >&2; fail=1; }
@@ -29,6 +32,11 @@ if [[ -f "$PKG" ]]; then
     warn "Package.swift is still pinned to pre-fix vmlx revision 57e346b58e1286ab2f7bc458014d125c9bded095"
     fail=1
   fi
+  if rg -q "revision: \"$EXPECTED_VMLX_REVISION\"" "$PKG"; then
+    pass "Package.swift pins vMLX Gemma tool parser fix"
+  else
+    fail_msg "Package.swift does not pin expected vMLX revision $EXPECTED_VMLX_REVISION"
+  fi
 fi
 
 if [[ -f "$RESOLVED" ]]; then
@@ -36,6 +44,11 @@ if [[ -f "$RESOLVED" ]]; then
     pass "Package.resolved contains vmlx-swift pin"
   else
     fail_msg "Package.resolved missing vmlx-swift pin"
+  fi
+  if rg -q "\"revision\" : \"$EXPECTED_VMLX_REVISION\"" "$RESOLVED"; then
+    pass "Package.resolved pins vMLX Gemma tool parser fix"
+  else
+    fail_msg "Package.resolved does not pin expected vMLX revision $EXPECTED_VMLX_REVISION"
   fi
 else
   warn "Package.resolved missing; cannot prove resolved vmlx revision"
@@ -54,6 +67,18 @@ else
   fail=1
 fi
 
+if [[ -f "$TOOL_PARSER" ]]; then
+  pass "SwiftPM checkout GemmaFunctionParser.swift exists"
+  if rg -q 'trimmingCharacters\(in: \.whitespacesAndNewlines\)' "$TOOL_PARSER"; then
+    pass "SwiftPM checkout contains Gemma tool whitespace parser fix"
+  else
+    fail_msg "SwiftPM checkout lacks Gemma tool whitespace parser fix"
+  fi
+else
+  warn "SwiftPM vmlx tool parser missing; cannot inspect Gemma tool whitespace fix"
+  fail=1
+fi
+
 if [[ -f "$TESTS" ]]; then
   if rg -q 'empty thought channel without newline does not surface thought' "$TESTS"; then
     pass "SwiftPM checkout contains focused Gemma4 no-thought regression"
@@ -62,6 +87,17 @@ if [[ -f "$TESTS" ]]; then
   fi
 else
   warn "SwiftPM vmlx tests missing; cannot inspect focused regression"
+  fail=1
+fi
+
+if [[ -f "$TOOL_TESTS" ]]; then
+  if rg -q 'Gemma-4 tool-call parser trims whitespace around function names and keys' "$TOOL_TESTS"; then
+    pass "SwiftPM checkout contains Gemma tool whitespace regression"
+  else
+    fail_msg "SwiftPM checkout lacks Gemma tool whitespace regression"
+  fi
+else
+  warn "SwiftPM vmlx tool tests missing; cannot inspect Gemma tool whitespace regression"
   fail=1
 fi
 
