@@ -118,6 +118,49 @@ struct ModelDetails: Codable, Sendable {
     let quantization_level: String?
 }
 
+extension ModelDetails {
+    /// Ollama-compatible details for local MLX models.
+    ///
+    /// Prefer resolved bundle metadata when the model id maps to a downloaded
+    /// directory. Fall back to strict family-name helpers for local aliases
+    /// such as `_dsv4_band_pe2`, because `/api/tags` is often used by clients
+    /// before the user loads the model and those aliases still need honest
+    /// family metadata instead of `unknown`.
+    static func localMLXModelDetails(for modelId: String) -> ModelDetails {
+        let modelInfo = ModelInfo.load(modelId: modelId)
+        let family = localMLXFamily(for: modelId, architecture: modelInfo?.model.architecture)
+
+        return ModelDetails(
+            parent_model: "",
+            format: "safetensors",
+            family: family,
+            families: [family],
+            parameter_size: modelInfo?.model.parameters ?? ModelMetadataParser.parameterCount(from: modelId) ?? "",
+            quantization_level: modelInfo?.model.quantization ?? ModelMetadataParser.quantizationOllama(from: modelId) ?? ""
+        )
+    }
+
+    private static func localMLXFamily(for modelId: String, architecture: String?) -> String {
+        if let architecture,
+            !architecture.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            architecture.lowercased() != "unknown"
+        {
+            return architecture
+        }
+
+        if ModelFamilyNames.isDSV4Family(modelId) { return "deepseek_v4" }
+        if ModelFamilyNames.isQwenFamily(modelId) { return "qwen" }
+        if ModelFamilyNames.isGemmaFamily(modelId) { return "gemma" }
+        if ModelFamilyNames.isMiniMaxFamily(modelId) { return "minimax" }
+        if ModelFamilyNames.isLingFamily(modelId) { return "ling" }
+        if ModelFamilyNames.isZayaVLFamily(modelId) { return "zaya_vl" }
+        if ModelFamilyNames.isZayaFamily(modelId) { return "zaya" }
+        if ModelFamilyNames.isNemotronOmniFamily(modelId) { return "nemotron_omni" }
+
+        return "unknown"
+    }
+}
+
 /// Response for /models endpoint
 struct ModelsResponse: Codable, Sendable {
     var object: String = "list"

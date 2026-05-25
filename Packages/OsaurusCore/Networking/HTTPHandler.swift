@@ -5425,14 +5425,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 m.modified_at = now
                 m.size = 0
                 m.digest = ""
-                m.details = ModelDetails(
-                    parent_model: "",
-                    format: "safetensors",
-                    family: "unknown",
-                    families: ["unknown"],
-                    parameter_size: "",
-                    quantization_level: ""
-                )
+                m.details = ModelDetails.localMLXModelDetails(for: name)
                 return m
             }
 

@@ -24,6 +24,29 @@ enum ModelFamilyNames {
         ) != nil
     }
 
+    /// Qwen/Qwen3.x bundles in repo, local-folder, and picker alias forms.
+    /// Keep this name-only helper strict enough to avoid words like
+    /// `notqwen`, while accepting slash, dash, underscore, and versioned
+    /// forms such as `qwen3.6-35b-a3b-mxfp4`.
+    static func isQwenFamily(_ modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.range(
+            of: #"(^|/|[\-_])qwen($|[\-_/\.0-9])"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    /// Gemma/Gemma3n/Gemma4 bundles in repo, local-folder, and picker alias
+    /// forms. This is used for metadata surfaces only; tokenizer/template
+    /// selection still comes from the resolved bundle.
+    static func isGemmaFamily(_ modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.range(
+            of: #"(^|/|[\-_])gemma($|[\-_/\.0-9])"#,
+            options: .regularExpression
+        ) != nil
+    }
+
     /// DeepSeek-V4 / DSV4 Flash bundles (`model_type=deepseek_v4`).
     /// Match both public repo forms (`DeepSeek-V4-...`) and shorthand
     /// runtime names (`DSV4-...`, `deepseekv4-...`) while avoiding
