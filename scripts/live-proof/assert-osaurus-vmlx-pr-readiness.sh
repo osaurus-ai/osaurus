@@ -28,6 +28,17 @@ require_text() {
   fi
 }
 
+require_fixed_text() {
+  local file="$1"
+  local pattern="$2"
+  local label="$3"
+  if rg -Fq "$pattern" "$file"; then
+    pass "$label"
+  else
+    fail_msg "missing $label in ${file#$ROOT/}"
+  fi
+}
+
 pin_from_file() {
   local file="$1"
   if [[ ! -f "$file" ]]; then
@@ -50,8 +61,10 @@ APP_RESOLVED="$ROOT/App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swift
 CHECKOUT="$ROOT/Packages/OsaurusCore/.build/checkouts/vmlx-swift"
 PARSER="$CHECKOUT/Libraries/MLXLMCommon/ReasoningParser.swift"
 TOOL_PARSER="$CHECKOUT/Libraries/MLXLMCommon/Tool/Parsers/GemmaFunctionParser.swift"
+DSML_PARSER="$CHECKOUT/Libraries/MLXLMCommon/Tool/Parsers/DSMLToolCallParser.swift"
 TESTS="$CHECKOUT/Tests/MLXLMCommonFocusedTests/Gemma4ThoughtChannelParserFocusedTests.swift"
 TOOL_TESTS="$CHECKOUT/Tests/MLXLMTests/ToolCallEdgeCasesTests.swift"
+DSML_TESTS="$CHECKOUT/Tests/MLXLMCommonFocusedTests/DSMLToolCallParserFocusedTests.swift"
 
 for file in "$KEYCHAIN_GUARD" "$GEMMA_WIRE_GUARD" "$SAMPLER_GUARD" "$RESPONSES_CACHE_GUARD" "$SERVER_SETTINGS_GUARD" \
   "$PKG" "$CORE_RESOLVED" "$WORKSPACE_RESOLVED" "$APP_RESOLVED"; do
@@ -138,10 +151,22 @@ fi
 
 if [[ -f "$PARSER" ]]; then
   pass "SwiftPM checkout parser exists"
-  require_text "$PARSER" 'stripIdentifierOnlyAtEnd: true\)' \
+  require_fixed_text "$PARSER" 'channelName == "thought" || channelName == "thinking"' \
+    "wired checkout handles Gemma bare thought channel name"
+  require_fixed_text "$PARSER" 'harmonyChannelShouldStripName = false' \
     "wired checkout contains Gemma empty-thought parser fix"
 else
   fail_msg "SwiftPM checkout parser missing"
+fi
+
+if [[ -f "$DSML_PARSER" ]]; then
+  pass "SwiftPM checkout DSML parser exists"
+  require_text "$DSML_PARSER" 'tool_ccalls' \
+    "wired checkout accepts DSV4 tool_ccalls DSML alias"
+  require_text "$DSML_PARSER" 'tool_cs' \
+    "wired checkout accepts DSV4 tool_cs DSML alias"
+else
+  fail_msg "SwiftPM checkout DSML parser missing"
 fi
 
 if [[ -f "$TOOL_PARSER" ]]; then
@@ -166,6 +191,16 @@ if [[ -f "$TOOL_TESTS" ]]; then
     "wired checkout contains Gemma tool whitespace regression"
 else
   fail_msg "SwiftPM checkout Gemma tool tests missing"
+fi
+
+if [[ -f "$DSML_TESTS" ]]; then
+  pass "SwiftPM checkout DSML focused tests exist"
+  require_text "$DSML_TESTS" 'processorAcceptsLiveToolCCallsToolCSAlias' \
+    "wired checkout contains DSV4 DSML alias regression"
+  require_text "$DSML_TESTS" 'visible\.trimmingCharacters\(in: \.whitespacesAndNewlines\)\.isEmpty' \
+    "wired checkout rejects visible DSML alias leakage"
+else
+  fail_msg "SwiftPM checkout DSML focused tests missing"
 fi
 
 echo "--- existing Gemma wire guard ---"

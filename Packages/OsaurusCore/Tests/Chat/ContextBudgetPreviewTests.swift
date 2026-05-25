@@ -50,12 +50,17 @@ struct ContextBudgetPreviewTests {
             try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let previousRoot = OsaurusPaths.overrideRoot
             OsaurusPaths.overrideRoot = root
+            let previousChatConfig = ChatConfigurationStore.load()
+            var isolatedChatConfig = previousChatConfig
+            isolatedChatConfig.defaultModel = nil
+            ChatConfigurationStore.save(isolatedChatConfig)
             MemoryConfigurationStore.invalidateCache()
             var memoryConfig = MemoryConfiguration.default
             memoryConfig.enabled = true
             MemoryConfigurationStore.save(memoryConfig)
             AgentManager.shared.refresh()
             defer {
+                ChatConfigurationStore.save(previousChatConfig)
                 MemoryConfigurationStore.invalidateCache()
                 OsaurusPaths.overrideRoot = previousRoot
                 AgentManager.shared.refresh()

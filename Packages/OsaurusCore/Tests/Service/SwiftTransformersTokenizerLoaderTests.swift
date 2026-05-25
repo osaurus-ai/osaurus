@@ -407,6 +407,26 @@ struct SwiftTransformersTokenizerLoaderTests {
                 label: "Gemma 4 26B JANG_4M CRACK",
                 path: "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"),
             LocalTokenizerRow(
+                family: "gemma4",
+                label: "Gemma 4 26B finished 4bit",
+                path: "/Users/eric/osaurus_models/finished/gemma-4-26b-a4b-it-4bit"),
+            LocalTokenizerRow(
+                family: "gemma4",
+                label: "Gemma 4 31B JANG_4M candidate",
+                path: "/Users/eric/models/dealign.ai/Gemma-4-31B-JANG_4M"),
+            LocalTokenizerRow(
+                family: "gemma4",
+                label: "Gemma 4 31B finished 4bit candidate",
+                path: "/Users/eric/osaurus_models/finished/gemma-4-31b-a4b-it-4bit"),
+            LocalTokenizerRow(
+                family: "gemma4",
+                label: "Gemma 4 E2B finished 4bit",
+                path: "/Users/eric/osaurus_models/finished/gemma-4-e2b-it-4bit"),
+            LocalTokenizerRow(
+                family: "gemma4",
+                label: "Gemma 4 E4B finished 4bit",
+                path: "/Users/eric/osaurus_models/finished/gemma-4-e4b-it-4bit"),
+            LocalTokenizerRow(
                 family: "qwen36-27b",
                 label: "Qwen3.6 27B source",
                 path: "/Users/eric/models/Sources/Qwen/Qwen3.6-27B"),

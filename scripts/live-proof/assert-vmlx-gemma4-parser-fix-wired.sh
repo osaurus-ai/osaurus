@@ -65,7 +65,8 @@ if [[ -f "$PARSER" ]]; then
   else
     fail_msg "SwiftPM checkout HEAD does not match expected vMLX revision $EXPECTED_VMLX_REVISION"
   fi
-  if rg -q 'stripIdentifierOnlyAtEnd: true\)' "$PARSER"; then
+  if rg -Fq 'channelName == "thought" || channelName == "thinking"' "$PARSER" \
+    && rg -Fq 'harmonyChannelShouldStripName = false' "$PARSER"; then
     pass "SwiftPM checkout contains Gemma4 empty thought-channel fix"
   else
     fail_msg "SwiftPM checkout lacks Gemma4 empty thought-channel fix; Osaurus will still surface bare thought in this edge case"

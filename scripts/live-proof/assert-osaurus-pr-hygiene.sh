@@ -65,8 +65,9 @@ CHAT_REASONING_GUARD="$ROOT/scripts/live-proof/assert-chat-reasoning-delta-routi
 CHAT_UI_REASONING_GUARD="$ROOT/scripts/live-proof/assert-chat-ui-reasoning-routing.sh"
 HTTP_CANCEL_GUARD="$ROOT/scripts/live-proof/assert-http-channel-load-cancellation.sh"
 TOOL_CHOICE_GUARD="$ROOT/scripts/live-proof/assert-tool-choice-required-routing.sh"
+MODEL_TOOL_CAPABILITY_GUARD="$ROOT/scripts/live-proof/assert-model-tool-capability-surfaces.sh"
 
-for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD" "$CHAT_REASONING_GUARD" "$CHAT_UI_REASONING_GUARD" "$HTTP_CANCEL_GUARD" "$TOOL_CHOICE_GUARD"; do
+for file in "$KEYCHAIN_GUARD" "$VMLX_READY" "$SAMPLER_GUARD" "$RESPONSES_GUARD" "$NO_FORCED_GUARD" "$SERVER_SETTINGS_GUARD" "$CHAT_REASONING_GUARD" "$CHAT_UI_REASONING_GUARD" "$HTTP_CANCEL_GUARD" "$TOOL_CHOICE_GUARD" "$MODEL_TOOL_CAPABILITY_GUARD"; do
   require_file "$file" "${file#$ROOT/}"
 done
 
@@ -130,6 +131,12 @@ if "$TOOL_CHOICE_GUARD"; then
   pass "tool_choice required routing"
 else
   fail_msg "tool_choice required routing guard failed"
+fi
+
+if "$MODEL_TOOL_CAPABILITY_GUARD"; then
+  pass "model tool/capability surfaces"
+else
+  fail_msg "model tool/capability surface guard failed"
 fi
 
 echo "--- PR artifact hygiene ---"
@@ -210,6 +217,18 @@ require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenize
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenizerLoaderTests.swift" \
   'DSV4 canonical template path must render assistant tool history as a DSML block' \
   "DSV4 canonical tokenizer path preserves DSML tool history"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenizerLoaderTests.swift" \
+  'downloadedFamilyTokenizersRenderCapabilitiesSearchToolSurface' \
+  "downloaded model tokenizer matrix renders capability discovery surface"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenizerLoaderTests.swift" \
+  'Gemma 4 31B JANG_4M candidate' \
+  "downloaded tokenizer matrix keeps Gemma 4 31B candidate covered"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Tool/ToolSearchServiceTests.swift" \
+  'hybridSearchFallsBackToRegistryWhenToolDatabaseIsClosed' \
+  "capability search falls back to registry when encrypted storage is closed"
+require_text "$ROOT/Packages/OsaurusCore/Tests/Tool/CapabilityToolsTests.swift" \
+  'capabilitiesSearchSchemaIsGemmaRenderable' \
+  "capabilities_search schema remains Gemma-renderable"
 require_text "$ROOT/Packages/OsaurusCore/Models/Configuration/ModelMediaCapabilities.swift" \
   '"qwen3_6", "qwen3_6_moe"' \
   "Qwen3.6 config-based media detection preserves video-capable model types"
