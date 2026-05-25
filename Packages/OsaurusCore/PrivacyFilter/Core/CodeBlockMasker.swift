@@ -36,6 +36,21 @@ public enum CodeBlockMasker {
     /// range is passed through (we keep the masked length equal to
     /// the original length so indices stay aligned).
     public static func mask(_ text: String) -> MaskOutput {
+        // Hot-path bail: no backticks AND no indented-block hint =>
+        // no spans to mask. `findCodeSpans` would still walk every
+        // character looking for fences, so skipping it shaves a
+        // measurable chunk off the per-segment cost on the common
+        // case (plain prose). We can't fast-return for the
+        // "backticks-only" case because indented blocks could
+        // still apply, but the indented-block scanner has its own
+        // cheap precheck and is no-op there.
+        if !text.contains("`")
+            && !text.contains("\n    ")
+            && !text.contains("\n\t")
+            && !hasIndentedFirstLine(text)
+        {
+            return MaskOutput(masked: text) { range in range }
+        }
         let spans = findCodeSpans(in: text)
         if spans.isEmpty {
             return MaskOutput(masked: text) { range in range }
@@ -92,12 +107,12 @@ public enum CodeBlockMasker {
 
     // MARK: - Span scanner
 
-    /// Returns ranges of all fenced and inline code spans in scan order.
-    /// Fenced spans match `` ``` `` openers (optionally followed by a
-    /// language identifier) and close on the next `` ``` `` at the
-    /// start of a line. Inline spans match a single `` ` `` opener and
-    /// close at the next `` ` `` on the same line. Unbalanced fences
-    /// or inline backticks consume the rest of the input / line.
+    /// Returns ranges of all fenced, inline, and indented (4-space /
+    /// tab) code spans in scan order. Spans from the indented-block
+    /// pass run AFTER the fenced/inline pass and skip ranges that
+    /// already overlap an earlier span — fenced blocks naturally
+    /// contain whitespace-indented lines, but the fenced span already
+    /// covers them.
     private static func findCodeSpans(in text: String) -> [Range<String.Index>] {
         var spans: [Range<String.Index>] = []
         var idx = text.startIndex
@@ -154,7 +169,106 @@ public enum CodeBlockMasker {
             }
             idx = text.index(after: idx)
         }
+
+        appendIndentedCodeSpans(in: text, into: &spans)
+        // Re-sort because the indented pass appends spans at the end
+        // of the run, not in document order with the fenced/inline
+        // pass.
+        spans.sort { $0.lowerBound < $1.lowerBound }
         return spans
+    }
+
+    /// Indented code blocks per CommonMark §4.4: a paragraph-level
+    /// block whose lines begin with 4 spaces or one tab and are
+    /// preceded by a blank line (or start of document). We use a
+    /// looser heuristic suited to PII masking: any run of one or
+    /// more consecutive lines starting with 4+ leading spaces (or
+    /// a tab) gets masked, as long as the first such line wasn't
+    /// already covered by an earlier (fenced/inline) span. Over-
+    /// masking is fine — we'd rather miss PII inside what might be
+    /// formatted code than misclassify an identifier as a name.
+    private static func appendIndentedCodeSpans(
+        in text: String,
+        into spans: inout [Range<String.Index>]
+    ) {
+        // Cheap precheck: if the text has no leading whitespace
+        // followed by content on any line, no work to do.
+        guard text.contains("\n    ") || text.contains("\n\t") || hasIndentedFirstLine(text) else {
+            return
+        }
+        let fencedRanges = spans
+        var idx = text.startIndex
+        var atLineStart = true
+        var prevLineBlank = true
+        while idx < text.endIndex {
+            if atLineStart {
+                let isIndented = lineStartsIndented(text, at: idx)
+                if isIndented, prevLineBlank, !inAnyRange(idx, ranges: fencedRanges) {
+                    // Collect the contiguous indented run.
+                    var lineStart = idx
+                    let runStart = idx
+                    var lastLineEnd = idx
+                    while lineStart < text.endIndex {
+                        if !lineStartsIndented(text, at: lineStart) { break }
+                        guard let newline = text.range(of: "\n", range: lineStart ..< text.endIndex) else {
+                            lastLineEnd = text.endIndex
+                            lineStart = text.endIndex
+                            break
+                        }
+                        lastLineEnd = newline.upperBound
+                        lineStart = newline.upperBound
+                        if lineStart == text.endIndex { break }
+                    }
+                    spans.append(runStart ..< lastLineEnd)
+                    idx = lastLineEnd
+                    atLineStart = true
+                    prevLineBlank = false
+                    continue
+                }
+            }
+            let ch = text[idx]
+            if ch == "\n" {
+                // Determine if THIS line (before the newline we're
+                // about to step over) was blank. We track that by
+                // checking the prior character.
+                prevLineBlank = (idx == text.startIndex) || text[text.index(before: idx)] == "\n"
+                atLineStart = true
+            } else {
+                atLineStart = false
+            }
+            idx = text.index(after: idx)
+        }
+    }
+
+    private static func hasIndentedFirstLine(_ text: String) -> Bool {
+        guard let first = text.first else { return false }
+        return first == "\t" || (text.hasPrefix("    ") && !text.hasPrefix("     "))  // 4 leading spaces, not 5+
+            || text.hasPrefix("    ")
+    }
+
+    private static func lineStartsIndented(_ text: String, at idx: String.Index) -> Bool {
+        guard idx < text.endIndex else { return false }
+        if text[idx] == "\t" { return true }
+        // Require at least 4 leading spaces and at least one
+        // non-whitespace char on the line.
+        let remaining = text.distance(from: idx, to: text.endIndex)
+        guard remaining >= 4 else { return false }
+        let fourEnd = text.index(idx, offsetBy: 4)
+        for ch in text[idx ..< fourEnd] where ch != " " { return false }
+        // Skip the rest of the leading spaces, then ensure the
+        // remainder of the line is non-empty (otherwise it's a
+        // blank line with trailing whitespace, not code).
+        var scan = fourEnd
+        while scan < text.endIndex, text[scan] == " " {
+            scan = text.index(after: scan)
+        }
+        if scan >= text.endIndex { return false }
+        return text[scan] != "\n"
+    }
+
+    private static func inAnyRange(_ idx: String.Index, ranges: [Range<String.Index>]) -> Bool {
+        for r in ranges where r.contains(idx) { return true }
+        return false
     }
 
     private static func matchesTripleBacktick(_ text: String, at idx: String.Index) -> Bool {

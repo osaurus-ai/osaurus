@@ -7,12 +7,20 @@
 //  SessionRedactionStore for the process-wide keyed cache) and is
 //  cleared when a chat session resets.
 //
-//  An actor wraps the maps so the outbound scrubber and the inbound
-//  StreamingUnscrubber can read/write from different tasks without
-//  external locks. Counters are monotonic per-category; we never
-//  reuse an index even if the user later "Skip"s the placeholder in
-//  the review sheet — the cost is negligible (one string pair per
-//  redaction) and stable indices make logs easier to follow.
+//  An actor wraps the tables so the outbound scrubber and the inbound
+//  `StreamingUnscrubber` can read/write from different tasks without
+//  external locks.
+//
+//  Counter contract:
+//    * On any APPROVED send, per-category counters are monotonic.
+//      Skipping or forgetting an already-shipped placeholder never
+//      reuses its index — `[PHONE_1]` is gone forever once it left
+//      the machine.
+//    * On a CANCELED detection (review sheet dismissed before
+//      send), the pipeline rolls counters back via
+//      `rollbackToSnapshot` so a retry on the same originals
+//      reuses the same indices the user saw. Safe because the
+//      canceled placeholders never escaped this map.
 //
 
 import Foundation
@@ -39,6 +47,8 @@ public actor RedactionMap {
         self.conversationID = conversationID
     }
 
+    // MARK: - Mint
+
     /// Intern a detected original string for the given category. If the
     /// same original has already been interned in this map (regardless
     /// of category, since the original is the dictionary key), the
@@ -56,6 +66,34 @@ public actor RedactionMap {
         return placeholder
     }
 
+    /// Intern an entire segment's detections in a single actor hop.
+    /// Hot-path optimisation: `PrivacyFilterEngine.detect` used to
+    /// `await map.intern(…)` once per match, which on a 30-hit
+    /// segment costs 30 actor hops. Batching collapses that into
+    /// one hop and preserves the per-pair semantics (idempotent on
+    /// repeat originals, monotonic category counters).
+    public func internBatch(
+        _ items: [(original: String, category: EntityCategory)]
+    ) -> [Placeholder] {
+        var placeholders: [Placeholder] = []
+        placeholders.reserveCapacity(items.count)
+        for item in items {
+            if let existing = forward[item.original] {
+                placeholders.append(existing)
+                continue
+            }
+            let next = (counters[item.category] ?? 0) + 1
+            counters[item.category] = next
+            let placeholder = Placeholder(category: item.category, index: next)
+            forward[item.original] = placeholder
+            reverse[placeholder.token] = item.original
+            placeholders.append(placeholder)
+        }
+        return placeholders
+    }
+
+    // MARK: - Resolve
+
     /// Lookup the original behind a placeholder token. Returns `nil`
     /// when the streamed text contained a `[CATEGORY_N]`-shaped token
     /// that was never minted (e.g. a hallucinated placeholder from the
@@ -63,6 +101,47 @@ public actor RedactionMap {
     public func resolve(token: String) -> String? {
         reverse[token]
     }
+
+    // MARK: - Rollback (cancel path)
+
+    /// Drop a set of originals from the intern table. Per-category
+    /// counters stay put — this is the "shipped, then forgotten"
+    /// primitive used by `Forget redactions`.
+    ///
+    /// Most pipeline callers want `rollbackToSnapshot` instead,
+    /// which also rewinds counters so a retry of the same
+    /// originals reuses the same indices the user just saw.
+    public func removeOriginals(_ originals: Set<String>) {
+        guard !originals.isEmpty else { return }
+        for original in originals {
+            if let placeholder = forward.removeValue(forKey: original) {
+                reverse.removeValue(forKey: placeholder.token)
+            }
+        }
+    }
+
+    /// Snapshot of the per-category counters. Captured pre-detection
+    /// and replayed via `rollbackToSnapshot` on a canceled review.
+    public var counterSnapshot: [EntityCategory: Int] {
+        counters
+    }
+
+    /// Restore the map to a pre-detection state: drop the freshly
+    /// interned originals AND rewind per-category counters.
+    ///
+    /// Safe iff the canceled placeholders never escaped this map
+    /// (no wire send, no log, no peer process). The pipeline's
+    /// cancel branch satisfies that — Insights wire-body capture
+    /// is gated on a successful send.
+    public func rollbackToSnapshot(
+        removingOriginals originals: Set<String>,
+        counters snapshot: [EntityCategory: Int]
+    ) {
+        removeOriginals(originals)
+        counters = snapshot
+    }
+
+    // MARK: - Inspection
 
     /// Snapshot of every minted (placeholder, original) pair. Used by
     /// the review sheet's "always approve" path and by tests. Returned

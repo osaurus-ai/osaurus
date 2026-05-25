@@ -220,21 +220,34 @@ public final class PrivacyFilterEngine {
         }
         let resolved = Self.mergeMatches(pending)
 
-        var out: [DetectedEntity] = []
-        out.reserveCapacity(resolved.count)
+        // First pass: drop matches whose range maps back through the
+        // code-block mask to a `nil` (entirely masked) and collect
+        // the survivors. We do this BEFORE interning so we don't pay
+        // for placeholders we're about to throw away.
+        var surviving: [(category: EntityCategory, original: String, range: Range<String.Index>)] = []
+        surviving.reserveCapacity(resolved.count)
         for match in resolved {
-            // Skip detections whose span was masked out entirely.
-            // CodeBlockMasker replaces fences with placeholder runs;
-            // ranges that fall inside one are reported with a `nil`
-            // restored range and get dropped here.
             guard let restored = restore(match.range) else { continue }
-            let placeholder = await map.intern(match.original, as: match.category)
+            surviving.append((match.category, match.original, restored))
+        }
+
+        // Second pass: batch-intern in a single actor hop. Previous
+        // implementation awaited `map.intern(…)` per match — a 30-hit
+        // segment cost 30 hops × segment_count. `internBatch` is
+        // idempotent per-original (same semantics as `intern`).
+        let placeholders = await map.internBatch(
+            surviving.map { (original: $0.original, category: $0.category) }
+        )
+
+        var out: [DetectedEntity] = []
+        out.reserveCapacity(surviving.count)
+        for (idx, match) in surviving.enumerated() {
             out.append(
                 DetectedEntity(
                     category: match.category,
                     original: match.original,
-                    range: restored,
-                    placeholder: placeholder
+                    range: match.range,
+                    placeholder: placeholders[idx]
                 )
             )
         }

@@ -123,6 +123,22 @@ public final class PrivacyFilterModelDownloader: NSObject, ObservableObject {
         }
     }
 
+    /// Delete the on-disk bundle and reset state back to `.idle`. The
+    /// next call to `startDownload()` will fetch a fresh copy from
+    /// Hugging Face. Used by the "Remove model bundle" affordance in
+    /// the Model settings tab.
+    ///
+    /// Synchronously transitions the published state so the UI
+    /// updates without waiting for an async task. `clean()` is a
+    /// single `removeItem` call on a directory we own, so blocking
+    /// the main actor here is microseconds.
+    public func remove() {
+        currentTask?.cancel()
+        currentTask = nil
+        try? PrivacyFilterModelBundle.clean()
+        state = .idle
+    }
+
     // MARK: - Download pipeline
 
     private func runDownload() async {

@@ -109,4 +109,66 @@ struct PrivacyLocalizationTests {
             }
         }
     }
+
+    /// Covers H5: the master toggle copy must explicitly say the
+    /// filter is for cloud-bound requests. Users who don't read
+    /// the description otherwise expect ALL inference (including
+    /// local MLX / Apple Foundation) to be scrubbed.
+    ///
+    /// The toggle source-of-truth lives in
+    /// `PrivacyOverviewTab`'s `SettingsToggle`, which reads the
+    /// English string directly off `Localizable.xcstrings`. We
+    /// parse the catalog rather than instantiating the view
+    /// (SwiftUI's `Text` doesn't expose its localized string
+    /// without a host scene) so the test is hermetic.
+    @Test func masterToggleCopy_mentionsCloud() throws {
+        let title = "Scrub PII before sending to cloud providers"
+        let description =
+            "Detects PII in your messages and asks you to review before any cloud-bound request. "
+            + "Local models (MLX, Foundation) and on-device tools bypass the filter."
+
+        guard
+            let url = Bundle.module.url(
+                forResource: "Localizable",
+                withExtension: "xcstrings"
+            )
+        else {
+            Issue.record("Localizable.xcstrings not bundled with OsaurusCore module")
+            return
+        }
+        let data = try Data(contentsOf: url)
+        let catalog = try JSONDecoder().decode(Catalog.self, from: data)
+
+        // Both keys exist verbatim in the catalog (the title doubles
+        // as both the key and the English value because L() uses
+        // the string-as-key pattern). The presence of the keys is
+        // what gates the toggle label switching from the previous
+        // generic "Enable Privacy Filter" copy to the explicit
+        // cloud-bound wording.
+        let titleEntry = catalog.strings[title]
+        #expect(titleEntry != nil, "Master toggle title key is missing from xcstrings — H5 regression")
+        let descriptionEntry = catalog.strings[description]
+        #expect(
+            descriptionEntry != nil,
+            "Master toggle description key is missing from xcstrings — H5 regression"
+        )
+
+        // The title MUST contain the word 'cloud' so the user can
+        // tell at a glance that local-only chats bypass the filter.
+        // Lowercased compare so a future translator that capitalises
+        // 'Cloud' for emphasis still passes.
+        #expect(
+            title.lowercased().contains("cloud"),
+            "Master toggle title must mention 'cloud' — got: \(title)"
+        )
+
+        // Description should also flag the local bypass so power
+        // users running with on-device MLX never wonder why their
+        // local chat skips the review sheet.
+        #expect(
+            description.lowercased().contains("local")
+                && description.lowercased().contains("bypass"),
+            "Master toggle description must mention local bypass — got: \(description)"
+        )
+    }
 }

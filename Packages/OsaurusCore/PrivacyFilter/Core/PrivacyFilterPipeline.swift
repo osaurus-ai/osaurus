@@ -26,12 +26,38 @@
 //    3. `unscrubInbound`: one-shot version for non-streaming responses
 //       (and tool-call argument JSON).
 //
-//  Fail-open on read paths and fail-closed on write paths: if the
-//  engine can't load, `applyOutbound` returns the original messages
-//  and a nil map (no scrubbing today, but we also won't try to apply a
-//  partial scrub). The settings UI guards against ever flipping the
-//  master toggle on while the engine is unloaded, so this branch
-//  should only fire on transient errors.
+//  Fail-CLOSED end-to-end: every write path that could leak PII
+//  must throw rather than silently degrade. Concretely:
+//
+//    * Engine missing / lazy-load failed →
+//      `PrivacyFilterPipelineError.engineUnavailable`. We do NOT
+//      pass the original messages through; the caller (and the
+//      chat layer) must surface an actionable error pointing at
+//      Settings → Privacy.
+//    * Scrub returned no changes when the user approved entities →
+//      `PrivacyFilterPipelineError.scrubNoOp(approvedCount:)`.
+//      Catches a regression where `applyingScrub` is fed an empty
+//      substitution map.
+//    * Post-scrub leak scan re-detects regex categories AND
+//      ML-only originals in the scrubbed payload → `scrubLeaked`.
+//      The ML re-scan covers `Send anyway` semantics: skipping a
+//      person/address/secret entity still blocks the send, since
+//      the post-scrub invariant uses the model not just regex.
+//    * Non-interactive caller (HTTP, plugin, agent) with no
+//      review presenter and `requireReviewForNonInteractive`
+//      enabled → `PrivacyReviewService.review` returns `.canceled`,
+//      which the pipeline lifts into `reviewCanceled`.
+//
+//  Inbound paths (`wrapInboundStream` / `unscrubInbound`) are
+//  separately documented but the same rule applies: never let a
+//  placeholder ship to a local tool / consumer; if unscrubbing
+//  fails for an unknown token we leave it literal (see
+//  `StreamingUnscrubber`'s "Hallucinated placeholder policy").
+//
+//  Settings UI guards against ever flipping the master toggle on
+//  while the engine is unloaded, so the `engineUnavailable` branch
+//  is reserved for transient post-install errors (e.g. on-disk
+//  bundle deleted out from under us by L2's "Remove" button).
 //
 
 import Foundation
@@ -78,6 +104,32 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
                 "Privacy Filter: \(count) approved redaction(s) didn't apply (substitution mismatch). The message was not sent. This is a bug — please report."
         case .scrubLeaked(let counts):
             return Self.formatScrubLeaked(categoryCounts: counts)
+        }
+    }
+
+    /// Stable machine-readable code surfaced through HTTP error
+    /// envelopes. API clients can switch on this to render a
+    /// privacy-specific UI instead of treating the block as a
+    /// generic 500.
+    var httpErrorCode: String {
+        switch self {
+        case .reviewCanceled: return "privacy_filter_review_canceled"
+        case .engineUnavailable: return "privacy_filter_engine_unavailable"
+        case .scrubNoOp: return "privacy_filter_scrub_no_op"
+        case .scrubLeaked: return "privacy_filter_scrub_leaked"
+        }
+    }
+
+    /// HTTP-status hint for callers that want to map the privacy
+    /// pipeline error to a non-200 envelope. Most are 422 (the
+    /// request was understood but couldn't be processed safely);
+    /// `engineUnavailable` is 503 to signal "retry later when the
+    /// model is loaded."
+    var httpStatus: Int {
+        switch self {
+        case .reviewCanceled: return 499  // client-closed-request analog
+        case .engineUnavailable: return 503
+        case .scrubNoOp, .scrubLeaked: return 422
         }
     }
 
@@ -246,17 +298,30 @@ enum PrivacyFilterPipeline {
         let sid = sessionId ?? Self.fallbackSessionId(for: messages)
         let map = await SessionRedactionStore.shared.getOrCreate(sid, conversationID: UUID())
 
-        // Per-message detection: feeding the classifier one user
-        // utterance at a time matches its training distribution and
-        // avoids the system-prompt + user-message concat that
-        // historically produced all-`O` argmax. The downstream
-        // `applyingScrub` step does string-match substitution, so it
-        // doesn't care that the detected ranges are local to each
-        // segment.
-        let segments = messages.scrubbableTexts()
+        // Per-message detection scope: ONLY the latest user turn (plus
+        // any messages following it) gets classified. Earlier turns
+        // have already passed through detect → review on a prior call,
+        // and their originals live in the per-session `RedactionMap`.
+        // Re-classifying the entire history on every send was the
+        // dominant latency cost — at 20 turns it ran the MoE 20× per
+        // request for zero new information. The `applyingScrub` pass
+        // below still substitutes across the whole message array using
+        // the cumulative map, so prior turns continue to ship scrubbed.
+        let segments = messages.latestUserTurnSegments()
         if segments.isEmpty {
             return (messages, map)
         }
+
+        // Snapshot the map BEFORE detection. The originals set
+        // partitions new (needs review) from previously-approved
+        // (auto-approved against this turn's text). The counters
+        // snapshot lets the cancel branch below rewind indices so a
+        // retry on the same originals reuses the same placeholders
+        // the user just saw — counters stay monotonic across
+        // APPROVED sends, only canceled detections rewind.
+        let preExistingSnapshot = await map.snapshot()
+        let preExistingOriginals: Set<String> = Set(preExistingSnapshot.map(\.1))
+        let preDetectionCounters = await map.counterSnapshot
 
         var detections: [DetectedEntity] = []
         for segment in segments {
@@ -294,52 +359,100 @@ enum PrivacyFilterPipeline {
             seen.insert(entity.original).inserted
         }
 
+        // Partition: originals already minted on a prior turn (the
+        // user reviewed them then) are silently re-approved this
+        // turn. Only fresh originals reach the review sheet.
+        var newDetections: [DetectedEntity] = []
+        var carryOverCount = 0
+        for entity in detections {
+            if preExistingOriginals.contains(entity.original) {
+                carryOverCount += 1
+            } else {
+                newDetections.append(entity)
+            }
+        }
+
         // Log per-category counts — never the original strings. The
         // whole point of the filter is to keep PII out of cloud logs,
         // and our own stdout is the easiest spot to forget about.
-        let categoryCounts = Dictionary(grouping: detections, by: \.category)
+        let categoryCounts = Dictionary(grouping: newDetections, by: \.category)
             .mapValues(\.count)
             .map { "\($0.key.rawValue):\($0.value)" }
             .sorted()
             .joined(separator: ", ")
         print(
-            "[PrivacyFilter] Detection complete: \(detections.count) entities across \(segments.count) segments [\(categoryCounts)]"
+            "[PrivacyFilter] Detection complete: \(newDetections.count) new entities (+\(carryOverCount) carried over) across \(segments.count) segments [\(categoryCounts)]"
         )
 
-        guard !detections.isEmpty else {
-            // Nothing detected — return originals with the map so the
-            // streaming unscrubber still wraps the response (cheap, and
-            // means a later turn that DOES detect entities can still
-            // unscrub stray placeholders from this turn).
-            return (messages, map)
+        // Materialise carry-over entries as auto-approved entities so
+        // they get substituted by `applyingScrub` regardless of which
+        // message in the history they appear in.
+        let carryOverApproved: [DetectedEntity] = preExistingSnapshot.map { (placeholder, original) in
+            DetectedEntity(
+                category: placeholder.category,
+                original: original,
+                range: original.startIndex ..< original.startIndex,
+                placeholder: placeholder,
+                approved: true,
+                containingText: nil
+            )
         }
 
-        // Hand the detections to the review service. When a UI
-        // presenter is registered + the session hasn't opted into
-        // auto-approve, this suspends until the user confirms. The
-        // background-caller path (HTTP API, plugin agents) auto-
-        // approves so non-interactive callers don't deadlock.
+        guard !newDetections.isEmpty else {
+            // No new originals this turn. Carry-over substitutions
+            // still need to run so prior-turn PII gets scrubbed in
+            // the message history we hand to the cloud.
+            if carryOverApproved.isEmpty {
+                return (messages, map)
+            }
+            let scrubbedHistory = messages.applyingScrub(approved: carryOverApproved)
+            return (scrubbedHistory, map)
+        }
+
+        // Hand only the newly-detected entities to the review service.
+        // When a UI presenter is registered + the session hasn't
+        // opted into auto-approve, this suspends until the user
+        // confirms. The background-caller path (HTTP API, plugin
+        // agents) auto-approves so non-interactive callers don't
+        // deadlock.
         let outcome = await PrivacyReviewService.shared.review(
-            detections: detections,
+            detections: newDetections,
             sessionId: sid
         )
-        let approved: [DetectedEntity]
+        let approvedFromReview: [DetectedEntity]
         switch outcome {
         case .approved(let entities):
-            approved = entities
+            approvedFromReview = entities
         case .canceled:
-            // User decided not to send (explicit Cancel button, sheet
-            // dismissed without action, or the awaiting Task was
-            // cancelled e.g. by the Stop button). Throw so the
-            // RemoteProviderService can abort cleanly without firing
-            // HTTP. The chat layer maps this back to a UI cancel
-            // (remove turns, restore draft) instead of an error
-            // bubble — see `ChatView.send` cancel handling.
+            // User cancelled the send (Cancel button, sheet
+            // dismissed, or the awaiting Task was cancelled by the
+            // Stop button). `RemoteProviderService` aborts without
+            // firing HTTP; the chat layer maps this back to a UI
+            // cancel (remove turns, restore draft) — see
+            // `ChatView.send` cancel handling.
+            //
+            // Before throwing, undo the side effects of detection.
+            // It already interned every `newDetections` original
+            // into the per-session map; without rollback the next
+            // send sees them in the carry-over set and skips the
+            // dialog entirely. Counter rewind is safe — the
+            // placeholders never left this map.
+            let freshOriginals = Set(newDetections.map(\.original))
+            await map.rollbackToSnapshot(
+                removingOriginals: freshOriginals,
+                counters: preDetectionCounters
+            )
             throw PrivacyFilterPipelineError.reviewCanceled
         }
 
+        // Final substitution list = this turn's approved entities
+        // PLUS every previously-approved (carry-over) entity. Prior
+        // approvals always count: the user already reviewed them once,
+        // so we don't ask again on every send, and we DON'T let a
+        // user un-tick this turn cause those values to ship raw.
+        let approved = approvedFromReview + carryOverApproved
         let approvedCount = approved.filter { $0.approved }.count
-        let skippedCount = approved.count - approvedCount
+        let skippedCount = approvedFromReview.count - approvedFromReview.filter { $0.approved }.count
         print("[PrivacyFilter] Review outcome: \(approvedCount) approved, \(skippedCount) skipped")
 
         let scrubbed = messages.applyingScrub(approved: approved)
@@ -351,12 +464,12 @@ enum PrivacyFilterPipeline {
         // CLOSED rather than ship the original raw text and pretend
         // we redacted. The thrown error surfaces to the chat layer
         // as a non-generic message the user can act on.
+        let diff = diffMessages(before: messages, after: scrubbed)
         if approvedCount > 0 {
-            let changedFields = countChangedFields(before: messages, after: scrubbed)
             print(
-                "[PrivacyFilter] Scrub applied: approved=\(approvedCount) changedFields=\(changedFields)/\(messages.count)"
+                "[PrivacyFilter] Scrub applied: approved=\(approvedCount) changedFields=\(diff.changedCount)/\(messages.count)"
             )
-            if changedFields == 0 {
+            if diff.changedCount == 0 {
                 let originals =
                     approved
                     .filter { $0.approved }
@@ -383,7 +496,58 @@ enum PrivacyFilterPipeline {
         // placeholder substitution). The matched values are NEVER
         // logged or echoed — only category counts surface to the
         // user, and even those go through localized plural strings.
-        let leaks = Self.scanForLeaks(in: scrubbed, ruleset: ruleset)
+        //
+        // Originals the user EXPLICITLY skipped in the review sheet
+        // are excluded from the leak count — they tripped the regex
+        // by definition (they were in the detection list), and
+        // counting them again would block the send right after the
+        // user told us to let them through.
+        let skippedOriginals: Set<String> = Set(
+            approvedFromReview
+                .filter { !$0.approved }
+                .map(\.original)
+        )
+        let leaks = Self.scanForLeaks(
+            in: scrubbed,
+            ruleset: ruleset,
+            ignoreOriginals: skippedOriginals,
+            dirtyIndices: diff.dirtyIndices
+        )
+
+        // Per-original assertion: every APPROVED entity should be
+        // absent from the scrubbed wire payload. Regex-backed
+        // categories are covered by the `leaks` scan above, but
+        // model-only categories (person, address, date, secret)
+        // never reach the regex detector — a substitution mismatch
+        // (case folding, unicode normalisation, partial overlap
+        // with a longer match) would silently send the raw original.
+        // We catch that here and report it as a leak in the entity's
+        // category so the chat layer surfaces the same blocking
+        // error users see for regex leaks.
+        let approvedOriginals: [DetectedEntity] = approved.filter { $0.approved }
+        if !approvedOriginals.isEmpty {
+            var mlLeaks: [EntityCategory: Int] = [:]
+            let scrubbedTexts = scrubbed.scrubbableTexts()
+            for entity in approvedOriginals {
+                let needle = entity.original
+                if needle.isEmpty { continue }
+                for text in scrubbedTexts where text.contains(needle) {
+                    mlLeaks[entity.category, default: 0] += 1
+                    break
+                }
+            }
+            if !mlLeaks.isEmpty {
+                let summary =
+                    mlLeaks
+                    .map { "\($0.key.rawValue):\($0.value)" }
+                    .sorted()
+                    .joined(separator: ", ")
+                print(
+                    "[PrivacyFilter] APPROVED ORIGINAL FOUND IN SCRUBBED PAYLOAD — substitution failed, blocking send. counts=[\(summary)]"
+                )
+                throw PrivacyFilterPipelineError.scrubLeaked(categoryCounts: mlLeaks)
+            }
+        }
         if !leaks.isEmpty {
             let summary =
                 leaks
@@ -434,42 +598,88 @@ enum PrivacyFilterPipeline {
     /// `messages` and bucket any matches by category. Empty dict means
     /// "no leaks detected". Callers map this into
     /// `PrivacyFilterPipelineError.scrubLeaked` when non-empty.
+    ///
+    /// `ignoreOriginals` carries the verbatim strings the user
+    /// explicitly skipped in the review sheet — counting them as
+    /// leaks would block the send right after the user told us to let
+    /// them through. This is the M5 fix; it preserves the safety of
+    /// the invariant for *unintended* leaks (the regex caught
+    /// something the user never saw) while honouring explicit skips.
+    ///
+    /// `dirtyIndices` is the H6 optimisation: when non-nil, only
+    /// those message indices (i.e. messages whose scrubbable fields
+    /// actually changed in this pipeline call) get re-scanned.
+    /// Earlier turns either shipped on a prior call (vetted then) or
+    /// were untouched by `applyingScrub` (no new text), so re-scanning
+    /// them is pure cost. Pass `nil` to scan the whole history (used
+    /// by tests and the lower-priority callers).
     static func scanForLeaks(
         in messages: [ChatMessage],
-        ruleset: RegexEntityDetector.EffectiveRuleSet
+        ruleset: RegexEntityDetector.EffectiveRuleSet,
+        ignoreOriginals: Set<String> = [],
+        dirtyIndices: Set<Int>? = nil
     ) -> [EntityCategory: Int] {
         var counts: [EntityCategory: Int] = [:]
-        for text in messages.scrubbableTexts() {
+        let scoped: [ChatMessage]
+        if let dirtyIndices, !dirtyIndices.isEmpty {
+            scoped = messages.enumerated()
+                .filter { dirtyIndices.contains($0.offset) }
+                .map(\.element)
+        } else if dirtyIndices != nil {
+            // Explicit empty set: nothing changed → nothing to scan.
+            return [:]
+        } else {
+            scoped = messages
+        }
+        for text in scoped.scrubbableTexts() {
             if text.isEmpty { continue }
             let matches = RegexEntityDetector.detect(in: text, ruleset: ruleset)
             for match in matches {
+                if ignoreOriginals.contains(match.original) { continue }
                 counts[match.category, default: 0] += 1
             }
         }
         return counts
     }
 
-    /// Compare scrubbable fields across two parallel message arrays.
-    /// Mismatched lengths return the larger count (best-effort) so the
-    /// caller's no-op detection still triggers on the suspicious case.
-    private static func countChangedFields(
+    /// Compare scrubbable fields across two parallel message arrays
+    /// and return both the count of changed messages and the indices
+    /// (relative to `after`) that changed. Mismatched lengths fall
+    /// back to "every index dirty" with a count of `max(before, after)`
+    /// so the caller's no-op detection still triggers on the
+    /// suspicious case AND the leak scan won't accidentally treat the
+    /// shorter array as fully clean.
+    private static func diffMessages(
         before: [ChatMessage],
         after: [ChatMessage]
-    ) -> Int {
+    ) -> (changedCount: Int, dirtyIndices: Set<Int>) {
         guard before.count == after.count else {
-            return max(before.count, after.count)
+            let n = max(before.count, after.count)
+            return (n, Set(0 ..< n))
         }
-        var changed = 0
-        for (a, b) in zip(before, after) {
-            if a.content != b.content { changed += 1; continue }
-            if a.reasoning_content != b.reasoning_content { changed += 1; continue }
-            // Tool-call arguments are a JSON blob; cheapest correct
-            // check is the joined string of all arguments per call.
+        var changedCount = 0
+        var dirty: Set<Int> = []
+        for (idx, pair) in zip(before, after).enumerated() {
+            let (a, b) = pair
+            if a.content != b.content {
+                changedCount += 1
+                dirty.insert(idx)
+                continue
+            }
+            if a.reasoning_content != b.reasoning_content {
+                changedCount += 1
+                dirty.insert(idx)
+                continue
+            }
             let aArgs = (a.tool_calls ?? []).map(\.function.arguments).joined()
             let bArgs = (b.tool_calls ?? []).map(\.function.arguments).joined()
-            if aArgs != bArgs { changed += 1; continue }
+            if aArgs != bArgs {
+                changedCount += 1
+                dirty.insert(idx)
+                continue
+            }
         }
-        return changed
+        return (changedCount, dirty)
     }
 
     /// Wrap a streaming AsyncThrowingStream so each yielded chunk is
@@ -550,11 +760,55 @@ enum PrivacyFilterPipeline {
                     if !contentTail.isEmpty {
                         continuation.yield(contentTail)
                     }
-                    continuation.finish(throwing: error)
+                    // Tool-call errors thrown mid-stream by
+                    // `RemoteProviderService._streamRemote` carry the
+                    // raw JSON args with `[CATEGORY_N]` placeholders
+                    // still embedded — without this pass the local
+                    // tool executes with `{"phone":"[PHONE_1]"}`
+                    // instead of the real value. Unscrub before the
+                    // consumer (Work loop / plugin host) sees them.
+                    let unscrubbed = await Self.unscrubToolInvocationError(error, map: map)
+                    continuation.finish(throwing: unscrubbed)
                 }
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
         }
+    }
+
+    /// Replace placeholder tokens inside a `ServiceToolInvocation` or
+    /// `ServiceToolInvocations` thrown mid-stream by the provider.
+    /// Other error types pass through unchanged so the unscrubber stays
+    /// transparent to the rest of the error taxonomy.
+    private static func unscrubToolInvocationError(
+        _ error: Error,
+        map: RedactionMap
+    ) async -> Error {
+        if let single = error as? ServiceToolInvocation {
+            let scrubbed = await replacePlaceholdersInJSON(single.jsonArguments, map: map)
+            return ServiceToolInvocation(
+                toolName: single.toolName,
+                jsonArguments: scrubbed,
+                toolCallId: single.toolCallId,
+                geminiThoughtSignature: single.geminiThoughtSignature
+            )
+        }
+        if let batch = error as? ServiceToolInvocations {
+            var out: [ServiceToolInvocation] = []
+            out.reserveCapacity(batch.invocations.count)
+            for inv in batch.invocations {
+                let scrubbed = await replacePlaceholdersInJSON(inv.jsonArguments, map: map)
+                out.append(
+                    ServiceToolInvocation(
+                        toolName: inv.toolName,
+                        jsonArguments: scrubbed,
+                        toolCallId: inv.toolCallId,
+                        geminiThoughtSignature: inv.geminiThoughtSignature
+                    )
+                )
+            }
+            return ServiceToolInvocations(invocations: out)
+        }
+        return error
     }
 
     /// One-shot unscrub for non-streaming responses and tool-call
@@ -672,19 +926,30 @@ enum PrivacyFilterPipeline {
 
     // MARK: - Helpers
 
-    /// Build a stable session id when the caller didn't pass one (the
-    /// HTTP API doesn't always set `session_id`). We hash the first
-    /// system message + first user message so two requests in the same
-    /// conversation map to the same key without bleeding maps across
-    /// unrelated calls.
-    private static func fallbackSessionId(for messages: [ChatMessage]) -> String {
-        let first = messages.prefix(2).compactMap { $0.content }.joined(separator: "\u{001E}")
-        if first.isEmpty {
-            return "pf-anon-\(UUID().uuidString)"
-        }
-        var hasher = Hasher()
-        hasher.combine(first)
-        return "pf-anon-\(hasher.finalize())"
+    /// Build a session id when the caller didn't pass one (the HTTP
+    /// API and headless plugin paths don't always set `session_id`).
+    ///
+    /// The earlier implementation hashed the first system + user
+    /// message so two requests in the same conversation could share a
+    /// `RedactionMap`. That worked for the chat UI but collided
+    /// catastrophically on the HTTP API: two unrelated clients
+    /// happening to send the same system prompt + greeting would
+    /// share one map and have each other's PII resolve into their
+    /// own placeholders on inbound unscrub.
+    ///
+    /// We now mint a fresh UUID per call. The trade-off: a
+    /// non-`session_id`-carrying client loses placeholder stability
+    /// across turns (each request gets a fresh map, so prior-turn
+    /// placeholders won't resolve on a follow-up). That's the
+    /// correct safety posture — silently sharing maps was a real
+    /// privacy bug. Clients that need multi-turn redaction should
+    /// pass `session_id` (or `parameters.sessionId`) explicitly.
+    ///
+    /// Package-internal (not `private`) so the H3 regression test
+    /// can lock the "fresh UUID per call" contract directly. The
+    /// function is a pure factory — no state, no side effects.
+    static func fallbackSessionId(for messages: [ChatMessage]) -> String {
+        return "pf-anon-\(UUID().uuidString)"
     }
 
     private static func looksLikePlaceholder(_ token: String) -> Bool {

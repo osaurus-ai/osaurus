@@ -55,6 +55,31 @@ extension Array where Element == ChatMessage {
         return pieces
     }
 
+    /// Scrubbable segments contributed by the latest user turn only —
+    /// i.e. the slice starting at the most recent `role == "user"`
+    /// message and extending to the end of the array. Detection only
+    /// needs to scan new originals, because anything already scrubbed
+    /// on a prior turn is captured by the per-session `RedactionMap`
+    /// and re-applied via `applyingScrub(approved:)`.
+    ///
+    /// Returns the whole-history segments as a fallback when there is
+    /// no user message in scope (e.g. a system-only kickoff or an
+    /// assistant-led plugin agent transcript) so we don't accidentally
+    /// skip detection on a turn that actually does carry PII.
+    func latestUserTurnSegments() -> [String] {
+        guard let lastUserIdx = lastIndex(where: { $0.role == "user" }) else {
+            return scrubbableTexts()
+        }
+        let slice = self[lastUserIdx...]
+        var pieces: [String] = []
+        pieces.reserveCapacity(slice.count)
+        for message in slice {
+            if message.role == "system" { continue }
+            message.appendScrubbableTexts(into: &pieces)
+        }
+        return pieces
+    }
+
     /// Produce new messages with every scrubbable field rewritten by
     /// substituting approved originals with their placeholder tokens.
     /// Multiple occurrences of one original — same field or different
@@ -74,17 +99,38 @@ extension Array where Element == ChatMessage {
 }
 
 extension ChatMessage {
+    /// Hard cap on the per-segment character count handed to the
+    /// classifier. Segments above this size are split into chunks of
+    /// `maxSegmentChars` characters so a single multi-megabyte paste
+    /// can't:
+    ///   * blow MLX VRAM on the classifier forward pass, or
+    ///   * starve the rest of the pipeline by stretching one segment's
+    ///     detection into multi-minute latency.
+    ///
+    /// `MessageScrubbing` is intentionally NOT in charge of warning
+    /// the user — the chat layer surfaces a "scan truncated" hint
+    /// when the count of emitted segments exceeds the message count
+    /// (i.e. at least one was chunked).
+    static let maxSegmentChars: Int = 8_000
+
     /// Append every scrubbable string field of this message to `out`.
     /// Image / audio / video parts and `tool_call_id` are skipped —
     /// they're identifiers or binary, not user-language.
+    ///
+    /// **Multimodal limitation:** non-text content parts (image URLs,
+    /// inlined base64 image data, audio attachments) are NOT scanned.
+    /// The Privacy Filter is text-only by design; OCR'd PII in a
+    /// pasted screenshot bypasses the filter. This is documented in
+    /// `docs/PRIVACY_FILTER.md#limitations` and in the master toggle
+    /// description.
     fileprivate func appendScrubbableTexts(into out: inout [String]) {
         if let content, !content.isEmpty {
-            out.append(content)
+            ChatMessage.appendCapped(content, into: &out)
         }
         if let parts = contentParts {
             for part in parts {
                 if case .text(let text) = part, !text.isEmpty {
-                    out.append(text)
+                    ChatMessage.appendCapped(text, into: &out)
                 }
             }
         }
@@ -92,12 +138,30 @@ extension ChatMessage {
             for call in calls {
                 let argsText = call.function.arguments
                 if !argsText.isEmpty {
-                    out.append(argsText)
+                    ChatMessage.appendCapped(argsText, into: &out)
                 }
             }
         }
         if let reasoning_content, !reasoning_content.isEmpty {
-            out.append(reasoning_content)
+            ChatMessage.appendCapped(reasoning_content, into: &out)
+        }
+    }
+
+    /// Split `text` at `maxSegmentChars` boundaries and append each
+    /// chunk to `out`. Sub-cap inputs append as a single element so
+    /// the common case stays zero-overhead.
+    fileprivate static func appendCapped(_ text: String, into out: inout [String]) {
+        if text.count <= ChatMessage.maxSegmentChars {
+            out.append(text)
+            return
+        }
+        var idx = text.startIndex
+        while idx < text.endIndex {
+            let end =
+                text.index(idx, offsetBy: ChatMessage.maxSegmentChars, limitedBy: text.endIndex)
+                ?? text.endIndex
+            out.append(String(text[idx ..< end]))
+            idx = end
         }
     }
 
@@ -160,9 +224,83 @@ extension ChatMessage {
         )
     }
 
-    /// Plain string substitution in `order`. Each original is replaced
-    /// everywhere it appears. Cheap: short list, short strings.
+    /// Single-pass substitution. Builds one alternation regex from
+    /// the originals (longest-first so substrings of a longer match
+    /// can't win at the same position) and walks the text once,
+    /// stitching non-match runs together with the placeholder tokens.
+    ///
+    /// Why this matters: the old implementation called
+    /// `replacingOccurrences` once per original, each pass copying
+    /// the entire buffer. With N originals and text of length M
+    /// that's `O(N × M)` allocations and string copies; the regex
+    /// pass below is effectively `O(M + matches)` driven by the
+    /// NSRegularExpression NFA, which is roughly Aho-Corasick under
+    /// the hood.
+    ///
+    /// Falls back to a single linear scan if the regex fails to
+    /// compile (shouldn't happen — all originals are run through
+    /// `NSRegularExpression.escapedPattern` first — but the fallback
+    /// keeps semantics identical to the previous implementation).
     fileprivate static func substitute(
+        _ text: String,
+        mapping: [String: String],
+        order: [String]
+    ) -> String {
+        if text.isEmpty || order.isEmpty { return text }
+
+        var nonEmpty: [String] = []
+        nonEmpty.reserveCapacity(order.count)
+        for original in order where !original.isEmpty && mapping[original] != nil {
+            nonEmpty.append(original)
+        }
+        if nonEmpty.isEmpty { return text }
+
+        let pattern =
+            nonEmpty
+            .map { NSRegularExpression.escapedPattern(for: $0) }
+            .joined(separator: "|")
+
+        guard
+            let regex = try? NSRegularExpression(
+                pattern: pattern,
+                options: [.dotMatchesLineSeparators]
+            )
+        else {
+            return slowSubstitute(text, mapping: mapping, order: nonEmpty)
+        }
+
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        let matches = regex.matches(in: text, options: [], range: fullRange)
+        if matches.isEmpty { return text }
+
+        var out = ""
+        out.reserveCapacity(nsText.length)
+        var cursor = 0
+        for match in matches {
+            let r = match.range
+            guard r.location != NSNotFound, r.location >= cursor else { continue }
+            if r.location > cursor {
+                out.append(nsText.substring(with: NSRange(location: cursor, length: r.location - cursor)))
+            }
+            let original = nsText.substring(with: r)
+            if let token = mapping[original] {
+                out.append(token)
+            } else {
+                out.append(original)
+            }
+            cursor = r.location + r.length
+        }
+        if cursor < nsText.length {
+            out.append(nsText.substring(with: NSRange(location: cursor, length: nsText.length - cursor)))
+        }
+        return out
+    }
+
+    /// Defensive fallback used only when the alternation regex fails
+    /// to compile. Behaviourally identical to the pre-P3 multi-pass
+    /// loop.
+    private static func slowSubstitute(
         _ text: String,
         mapping: [String: String],
         order: [String]

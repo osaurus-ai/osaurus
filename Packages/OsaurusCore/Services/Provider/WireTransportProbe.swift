@@ -82,10 +82,20 @@ public final class WireTransportProbe: @unchecked Sendable {
     /// the first write wins (a request retry would otherwise stomp
     /// the original; we want the *first* attempt's body so the
     /// captured pair stays self-consistent).
+    ///
+    /// Capped at `maxResponseBytes` (1 MiB) so a paste-the-whole-
+    /// novel request can't balloon process memory; the Insights UI
+    /// only renders head/tail anyway, so the trimmed bytes carry
+    /// the same diagnostic value.
     public func recordRequestBody(_ data: Data) {
         bodies.withLock { state in
             if state.req == nil {
-                state.req = data
+                if data.count <= Self.maxResponseBytes {
+                    state.req = data
+                } else {
+                    state.req = data.prefix(Self.maxResponseBytes)
+                    state.truncated = true
+                }
             }
         }
     }

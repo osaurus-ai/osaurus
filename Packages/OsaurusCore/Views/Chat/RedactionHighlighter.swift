@@ -115,35 +115,98 @@ enum RedactionHighlighter {
         accentColor: NSColor,
         a11yLabelBuilder: (RedactionHighlight) -> String
     ) -> [AppliedRedactionRange] {
-        guard !highlights.isEmpty, storage.length > 0 else { return [] }
+        return applyInternal(
+            on: storage,
+            highlights: highlights,
+            accentColor: accentColor,
+            a11yLabelBuilder: a11yLabelBuilder,
+            scanRange: NSRange(location: 0, length: storage.length),
+            seedFromExistingAttributes: false
+        )
+    }
 
-        // Longest-original-first so a redaction whose original is a
-        // substring of another doesn't get its range stomped by the
-        // shorter pattern's pass.
+    /// Incremental variant: only scan the appended tail of the
+    /// storage. Caller passes `appliedThrough` — the highest index
+    /// painted on the previous run — and we extend the scan window
+    /// back by the longest highlight key (so an original that
+    /// straddles `appliedThrough` still resolves) and seed
+    /// `paintedIndices` from the existing `.redactionPlaceholder`
+    /// runs in that prefix.
+    ///
+    /// Returns the painted ranges from the SCAN WINDOW only — the
+    /// caller is expected to keep its own running list and
+    /// accumulate. This means a fresh layout pass should call
+    /// `apply` (not `applyIncremental`), and only streaming deltas
+    /// where text was appended (never mutated) should use this
+    /// path.
+    ///
+    /// Pass `appliedThrough >= storage.length` to short-circuit:
+    /// nothing was appended, nothing to scan.
+    @discardableResult
+    static func applyIncremental(
+        on storage: NSTextStorage,
+        appliedThrough: Int,
+        highlights: [String: RedactionHighlight],
+        accentColor: NSColor,
+        a11yLabelBuilder: (RedactionHighlight) -> String
+    ) -> [AppliedRedactionRange] {
+        guard !highlights.isEmpty, storage.length > 0 else { return [] }
+        if appliedThrough >= storage.length { return [] }
+
+        let lookback = (highlights.keys.map { $0.count }.max() ?? 0)
+        let start = max(0, appliedThrough - lookback)
+        let length = storage.length - start
+        guard length > 0 else { return [] }
+
+        return applyInternal(
+            on: storage,
+            highlights: highlights,
+            accentColor: accentColor,
+            a11yLabelBuilder: a11yLabelBuilder,
+            scanRange: NSRange(location: start, length: length),
+            seedFromExistingAttributes: true
+        )
+    }
+
+    private static func applyInternal(
+        on storage: NSTextStorage,
+        highlights: [String: RedactionHighlight],
+        accentColor: NSColor,
+        a11yLabelBuilder: (RedactionHighlight) -> String,
+        scanRange: NSRange,
+        seedFromExistingAttributes: Bool
+    ) -> [AppliedRedactionRange] {
+        guard !highlights.isEmpty, storage.length > 0 else { return [] }
+        guard scanRange.length > 0 else { return [] }
+
         let sortedKeys = highlights.keys
             .filter { !$0.isEmpty }
             .sorted { $0.count > $1.count }
         guard !sortedKeys.isEmpty else { return [] }
 
-        // Pre-compute the per-attribute payload. Reusing the same
-        // dict for every `addAttributes` call keeps the per-range
-        // allocation cost flat.
         let underlineColor = accentColor.withAlphaComponent(0.7)
 
         var applied: [AppliedRedactionRange] = []
         let storageString = storage.string as NSString
-        let fullRange = NSRange(location: 0, length: storage.length)
-        // Track which character indices have already been painted so
-        // a long match doesn't get partially overwritten by a shorter
-        // sibling that shares some characters. NSMutableIndexSet is
-        // O(log n) for membership checks at our scales.
         let paintedIndices = NSMutableIndexSet()
+
+        if seedFromExistingAttributes {
+            storage.enumerateAttribute(
+                .redactionPlaceholder,
+                in: scanRange,
+                options: []
+            ) { value, range, _ in
+                if value != nil {
+                    paintedIndices.add(in: range)
+                }
+            }
+        }
 
         storage.beginEditing()
         for original in sortedKeys {
             guard let highlight = highlights[original] else { continue }
             let originalNS = original as NSString
-            var searchRange = fullRange
+            var searchRange = scanRange
             while searchRange.length > 0 {
                 let found = storageString.range(
                     of: original,
@@ -151,20 +214,11 @@ enum RedactionHighlighter {
                     range: searchRange
                 )
                 if found.location == NSNotFound { break }
-                // Skip ranges that overlap with already-painted text.
                 let candidate = NSRange(location: found.location, length: found.length)
                 let overlaps = paintedIndices.intersects(
                     in: NSRange(location: candidate.location, length: candidate.length)
                 )
                 if !overlaps {
-                    // `.toolTip` is the closest built-in attribute
-                    // that surfaces a string to VoiceOver/help on
-                    // hover; NSAttributedString has no public a11y
-                    // label key. The dedicated `.redactionPlaceholder`
-                    // run is what the hover controller actually
-                    // reads — the tooltip is a backup so even
-                    // contexts without the controller (drag-out
-                    // text, copy-as-RTF) carry the metadata.
                     let attributes: [NSAttributedString.Key: Any] = [
                         .foregroundColor: accentColor,
                         .underlineStyle: NSUnderlineStyle.single.rawValue
@@ -180,13 +234,11 @@ enum RedactionHighlighter {
                     )
                     applied.append(AppliedRedactionRange(range: candidate, highlight: highlight))
                 }
-                // Advance regardless of paint outcome so we don't
-                // loop forever on overlapping originals.
                 let nextLocation = found.location + max(found.length, originalNS.length, 1)
-                if nextLocation >= fullRange.upperBound { break }
+                if nextLocation >= scanRange.upperBound { break }
                 searchRange = NSRange(
                     location: nextLocation,
-                    length: fullRange.upperBound - nextLocation
+                    length: scanRange.upperBound - nextLocation
                 )
             }
         }

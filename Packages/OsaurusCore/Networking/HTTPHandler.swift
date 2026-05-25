@@ -3078,7 +3078,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // the actual on-wire status (200) so dashboards don't
                     // mis-attribute a delivered stream as a 500.
                     hop {
-                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
                     }
                     logSelf.logRequest(
@@ -4104,7 +4104,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // the actual on-wire status (200) so dashboards don't
                     // mis-attribute a delivered stream as a 500.
                     hop {
-                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
                     }
                     httpTrace.mark("http_sse_error_written")
@@ -4464,7 +4464,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // NDJSON response head was already 200 — surface as in-band
                 // NDJSON error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -4787,7 +4787,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } catch {
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -6089,7 +6089,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -6912,7 +6912,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(

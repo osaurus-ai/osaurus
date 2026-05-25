@@ -21,6 +21,27 @@ import Foundation
 /// can land with safe defaults instead of failing the whole decode
 /// when an older on-disk config file is missing them.
 public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
+    /// Schema version of the on-disk JSON. Today the decoder still
+    /// uses `decodeIfPresent`-with-defaults for forward compat —
+    /// adding a field is non-breaking and old files just take the
+    /// default. The version field exists for the BREAKING case
+    /// (e.g. rename a field, drop a category enum case) where the
+    /// decoder needs to branch on the source schema instead of
+    /// letting silent defaults paper over the change.
+    ///
+    /// Bump the constant when a new schema is published and add a
+    /// matching `if encoded < currentSchemaVersion { migrate }`
+    /// block in `init(from:)`. Files written by older Osaurus
+    /// builds decode as `0` (key absent) and the migration block
+    /// promotes them to the current shape.
+    public static let currentSchemaVersion: Int = 1
+
+    /// Schema version that produced this in-memory value. Defaults
+    /// to `currentSchemaVersion` for freshly-constructed objects
+    /// (so re-saving doesn't lie about the source), and to the
+    /// value read off disk for decoded ones.
+    public var schemaVersion: Int
+
     /// Master switch. When false the pipeline never invokes detection,
     /// regardless of per-provider toggles.
     public var enabled: Bool
@@ -44,6 +65,18 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     /// state still lives in `SessionRedactionStore`). This is the
     /// global default — sessions can flip back on their own.
     public var alwaysApproveByDefault: Bool
+
+    /// When true, non-interactive callers (HTTP API on
+    /// `/chat/completions` and `/agents/{id}/run`, plugin chat
+    /// agents, headless tools) BLOCK sends that surface detections
+    /// instead of silently auto-approving. The chat UI is unaffected
+    /// because it always has a presenter registered.
+    ///
+    /// Default ON: the user enabled the filter expecting their PII
+    /// to be reviewed, and a background caller bypassing the sheet
+    /// breaks that expectation. Power users can flip this off if they
+    /// rely on the HTTP API and accept the silent auto-approval.
+    public var requireReviewForNonInteractive: Bool
 
     /// Per-category toggle for the built-in `RegexEntityDetector`
     /// patterns (phone / email / url / accountNumber). A `false`
@@ -71,15 +104,18 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         skipCodeBlocks: Bool = true,
         confidenceThreshold: Float = 0.5,
         alwaysApproveByDefault: Bool = false,
+        requireReviewForNonInteractive: Bool = true,
         builtinPatternEnabled: [EntityCategory: Bool] = Self.defaultBuiltinPatternEnabled,
         presetRules: [String: Bool] = [:],
         customRules: [PrivacyRule] = []
     ) {
+        self.schemaVersion = Self.currentSchemaVersion
         self.enabled = enabled
         self.providerOverrides = providerOverrides
         self.skipCodeBlocks = skipCodeBlocks
         self.confidenceThreshold = confidenceThreshold
         self.alwaysApproveByDefault = alwaysApproveByDefault
+        self.requireReviewForNonInteractive = requireReviewForNonInteractive
         self.builtinPatternEnabled = builtinPatternEnabled
         self.presetRules = presetRules
         self.customRules = customRules
@@ -122,11 +158,13 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
+        case schemaVersion
         case enabled
         case providerOverrides
         case skipCodeBlocks
         case confidenceThreshold
         case alwaysApproveByDefault
+        case requireReviewForNonInteractive
         case builtinPatternEnabled
         case presetRules
         case customRules
@@ -134,6 +172,11 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Default 0 = "key absent" = pre-versioning config. Future
+        // migrations branch off this value before decoding the rest
+        // of the struct.
+        self.schemaVersion =
+            try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
         self.enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         self.providerOverrides =
             try c.decodeIfPresent([String: Bool].self, forKey: .providerOverrides) ?? [:]
@@ -143,6 +186,8 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
             try c.decodeIfPresent(Float.self, forKey: .confidenceThreshold) ?? 0.5
         self.alwaysApproveByDefault =
             try c.decodeIfPresent(Bool.self, forKey: .alwaysApproveByDefault) ?? false
+        self.requireReviewForNonInteractive =
+            try c.decodeIfPresent(Bool.self, forKey: .requireReviewForNonInteractive) ?? true
 
         // `builtinPatternEnabled` is stored on disk as `[String: Bool]`
         // (category raw values), not `[EntityCategory: Bool]`. Swift's
@@ -176,11 +221,17 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        // Always emit the CURRENT schema, even if `schemaVersion`
+        // on this in-memory value still reads the older number a
+        // future migration left there — the on-disk file should
+        // reflect the shape we're actually writing.
+        try c.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
         try c.encode(enabled, forKey: .enabled)
         try c.encode(providerOverrides, forKey: .providerOverrides)
         try c.encode(skipCodeBlocks, forKey: .skipCodeBlocks)
         try c.encode(confidenceThreshold, forKey: .confidenceThreshold)
         try c.encode(alwaysApproveByDefault, forKey: .alwaysApproveByDefault)
+        try c.encode(requireReviewForNonInteractive, forKey: .requireReviewForNonInteractive)
         // Encode as raw-string-keyed dict so the on-disk JSON is
         // `{"phone": true, …}` rather than the default
         // alternating-array form.

@@ -97,24 +97,51 @@ final class PrivacyReviewService {
             return .approved(detections)
         }
 
-        // Honor the global "always approve" toggle from settings. This
-        // is the user's coarse-grained "I trust this app and want
-        // frictionless sending" switch; per-session is the fine-grained
-        // version that's preserved across review sheets in the same
-        // conversation.
-        if PrivacyFilterStore.snapshot().alwaysApproveByDefault {
-            return .approved(detections)
-        }
+        let configSnapshot = PrivacyFilterStore.snapshot()
 
-        // Honor per-session auto-approve.
-        if await SessionRedactionStore.shared.isAutoApproveEnabled(sessionId) {
-            return .approved(detections)
+        // Per-session "Require review" wins over EVERYTHING — the
+        // user explicitly opted this conversation OUT of auto-approve
+        // (e.g. global default is on, but they're about to share
+        // sensitive context they want a final look at). Checked first
+        // so it overrides both the global flag and per-session
+        // auto-approve.
+        let sessionRequiresReview = await SessionRedactionStore.shared.isReviewRequired(sessionId)
+        if !sessionRequiresReview {
+            // Honor the global "always approve" toggle from settings.
+            // This is the user's coarse-grained "I trust this app and
+            // want frictionless sending" switch; per-session is the
+            // fine-grained version that's preserved across review
+            // sheets in the same conversation.
+            if configSnapshot.alwaysApproveByDefault {
+                return .approved(detections)
+            }
+
+            // Honor per-session auto-approve.
+            if await SessionRedactionStore.shared.isAutoApproveEnabled(sessionId) {
+                return .approved(detections)
+            }
         }
 
         guard let presenter = current?.closure else {
-            // No UI attached — auto-approve so background callers
-            // (HTTP API, agent loops) don't hang waiting on a sheet
-            // that won't appear.
+            // No UI attached. Two paths:
+            //
+            //   * `requireReviewForNonInteractive == true` (default): a
+            //     background caller (HTTP `/chat/completions`, plugin
+            //     agent, headless tool) tried to ship PII through the
+            //     filter. With no UI to confirm, treat this as
+            //     `.canceled` so the pipeline aborts the send instead
+            //     of silently auto-approving. This is the fail-closed
+            //     posture documented in `docs/PRIVACY_FILTER.md`.
+            //
+            //   * otherwise (power user opt-out): auto-approve so the
+            //     send proceeds — same legacy behaviour as before this
+            //     flag landed.
+            if configSnapshot.requireReviewForNonInteractive {
+                print(
+                    "[PrivacyFilter] BLOCKING non-interactive send: \(detections.count) detection(s) but no review presenter is registered."
+                )
+                return .canceled
+            }
             return .approved(detections)
         }
 

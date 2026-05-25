@@ -163,4 +163,88 @@ struct InboundStreamWrapperTests {
         for try await c in wrapped { collected.append(c) }
         #expect(collected == chunks)
     }
+
+    /// Covers C1: when a provider throws `ServiceToolInvocation`
+    /// mid-stream, the wrapper must rewrite every `[CATEGORY_N]`
+    /// placeholder back to the user's original BEFORE the local
+    /// tool executor sees the args. Before C1 the local tool ran
+    /// with `{"phone":"[PHONE_1]"}` and silently broke.
+    @Test func toolInvocationError_unscrubsJSONArgs() async throws {
+        let map = RedactionMap(conversationID: UUID())
+        _ = await map.intern("949-238-0232", as: .phone)
+
+        let upstream = AsyncThrowingStream<String, Error> { cont in
+            cont.yield("partial content ")
+            cont.finish(
+                throwing: ServiceToolInvocation(
+                    toolName: "send_sms",
+                    jsonArguments: "{\"phone\":\"[PHONE_1]\"}",
+                    toolCallId: "call_abc"
+                )
+            )
+        }
+
+        let wrapped = PrivacyFilterPipeline.wrapInboundStream(upstream, map: map)
+        var collected: [String] = []
+        var caught: Error?
+        do {
+            for try await chunk in wrapped {
+                collected.append(chunk)
+            }
+        } catch {
+            caught = error
+        }
+
+        guard let single = caught as? ServiceToolInvocation else {
+            #expect(Bool(false), "Expected ServiceToolInvocation, got \(String(describing: caught))")
+            return
+        }
+        #expect(single.toolName == "send_sms")
+        #expect(single.toolCallId == "call_abc")
+        #expect(single.jsonArguments.contains("949-238-0232"))
+        #expect(!single.jsonArguments.contains("[PHONE_1]"))
+    }
+
+    /// Same idea as above but for the batched
+    /// `ServiceToolInvocations` shape (multi-tool turn).
+    @Test func batchedToolInvocationsError_unscrubsEveryArg() async throws {
+        let map = RedactionMap(conversationID: UUID())
+        _ = await map.intern("949-238-0232", as: .phone)
+        _ = await map.intern("alice@example.com", as: .email)
+
+        let batch = ServiceToolInvocations(invocations: [
+            ServiceToolInvocation(
+                toolName: "send_sms",
+                jsonArguments: "{\"phone\":\"[PHONE_1]\"}",
+                toolCallId: "call_a"
+            ),
+            ServiceToolInvocation(
+                toolName: "send_email",
+                jsonArguments: "{\"to\":\"[EMAIL_1]\"}",
+                toolCallId: "call_b"
+            ),
+        ])
+
+        let upstream = AsyncThrowingStream<String, Error> { cont in
+            cont.finish(throwing: batch)
+        }
+        let wrapped = PrivacyFilterPipeline.wrapInboundStream(upstream, map: map)
+        var caught: Error?
+        do {
+            for try await _ in wrapped {}
+        } catch {
+            caught = error
+        }
+        guard let group = caught as? ServiceToolInvocations else {
+            #expect(Bool(false), "Expected ServiceToolInvocations")
+            return
+        }
+        #expect(group.invocations.count == 2)
+        for inv in group.invocations {
+            #expect(!inv.jsonArguments.contains("[PHONE_"))
+            #expect(!inv.jsonArguments.contains("[EMAIL_"))
+        }
+        #expect(group.invocations[0].jsonArguments.contains("949-238-0232"))
+        #expect(group.invocations[1].jsonArguments.contains("alice@example.com"))
+    }
 }

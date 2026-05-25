@@ -23,10 +23,59 @@
 
 import SwiftUI
 
+/// Per-view holder for the debounced-save `DispatchWorkItem`. Lives
+/// in a class so SwiftUI's `@StateObject` keeps the same instance
+/// across view re-renders, and so the `deinit` flush has a clear
+/// owner. `Sendable` because all writes happen on the main queue.
+@MainActor
+final class PrivacyViewSaveDebouncer: ObservableObject {
+    /// Window matches the visible tick rate of the sliders / preset
+    /// toggles; faster and the JSON write fires per-keystroke on a
+    /// drag, slower and the user perceives a lag between flipping
+    /// and the filter actually picking up the new value.
+    static let debounceInterval: TimeInterval = 0.3
+
+    private var pendingWork: DispatchWorkItem?
+
+    /// Cancel any pending write and schedule a new one. The closure
+    /// is captured by the work item, so each call snapshots the
+    /// configuration at scheduling time — the trailing-edge value
+    /// wins, which is the standard slider-drag behavior.
+    func schedule(_ work: @escaping @Sendable () -> Void) {
+        pendingWork?.cancel()
+        let item = DispatchWorkItem(block: work)
+        pendingWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounceInterval, execute: item)
+    }
+
+    /// Run any pending work right now and drop the work item.
+    /// Called from `onDisappear` and on app-quit notifications so
+    /// a debounced write can't be lost if the user closes the
+    /// settings sheet or quits within the debounce window.
+    func flush() {
+        if let item = pendingWork {
+            item.cancel()
+            item.perform()
+            pendingWork = nil
+        }
+    }
+
+    // No `deinit` cancel: `DispatchWorkItem` is non-`Sendable` so
+    // the nonisolated default deinit can't touch `pendingWork`,
+    // and a custom deinit would have to hop to MainActor. The
+    // `onDisappear` + `willTerminate` hooks on `PrivacyView`
+    // already cover the graceful flush paths; if neither fires
+    // (e.g. SwiftUI tears the view down silently), the work item
+    // simply runs after the view is gone — its closure only
+    // touches the file system, not view state, so that's a safe
+    // tail.
+}
+
 struct PrivacyView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var downloader = PrivacyFilterModelDownloader.shared
     @ObservedObject private var providerManager = RemoteProviderManager.shared
+    @StateObject private var saveDebouncer = PrivacyViewSaveDebouncer()
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -78,8 +127,24 @@ struct PrivacyView: View {
                 hasAppeared = true
             }
         }
+        .onDisappear {
+            // Flush any pending debounced write so closing Settings
+            // (or the user navigating away) never strands a
+            // half-second-old slider value off-disk. The flush also
+            // runs naturally in the debouncer's `deinit`, but we
+            // can't reach the MainActor from there, so the
+            // disappear path is the canonical hook.
+            saveDebouncer.flush()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .privacyFilterConfigurationChanged)) { _ in
             configuration = PrivacyFilterStore.snapshot()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            // Belt-and-suspenders for the user-quits-while-sheet-open
+            // race that motivated the synchronous master toggle.
+            // `onDisappear` doesn't fire when the entire app
+            // process is going down.
+            saveDebouncer.flush()
         }
         .sheet(item: $customRuleEditorContext) { context in
             PrivacyCustomRuleEditor(
@@ -135,6 +200,7 @@ struct PrivacyView: View {
             PrivacyRulesTab(
                 configuration: $configuration,
                 save: save,
+                saveDebounced: saveDebounced,
                 presetsExpanded: $presetsExpanded,
                 customRuleEditorContext: $customRuleEditorContext,
                 onDeleteCustomRule: deleteCustomRule(id:),
@@ -144,10 +210,14 @@ struct PrivacyView: View {
             PrivacyProvidersTab(
                 providers: providerManager.configuration.providers,
                 configuration: $configuration,
-                save: save
+                save: save,
+                saveDebounced: saveDebounced
             )
         case .model:
-            PrivacyModelTab(onReverify: downloader.reverify)
+            PrivacyModelTab(
+                onReverify: downloader.reverify,
+                onRemove: downloader.remove
+            )
         }
     }
 
@@ -196,7 +266,7 @@ struct PrivacyView: View {
     private func forgetAllRedactions() {
         Task { @MainActor in
             await SessionRedactionStore.shared.invalidateAll()
-            forgetActionMessage = "Cleared."
+            forgetActionMessage = L("privacy.forget.cleared")
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             forgetActionMessage = nil
         }
@@ -211,8 +281,28 @@ struct PrivacyView: View {
     /// `PrivacyFilterStorePersistenceTests`). JSON encode + atomic
     /// write of the ~1KB config is microseconds; this matches how
     /// `MemoryConfigurationStore.save` works in the rest of the app.
+    ///
+    /// Use this for fields where the user's perceived state MUST
+    /// match the on-disk state immediately (master toggle,
+    /// requireReview, master alwaysApprove). Slider-shaped or
+    /// preset-toggle-shaped fields go through `saveDebounced()` so
+    /// dragging a slider doesn't issue 60 atomic writes per second.
     private func save() {
+        saveDebouncer.flush()
         PrivacyFilterStore.save(configuration)
+    }
+
+    /// Debounced variant. Each call snapshots `configuration`
+    /// at scheduling time and cancels any pending write — only the
+    /// trailing-edge value is written. If the view disappears or
+    /// the user quits within `PrivacyViewSaveDebouncer.debounceInterval`,
+    /// the `onDisappear` hook flushes synchronously so the change
+    /// still lands.
+    private func saveDebounced() {
+        let snapshot = configuration
+        saveDebouncer.schedule {
+            PrivacyFilterStore.save(snapshot)
+        }
     }
 }
 
@@ -584,8 +674,10 @@ private struct PrivacyOverviewTab: View {
         VStack(alignment: .leading, spacing: 24) {
             SettingsSection(title: L("Filter"), icon: "lock.shield.fill") {
                 SettingsToggle(
-                    title: L("Enable Privacy Filter"),
-                    description: L("Run on-device detection before any cloud-bound request."),
+                    title: L("Scrub PII before sending to cloud providers"),
+                    description: L(
+                        "Detects PII in your messages and asks you to review before any cloud-bound request. Local models (MLX, Foundation) and on-device tools bypass the filter."
+                    ),
                     isOn: Binding(
                         get: { configuration.enabled },
                         set: { newValue in
@@ -619,24 +711,13 @@ private struct PrivacyOverviewTab: View {
                     )
                 )
 
-                SettingsSliderField(
-                    label: L("Confidence Threshold"),
-                    help: L("Higher means fewer false positives, but may miss subtle PII."),
-                    text: Binding(
-                        get: { String(format: "%.2f", configuration.confidenceThreshold) },
-                        set: { newValue in
-                            let v =
-                                Float(newValue.trimmingCharacters(in: .whitespacesAndNewlines))
-                                ?? configuration.confidenceThreshold
-                            configuration.confidenceThreshold = v
-                            save()
-                        }
-                    ),
-                    range: 0.0 ... 1.0,
-                    step: 0.05,
-                    defaultValue: 0.5,
-                    formatString: "%.2f"
-                )
+                // Intentionally hidden until the underlying classifier
+                // exposes a threshold knob. `confidenceThreshold` is
+                // persisted (so a future build can round-trip the
+                // user's choice without a migration) but
+                // `PrivacyFilterEngine.detect` doesn't read it today,
+                // so surfacing a slider that does nothing is worse
+                // than not surfacing it at all.
             }
 
             SettingsSection(
@@ -693,6 +774,12 @@ private struct PrivacyRulesTab: View {
     @Environment(\.theme) private var theme
     @Binding var configuration: PrivacyFilterConfiguration
     let save: () -> Void
+    /// Slider-shaped writes (preset toggles, built-in category
+    /// toggles) route through this so a fast user-interaction
+    /// (e.g. enabling four presets in a row) coalesces into one
+    /// JSON write instead of four. Falls through to `save` on
+    /// `onDisappear` / quit.
+    let saveDebounced: () -> Void
     @Binding var presetsExpanded: Bool
     @Binding var customRuleEditorContext: CustomRuleEditorContext?
     let onDeleteCustomRule: (UUID) -> Void
@@ -756,7 +843,7 @@ private struct PrivacyRulesTab: View {
                 get: { configuration.isBuiltinPatternEnabled(category) },
                 set: { newValue in
                     configuration.builtinPatternEnabled[category] = newValue
-                    save()
+                    saveDebounced()
                 }
             )
         )
@@ -847,7 +934,7 @@ private struct PrivacyRulesTab: View {
                     get: { configuration.isPresetEnabled(preset.id) },
                     set: { newValue in
                         configuration.presetRules[preset.id] = newValue
-                        save()
+                        saveDebounced()
                     }
                 )
             )
@@ -997,6 +1084,10 @@ private struct PrivacyProvidersTab: View {
     let providers: [RemoteProvider]
     @Binding var configuration: PrivacyFilterConfiguration
     let save: () -> Void
+    /// Provider-toggle writes funnel through here so flipping a
+    /// handful of providers in a row doesn't issue a JSON write
+    /// per toggle.
+    let saveDebounced: () -> Void
 
     var body: some View {
         if providers.isEmpty {
@@ -1049,7 +1140,7 @@ private struct PrivacyProvidersTab: View {
                 get: { configuration.providerOverrides[provider.id.uuidString] ?? true },
                 set: { newValue in
                     configuration.setProviderEnabled(provider.id, enabled: newValue)
-                    save()
+                    saveDebounced()
                 }
             )
         )
@@ -1057,7 +1148,10 @@ private struct PrivacyProvidersTab: View {
 
     private func providerDescription(_ provider: RemoteProvider) -> String {
         let host = provider.host.isEmpty ? provider.providerType.rawValue : provider.host
-        return "Cloud provider — \(host)"
+        return String(
+            format: L("privacy.providers.row.subtitle %@"),
+            host
+        )
     }
 }
 
@@ -1071,6 +1165,9 @@ private struct PrivacyProvidersTab: View {
 private struct PrivacyModelTab: View {
     @Environment(\.theme) private var theme
     let onReverify: () -> Void
+    let onRemove: () -> Void
+
+    @State private var showRemoveConfirmation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -1098,6 +1195,26 @@ private struct PrivacyModelTab: View {
                         }
                         .buttonStyle(.bordered)
                         .localizedHelp("Re-run the model bundle SHA-256 verification.")
+
+                        // Destructive action lives in the same row as
+                        // Re-verify so the user can audit the bundle
+                        // (re-verify) or wipe it (remove) without
+                        // hunting through a separate "danger zone"
+                        // panel. The confirmation alert protects the
+                        // ~2.8GB redownload the next install would
+                        // need.
+                        Button(role: .destructive) {
+                            showRemoveConfirmation = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "trash")
+                                Text("Remove", bundle: .module)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .localizedHelp(
+                            "Delete the on-disk model bundle. You'll need to re-download it from the Install button to use the Privacy Filter again."
+                        )
                     }
                 }
                 .padding(14)
@@ -1110,6 +1227,26 @@ private struct PrivacyModelTab: View {
                         )
                 )
             }
+        }
+        .confirmationDialog(
+            Text("Remove Privacy Filter model?", bundle: .module),
+            isPresented: $showRemoveConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                onRemove()
+            } label: {
+                Text("Remove Bundle", bundle: .module)
+            }
+            Button(role: .cancel) {
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text(
+                "This deletes the on-disk model (~2.8 GB). The Privacy Filter stops detecting until you re-download it.",
+                bundle: .module
+            )
         }
     }
 }

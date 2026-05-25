@@ -426,13 +426,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         switch route {
         case .service(let service, let effectiveModel):
             let innerStream: AsyncThrowingStream<String, Error>
-            // Wire-verification probe is installed only for chatUI
-            // sends so the Insights "Wire" tabs can show the
-            // post-scrub request + pre-unscrub response bytes. HTTP
-            // routes have their own observability via HTTPHandler
-            // and don't need (or want) a second capture surface.
-            let probe: WireTransportProbe? =
-                inferenceSource == .chatUI ? WireTransportProbe() : nil
+            // Wire-verification probe captures the post-scrub
+            // request body + pre-unscrub response bytes. Installed
+            // for every inference source (chatUI, httpAPI, plugin,
+            // agent) so the Insights "Wire" tab can show exactly
+            // what hit the network on any route — that's the only
+            // way users can verify the Privacy Filter scrub
+            // actually happened. Memory cost is bounded by
+            // `WireTransportProbe.maxResponseBytes` (1 MiB) per
+            // in-flight request.
+            let probe: WireTransportProbe? = WireTransportProbe()
 
             // If tools were provided and supported, use message-based tool streaming
             if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
@@ -770,12 +773,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             defer {
                 Task { await InferenceLoadCoordinator.shared.endChatGeneration() }
             }
-            // Wire-verification probe for chatUI completes — same
-            // contract as the streaming path. Bound around every
-            // call into the service so the remote layer can pick
-            // up the binding via task-local lookup.
-            let probe: WireTransportProbe? =
-                inferenceSource == .chatUI ? WireTransportProbe() : nil
+            // Wire-verification probe — same contract as the
+            // streaming path, installed for every inference source
+            // so HTTP / plugin / agent completes also surface their
+            // wire bodies in Insights. Bound around every call into
+            // the service so the remote layer can pick up the
+            // binding via task-local lookup.
+            let probe: WireTransportProbe? = WireTransportProbe()
             // If tools were provided and the service supports them, use the message-based API
             if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
                 let stopSequences = request.stop ?? []

@@ -933,6 +933,25 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
     }
 
+    /// Clear the Privacy Filter `RedactionMap` for this conversation
+    /// (and the chat-side highlight accumulator) without otherwise
+    /// affecting the turn history, draft, or attachments. Useful when
+    /// the user wants to "forget" a redaction without resetting the
+    /// chat — the next outbound send will mint fresh placeholders
+    /// for any PII it detects.
+    ///
+    /// Surfacing this in the UI is a future UX task; the method is
+    /// public so a menu item, command-palette action, or settings
+    /// shortcut can wire it up without touching the privacy
+    /// internals.
+    func forgetRedactionsInThisConversation() {
+        sessionRedactions.removeAll()
+        sessionRedactionOrder.removeAll()
+        if let sid = sessionId {
+            Task { await SessionRedactionStore.shared.invalidate(sid.uuidString) }
+        }
+    }
+
     func reset() {
         stop()
         turns.removeAll()

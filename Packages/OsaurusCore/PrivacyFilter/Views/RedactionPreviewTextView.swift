@@ -41,11 +41,25 @@ struct RedactionPreviewTextView: NSViewRepresentable {
     @MainActor
     final class Coordinator {
         var hoverController: RedactionHoverController?
-        /// Last-rendered (text, highlights) tuple. Re-rendering on
+        /// Last-rendered (text, theme-mode) tuple. Re-rendering on
         /// every SwiftUI tick would churn `NSTextStorage` and reset
         /// the user's selection — only mutate when the inputs
         /// actually change.
         var lastFingerprint: String = ""
+        /// Last-applied (text, highlights, accent) fingerprint.
+        /// Distinct from `lastFingerprint` because the highlighter
+        /// pass is a separate write to the same `NSTextStorage` and
+        /// we want to skip it when nothing it would change has
+        /// moved (a SwiftUI re-render where the body text and
+        /// redaction map are identical to the previous tick should
+        /// not touch `NSTextStorage` at all). Accent is folded in
+        /// so a theme accent change re-stamps the foreground/
+        /// underline colors without forcing a full rebuild.
+        var lastHighlightFingerprint: String = ""
+        /// Last applied range list, kept so the no-change branch
+        /// can hand the hover controller the same set without
+        /// re-running the highlighter.
+        var lastAppliedRanges: [AppliedRedactionRange] = []
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -108,6 +122,7 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         textView.accentColor = NSColor(theme.accentColor)
 
         let fingerprint = makeFingerprint()
+        let textRebuilt: Bool
         if context.coordinator.lastFingerprint != fingerprint {
             let attributed = Self.buildAttributedString(
                 scrubbedText: scrubbedText,
@@ -115,19 +130,31 @@ struct RedactionPreviewTextView: NSViewRepresentable {
             )
             storage.setAttributedString(attributed)
             context.coordinator.lastFingerprint = fingerprint
+            textRebuilt = true
+        } else {
+            textRebuilt = false
         }
 
-        // Apply highlights every time — empty `highlights` is a
-        // cheap no-op, and a non-empty pass is what installs the
-        // `redactionPlaceholder` attributes the hover controller
-        // reads. Doing it on every update means a theme change
-        // (which we let through above) re-stamps the colors.
-        let applied = RedactionHighlighter.apply(
-            on: storage,
-            highlights: highlights,
-            accentColor: NSColor(theme.accentColor),
-            a11yLabelBuilder: { Self.accessibilityLabel(for: $0) }
-        )
+        let highlightFingerprint = makeHighlightFingerprint()
+        let highlightChanged =
+            textRebuilt || context.coordinator.lastHighlightFingerprint != highlightFingerprint
+        let applied: [AppliedRedactionRange]
+        if highlightChanged {
+            applied = RedactionHighlighter.apply(
+                on: storage,
+                highlights: highlights,
+                accentColor: NSColor(theme.accentColor),
+                a11yLabelBuilder: { Self.accessibilityLabel(for: $0) }
+            )
+            context.coordinator.lastHighlightFingerprint = highlightFingerprint
+            context.coordinator.lastAppliedRanges = applied
+        } else {
+            // Inputs unchanged since the last apply ⇒ existing
+            // `redactionPlaceholder` runs are still valid. Reuse the
+            // last `applied` list so the hover controller can be
+            // re-attached without rescanning the storage.
+            applied = context.coordinator.lastAppliedRanges
+        }
 
         // Lazy-create the hover controller — chats / previews
         // without any redactions never allocate the tracking-area
@@ -180,12 +207,40 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         return String(format: format, highlight.placeholderToken)
     }
 
-    /// (text, highlights, theme-mode) fingerprint. Theme mode is
-    /// folded in so a dark/light switch counts as a change and
-    /// re-rebuilds the attributed string with the new
-    /// foreground/background colors.
+    /// (text, theme-mode) fingerprint. Theme mode is folded in so a
+    /// dark/light switch counts as a change and re-rebuilds the
+    /// attributed string with the new foreground/background colors.
+    /// Body text fingerprint INTENTIONALLY excludes `highlights`
+    /// because they're applied as a separate pass on the same
+    /// storage; folding them in here would rebuild the attributed
+    /// string (and drop the user's selection) every time the
+    /// redaction map ticked.
     private func makeFingerprint() -> String {
-        let highlightKey = highlights.keys.sorted().joined(separator: ",")
-        return "\(scrubbedText.count)|\(highlightKey)|\(theme.isDark ? 1 : 0)|\(theme.bodySize)"
+        return "\(scrubbedText.count)|\(theme.isDark ? 1 : 0)|\(theme.bodySize)"
+    }
+
+    /// (scrubbedText, highlights, accent) fingerprint used to gate
+    /// the highlighter pass. Hashes the full highlight contents so
+    /// a placeholder-token change is detected even when the key
+    /// set is identical (very rare — `[PHONE_1]` would never become
+    /// `[PHONE_2]` for the same original — but the cost of folding
+    /// in `placeholderToken` is two hashes per call, so we just
+    /// do it).
+    private func makeHighlightFingerprint() -> String {
+        var hasher = Hasher()
+        hasher.combine(scrubbedText)
+        hasher.combine(highlights.count)
+        for key in highlights.keys.sorted() {
+            hasher.combine(key)
+            if let h = highlights[key] {
+                hasher.combine(h.placeholderToken)
+                hasher.combine(h.direction.rawValue)
+            }
+        }
+        // Accent description is `(red, green, blue, alpha)`-ish via
+        // NSColor's debug description — stable enough to detect a
+        // user-driven theme accent change.
+        hasher.combine(NSColor(theme.accentColor).description)
+        return String(hasher.finalize())
     }
 }
