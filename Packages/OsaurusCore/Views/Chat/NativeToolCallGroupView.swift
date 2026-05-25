@@ -27,7 +27,10 @@ enum JSONFormatter {
             return "{}"
         }
 
-        guard let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+        guard let pretty = try? JSONSerialization.data(
+            withJSONObject: obj,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        ),
             let s = String(data: pretty, encoding: .utf8)
         else { return nil }
         return s
