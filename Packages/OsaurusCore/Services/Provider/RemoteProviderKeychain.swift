@@ -47,6 +47,7 @@ public enum RemoteProviderKeychain {
     public static func saveAPIKey(_ apiKey: String, for providerId: UUID) -> Bool {
         let account = "\(providerId.uuidString).apiKey"
         guard let keyData = apiKey.data(using: .utf8) else { return false }
+        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
 
         // Delete any existing key first
         deleteAPIKey(for: providerId)
@@ -66,6 +67,7 @@ public enum RemoteProviderKeychain {
     /// Retrieve an API key for a provider ID
     public static func getAPIKey(for providerId: UUID) -> String? {
         let account = "\(providerId.uuidString).apiKey"
+        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -94,6 +96,7 @@ public enum RemoteProviderKeychain {
     @discardableResult
     public static func deleteAPIKey(for providerId: UUID) -> Bool {
         let account = "\(providerId.uuidString).apiKey"
+        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -116,6 +119,7 @@ public enum RemoteProviderKeychain {
     public static func saveOAuthTokens(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID) -> Bool {
         let account = "\(providerId.uuidString).oauth.tokens"
         guard let tokenData = try? JSONEncoder().encode(tokens) else { return false }
+        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
 
         deleteOAuthTokens(for: providerId)
 
@@ -142,6 +146,7 @@ public enum RemoteProviderKeychain {
 
     public static func getOAuthTokens(for providerId: UUID) -> RemoteProviderOAuthTokens? {
         let account = "\(providerId.uuidString).oauth.tokens"
+        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -169,6 +174,7 @@ public enum RemoteProviderKeychain {
     @discardableResult
     public static func deleteOAuthTokens(for providerId: UUID) -> Bool {
         let account = "\(providerId.uuidString).oauth.tokens"
+        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -191,6 +197,7 @@ public enum RemoteProviderKeychain {
     public static func saveHeaderSecret(_ value: String, key: String, for providerId: UUID) -> Bool {
         let account = "\(providerId.uuidString).header.\(key)"
         guard let valueData = value.data(using: .utf8) else { return false }
+        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
 
         // Delete any existing value first
         deleteHeaderSecret(key: key, for: providerId)
@@ -210,6 +217,7 @@ public enum RemoteProviderKeychain {
     /// Retrieve a secret header value for a provider
     public static func getHeaderSecret(key: String, for providerId: UUID) -> String? {
         let account = "\(providerId.uuidString).header.\(key)"
+        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -238,6 +246,7 @@ public enum RemoteProviderKeychain {
     @discardableResult
     public static func deleteHeaderSecret(key: String, for providerId: UUID) -> Bool {
         let account = "\(providerId.uuidString).header.\(key)"
+        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -251,6 +260,7 @@ public enum RemoteProviderKeychain {
 
     /// Delete all secrets for a provider (API key + all header secrets)
     public static func deleteAllSecrets(for providerId: UUID) {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return }
         // Delete API key
         deleteAPIKey(for: providerId)
         deleteOAuthTokens(for: providerId)

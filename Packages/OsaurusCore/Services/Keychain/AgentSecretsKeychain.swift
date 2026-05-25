@@ -84,6 +84,7 @@ public enum AgentSecretsKeychain {
                 return testing.saved
             }
         #endif
+        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
 
         deleteSecret(id: id, agentId: agentId)
 
@@ -106,6 +107,7 @@ public enum AgentSecretsKeychain {
                 return testing.value
             }
         #endif
+        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -135,6 +137,7 @@ public enum AgentSecretsKeychain {
                 return testing.deleted
             }
         #endif
+        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -173,6 +176,7 @@ public enum AgentSecretsKeychain {
     }
 
     public static func deleteAllSecrets(agentId: UUID) {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return }
         let prefix = "\(agentId.uuidString)."
         for account in allAccounts() where account.hasPrefix(prefix) {
             let query: [String: Any] = [
@@ -218,6 +222,7 @@ public enum AgentSecretsKeychain {
                 return accounts
             }
         #endif
+        if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

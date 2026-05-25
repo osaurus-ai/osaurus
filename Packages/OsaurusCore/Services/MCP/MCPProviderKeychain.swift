@@ -128,6 +128,7 @@ public enum MCPProviderKeychain {
     /// and any number of header secrets. Used when removing a provider entirely or
     /// resetting the app.
     public static func deleteAllSecrets(for providerId: UUID) {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return }
         // Targeted deletes (cheap, idempotent).
         deleteToken(for: providerId)
         deleteOAuthTokens(for: providerId)
@@ -179,6 +180,7 @@ public enum MCPProviderKeychain {
     /// don't have to worry about the difference between `SecItemAdd` and `SecItemUpdate`.
     @discardableResult
     private static func setData(_ data: Data, account: String) -> Bool {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
         deleteItem(account: account)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -191,6 +193,7 @@ public enum MCPProviderKeychain {
     }
 
     private static func getData(account: String) -> Data? {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -208,6 +211,7 @@ public enum MCPProviderKeychain {
 
     @discardableResult
     private static func deleteItem(account: String) -> Bool {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

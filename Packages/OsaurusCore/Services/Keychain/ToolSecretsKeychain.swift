@@ -19,6 +19,7 @@ public enum ToolSecretsKeychain {
     public static func saveSecret(_ value: String, id: String, for pluginId: String, agentId: UUID) -> Bool {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
         guard let valueData = value.data(using: .utf8) else { return false }
+        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
 
         deleteSecret(id: id, for: pluginId, agentId: agentId)
 
@@ -36,6 +37,7 @@ public enum ToolSecretsKeychain {
 
     public static func getSecret(id: String, for pluginId: String, agentId: UUID) -> String? {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
+        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -67,6 +69,7 @@ public enum ToolSecretsKeychain {
     @discardableResult
     public static func deleteSecret(id: String, for pluginId: String, agentId: UUID) -> Bool {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
+        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -85,6 +88,7 @@ public enum ToolSecretsKeychain {
 
     /// Delete all agent-scoped secrets for a plugin across every agent.
     public static func deleteAllSecretsAllAgents(for pluginId: String) {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return }
         let allItems = fetchAllItems(attributesOnly: true)
         let suffix = ".\(pluginId)."
         for item in allItems {
@@ -196,6 +200,7 @@ public enum ToolSecretsKeychain {
 
     /// Delete all legacy (non-agent-scoped) entries for a plugin.
     public static func deleteLegacySecrets(for pluginId: String) {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return }
         let legacyPrefix = "\(pluginId)."
         let allItems = fetchAllItems(attributesOnly: true)
 
@@ -235,6 +240,7 @@ public enum ToolSecretsKeychain {
     }
 
     private static func fetchAllItems(attributesOnly: Bool) -> [[String: Any]] {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -257,6 +263,7 @@ public enum ToolSecretsKeychain {
     }
 
     private static func deleteAllMatchingPrefix(_ prefix: String) {
+        if KeychainQueryHelpers.disablesKeychainForProcess { return }
         let allItems = fetchAllItems(attributesOnly: true)
         for item in allItems {
             guard let account = item[kSecAttrAccount as String] as? String,

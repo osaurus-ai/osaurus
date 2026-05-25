@@ -29,6 +29,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private var activityDot: NSView?
     private var vadDot: NSView?
     private var pendingPopoverAction: (@MainActor () -> Void)?
+    private var keychainDisabledTestMode: Bool {
+        StorageKeyManager.disablesKeychainForProcess
+    }
 
     /// Runs before AppKit shows its first window. Anything that influences
     /// window painting on launch (activation policy, automatic-termination
@@ -238,7 +241,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize directory access early so security-scoped bookmark is active
         _ = DirectoryPickerService.shared
 
-        if LaunchGuard.isSafeMode {
+        if keychainDisabledTestMode {
+            LaunchGuard.markStartupComplete()
+        } else if LaunchGuard.isSafeMode {
             NotificationService.shared.postSafeModeActive()
             LaunchGuard.markStartupComplete()
         } else {
@@ -271,8 +276,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
 
         Task { @MainActor in
-            await MCPProviderManager.shared.connectEnabledProviders()
-            await RemoteProviderManager.shared.connectEnabledProviders()
+            if !keychainDisabledTestMode {
+                await MCPProviderManager.shared.connectEnabledProviders()
+                await RemoteProviderManager.shared.connectEnabledProviders()
+            }
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
@@ -375,7 +382,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // compose for the active agent sees real sandbox tools instead of
         // the placeholder. (Replaces a separate `Task.detached` startContainer
         // call that used to race the registrar's first registration.)
-        SandboxToolRegistrar.shared.start()
+        if !keychainDisabledTestMode {
+            SandboxToolRegistrar.shared.start()
+        }
 
         // Present the initial user-facing window. The 300 ms defer keeps
         // window-server frames clean during the loud first second of launch:
@@ -408,14 +417,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
             }
 
-            if presentOnboarding {
+            if keychainDisabledTestMode {
+                // Headless live-proof launches only need the local HTTP server.
+            } else if presentOnboarding {
                 showOnboardingWindow()
             } else {
                 presentInitialWindow()
             }
 
-            ToastWindowController.shared.setup()
-            NotchWindowController.shared.setup()
+            if !keychainDisabledTestMode {
+                ToastWindowController.shared.setup()
+                NotchWindowController.shared.setup()
+            }
 
             // tear down the Tahoe placeholder observers
             if #available(macOS 26.0, *) {
@@ -436,7 +449,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // pool — but for the common "reopen the same agent I just
             // had" workflow this trims the cold inference wait off the
             // first chat session of the launch.
-            prewarmGreetingPoolIfEnabled()
+            if !keychainDisabledTestMode {
+                prewarmGreetingPoolIfEnabled()
+            }
         }
     }
 
