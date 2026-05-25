@@ -539,7 +539,7 @@ final class ModelManager: NSObject, ObservableObject {
     /// JANG/JANGTQ/MXFP/TurboQuant uploads are MLX-native artifact families and
     /// should reach the Hugging Face metadata check instead of being rejected by
     /// title text alone.
-    static func nameLooksLikeMLX(_ repoId: String) -> Bool {
+    nonisolated static func nameLooksLikeMLX(_ repoId: String) -> Bool {
         let lower = repoId.lowercased()
         return lower.contains("-mlx") || lower.contains("_mlx") || lower.hasSuffix("/mlx")
             || lower.contains("mlx-")

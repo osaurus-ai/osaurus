@@ -46,8 +46,10 @@ require_file "$APP_DELEGATE" "AppDelegate"
 require_file "$MODEL_DOWNLOAD_VIEW" "ModelDownloadView"
 require_file "$TESTS" "ModelManagerResolveTests"
 
-require_text "$MODEL_MANAGER" 'static func nameLooksLikeMLX' \
+require_text "$MODEL_MANAGER" 'nonisolated static func nameLooksLikeMLX' \
   "ModelManager has MLX artifact hint helper"
+require_text "$MODEL_MANAGER" 'nonisolated static func nameLooksLikeMLX' \
+  "ModelManager MLX artifact hint helper is callable from nonisolated tests"
 require_text "$MODEL_MANAGER" 'lower\.contains\("-mxfp"\)|lower\.contains\("_mxfp"\)' \
   "ModelManager accepts MXFP artifact-family hints"
 require_text "$MODEL_MANAGER" 'lower\.contains\("-jang"\)|lower\.contains\("_jang"\)' \
