@@ -1544,8 +1544,14 @@ struct RuntimePolicySourceTests {
             "Chat UI should only send tool schemas when the composer resolved a non-empty tool set."
         )
         #expect(
-            chatView.contains("tool_choice: toolSpecs.isEmpty ? nil : .auto"),
-            "Chat UI should keep the local no-tool path available by omitting auto tool choice when no tools are resolved."
+            chatView.contains("tool_choice: ChatToolChoicePolicy.resolve("),
+            "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
+        )
+        #expect(
+            chatView.contains("tools: toolSpecs,")
+                && chatView.contains("userText: trimmed,")
+                && chatView.contains("attempt: attempts"),
+            "Chat UI tool-choice policy must see the resolved tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
         )
         #expect(
             chatView.contains("finalReq.samplingParametersAreImplicit = true"),

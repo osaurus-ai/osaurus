@@ -2151,7 +2151,11 @@ final class ChatSession: ObservableObject {
                         stop: nil,
                         n: nil,
                         tools: toolSpecs.isEmpty ? nil : toolSpecs,
-                        tool_choice: toolSpecs.isEmpty ? nil : .auto,
+                        tool_choice: ChatToolChoicePolicy.resolve(
+                            tools: toolSpecs,
+                            userText: trimmed,
+                            attempt: attempts
+                        ),
                         session_id: sessionId?.uuidString
                     )
                     req.samplingParametersAreImplicit = true
