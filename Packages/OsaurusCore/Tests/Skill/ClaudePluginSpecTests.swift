@@ -35,11 +35,24 @@ struct ClaudePluginSpecTests {
 
     // MARK: - Test root isolation
 
-    /// Returns a fresh isolated `OSAURUS_TEST_ROOT` directory + a teardown
-    /// closure the caller is expected to invoke after each test. Keeps
-    /// disk writes inside `/tmp/osaurus-claude-plugin-tests/*` so the
-    /// suite never mutates `~/.osaurus` even when the env var is shared
-    /// with another test run.
+    /// Returns a fresh isolated root directory + a teardown closure the
+    /// caller is expected to invoke after each test. Keeps disk writes
+    /// inside `/tmp/osaurus-claude-plugin-tests/*` so the suite never
+    /// mutates `~/.osaurus`.
+    ///
+    /// Drives isolation through `OsaurusPaths.overrideRoot` (the typed
+    /// test hook) rather than `setenv("OSAURUS_TEST_ROOT", …)`. Under
+    /// xctest on macOS 26 / Apple-Virtual-Machine arm64e (what CI
+    /// runs), `ProcessInfo.processInfo.environment` was caching the
+    /// first observed value, so a later test's `setenv` was invisible
+    /// to `OsaurusPaths.root()` and two serialized tests wound up
+    /// resolving to the same physical directory — the previous test's
+    /// snapshot leaked into the next test's `all()` listing. The env
+    /// var still has to be set for the few tests that exercise the
+    /// subprocess-shape path (`subprocessEnv` / variable expander),
+    /// because that codepath legitimately reads the env var; but the
+    /// override is the source of truth for in-process resolution and
+    /// `@Suite(.serialized)` keeps the override mutation safe.
     private static func isolatedRoot(label: String) -> (URL, () -> Void) {
         let unique = "\(label)-\(UUID().uuidString)"
         let root = URL(fileURLWithPath: "/tmp/osaurus-claude-plugin-tests")
@@ -48,12 +61,15 @@ struct ClaudePluginSpecTests {
             at: root,
             withIntermediateDirectories: true
         )
-        let previous = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"]
+        let previousOverride = OsaurusPaths.overrideRoot
+        let previousEnv = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"]
+        OsaurusPaths.overrideRoot = root
         setenv("OSAURUS_TEST_ROOT", root.path, 1)
         let teardown = {
             try? FileManager.default.removeItem(at: root)
-            if let previous {
-                setenv("OSAURUS_TEST_ROOT", previous, 1)
+            OsaurusPaths.overrideRoot = previousOverride
+            if let previousEnv {
+                setenv("OSAURUS_TEST_ROOT", previousEnv, 1)
             } else {
                 unsetenv("OSAURUS_TEST_ROOT")
             }
