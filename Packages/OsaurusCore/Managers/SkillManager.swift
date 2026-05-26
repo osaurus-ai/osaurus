@@ -47,6 +47,38 @@ public final class SkillManager {
         skills = await SkillStore.loadAll()
     }
 
+    // MARK: - Batch Updates
+
+    /// Depth counter so nested batches collapse to a single trailing refresh.
+    private var batchDepth = 0
+    /// Skills saved during a batch, so `skill(for:)` (and the file-attachment
+    /// helpers) can resolve a just-saved skill without a full `refresh()`.
+    private var batchStagedSkills: [UUID: Skill] = [:]
+
+    private var isBatching: Bool { batchDepth > 0 }
+
+    /// Run `body` as a bulk mutation: per-operation refreshes are suppressed
+    /// and `skills` is reloaded once when the outermost batch finishes. The
+    /// Claude plugin installer otherwise saves 170+ skills one-by-one, making
+    /// the Skills view flash as it re-renders the list on every save.
+    @discardableResult
+    public func batchUpdates<T>(_ body: () async -> T) async -> T {
+        batchDepth += 1
+        let result = await body()
+        batchDepth -= 1
+        if batchDepth == 0 {
+            batchStagedSkills.removeAll()
+            await refresh()
+        }
+        return result
+    }
+
+    /// `refresh()` unless a bulk batch is in flight (see `batchUpdates`).
+    private func refreshUnlessBatching() async {
+        guard !isBatching else { return }
+        await refresh()
+    }
+
     @discardableResult
     public func create(
         name: String,
@@ -162,7 +194,8 @@ public final class SkillManager {
     // MARK: - Lookup
 
     public func skill(for id: UUID) -> Skill? {
-        skills.first { $0.id == id }
+        if isBatching, let staged = batchStagedSkills[id] { return staged }
+        return skills.first { $0.id == id }
     }
 
     public func skill(named name: String) -> Skill? {
@@ -269,10 +302,11 @@ public final class SkillManager {
                 pluginId: parsedSkill.pluginId
             )
             await SkillStore.save(skill)
+            if isBatching { batchStagedSkills[skill.id] = skill }
             imported.append(skill)
         }
         if !imported.isEmpty {
-            await refresh()
+            await refreshUnlessBatching()
 
             Task {
                 for skill in imported {
@@ -298,7 +332,7 @@ public final class SkillManager {
             throw SkillFileError.cannotModifyBuiltIn
         }
         try await SkillStore.addReference(to: skill, name: name, content: content)
-        await refresh()
+        await refreshUnlessBatching()
 
     }
 
@@ -307,7 +341,7 @@ public final class SkillManager {
             throw SkillFileError.cannotModifyBuiltIn
         }
         try await SkillStore.addAsset(to: skill, name: name, content: content)
-        await refresh()
+        await refreshUnlessBatching()
 
     }
 

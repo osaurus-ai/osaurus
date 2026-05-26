@@ -103,6 +103,7 @@ struct IsKnownHybridModelMCDCTests {
     @Test("B2.qwen3.6 substring independently flips Block 2")
     func b2_qwen3_6() {
         #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "dealignai/Qwen3.6-35B-A3B-MXFP4-CRACK-MTP"))
         #expect(ModelRuntime.isKnownHybridModel(name: "qwen3.6-35b-a3b-jangtq4"))
     }
 
@@ -219,6 +220,7 @@ struct IsKnownHybridModelMCDCTests {
             "minimax-m2.7-small-jangtq",
             "foundation",  // Apple's built-in
             "deepseekv4-flash-jangtq",  // DSV4 has its own cache topology
+            "DeepSeek-V4-Flash-JANGTQ2",  // DSV4 JANGTQ2 has its own hybrid-pool cache
             "",  // empty string edge case
         ]
         for name in denseFamilies {

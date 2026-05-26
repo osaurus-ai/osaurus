@@ -41,7 +41,7 @@ struct AgentLoopToolsTests {
             )
             #expect(ToolEnvelope.isSuccess(result))
             #expect(result.contains("Todo updated"))
-            #expect(result.contains("1\\/3 complete"))
+            #expect(result.contains("1/3 complete"))
 
             let stored = await AgentTodoStore.shared.todo(for: sessionId)
             #expect(stored?.totalCount == 3)
@@ -83,8 +83,8 @@ struct AgentLoopToolsTests {
                 argumentsJSON: #"{"markdown": "Just prose, no checkboxes"}"#
             )
             // Stored — but the response warns the model the format is wrong.
-            // JSON-encoding turns `/` into `\/` inside the envelope's `text`
-            // field, so assert on the escaped form.
+            // Tool envelopes use the canonical JSON encoder, which keeps
+            // slash-bearing progress/path text readable for model replay.
             #expect(ToolEnvelope.isSuccess(result))
             #expect(result.contains("- [ ]") && result.contains("- [x]"))
             #expect(result.contains("lines were found"))

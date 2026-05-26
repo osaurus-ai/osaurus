@@ -1666,11 +1666,12 @@ extension FloatingInputCard {
     }
 
     private func toggleThinking(id: String) {
-        let current =
-            selectedModel.flatMap {
-                ModelProfileRegistry.boolOptionValue(for: $0, optionId: id, values: activeModelOptions)
-            } ?? false
-        let newVal = !current
+        let thinkingOpt = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption }
+        let currentEnabled = selectedModel.flatMap {
+            ModelProfileRegistry.thinkingEnabled(for: $0, values: activeModelOptions)
+        } ?? false
+        let newEnabled = !currentEnabled
+        let newVal = thinkingOpt?.inverted == true ? !newEnabled : newEnabled
 
         withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
             activeModelOptions[id] = .bool(newVal)
@@ -1685,13 +1686,10 @@ extension FloatingInputCard {
 
     private var modelOptionsSummary: String {
         guard let model = selectedModel,
-            let profile = ModelProfileRegistry.profile(for: model)
+            ModelProfileRegistry.profile(for: model) != nil
         else { return "" }
-        let defaults = profile.defaults
         let nonDefault = activeProfileOptions.compactMap { option -> String? in
-            guard let current = activeModelOptions[option.id],
-                current != defaults[option.id]
-            else { return nil }
+            guard let current = activeModelOptions[option.id] else { return nil }
             if case .segmented(let segments) = option.kind {
                 return segments.first(where: { $0.id == current.stringValue })?.label
             }
@@ -1724,12 +1722,23 @@ extension FloatingInputCard {
         .popover(isPresented: $showModelOptionsPicker, arrowEdge: .top) {
             ModelOptionsSelectorView(
                 options: activeProfileOptions,
-                values: $activeModelOptions,
-                defaults: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.defaults } ?? [:],
+                values: modelOptionsBinding,
                 profileName: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.displayName } ?? "",
                 thinkingOptionId: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
             )
         }
+    }
+
+    private var modelOptionsBinding: Binding<[String: ModelOptionValue]> {
+        Binding(
+            get: { activeModelOptions },
+            set: { newValues in
+                activeModelOptions = newValues
+                if let model = selectedModel {
+                    ModelOptionsStore.shared.saveOptions(newValues, for: model)
+                }
+            }
+        )
     }
 
     // MARK: - Sandbox Toggle Chip
@@ -3560,18 +3569,12 @@ private struct SelectorChip<Content: View>: View {
 private struct ModelOptionsSelectorView: View {
     let options: [ModelOptionDefinition]
     @Binding var values: [String: ModelOptionValue]
-    let defaults: [String: ModelOptionValue]
     let profileName: String
     let thinkingOptionId: String?
 
     @Environment(\.theme) private var theme
 
-    private var hasNonDefaults: Bool {
-        options.contains { option in
-            guard let current = values[option.id] else { return false }
-            return current != defaults[option.id]
-        }
-    }
+    private var hasExplicitOptions: Bool { !values.isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -3600,10 +3603,10 @@ private struct ModelOptionsSelectorView: View {
 
             Spacer()
 
-            if hasNonDefaults {
+            if hasExplicitOptions {
                 Button {
                     withAnimation(.easeOut(duration: 0.15)) {
-                        values = defaults
+                        values = [:]
                     }
                 } label: {
                     HStack(spacing: 3) {
@@ -3654,14 +3657,14 @@ private struct ModelOptionsSelectorView: View {
 
     private func segmentedRow(option: ModelOptionDefinition, segments: [ModelOptionSegment]) -> some View {
         let currentId = values[option.id]?.stringValue ?? segments.first?.id ?? ""
-        let isNonDefault = values[option.id] != defaults[option.id]
+        let isExplicit = values[option.id] != nil
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 if let icon = option.icon {
                     Image(systemName: icon)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(isNonDefault ? theme.accentColor : theme.tertiaryText)
+                        .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
                 }
                 Text(option.label)
                     .font(.system(size: 12, weight: .semibold))
@@ -3713,13 +3716,13 @@ private struct ModelOptionsSelectorView: View {
 
     private func toggleRow(option: ModelOptionDefinition, defaultValue: Bool) -> some View {
         let isOn = values[option.id]?.boolValue ?? defaultValue
-        let isNonDefault = values[option.id] != defaults[option.id]
+        let isExplicit = values[option.id] != nil
 
         return HStack(spacing: 6) {
             if let icon = option.icon {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isNonDefault ? theme.accentColor : theme.tertiaryText)
+                    .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
             }
             Text(option.label)
                 .font(.system(size: 12, weight: .semibold))

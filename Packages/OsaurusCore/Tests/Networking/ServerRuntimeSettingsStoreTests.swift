@@ -39,8 +39,10 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.cache.pagedKV.enabled == true)
             #expect(migrated.cache.blockDisk.enabled == true)
             #expect(migrated.cache.legacyDisk.enabled == false)
+            #expect(migrated.cache.liveKVCodec == .native)
             #expect(migrated.cache.defaultMaxKVSize == 65536)
             #expect(migrated.cache.longPromptMultiplier == 2.0)
+            #expect(migrated.cache.enableSSMReDerive == true)
             #expect(migrated.mtp.mode == .auto)
 
             // File should now exist.
@@ -63,10 +65,10 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.cache.pagedKV.enabled == true)
             #expect(snapshot.cache.blockDisk.enabled == true)
             #expect(snapshot.cache.legacyDisk.enabled == false)
-            #expect(snapshot.cache.liveKVCodec == .none)
+            #expect(snapshot.cache.liveKVCodec == .native)
             #expect(snapshot.cache.defaultMaxKVSize == 65536)
             #expect(snapshot.cache.longPromptMultiplier == 2.0)
-            #expect(snapshot.cache.enableSSMReDerive == false)
+            #expect(snapshot.cache.enableSSMReDerive == true)
             #expect(snapshot.mtp.mode == .auto)
         }
     }
@@ -125,6 +127,59 @@ struct ServerRuntimeSettingsStoreTests {
             let loaded = try #require(ServerRuntimeSettingsStore.load())
             #expect(loaded.mtp.mode == .off)
             #expect(loaded.mtp.draftTokenLimit == 2)
+        }
+    }
+
+    @Test @MainActor func load_repairsLegacyCacheDefaultsWithoutEnablingTurboQuant() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var oldDefault = VMLXServerRuntimeSettings()
+            oldDefault.cache.liveKVCodec = .none
+            oldDefault.cache.enableSSMReDerive = false
+            oldDefault.cache.defaultMaxKVSize = 65536
+            oldDefault.cache.longPromptMultiplier = 2.0
+            try writeSettings(oldDefault, to: dir)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+            #expect(loaded.cache.liveKVCodec == .none)
+            #expect(loaded.cache.enableSSMReDerive == true)
+
+            let data = try Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
+            let persisted = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
+            #expect(persisted.cache.liveKVCodec == .none)
+            #expect(persisted.cache.enableSSMReDerive == true)
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: dir.appendingPathComponent(".server-runtime-cache-defaults-v2-migrated").path
+                )
+            )
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let snapshot = ServerRuntimeSettingsStore.snapshot()
+            #expect(snapshot.cache.liveKVCodec == .none)
+            #expect(snapshot.cache.enableSSMReDerive == true)
+        }
+    }
+
+    @Test @MainActor func load_preservesExplicitCacheNoneAfterMigrationMarker() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var explicitNone = VMLXServerRuntimeSettings()
+            explicitNone.cache.liveKVCodec = .none
+            explicitNone.cache.enableSSMReDerive = false
+            explicitNone.cache.defaultMaxKVSize = 65536
+            explicitNone.cache.longPromptMultiplier = 2.0
+            try writeSettings(explicitNone, to: dir)
+            try Data().write(
+                to: dir.appendingPathComponent(".server-runtime-cache-defaults-v2-migrated"),
+                options: [.atomic]
+            )
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+            #expect(loaded.cache.liveKVCodec == .none)
+            #expect(loaded.cache.enableSSMReDerive == false)
         }
     }
 

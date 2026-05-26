@@ -83,6 +83,12 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     // MARK: - Public API
 
+    /// Live proof/test launches can set this to avoid reading or writing the
+    /// user's login Keychain. Production launches leave it unset.
+    public static var disablesKeychainForProcess: Bool {
+        ProcessInfo.processInfo.environment["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"] == "1"
+    }
+
     /// Returns the current data-encryption key, generating + persisting
     /// one on first call. Throws on Keychain or derivation failure.
     public func currentKey() throws -> SymmetricKey {
@@ -110,7 +116,9 @@ public final class StorageKeyManager: @unchecked Sendable {
             os_unfair_lock_unlock(&lock)
 
             let key: SymmetricKey
-            if let existing = try readKeychainKey() {
+            if Self.disablesKeychainForProcess {
+                key = try generateInMemoryKey()
+            } else if let existing = try readKeychainKey() {
                 key = SymmetricKey(data: existing)
             } else {
                 key = try generateAndPersistKey()
@@ -157,6 +165,9 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// Returns true when a persisted key exists in Keychain. Cheap; no
     /// Touch ID prompt.
     public func keyExists() -> Bool {
+        if Self.disablesKeychainForProcess {
+            return hasCachedKey
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -186,7 +197,9 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// unrelated key.
     public func install(key: SymmetricKey) throws {
         let bytes = key.withUnsafeBytes { Data($0) }
-        try persistKeychain(data: bytes)
+        if !Self.disablesKeychainForProcess {
+            try persistKeychain(data: bytes)
+        }
         os_unfair_lock_lock(&lock)
         cachedKey = key
         cachedReadFailureStatus = nil
@@ -200,6 +213,14 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// reproducible on another device with the same iCloud Keychain
     /// (and thus the same master key).
     public func deriveFromMasterKey(context: LAContext) throws -> SymmetricKey {
+        if Self.disablesKeychainForProcess {
+            let key = try generateInMemoryKey()
+            os_unfair_lock_lock(&lock)
+            cachedKey = key
+            cachedReadFailureStatus = nil
+            os_unfair_lock_unlock(&lock)
+            return key
+        }
         guard MasterKey.exists() else {
             throw StorageKeyError.derivationFailed
         }
@@ -244,6 +265,11 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// **Irreversible.** Caller is responsible for moving any encrypted
     /// data out first if it should be preserved.
     public func resetForWipe() {
+        if Self.disablesKeychainForProcess {
+            try? FileManager.default.removeItem(at: saltFile())
+            wipeCache()
+            return
+        }
         let queries: [[String: Any]] = [
             [
                 kSecClass as String: kSecClassGenericPassword,
@@ -279,6 +305,9 @@ public final class StorageKeyManager: @unchecked Sendable {
     }
 
     private func generateAndPersistKey(forceFresh: Bool = false) throws -> SymmetricKey {
+        if Self.disablesKeychainForProcess {
+            return try generateInMemoryKey()
+        }
         var raw = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, 32, &raw) == errSecSuccess else {
             throw StorageKeyError.randomFailed
@@ -290,10 +319,33 @@ public final class StorageKeyManager: @unchecked Sendable {
         return SymmetricKey(data: keyBytes)
     }
 
+    private func generateInMemoryKey() throws -> SymmetricKey {
+        var raw = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, 32, &raw) == errSecSuccess else {
+            throw StorageKeyError.randomFailed
+        }
+        let keyBytes = Data(raw)
+        for i in raw.indices { raw[i] = 0 }
+        log.info("Storage key generated in-memory for OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS")
+        return SymmetricKey(data: keyBytes)
+    }
+
     /// Fetch the persisted HKDF salt or create a fresh one. We persist
     /// to **both** Keychain and a sidecar file so neither single delete
     /// breaks reproducibility.
     private func fetchOrCreateSalt() throws -> Data {
+        if Self.disablesKeychainForProcess {
+            if let s = readSaltSidecar() {
+                return s
+            }
+            var bytes = [UInt8](repeating: 0, count: 32)
+            guard SecRandomCopyBytes(kSecRandomDefault, 32, &bytes) == errSecSuccess else {
+                throw StorageKeyError.randomFailed
+            }
+            let salt = Data(bytes)
+            try? writeSaltSidecar(salt)
+            return salt
+        }
         if let s = try readKeychainSalt() {
             try? writeSaltSidecar(s)
             return s
@@ -329,6 +381,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     // MARK: - Keychain (key)
 
     private func persistKeychain(data: Data) throws {
+        if Self.disablesKeychainForProcess { return }
         let baseQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -355,6 +408,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     }
 
     private func readKeychainKey() throws -> Data? {
+        if Self.disablesKeychainForProcess { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -376,6 +430,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     // MARK: - Keychain (salt)
 
     private func persistKeychainSalt(_ data: Data) throws {
+        if Self.disablesKeychainForProcess { return }
         let baseQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -397,6 +452,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     }
 
     private func readKeychainSalt() throws -> Data? {
+        if Self.disablesKeychainForProcess { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,

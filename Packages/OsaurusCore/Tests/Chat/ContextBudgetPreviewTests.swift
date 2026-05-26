@@ -50,12 +50,17 @@ struct ContextBudgetPreviewTests {
             try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let previousRoot = OsaurusPaths.overrideRoot
             OsaurusPaths.overrideRoot = root
+            let previousChatConfig = ChatConfigurationStore.load()
+            var isolatedChatConfig = previousChatConfig
+            isolatedChatConfig.defaultModel = nil
+            ChatConfigurationStore.save(isolatedChatConfig)
             MemoryConfigurationStore.invalidateCache()
             var memoryConfig = MemoryConfiguration.default
             memoryConfig.enabled = true
             MemoryConfigurationStore.save(memoryConfig)
             AgentManager.shared.refresh()
             defer {
+                ChatConfigurationStore.save(previousChatConfig)
                 MemoryConfigurationStore.invalidateCache()
                 OsaurusPaths.overrideRoot = previousRoot
                 AgentManager.shared.refresh()
@@ -324,6 +329,20 @@ struct ContextBudgetPreviewTests {
             )
             let ids = sectionIds(preview)
             #expect(ids.contains("modelFamilyGuidance"))
+        }
+    }
+
+    @Test("preview: DSV4 model triggers act-now Model Family Guidance row")
+    func toolsOn_dsv4Model_includesModelFamilyGuidance() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "JANGQ/DeepSeek-V4-Flash-JANGTQ2"
+            )
+            let ids = sectionIds(preview)
+            #expect(ids.contains("modelFamilyGuidance"))
+            #expect(preview.prompt.contains("Do not say you will do it and then stop."))
         }
     }
 

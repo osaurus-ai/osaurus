@@ -224,8 +224,7 @@ public actor GenerativeGreetingService {
                 temperature: temperature,
                 maxTokens: Self.maxTokens(for: sizeClass),
                 timeout: Self.timeout,
-                fallbackModel: fallbackModel,
-                modelOptions: ["reasoningEffort": .string("no_think")]
+                fallbackModel: fallbackModel
             )
         }
 

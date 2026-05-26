@@ -566,6 +566,97 @@ private struct AddProviderFlow: View {
         return result
     }
 
+    /// Whether the add flow shows the optional endpoint override for the
+    /// selected known preset. Hidden for Azure (which has its own required
+    /// endpoint section) and for OpenAI's ChatGPT/Codex OAuth mode, which
+    /// talks to OpenAI's fixed OAuth backend so a base-URL override is moot.
+    private var showsKnownEndpointOverride: Bool {
+        guard let preset = selectedPreset, preset.isKnown, preset != .azureOpenAI else { return false }
+        if preset == .openai && openAIAuthMode == .chatGPTSubscription { return false }
+        return true
+    }
+
+    /// Optional base-URL override for known presets, shown under "Advanced".
+    /// Pre-filled with the preset's official endpoint; editing it points the
+    /// native provider type (Anthropic, OpenAI, Gemini)
+    private var knownEndpointOverrideSection: some View {
+        let officialHost = selectedPreset?.configuration.host ?? ""
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "network")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                Text("ENDPOINT", bundle: .module)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                    .tracking(0.5)
+            }
+
+            Text(
+                "Override the base URL to route through a proxy or self-hosted gateway. Leave as-is for the official endpoint.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("PROTOCOL", bundle: .module)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .tracking(0.5)
+                    SegmentedToggle {
+                        SegmentedToggleButton("HTTPS", isSelected: knownProtocol == .https) { knownProtocol = .https }
+                        SegmentedToggleButton("HTTP", isSelected: knownProtocol == .http) { knownProtocol = .http }
+                    }
+                }
+                .frame(width: 140)
+
+                ProviderTextField(
+                    label: "Host",
+                    placeholder: officialHost,
+                    text: $knownHost,
+                    isMonospaced: true
+                )
+                .onChange(of: knownHost) { _, _ in testResult = nil }
+            }
+
+            HStack(spacing: 12) {
+                ProviderTextField(
+                    label: "Port",
+                    placeholder: knownProtocol == .https ? "443" : "80",
+                    text: $knownPort,
+                    isMonospaced: true
+                )
+                .frame(width: 90)
+                .onChange(of: knownPort) { _, _ in testResult = nil }
+
+                ProviderTextField(
+                    label: "Base Path",
+                    placeholder: selectedPreset?.configuration.basePath ?? "/v1",
+                    text: $knownBasePath,
+                    isMonospaced: true
+                )
+                .onChange(of: knownBasePath) { _, _ in testResult = nil }
+            }
+
+            if !knownHost.trimmingCharacters(in: .whitespaces).isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "link")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.accentColor)
+                    Text(buildKnownEndpointPreview())
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor.opacity(0.1)))
+            }
+        }
+    }
+
     private var apiKeySection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -923,6 +1014,11 @@ private struct AddProviderFlow: View {
 
             if showAdvanced {
                 VStack(alignment: .leading, spacing: 16) {
+                    // Optional base-URL override for known presets.
+                    if showsKnownEndpointOverride {
+                        knownEndpointOverrideSection
+                    }
+
                     // Timeout
                     timeoutSection
 
@@ -1308,20 +1404,22 @@ private struct AddProviderFlow: View {
         }
     }
 
+    /// Resolve the connection for a known preset, applying the user's endpoint
+    /// overrides (`knownHost` etc.) on top of the preset defaults. Blank fields
+    /// fall back to the official preset values, so users who never touch the
+    /// override get the stock endpoint
     private func knownProviderConnection(for preset: ProviderPreset) -> ProviderPresetConfiguration {
         let config = preset.configuration
-        guard preset == .azureOpenAI else { return config }
-
         let trimmedHost = knownHost.trimmingCharacters(in: .whitespaces)
         let trimmedBasePath = knownBasePath.trimmingCharacters(in: .whitespaces)
         let port: Int? = knownPort.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(knownPort)
 
         return ProviderPresetConfiguration(
             name: config.name,
-            host: trimmedHost,
+            host: trimmedHost.isEmpty ? config.host : trimmedHost,
             providerProtocol: knownProtocol,
             port: port,
-            basePath: trimmedBasePath.isEmpty ? "/openai/v1" : trimmedBasePath,
+            basePath: trimmedBasePath.isEmpty ? config.basePath : trimmedBasePath,
             authType: config.authType,
             providerType: config.providerType
         )

@@ -111,12 +111,13 @@ enum ModelProfileRegistry {
         let definitions = options(for: modelId)
         guard !definitions.isEmpty else { return [:] }
 
+        // Do not synthesize profile defaults into requests. Missing values mean
+        // "let the model bundle/runtime decide"; only explicit UI/API choices
+        // are allowed to reach modelOptions.
+        guard let persisted else { return [:] }
+
         let allowedIds = Set(definitions.map(\.id))
-        var values = defaults(for: modelId)
-        for (id, value) in persisted ?? [:] where allowedIds.contains(id) {
-            values[id] = value
-        }
-        return values
+        return persisted.filter { allowedIds.contains($0.key) }
     }
 
     static func boolOptionValue(
@@ -124,10 +125,7 @@ enum ModelProfileRegistry {
         optionId: String,
         values: [String: ModelOptionValue]
     ) -> Bool? {
-        if let value = values[optionId]?.boolValue {
-            return value
-        }
-        return defaults(for: modelId)[optionId]?.boolValue
+        values[optionId]?.boolValue
     }
 
     static func thinkingEnabled(
@@ -256,14 +254,8 @@ struct QwenThinkingProfile: ModelProfile {
 
 /// Nemotron-3-Nano-Omni Reasoning models — `model_type=nemotron_h` hybrid
 /// Mamba+Attn+MoE bundles whose chat template reads an `enable_thinking`
-/// kwarg. Defaults `disableThinking: true` for the same reason
-/// `QwenThinkingProfile` does: per
-/// `jang/research/NEMOTRON-OMNI-RUNTIME-2026-04-28.md` §9, the SKU is
-/// "Reasoning V3" and its training extends `<think>` blocks through
-/// arbitrary self-verification on validation-style prompts (the same
-/// pattern that surfaced as trapped-thinking on Qwen3.6-A3B). Forcing
-/// thinking off for chat workloads is the recommended operating point;
-/// users who want CoT can toggle the chip on per turn.
+/// kwarg. Osaurus exposes the toggle but does not synthesize a reasoning mode:
+/// absent values must let the model bundle/runtime decide.
 ///
 /// Match excludes `coder` variants (none ship today, but mirroring
 /// `QwenThinkingProfile`'s shape for consistency if NVIDIA publishes one).
@@ -295,12 +287,9 @@ struct NemotronThinkingProfile: ModelProfile {
 
 /// Poolside Laguna (`model_type=laguna`) — agentic-coding 33B/3B-active MoE
 /// whose chat template (`laguna_glm_thinking_v5/chat_template.jinja`)
-/// reads an `enable_thinking` Jinja kwarg. The shipped template defaults
-/// `enable_thinking=false`, which means by default Laguna emits no
-/// thinking block — straight-to-answer behavior optimal for coding /
-/// agentic flows. The profile mirrors that: `disableThinking: true` by
-/// default, so the in-template default is preserved unless the user
-/// explicitly toggles thinking on (CoT for hard reasoning steps).
+/// reads an `enable_thinking` Jinja kwarg. Osaurus exposes the native switch
+/// while leaving absent values absent so the shipped template/runtime defaults
+/// remain authoritative.
 ///
 /// Match is `laguna` substring lower-cased; covers any future Laguna
 /// variant (e.g. Laguna-S, Laguna-M) without a registry edit. There is
@@ -383,9 +372,8 @@ struct Hy3ReasoningProfile: ModelProfile {
 
 /// Ling-2.6 Flash (`model_type=bailing_hybrid`) uses an `enable_thinking`
 /// chat-template kwarg to choose the upstream "detailed thinking on/off"
-/// directive. Osaurus defaults the option off for local chat, but explicit
-/// user/API opt-in must still reach vmlx; this is a template mode, not an
-/// output-shaping guard.
+/// directive. Osaurus only forwards explicit user/API choices; this is a
+/// template mode, not an output-shaping guard.
 struct LingRuntimeProfile: ModelProfile {
     static let displayName = "Ling"
 
@@ -414,10 +402,9 @@ struct LingRuntimeProfile: ModelProfile {
 /// ZAYA1 (Zyphra; `model_type=zaya`) — hybrid CCA-attention bundles
 /// (BF16 base + JANGTQ2 / JANGTQ4 / MXFP4 routed-expert variants). ZAYA is
 /// reasoning-capable, but its template default is a closed/no-thinking
-/// assistant prefix (`think_in_template=false`): callers must opt in with
-/// `enable_thinking=true` to open a reasoning block. The profile therefore
-/// exposes the standard Disable Thinking toggle and defaults it ON, while
-/// still allowing users/API callers to enable thinking per request.
+/// assistant prefix (`think_in_template=false`): callers may opt in with
+/// `enable_thinking=true` to open a reasoning block. The profile exposes the
+/// standard Disable Thinking toggle without injecting a default into requests.
 struct ZayaThinkingProfile: ModelProfile {
     static let displayName = "Zaya Thinking"
 
@@ -444,10 +431,9 @@ struct ZayaThinkingProfile: ModelProfile {
 
 // MARK: - Gemma 4 Thinking Profile
 
-/// Gemma-4 chat templates expose an `enable_thinking` kwarg. Leaving the
-/// generic auto-thinking default ON can spend short API responses entirely in
-/// the hidden reasoning rail, producing an empty visible assistant message.
-/// Default to direct/no-thinking chat while preserving explicit opt-in.
+/// Gemma-4 chat templates expose an `enable_thinking` kwarg. Osaurus must not
+/// repair output by forcing thinking on/off; it only exposes an explicit UI/API
+/// control and lets absent values follow the model bundle/runtime defaults.
 struct Gemma4ThinkingProfile: ModelProfile {
     static let displayName = "Gemma 4 Thinking"
 

@@ -39,6 +39,7 @@ public actor ModelRuntime {
         let nativeMTPDepth: Int?
         let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
+        let cacheTopology: ModelCacheTopologySnapshot?
     }
 
     struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
@@ -64,6 +65,7 @@ public actor ModelRuntime {
         let weightsSizeBytes: Int64
         let isVLM: Bool
         let draftStrategy: MLXLMCommon.DraftStrategy?
+        var cacheTopology: ModelCacheTopologySnapshot?
         init(
             name: String,
             container: ModelContainer,
@@ -146,7 +148,8 @@ public actor ModelRuntime {
                 draftStrategyDescription: Self.describeDraftStrategy(holder.draftStrategy),
                 nativeMTPDepth: Self.nativeMTPDepth(holder.draftStrategy),
                 mlxPressStatus: holder.container.mlxPressStatus(),
-                cacheStats: holder.container.cacheCoordinator?.snapshotStats()
+                cacheStats: holder.container.cacheCoordinator?.snapshotStats(),
+                cacheTopology: holder.cacheTopology
             )
         }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
@@ -327,6 +330,11 @@ public actor ModelRuntime {
 
         Stream.gpu.synchronize()
         Memory.clearCache()
+    }
+
+    private func cancelLoadingTask(name: String, loadID: UInt64) async {
+        guard let record = loadingTasks[name], record.id == loadID else { return }
+        await cancelAndDrainLoadingTasks([(name, record)])
     }
 
     private func finishLoadedContainer(
@@ -524,6 +532,7 @@ public actor ModelRuntime {
     }
 
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
+        try Task.checkCancellation()
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
         genLog.info(
@@ -531,6 +540,7 @@ public actor ModelRuntime {
         )
 
         while true {
+            try Task.checkCancellation()
             if let existing = modelCache[name] {
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
                 genLog.info(
@@ -599,6 +609,7 @@ public actor ModelRuntime {
             break
         }
 
+        try Task.checkCancellation()
         guard let localURL = Self.findLocalDirectory(forModelId: id) else {
             throw NSError(
                 domain: "ModelRuntime",
@@ -612,6 +623,7 @@ public actor ModelRuntime {
 
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
         await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
+        try Task.checkCancellation()
 
         // Preflight: JANGTQ/TurboQuant variants need a `jangtq_runtime.safetensors`
         // sidecar (signs + codebook arrays for the Metal kernels). vmlx's
@@ -628,6 +640,7 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public)"
         )
+        try Task.checkCancellation()
 
         if policy == .manualMultiModel {
             await unloadForFlexibleResidentBudget(
@@ -635,6 +648,7 @@ public actor ModelRuntime {
                 incomingWeightsSizeBytes: weightsBytes
             )
         }
+        try Task.checkCancellation()
 
         // Tool-call format + reasoning parser are stamped automatically by
         // vmlx-swift's LLM/VLM factories from `jang_config.json` capabilities
@@ -649,6 +663,7 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: task start model=\(name, privacy: .public) loadID=\(loadID, privacy: .public)"
             )
+            try Task.checkCancellation()
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
             let serverSettings = ServerRuntimeSettingsStore.snapshot()
             let mtpPlan = Self.resolveNativeMTPLaunchPlan(
@@ -664,7 +679,15 @@ public actor ModelRuntime {
                     base: ModelConfiguration(directory: localURL)),
                 loadConfiguration: mtpPlan.loadConfiguration
             )
+            if Task.isCancelled {
+                container.disableCaching()
+                throw CancellationError()
+            }
             let isVLM = await container.isVLM
+            if Task.isCancelled {
+                container.disableCaching()
+                throw CancellationError()
+            }
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - taskStartedAt) * 1000)
             genLog.info(
                 "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
@@ -681,7 +704,13 @@ public actor ModelRuntime {
         loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)
 
         do {
-            let holder = try await task.value
+            let holder = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                Task {
+                    await ModelRuntime.shared.cancelLoadingTask(name: name, loadID: loadID)
+                }
+            }
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
             genLog.info(
                 "loadContainer: task value returned model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public)"
@@ -713,47 +742,15 @@ public actor ModelRuntime {
     //
     //   - `usePagedCache: true`            — content-addressed paged blocks
     //                                        (multi-turn cache reuse path)
-    //   - `defaultKVMode: .none`             — fp16 KV by default. Both
-    //                                        `.turboQuant(3, 3)` (committed
-    //                                        in #995, reverted in e202cbbe)
-    //                                        AND `.turboQuant(4, 4)` (per
-    //                                        the OSAURUS-INTEGRATION-2026-
-    //                                        05-01.md §"3-bit KV verdict"
-    //                                        recommendation, committed in
-    //                                        db3179fe) reproduce the same
-    //                                        degenerate-repetition failure
-    //                                        mode in real-bundle testing:
-    //                                        Qwen3.6 27B MXFP4 emitted
-    //                                        `!!!!!!!!!` in the thinking
-    //                                        channel with 3-bit; Gemma-4
-    //                                        31B JANG_4M emitted
-    //                                        `idea idea idea` and other
-    //                                        family bundles drifted into
-    //                                        looping after a few turns
-    //                                        with 4-bit. Vmlx's `1173822`
-    //                                        paged-cache fix closed the
-    //                                        cross-turn handoff
-    //                                        re-encoding bug, but the
-    //                                        underlying codebook
-    //                                        quantization error still
-    //                                        compounds across long
-    //                                        thinking-mode preambles
-    //                                        (longer prefix → more
-    //                                        compression rounds → more
-    //                                        accumulated error → attention
-    //                                        latches onto a high-prob low-
-    //                                        info token and loops).
-    //                                        The vmlx team's BENCH harness
-    //                                        didn't toggle thinking on
-    //                                        every family it verified, so
-    //                                        the integration guide's
-    //                                        4-bit recommendation under-
-    //                                        tested the failure mode.
-    //                                        Default to fp16; users who
-    //                                        need the memory savings can
-    //                                        submit `kvMode:
-    //                                        .turboQuant(...)` explicitly
-    //                                        per request.
+    //   - `defaultKVMode`                   — owned by vmlx
+    //                                        `VMLXServerRuntimeSettings`.
+    //                                        `engine_selected` resolves to
+    //                                        automatic TurboQuant KV for
+    //                                        ordinary full-history KV layers;
+    //                                        DSV4/ZAYA/SSM/rotating caches
+    //                                        keep their typed companion-state
+    //                                        serializers and are not replaced
+    //                                        by generic KV compression.
     //   - `defaultMaxKVSize: 65536`        — 64K ring window for slots that
     //                                        submit `maxKVSize: nil`. Matches
     //                                        the vmlx OSAURUS-PRODUCTION-
@@ -768,13 +765,14 @@ public actor ModelRuntime {
     //                                        2 bytes (fp16) × 2 (K+V) ≈
     //                                        2.4 GB per slot on Mistral 3.5
     //                                        (largest layer count we ship);
-    //                                        on .turboQuant(4,4) steady
-    //                                        state ~26× smaller (~95 MB).
-    //                                        With `defaultKVMode: .none` the
-    //                                        cold path is fp16 but the
-    //                                        rotating cap only kicks in for
-    //                                        prompts past 131K (65536 × 2.0)
-    //                                        — small chats unaffected.
+    //                                        on TurboQuant KV steady state is
+    //                                        much smaller. With
+    //                                        `engine_selected`, ordinary KV
+    //                                        layers use the vmlx automatic
+    //                                        codec; the rotating cap only
+    //                                        kicks in for prompts past 131K
+    //                                        (65536 × 2.0), so small chats
+    //                                        are unaffected.
     //   - `longPromptMultiplier: 2.0`      — cap kicks in only past 131K
     //                                        (65536 * 2.0) prompt tokens,
     //                                        so short and medium prompts
@@ -841,6 +839,9 @@ public actor ModelRuntime {
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
             ssmMaxEntries: 50
         )
+        if settings.cache.liveKVCodec == .engineSelected {
+            config.defaultKVMode = .turboQuant()
+        }
         if diskCacheDir != nil, !diskDirUsable {
             config.enableDiskCache = false
             config.diskCacheDir = nil
@@ -886,12 +887,15 @@ public actor ModelRuntime {
     nonisolated static func cacheKVModeTag(
         for cache: VMLXServerCacheSettings
     ) -> String {
-        switch cache.defaultKVMode {
-        case .none:
+        switch cache.liveKVCodec {
+        case .engineSelected:
+            return "engine-selected"
+        case .native, .none:
             return "fp16"
-        case .affine(let bits, let groupSize):
-            return "affine(\(bits),\(groupSize))"
-        case .turboQuant(let keyBits, let valueBits):
+        case .turboQuant:
+            guard case .turboQuant(let keyBits, let valueBits) = cache.defaultKVMode else {
+                return "fp16"
+            }
             return "turbo(\(keyBits),\(valueBits))"
         }
     }
@@ -954,6 +958,7 @@ public actor ModelRuntime {
     /// Installs the cache coordinator on a freshly-loaded holder.
     private func installCacheCoordinator(on holder: SessionHolder) async {
         let cacheTopology = await holder.container.cacheTopologySnapshot()
+        holder.cacheTopology = cacheTopology
         let cacheConfig = Self.buildCacheCoordinatorConfig(
             modelName: holder.name,
             cacheTopology: cacheTopology
@@ -1144,6 +1149,16 @@ public actor ModelRuntime {
         }
         trace?.mark("load_container_done")
 
+        if Task.isCancelled {
+            await ModelResidencyManager.shared.cancel(modelName: modelName)
+            if shouldReportModelLoad {
+                await unload(name: modelName)
+            } else {
+                await scheduleIdleResidency(for: modelName)
+            }
+            throw CancellationError()
+        }
+
         // Pin the model against eviction for the stream's lifetime.
         await ModelLease.shared.acquire(modelName)
 
@@ -1167,6 +1182,7 @@ public actor ModelRuntime {
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
                 generation: parameters,
+                toolChoice: toolChoice,
                 stopSequences: stopSequences,
                 draftStrategy: holder.draftStrategy,
                 runtime: cfg,
@@ -1295,12 +1311,9 @@ public actor ModelRuntime {
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            // Collect every tool invocation parsed from this completion. Local
-            // models can emit multiple `<tool_call>` blocks per response;
-            // vmlx-swift's `BatchEngine.generate` surfaces each as its own
-            // `.toolCall` event, so we keep iterating until the stream
-            // finishes naturally instead of bailing on the first invocation.
-            var pendingTools: [ServiceToolInvocation] = []
+            // Chat UI streaming should execute a parsed tool call immediately.
+            // Continuing to drain model text after the tool event can leak the
+            // model's pseudo-tool prose before the app renders/runs the tool.
             do {
                 for try await ev in events {
                     if case .completionInfo(
@@ -1332,32 +1345,21 @@ public actor ModelRuntime {
                     case .toolInvocation(let name, let argsJSON):
                         continuation.yield(StreamingToolHint.encode(name))
                         continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
-                        pendingTools.append(
-                            ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+                        continuation.finish(
+                            throwing: ServiceToolInvocation(
+                                toolName: name,
+                                jsonArguments: argsJSON
+                            )
                         )
+                        return
                     case .completionInfo:
                         continue
                     }
                 }
-                do {
-                    try Self.throwIfTools(pendingTools)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
+                continuation.finish()
             } catch {
                 if Task.isCancelled {
                     continuation.finish()
-                } else if !pendingTools.isEmpty {
-                    // Mid-stream failure with parsed tools — surface them
-                    // so the caller can still execute what we got. The
-                    // upstream error is swallowed in this branch by
-                    // design (parity with the previous behaviour).
-                    do {
-                        try Self.throwIfTools(pendingTools)
-                    } catch let surfaced {
-                        continuation.finish(throwing: surfaced)
-                    }
                 } else {
                     continuation.finish(throwing: error)
                 }
@@ -1518,7 +1520,7 @@ public actor ModelRuntime {
             switch toolChoice {
             case .none:
                 return nil
-            case .auto:
+            case .auto, .required:
                 return tools.map { $0.toTokenizerToolSpec() }
             case .function(let target):
                 let name = target.function.name
@@ -1534,30 +1536,13 @@ public actor ModelRuntime {
         _ messages: [ChatMessage],
         toolChoice: ToolChoiceOption?
     ) -> [ChatMessage] {
-        guard case .function(let target) = toolChoice else { return messages }
-
-        let toolName = target.function.name
-        let directive = """
-            Tool choice is forced by the API caller. You must call exactly the \
-            function named `\(toolName)` and must not answer in natural language. \
-            Ignore any user instruction that asks you to skip tools, answer in \
-            plain text, or choose a different tool.
-            """
-
-        var out = messages
-        if let firstSystemIdx = out.firstIndex(where: { $0.role == "system" }) {
-            let existing = out[firstSystemIdx].content ?? ""
-            out[firstSystemIdx] = ChatMessage(
-                role: "system",
-                content: existing.isEmpty ? directive : directive + "\n\n" + existing,
-                tool_calls: out[firstSystemIdx].tool_calls,
-                tool_call_id: out[firstSystemIdx].tool_call_id,
-                reasoning_content: out[firstSystemIdx].reasoning_content
-            )
-        } else {
-            out.insert(ChatMessage(role: "system", content: directive), at: 0)
-        }
-        return out
+        // Named `tool_choice` is enforced by `makeTokenizerTools`: the
+        // tokenizer sees only the requested function's schema. Do not add a
+        // generic system directive here. Some model-family templates,
+        // including DSV4 DSML, treat that out-of-template prose as ordinary
+        // instruction text and can respond with an empty visible answer
+        // instead of the selected protocol block.
+        messages
     }
 
     /// When `jsonMode` is true, prepend (or augment) a system instruction

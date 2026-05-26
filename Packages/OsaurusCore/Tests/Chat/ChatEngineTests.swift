@@ -120,6 +120,44 @@ struct ChatEngineTests {
         #expect(response.output_text == "responses-api-ok")
     }
 
+    @Test func streamResponseBody_doesNotEscapeToolArgumentSlashes() throws {
+        let body = try #require(
+            ChatEngine.streamResponseBody(
+                accumulated: "",
+                toolInvocation: (
+                    name: "file_read",
+                    args: #"{"path":"/Users/eric/Desktop/testmandel/mandelbrot.py"}"#
+                )
+            )
+        )
+
+        #expect(body.contains(#"\/"#) == false)
+        #expect(body.contains(#""path" : "/Users/eric/Desktop/testmandel/mandelbrot.py""#))
+    }
+
+    @Test func toolCallResponse_doesNotEscapeCanonicalArgumentSlashes() throws {
+        let response = ChatEngine.makeToolCallResponse(
+            invocations: [
+                ServiceToolInvocation(
+                    toolName: "file_read",
+                    jsonArguments: #"{"path":"/Users/eric/Desktop/testmandel/mandelbrot.py"}"#
+                )
+            ],
+            responseId: "chatcmpl-test",
+            created: 1,
+            effectiveModel: "fake",
+            inputTokens: 10,
+            startTime: Date(timeIntervalSince1970: 1),
+            inferenceSource: .httpAPI,
+            temperature: nil,
+            maxTokens: 128
+        )
+
+        let args = try #require(response.choices.first?.message.tool_calls?.first?.function.arguments)
+        #expect(args.contains(#"\/"#) == false)
+        #expect(args == #"{"path":"/Users/eric/Desktop/testmandel/mandelbrot.py"}"#)
+    }
+
     @Test func streamChat_yields_deltas_success() async throws {
         let svc = FakeModelService(deltas: ["a", "b", "c"])
         let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
@@ -142,6 +180,34 @@ struct ChatEngineTests {
         var out = ""
         for try await d in stream { out += d }
         #expect(out == "abc")
+    }
+
+    @Test func streamChat_preserves_reasoning_sentinel_for_endpoint_routing() async throws {
+        let reasoning = StreamingReasoningHint.encode("private chain")
+        let svc = FakeModelService(deltas: [reasoning, "visible"])
+        let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 16,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        let stream = try await engine.streamChat(request: req)
+        var deltas: [String] = []
+        for try await delta in stream { deltas.append(delta) }
+
+        #expect(deltas == [reasoning, "visible"])
+        #expect(StreamingReasoningHint.decode(deltas[0]) == "private chain")
     }
 
     @Test func completeChat_returns_choice_success() async throws {
@@ -362,7 +428,7 @@ struct ChatEngineTests {
         )
     }
 
-    @Test func completeChat_appliesModelProfileDefaultsForBareAPIRequests() async throws {
+    @Test func completeChat_keepsBareAPIRequestsFreeOfHiddenThinkingDefaults() async throws {
         actor Capture {
             var params: GenerationParameters?
             func set(_ params: GenerationParameters) { self.params = params }
@@ -418,8 +484,8 @@ struct ChatEngineTests {
         _ = try await engine.completeChat(request: req)
         let params = await capture.params
         #expect(
-            params?.modelOptions["disableThinking"]?.boolValue == true,
-            "Bare HTTP/API Qwen requests must receive the same profile default as Chat UI; otherwise omitted enable_thinking falls through to generic thinking-on and short non-streaming responses can return empty visible content."
+            params?.modelOptions["disableThinking"] == nil,
+            "Bare HTTP/API Qwen requests must not receive hidden thinking overrides; omitted enable_thinking should leave the model/template default intact."
         )
 
         var explicitThinking = req
@@ -450,8 +516,8 @@ struct ChatEngineTests {
         _ = try await engine.completeChat(request: gemmaReq)
         let gemmaParams = await capture.params
         #expect(
-            gemmaParams?.modelOptions["disableThinking"]?.boolValue == true,
-            "Bare HTTP/API Gemma-4 requests must default thinking off; otherwise short non-streaming responses can spend the full budget in hidden reasoning and return empty visible content."
+            gemmaParams?.modelOptions["disableThinking"] == nil,
+            "Bare HTTP/API Gemma-4 requests must not default thinking off as a hidden repair; omitted enable_thinking should leave the model/template default intact."
         )
 
         var gemmaExplicitThinking = gemmaReq
