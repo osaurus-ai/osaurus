@@ -32,7 +32,7 @@ public struct ChatExportOptions: Codable, Equatable, Sendable {
 
     public static func loadLast() -> ChatExportOptions {
         guard let data = UserDefaults.standard.data(forKey: defaultsKey),
-              let value = try? JSONDecoder().decode(ChatExportOptions.self, from: data)
+            let value = try? JSONDecoder().decode(ChatExportOptions.self, from: data)
         else { return ChatExportOptions() }
         return value
     }

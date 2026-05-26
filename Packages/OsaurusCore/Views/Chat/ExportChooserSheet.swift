@@ -98,7 +98,9 @@ struct ExportChooserSheet: View {
         .frame(width: contentWidth, height: pageHeight)
     }
 
-    private func formatRow(_ format: ChatSessionSidebar.ExportFormat, icon: String, label: LocalizedStringKey) -> some View {
+    private func formatRow(_ format: ChatSessionSidebar.ExportFormat, icon: String, label: LocalizedStringKey)
+        -> some View
+    {
         let isSelected = selectedFormat == format
         return Button {
             selectedFormat = format

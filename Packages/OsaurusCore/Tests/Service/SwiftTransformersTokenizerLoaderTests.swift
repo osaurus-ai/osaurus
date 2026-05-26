@@ -485,79 +485,98 @@ struct SwiftTransformersTokenizerLoaderTests {
             LocalTokenizerRow(
                 family: "gemma4",
                 label: "Gemma 4 26B JANG_4M CRACK",
-                path: "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"),
+                path: "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"
+            ),
             LocalTokenizerRow(
                 family: "gemma4",
                 label: "Gemma 4 26B finished 4bit",
-                path: "/Users/eric/osaurus_models/finished/gemma-4-26b-a4b-it-4bit"),
+                path: "/Users/eric/osaurus_models/finished/gemma-4-26b-a4b-it-4bit"
+            ),
             LocalTokenizerRow(
                 family: "gemma4",
                 label: "Gemma 4 31B JANG_4M candidate",
-                path: "/Users/eric/models/dealign.ai/Gemma-4-31B-JANG_4M"),
+                path: "/Users/eric/models/dealign.ai/Gemma-4-31B-JANG_4M"
+            ),
             LocalTokenizerRow(
                 family: "gemma4",
                 label: "Gemma 4 31B finished 4bit candidate",
-                path: "/Users/eric/osaurus_models/finished/gemma-4-31b-a4b-it-4bit"),
+                path: "/Users/eric/osaurus_models/finished/gemma-4-31b-a4b-it-4bit"
+            ),
             LocalTokenizerRow(
                 family: "gemma4",
                 label: "Gemma 4 E2B finished 4bit",
-                path: "/Users/eric/osaurus_models/finished/gemma-4-e2b-it-4bit"),
+                path: "/Users/eric/osaurus_models/finished/gemma-4-e2b-it-4bit"
+            ),
             LocalTokenizerRow(
                 family: "gemma4",
                 label: "Gemma 4 E4B finished 4bit",
-                path: "/Users/eric/osaurus_models/finished/gemma-4-e4b-it-4bit"),
+                path: "/Users/eric/osaurus_models/finished/gemma-4-e4b-it-4bit"
+            ),
             LocalTokenizerRow(
                 family: "qwen36-27b",
                 label: "Qwen3.6 27B source",
-                path: "/Users/eric/models/Sources/Qwen/Qwen3.6-27B"),
+                path: "/Users/eric/models/Sources/Qwen/Qwen3.6-27B"
+            ),
             LocalTokenizerRow(
                 family: "qwen36-27b",
                 label: "Qwen3.6 27B JANG_4M CRACK",
-                path: "/Users/eric/models/dealign.ai/Qwen3.6-27B-JANG_4M-CRACK"),
+                path: "/Users/eric/models/dealign.ai/Qwen3.6-27B-JANG_4M-CRACK"
+            ),
             LocalTokenizerRow(
                 family: "qwen36-27b",
                 label: "Qwen3.6 27B MXFP4 CRACK",
-                path: "/Users/eric/models/dealign.ai/Qwen3.6-27B-MXFP4-CRACK"),
+                path: "/Users/eric/models/dealign.ai/Qwen3.6-27B-MXFP4-CRACK"
+            ),
             LocalTokenizerRow(
                 family: "qwen36-35b",
                 label: "Qwen3.6 35B source",
-                path: "/Users/eric/models/Sources/Qwen/Qwen3.6-35B-A3B"),
+                path: "/Users/eric/models/Sources/Qwen/Qwen3.6-35B-A3B"
+            ),
             LocalTokenizerRow(
                 family: "qwen36-35b",
                 label: "Qwen3.6 35B JANGTQ CRACK",
-                path: "/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-JANGTQ-CRACK"),
+                path: "/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-JANGTQ-CRACK"
+            ),
             LocalTokenizerRow(
                 family: "qwen36-35b",
                 label: "Qwen3.6 35B MXFP4 CRACK MTP",
-                path: "/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-MXFP4-CRACK-MTP"),
+                path: "/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-MXFP4-CRACK-MTP"
+            ),
             LocalTokenizerRow(
                 family: "qwen36-35b",
                 label: "Qwen3.6 35B mxfp4 OsaurusAI",
-                path: "/Users/eric/models/OsaurusAI/Qwen3.6-35B-A3B-mxfp4"),
+                path: "/Users/eric/models/OsaurusAI/Qwen3.6-35B-A3B-mxfp4"
+            ),
             LocalTokenizerRow(
                 family: "minimax-m2",
                 label: "MiniMax M2.7 Small JANGTQ",
-                path: "/Users/eric/models/JANGQ/MiniMax-M2.7-Small-JANGTQ"),
+                path: "/Users/eric/models/JANGQ/MiniMax-M2.7-Small-JANGTQ"
+            ),
             LocalTokenizerRow(
                 family: "minimax-m2",
                 label: "MiniMax M2.7 JANGTQ_K CRACK",
-                path: "/Users/eric/models/dealign.ai/MiniMax-M2.7-JANGTQ_K-CRACK"),
+                path: "/Users/eric/models/dealign.ai/MiniMax-M2.7-JANGTQ_K-CRACK"
+            ),
             LocalTokenizerRow(
                 family: "minimax-m2",
                 label: "MiniMax M2.7 JANG_K CRACK",
-                path: "/Users/eric/models/dealign.ai/MiniMax-M2.7-JANG_K-CRACK"),
+                path: "/Users/eric/models/dealign.ai/MiniMax-M2.7-JANG_K-CRACK"
+            ),
             LocalTokenizerRow(
                 family: "dsv4",
                 label: "DeepSeek V4 Flash JANG",
-                path: "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANG"),
+                path: "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANG"
+            ),
             LocalTokenizerRow(
                 family: "dsv4",
                 label: "DeepSeek V4 Flash JANGTQ-K",
-                path: "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"),
+                path: "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
+            ),
             LocalTokenizerRow(
                 family: "dsv4",
                 label: "DeepSeek V4 Flash JANGTQ2",
-                path: "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ2"),
+                path: "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ2"
+            ),
         ]
 
         let tool = CapabilitiesSearchTool().asOpenAITool().toTokenizerToolSpec()

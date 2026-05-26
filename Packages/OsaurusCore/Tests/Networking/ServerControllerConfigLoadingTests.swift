@@ -40,33 +40,41 @@ struct ServerControllerConfigLoadingTests {
 
         var cacheChanged = base
         cacheChanged.cache.blockDisk.enabled = false
-        #expect(ServerController.loadedModelRuntimeInputsRequireRefresh(
-            previous: base,
-            next: cacheChanged
-        ))
+        #expect(
+            ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: cacheChanged
+            )
+        )
 
         var turboQuantChanged = base
         turboQuantChanged.cache.liveKVCodec = .turboQuant
         turboQuantChanged.cache.turboQuantKeyBits = 4
         turboQuantChanged.cache.turboQuantValueBits = 4
-        #expect(ServerController.loadedModelRuntimeInputsRequireRefresh(
-            previous: base,
-            next: turboQuantChanged
-        ))
+        #expect(
+            ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: turboQuantChanged
+            )
+        )
 
         var multimodalChanged = base
         multimodalChanged.multimodal.requireMediaSaltForCache = false
-        #expect(ServerController.loadedModelRuntimeInputsRequireRefresh(
-            previous: base,
-            next: multimodalChanged
-        ))
+        #expect(
+            ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: multimodalChanged
+            )
+        )
 
         var mtpChanged = base
         mtpChanged.mtp.mode = .off
-        #expect(ServerController.loadedModelRuntimeInputsRequireRefresh(
-            previous: base,
-            next: mtpChanged
-        ))
+        #expect(
+            ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: mtpChanged
+            )
+        )
     }
 
     @Test func loadedModelRefreshInputs_ignoreNetworkAndSamplingOnlyChanges() {
@@ -75,24 +83,30 @@ struct ServerControllerConfigLoadingTests {
         var networkChanged = base
         networkChanged.network.port = 9999
         networkChanged.network.host = "0.0.0.0"
-        #expect(!ServerController.loadedModelRuntimeInputsRequireRefresh(
-            previous: base,
-            next: networkChanged
-        ))
+        #expect(
+            !ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: networkChanged
+            )
+        )
 
         var generationChanged = base
         generationChanged.generation.topP = 0.42
         generationChanged.generation.temperature = 0.1
-        #expect(!ServerController.loadedModelRuntimeInputsRequireRefresh(
-            previous: base,
-            next: generationChanged
-        ))
+        #expect(
+            !ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: generationChanged
+            )
+        )
 
         var concurrencyChanged = base
         concurrencyChanged.concurrency.maxConcurrentSequences = 4
-        #expect(!ServerController.loadedModelRuntimeInputsRequireRefresh(
-            previous: base,
-            next: concurrencyChanged
-        ))
+        #expect(
+            !ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: concurrencyChanged
+            )
+        )
     }
 }

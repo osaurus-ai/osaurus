@@ -684,27 +684,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["is_hybrid"] = stats.isHybrid
                 row["is_paged_incompatible"] = stats.isPagedIncompatible
                 if let topology = summary.cacheTopology {
-                    row["cache_topology"] = [
-                        "layer_count": topology.layerCount,
-                        "kv_layer_count": topology.kvLayerCount,
-                        "chunked_kv_layer_count": topology.chunkedKVLayerCount,
-                        "quantized_kv_layer_count": topology.quantizedKVLayerCount,
-                        "turbo_quant_kv_layer_count": topology.turboQuantKVLayerCount,
-                        "compilable_kv_layer_count": topology.compilableKVLayerCount,
-                        "compilable_turbo_quant_kv_layer_count": topology.compilableTurboQuantKVLayerCount,
-                        "rotating_kv_layer_count": topology.rotatingKVLayerCount,
-                        "compilable_rotating_kv_layer_count": topology.compilableRotatingKVLayerCount,
-                        "rotating_wrapper_layer_count": topology.rotatingWrapperLayerCount,
-                        "hybrid_pool_layer_count": topology.hybridPoolLayerCount,
-                        "mamba_layer_count": topology.mambaLayerCount,
-                        "compilable_mamba_layer_count": topology.compilableMambaLayerCount,
-                        "arrays_layer_count": topology.arraysLayerCount,
-                        "zaya_cca_layer_count": topology.zayaCCALayerCount,
-                        "cache_list_layer_count": topology.cacheListLayerCount,
-                        "requires_ssm_companion_state": topology.requiresSSMCompanionState,
-                        "requires_disk_backed_restore": topology.requiresDiskBackedCoordinatorRestore,
-                        "tags": topology.topologyTags,
-                    ] as [String: Any]
+                    row["cache_topology"] =
+                        [
+                            "layer_count": topology.layerCount,
+                            "kv_layer_count": topology.kvLayerCount,
+                            "chunked_kv_layer_count": topology.chunkedKVLayerCount,
+                            "quantized_kv_layer_count": topology.quantizedKVLayerCount,
+                            "turbo_quant_kv_layer_count": topology.turboQuantKVLayerCount,
+                            "compilable_kv_layer_count": topology.compilableKVLayerCount,
+                            "compilable_turbo_quant_kv_layer_count": topology.compilableTurboQuantKVLayerCount,
+                            "rotating_kv_layer_count": topology.rotatingKVLayerCount,
+                            "compilable_rotating_kv_layer_count": topology.compilableRotatingKVLayerCount,
+                            "rotating_wrapper_layer_count": topology.rotatingWrapperLayerCount,
+                            "hybrid_pool_layer_count": topology.hybridPoolLayerCount,
+                            "mamba_layer_count": topology.mambaLayerCount,
+                            "compilable_mamba_layer_count": topology.compilableMambaLayerCount,
+                            "arrays_layer_count": topology.arraysLayerCount,
+                            "zaya_cca_layer_count": topology.zayaCCALayerCount,
+                            "cache_list_layer_count": topology.cacheListLayerCount,
+                            "requires_ssm_companion_state": topology.requiresSSMCompanionState,
+                            "requires_disk_backed_restore": topology.requiresDiskBackedCoordinatorRestore,
+                            "tags": topology.topologyTags,
+                        ] as [String: Any]
                 }
 
                 var paged: [String: Any] = ["enabled": stats.pagedEnabled]
@@ -5136,7 +5137,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     ctx.value.writeAndFlush(
                         NIOAny(HTTPServerResponsePart.body(.byteBuffer(buf))),
-                        promise: promise)
+                        promise: promise
+                    )
                     ctx.value.read()
                 }
             }

@@ -2,7 +2,9 @@
 
 Import full Claude plugins from any GitHub repository — skills, scheduled agents, slash commands, MCP providers, and shared `CLAUDE.md` context — as a single managed bundle.
 
-The Skills > Import > From GitHub flow recognises every published Anthropic plugin layout in the wild — the legacy flat skill marketplace, the directory-based plugin layout used by repos like [`anthropics/claude-for-legal`](https://github.com/anthropics/claude-for-legal), and the object-shaped marketplace used by [`anthropics/claude-plugins-community`](https://github.com/anthropics/claude-plugins-community) that points at external repos pinned to a specific commit. Plugins land tagged with a stable id so the whole bundle can be reinstalled, replaced, or uninstalled as a unit.
+The Plugins > Import > From GitHub flow recognises every published Anthropic plugin layout in the wild — the legacy flat skill marketplace, the directory-based plugin layout used by repos like [`anthropics/claude-for-legal`](https://github.com/anthropics/claude-for-legal), and the object-shaped marketplace used by [`anthropics/claude-plugins-community`](https://github.com/anthropics/claude-plugins-community) that points at external repos pinned to a specific commit. Plugins land tagged with a stable id so the whole bundle can be reinstalled, replaced, or uninstalled as a unit.
+
+Claude plugins live in the same **Plugins** management tab as Osaurus's native plugins. Each Claude plugin renders as a card mixed into the Installed grid (distinguished by an `Imported` badge), with version pills, an Update affordance, and a Configure button when the plugin declares `userConfig`. The legacy "Installed plugins" accordion previously shown at the top of **Skills** has been retired in this layout; **Skills** is now only for user-authored skills and the built-in defaults.
 
 ### Coverage matrix
 
@@ -158,11 +160,13 @@ After the plugin list loads, Osaurus fetches every agent body in the background,
 
 ## Importing
 
-1. Open Management (`⌘ Shift M`) → **Skills**.
-2. Click **Import** → **From GitHub**.
+1. Open Management (`⌘ Shift M`) → **Plugins**.
+2. Click **Import** in the header.
 3. Enter the repository (`owner/repo` or full URL).
 4. Pick which plugins (and which artifacts within each plugin) to install.
 5. Click **Install Selected**.
+
+If any selected plugin declares a `userConfig` block in its `.claude-plugin/plugin.json`, Osaurus shows the **Configure plugin settings** sheet after install so required values can be filled in before the plugin's MCP servers spin up. Non-sensitive values are stored at `~/.osaurus/claude-plugins/userconfig/<safe-id>.json`; sensitive (`sensitive: true`) values land in the macOS Keychain under the existing plugin-secrets namespace.
 
 The progress indicator shows `current / total` artifacts. File fetches run concurrently; mutations are applied serially on the main actor so the four backing managers stay consistent.
 
@@ -205,15 +209,58 @@ To opt out (e.g. in tests), pass `replaceExisting: false` to `ClaudePluginInstal
 
 ## Managing Installed Plugins
 
-The **Installed Plugins** card at the top of the Skills view aggregates everything tagged with a `github:` plugin id. Each row shows:
+Imported Claude plugins render as cards in the **Plugins → Installed** grid alongside Osaurus's native `PluginCard`s. Each card shows:
 
-- Plugin name (e.g. "Commercial Legal") and source slug (`anthropics/claude-for-legal`)
-- Chips for skill / schedule / command / MCP counts
-- An **Uninstall** affordance that fades in on hover
+- Display name, optional version pill, and an `Imported` badge
+- Per-artifact chips for skill / schedule / command / MCP counts (live from the underlying managers)
+- An `Update` capsule when the source's `plugin.json.version` (or marketplace entry / source SHA) is newer than what's installed
+- Ellipsis menu: **View Details**, **Open on GitHub**, **Configure Settings…** (when `userConfig` is declared), **Update** (when newer), **Uninstall**
 
-Uninstalling a plugin removes the corresponding skills, schedules, slash commands, and MCP providers in one shot, including any Keychain-stored MCP tokens.
+Tapping a card opens **Claude Plugin Detail** with the full hero (icon, displayName, version, license, author/homepage/repository badges, description), keyword chips, per-artifact list (skills, schedules, slash commands, MCP servers with inline Restart for stdio servers), a **CHANGELOG** section fetched lazily from `<source>/CHANGELOG.md`, and external link badges. The same view exposes:
 
-Osaurus's own internal plugins (`PluginManager`, Wasm-based tool plugins) are not surfaced here — only the `github:` namespace is shown.
+- A **Configure plugin settings** action that re-opens the userConfig sheet.
+- A "components declared but not yet honored" notice for unsupported manifest sections (hooks, output styles, monitors, themes, channels, LSP servers).
+
+Uninstalling a plugin removes the corresponding skills, schedules, slash commands, and MCP providers in one shot, including any Keychain-stored MCP tokens, the persisted manifest snapshot, the per-plugin userConfig file, the cache directory, and the per-plugin `${CLAUDE_PLUGIN_DATA}` directory.
+
+Osaurus's own internal plugins (`PluginManager`, Wasm-based tool plugins) appear as the existing `PluginCard` style in the same grid — the only difference is the `Imported` badge that marks GitHub-sourced Claude plugins.
+
+### Variable substitution
+
+The installer applies the Claude Code variable substitution rules to MCP provider command lines, arguments, working directory, and environment:
+
+| Token | Resolves to |
+| --- | --- |
+| `${CLAUDE_PLUGIN_ROOT}` | `~/.osaurus/claude-plugins/cache/<safe-id>/` (the synthesised read-only cache of the few files Osaurus fetched for this plugin) |
+| `${CLAUDE_PLUGIN_DATA}` | `~/.osaurus/claude-plugins/data/<safe-id>/` (created lazily on first reference; deleted on uninstall) |
+| `${CLAUDE_PROJECT_DIR}` | Best-effort current workspace root (empty string when not set) |
+| `${user_config.KEY}` | Non-sensitive value from the per-plugin userConfig store. Sensitive values are *only* exposed via the subprocess environment overlay — never spliced into bodies of text. |
+| `${ENV_VAR}` | Host env, but only for an allow-listed set (`PATH`, `HOME`, `USER`, `HOSTNAME`, `LANG`, `LC_ALL`, `TERM`) plus any names the plugin explicitly declares in `userConfig`. |
+
+When the installer launches an MCP subprocess (today, only those reachable from Osaurus's transport), it overlays `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and a `CLAUDE_PLUGIN_OPTION_<KEY>` for every userConfig value so MCP servers behave like they would under Claude Code.
+
+### Versioning and updates
+
+The card shows the version captured at install. Resolution order (spec):
+
+1. `version` in `<source>/.claude-plugin/plugin.json` (canonical).
+2. `version` in the marketplace plugin entry.
+3. Short SHA (first 7 chars) of the source path's HEAD commit.
+4. `nil` (no version shown).
+
+A background probe runs when the Plugins tab first appears and whenever the Refresh button is clicked. If the available version is newer (semver compare when both sides parse; string inequality otherwise), an **Update** capsule appears on the card and Update / Reinstall buttons appear in the detail view. The update flow re-fetches the source repo and calls `ClaudePluginInstaller.install(..., replaceExisting: true)` so the previously-selected artifact set is replaced in place.
+
+### Not honored yet
+
+The Tier-1 work in this release covers per-plugin `plugin.json`, version tracking, `userConfig`, variable substitution, persistent data dir, CHANGELOG/homepage/repository/keywords surfacing. The following spec features are detected and recorded but **not executed** — the detail view displays a "declared but not yet honored" notice so plugin authors aren't blindsided:
+
+- `hooks` (pre/post-compact, pre-tool-use, etc.)
+- `lspServers`
+- `outputStyles`
+- `experimental.themes`, `experimental.monitors`
+- `channels`
+- `bin/` PATH exports
+- Install scopes (`user` / `project` / `local` / `managed`) — Osaurus is single-host.
 
 ---
 
@@ -272,6 +319,13 @@ The installer keeps going if any single file fails to download or parse. Failure
 | Slash commands      | Persisted by `SlashCommandRegistry`                                       |
 | MCP providers       | `MCPProviderConfiguration` + secrets in macOS Keychain                    |
 | `CLAUDE.md` / `CONNECTORS.md` / `README.md` | Attached as references inside each owning skill directory |
+| Per-plugin manifest snapshot | `~/.osaurus/claude-plugins/manifests/<safe-id>.json`              |
+| Per-plugin userConfig (non-sensitive) | `~/.osaurus/claude-plugins/userconfig/<safe-id>.json`    |
+| Per-plugin userConfig (sensitive) | macOS Keychain (via `ToolSecretsKeychain`, `pluginId` namespace) |
+| `${CLAUDE_PLUGIN_DATA}` runtime dir | `~/.osaurus/claude-plugins/data/<safe-id>/` (created lazily)   |
+| Synthesised `${CLAUDE_PLUGIN_ROOT}` cache | `~/.osaurus/claude-plugins/cache/<safe-id>/`             |
+
+`<safe-id>` is the plugin id with every character outside `[A-Za-z0-9_-]` replaced by `-`, per spec.
 
 ---
 
@@ -281,10 +335,16 @@ The installer keeps going if any single file fails to download or parse. Failure
 | ------------ | ------------------------------------------------------------------------------------ |
 | Discovery    | `Packages/OsaurusCore/Services/GitHubSkillService.swift`                             |
 | Installation | `Packages/OsaurusCore/Services/Skill/ClaudePluginInstaller.swift`                    |
-| Import UI    | `Packages/OsaurusCore/Views/Skill/GitHubImportSheet.swift`                           |
-| Management UI| `Packages/OsaurusCore/Views/Skill/InstalledPluginsSection.swift`                     |
+| Manifest persistence | `Packages/OsaurusCore/Services/Skill/ClaudePluginManifestStore.swift`        |
+| Variable expander | `Packages/OsaurusCore/Services/Skill/ClaudePluginVariableExpander.swift`        |
+| Aggregator   | `Packages/OsaurusCore/Services/Plugin/InstalledClaudePluginsAggregator.swift`        |
+| Import UI    | `Packages/OsaurusCore/Views/Plugin/GitHubImportSheet.swift`                          |
+| Card UI      | `Packages/OsaurusCore/Views/Plugin/ClaudePluginCard.swift`                           |
+| Detail UI    | `Packages/OsaurusCore/Views/Plugin/ClaudePluginDetailView.swift`                     |
+| userConfig sheet | `Packages/OsaurusCore/Views/Plugin/ClaudePluginUserConfigSheet.swift`            |
+| Plugins-tab host | `Packages/OsaurusCore/Views/Plugin/PluginsView.swift`                            |
 | Schedule deep-link | `Packages/OsaurusCore/Managers/ManagementStateManager.swift`, `Views/Schedule/SchedulesView.swift` |
-| Tests        | `Packages/OsaurusCore/Tests/Skill/ClaudePluginInstallerTests.swift`                  |
+| Tests        | `Packages/OsaurusCore/Tests/Skill/ClaudePluginInstallerTests.swift`, `Packages/OsaurusCore/Tests/Skill/ClaudePluginSpecTests.swift` |
 
 ---
 

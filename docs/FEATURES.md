@@ -17,7 +17,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Structured Document IO           | Foundation | "Tools & Plugins"  | (in README)                   | Services/Documents/, Models/Documents/, Managers/Documents/DocumentAdaptersBootstrap.swift |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | plugins/README.md             | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
-| Claude Plugin Import             | Stable    | "Skills"           | CLAUDE_PLUGINS.md             | Services/GitHubSkillService.swift, Services/Skill/ClaudePluginInstaller.swift, Views/Skill/GitHubImportSheet.swift, Views/Skill/InstalledPluginsSection.swift |
+| Claude Plugin Import             | Stable    | "Plugins"          | CLAUDE_PLUGINS.md             | Services/GitHubSkillService.swift, Services/Skill/ClaudePluginInstaller.swift, Services/Skill/ClaudePluginManifestStore.swift, Services/Skill/ClaudePluginVariableExpander.swift, Services/Plugin/InstalledClaudePluginsAggregator.swift, Views/Plugin/GitHubImportSheet.swift, Views/Plugin/ClaudePluginCard.swift, Views/Plugin/ClaudePluginDetailView.swift, Views/Plugin/ClaudePluginUserConfigSheet.swift |
 | Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
 | Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/PreflightCapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
 | Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
@@ -867,22 +867,30 @@ See [docs/plugins/README.md](plugins/README.md) for the full reference.
 
 ### Claude Plugin Import
 
-**Purpose:** Import full Claude plugins from GitHub — skills, scheduled agents, slash commands, MCP providers, and shared `CLAUDE.md` context — as a single managed bundle.
+**Purpose:** Import full Claude plugins from GitHub — skills, scheduled agents, slash commands, MCP providers, and shared `CLAUDE.md` context — as a single managed bundle, surfaced as cards in the **Plugins** tab alongside native Osaurus plugins.
 
 **Components:**
 
-- `Services/GitHubSkillService.swift` — Repository discovery, `marketplace.json` parsing, directory-based artifact probing, GitHub rate-limit detection
-- `Services/Skill/ClaudePluginInstaller.swift` — Per-plugin install/uninstall orchestrator, idempotent re-install, MCP placeholder-token detection, cron inference
-- `Views/Skill/GitHubImportSheet.swift` — Import UI with concurrent fetch progress and deep-linkable install summary
-- `Views/Skill/InstalledPluginsSection.swift` — Aggregator + management surface for installed plugin bundles
+- `Services/GitHubSkillService.swift` — Repository discovery, `marketplace.json` parsing, directory-based artifact probing, `.claude-plugin/plugin.json` decoding, version resolver, GitHub rate-limit detection
+- `Services/Skill/ClaudePluginInstaller.swift` — Per-plugin install/uninstall orchestrator, idempotent re-install, MCP placeholder-token detection, cron inference, manifest snapshot write + userConfig hookup, `${CLAUDE_PLUGIN_*}` substitution into MCP entries and skill bodies
+- `Services/Skill/ClaudePluginManifestStore.swift` — Per-plugin manifest + userConfig persistence under `~/.osaurus/claude-plugins/`; per-plugin data dir lifecycle
+- `Services/Skill/ClaudePluginVariableExpander.swift` — `${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_DATA}` / `${user_config.KEY}` / allow-listed `${ENV}` substitution; `CLAUDE_PLUGIN_OPTION_*` subprocess env overlay
+- `Services/Plugin/InstalledClaudePluginsAggregator.swift` — Card-friendly aggregator that joins manifest snapshots with live manager counts and runs the update probe
+- `Views/Plugin/PluginsView.swift` — Plugins tab hosting both native and Claude plugin cards in a single Installed grid
+- `Views/Plugin/GitHubImportSheet.swift` — Import UI with concurrent fetch progress and deep-linkable install summary
+- `Views/Plugin/ClaudePluginCard.swift`, `Views/Plugin/ClaudePluginDetailView.swift`, `Views/Plugin/ClaudePluginUserConfigSheet.swift` — Claude-specific UI surfaces (Imported badge, Update affordance, Configure sheet, CHANGELOG section)
 - `Managers/ManagementStateManager.swift` — Deep-link state for opening a schedule editor from the install summary
 
 **Features:**
 
-- **Two marketplace shapes** — Directory-based Claude plugin layout *and* legacy flat `skills: [String]` arrays
+- **Unified Plugins tab** — Claude plugins render as cards mixed into the same `Installed` grid as native `PluginCard`s, distinguished by an `Imported` badge; **Skills** tab is now only for user-authored and built-in skills
+- **Marketplace + per-plugin manifest** — Reads both `.claude-plugin/marketplace.json` (legacy flat skill arrays, directory-based, external `url` / `git-subdir` shapes) and `<source>/.claude-plugin/plugin.json` (displayName, version, author, homepage, repository, license, keywords, userConfig)
 - **Five artifact families** — `SKILL.md`, `agents/*.md`, `commands/*.md`, `CLAUDE.md`, `.mcp.json` (HTTP/SSE)
-- **Plugin id grouping** — Every artifact is tagged `github:<owner>/<repo>/<plugin>` so the bundle can be reinstalled or uninstalled atomically
-- **Idempotent re-install** — Non-skill artifacts are replaced on re-import; skills dedupe by `(pluginId, name)`
+- **Plugin id grouping** — Every artifact tagged `github:<owner>/<repo>/<plugin>` so the bundle reinstalls / uninstalls atomically; manifest snapshot persisted at `~/.osaurus/claude-plugins/manifests/<safe-id>.json`
+- **Idempotent re-install + Update flow** — Card and detail view both show an Update capsule when the source's `plugin.json.version` (or marketplace / source SHA) is newer than what's installed; clicking Update calls `ClaudePluginInstaller.install(replaceExisting: true)` to re-fetch and replace the artifact set
+- **`userConfig` prompt sheet** — When `plugin.json` declares `userConfig`, an in-app sheet collects values at install. Non-sensitive values land in `~/.osaurus/claude-plugins/userconfig/<safe-id>.json`; sensitive values go to the macOS Keychain (skipped under `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`)
+- **Variable substitution** — `${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_DATA}` / `${user_config.KEY}` / allow-listed `${ENV}` resolve in MCP command/args/cwd/env and in skill bodies (sensitive values are env-only per spec)
+- **Persistent data dir** — `~/.osaurus/claude-plugins/data/<safe-id>/` is created lazily on first `${CLAUDE_PLUGIN_DATA}` reference and removed on uninstall
 - **Parallel discovery & fetch** — `withThrowingTaskGroup` + `async let` across plugins and artifact probes
 - **Cron inference** — Natural-language frequency text in agent frontmatter is mapped to cron; unmatched schedules land disabled with a deep-link to the editor
 - **Placeholder token handling** — MCP env references like `${VAR}`, `$VAR`, `<token>` are detected and the provider is created without a token (surfaced in the install summary)
@@ -894,7 +902,9 @@ See [docs/plugins/README.md](plugins/README.md) for the full reference.
 github:<owner>/<repo>/<plugin-name>
 ```
 
-Stored on each artifact as `Skill.pluginId`, `Schedule.parameters["pluginId"]`, `SlashCommand.pluginId`, and `MCPProvider.pluginId`.
+Stored on each artifact as `Skill.pluginId`, `Schedule.parameters["pluginId"]`, `SlashCommand.pluginId`, and `MCPProvider.pluginId`. Snapshot persisted under the same id (sanitised via `OsaurusPaths.claudePluginSafeId`).
+
+**Not yet honored:** hooks, lspServers, outputStyles, themes/monitors (experimental), channels, bin/ PATH exports, install scopes. The detail view surfaces a "declared but not yet honored" notice so plugin authors aren't blindsided.
 
 **Reference repository:** [`anthropics/claude-for-legal`](https://github.com/anthropics/claude-for-legal)
 

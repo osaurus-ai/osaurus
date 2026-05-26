@@ -137,9 +137,10 @@ public enum ServerRuntimeSettingsStore {
         // so without this repair tuned MXFP8/MTP bundles still never reach the
         // tensor+tuning-gated autodetect path after upgrade.
         if normalized.mtp.mode == .off,
-           normalized.mtp.draftTokenLimit == nil,
-           normalized.mtp.keepDraftCacheSeparate,
-           normalized.mtp.acceptedTokensOnlyEnterBaseCache {
+            normalized.mtp.draftTokenLimit == nil,
+            normalized.mtp.keepDraftCacheSeparate,
+            normalized.mtp.acceptedTokensOnlyEnterBaseCache
+        {
             normalized.mtp.mode = .auto
         }
         if shouldRepairLegacyCacheDefaults(normalized.cache) {

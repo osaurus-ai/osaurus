@@ -203,7 +203,9 @@ public final class ScheduleManager {
 
     /// Key used in `Schedule.parameters` to group schedules by the plugin they
     /// were installed from. Set by the Claude plugin importer.
-    public static let pluginIdParameterKey = "pluginId"
+    /// `nonisolated` so non-MainActor code (aggregator/tests) can read
+    /// the key without hopping to the main actor first.
+    public nonisolated static let pluginIdParameterKey = "pluginId"
 
     /// Returns all schedules associated with a plugin id.
     public func schedules(forPluginId pluginId: String) -> [Schedule] {
