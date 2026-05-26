@@ -1614,8 +1614,14 @@ struct RuntimePolicySourceTests {
         )
         let tokenizerLoader = try Self.source("Services/ModelRuntime/SwiftTransformersTokenizerLoader.swift")
         #expect(
-            tokenizerLoader.contains("toolChoiceRequired: Self.deepseekV4String(additionalContext?[\"tool_choice\"]) == \"required\""),
+            tokenizerLoader.contains("let toolChoiceRequired =")
+                && tokenizerLoader.contains("Self.deepseekV4String(additionalContext?[\"tool_choice\"]) == \"required\"")
+                && tokenizerLoader.contains("toolChoiceRequired: toolChoiceRequired"),
             "DSV4 native prompt rendering must pass required tool_choice into DeepseekV4ChatEncoder so second-turn/named required tool calls keep the DSML must-call directive."
+        )
+        #expect(
+            tokenizerLoader.contains("dsv4Messages[idx].task = \"action\""),
+            "DSV4 required/named tool_choice must use the native action task rail, not hidden sampler overrides or forced thinking."
         )
         #expect(
             registry.contains("invalidToolArgumentsEnvelope")

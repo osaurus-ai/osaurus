@@ -582,12 +582,21 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             effort = nil
         }
 
+        let toolChoiceRequired =
+            Self.deepseekV4String(additionalContext?["tool_choice"]) == "required"
+        if toolChoiceRequired,
+            let idx = dsv4Messages.lastIndex(where: { $0.role == .user || $0.role == .developer }),
+            dsv4Messages[idx].task == nil
+        {
+            dsv4Messages[idx].task = "action"
+        }
+
         var prompt = MLXLMCommon.DeepseekV4ChatEncoder().encode(
             messages: dsv4Messages,
             thinkingMode: thinkingMode,
             reasoningEffort: effort,
             dropEarlierReasoning: true,
-            toolChoiceRequired: Self.deepseekV4String(additionalContext?["tool_choice"]) == "required"
+            toolChoiceRequired: toolChoiceRequired
         )
         if !addGenerationPrompt,
             let lastRole = dsv4Messages.last?.role,
