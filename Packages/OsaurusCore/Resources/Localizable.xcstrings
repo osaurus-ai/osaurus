@@ -7698,6 +7698,9 @@
         }
       }
     },
+    "ENDPOINT" : {
+
+    },
     "English-only model with highest recall" : {
       "localizations" : {
         "de" : {
@@ -14378,6 +14381,9 @@
           }
         }
       }
+    },
+    "Override the base URL to route through a proxy or self-hosted gateway. Leave as-is for the official endpoint." : {
+
     },
     "Overview" : {
       "localizations" : {
@@ -23036,6 +23042,16 @@
     },
     "You may be asked to authenticate to sign the upload." : {
 
+    },
+    "You were renaming a conversation titled \"%@\" to \"%@\" but haven't saved it yet." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "You were renaming a conversation titled \"%1$@\" to \"%2$@\" but haven't saved it yet."
+          }
+        }
+      }
     },
     "You're already set up" : {
 

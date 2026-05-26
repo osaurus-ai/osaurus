@@ -307,9 +307,24 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         }
 
         let host = provider.host.lowercased().trimmingCharacters(in: .whitespaces)
-        return knownPresets.first { preset in
+        if let byHost = knownPresets.first(where: { preset in
             guard !preset.configuration.host.isEmpty else { return false }
             return preset.configuration.host.lowercased() == host
+        }) {
+            return byHost
+        }
+
+        // Host didn't match a stock endpoint which is likely a custom base URL like a
+        // self-hosted proxy. Fall back to the distinctive provider types so a
+        // custom-host Anthropic/OpenAI/Gemini provider keeps its branded card and
+        // native editor instead of looking like a generic custom provider.
+        // `openaiLegacy` is intentionally excluded as it's shared by many presets
+        // (xAI, DeepSeek, Venice, OpenRouter, Ollama) so it can't identify one.
+        switch provider.providerType {
+        case .anthropic: return .anthropic
+        case .gemini: return .google
+        case .openResponses, .openAICodex: return .openai
+        case .openaiLegacy, .azureOpenAI, .osaurus: return nil
         }
     }
 }
