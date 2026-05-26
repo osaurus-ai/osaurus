@@ -3272,6 +3272,8 @@ struct ChatView: View {
                         // there, which is the safer flow because it
                         // forces them to pick a destination.
                         AppDelegate.shared?.showManagementWindow(initialTab: .storage)
+                    case .openPrivacySettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
                     }
                 }
             )

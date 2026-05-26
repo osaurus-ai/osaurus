@@ -3867,7 +3867,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let writerBound = NIOLoopBound(writer, eventLoop: loop)
             hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
             let keepaliveTask = Self.startSSEKeepalive(
-                writer: writerBound, channel: context.channel, loop: loop, ctx: ctx
+                writer: writerBound,
+                channel: context.channel,
+                loop: loop,
+                ctx: ctx
             )
             runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
@@ -3888,7 +3891,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if delta.isEmpty { continue }
                         accumulated += delta
                         let chunk = CompletionResponseDTO(
-                            id: responseId, object: "text_completion", created: created, model: model,
+                            id: responseId,
+                            object: "text_completion",
+                            created: created,
+                            model: model,
                             choices: [CompletionChoiceDTO(text: delta, index: 0, finish_reason: nil)],
                             usage: nil
                         )
@@ -3900,7 +3906,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     hop { writerBound.value.writeError(error.localizedDescription, context: ctx.value) }
                 }
                 let final = CompletionResponseDTO(
-                    id: responseId, object: "text_completion", created: created, model: model,
+                    id: responseId,
+                    object: "text_completion",
+                    created: created,
+                    model: model,
                     choices: [CompletionChoiceDTO(text: "", index: 0, finish_reason: finishReason)],
                     usage: nil
                 )
@@ -3911,11 +3920,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
-                    method: "POST", path: "/completions", userAgent: logUserAgent,
-                    requestBody: logRequestBody, responseStatus: 200, startTime: startTime,
-                    model: model, tokensInput: promptTokens,
+                    method: "POST",
+                    path: "/completions",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: model,
+                    tokensInput: promptTokens,
                     tokensOutput: TokenEstimator.estimate(accumulated),
-                    temperature: req.temperature, maxTokens: req.resolvedMaxTokens
+                    temperature: req.temperature,
+                    maxTokens: req.resolvedMaxTokens
                 )
             }
             return
@@ -3936,7 +3951,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 let completionTokens = TokenEstimator.estimate(text)
                 let response = CompletionResponseDTO(
-                    id: responseId, object: "text_completion", created: created, model: model,
+                    id: responseId,
+                    object: "text_completion",
+                    created: created,
+                    model: model,
                     choices: [CompletionChoiceDTO(text: text, index: 0, finish_reason: "stop")],
                     usage: CompletionUsageDTO(
                         prompt_tokens: promptTokens,
@@ -3950,15 +3968,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let headersCopy = headers
                 hop {
                     Self.writeFullResponse(
-                        ctx: ctx, version: version, status: .ok, headers: headersCopy, body: body
+                        ctx: ctx,
+                        version: version,
+                        status: .ok,
+                        headers: headersCopy,
+                        body: body
                     )
                 }
                 logSelf.logRequest(
-                    method: "POST", path: "/completions", userAgent: logUserAgent,
-                    requestBody: logRequestBody, responseBody: body, responseStatus: 200,
-                    startTime: startTime, model: model, tokensInput: promptTokens,
-                    tokensOutput: completionTokens, temperature: req.temperature,
-                    maxTokens: req.resolvedMaxTokens, finishReason: .stop
+                    method: "POST",
+                    path: "/completions",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: model,
+                    tokensInput: promptTokens,
+                    tokensOutput: completionTokens,
+                    temperature: req.temperature,
+                    maxTokens: req.resolvedMaxTokens,
+                    finishReason: .stop
                 )
             } catch {
                 let message = error.localizedDescription
@@ -3967,14 +3997,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let body = Self.errorBody(.openai(type: "internal_error"), message: message)
                 hop {
                     Self.writeFullResponse(
-                        ctx: ctx, version: version, status: status,
-                        headers: [("Content-Type", "application/json; charset=utf-8")], body: body
+                        ctx: ctx,
+                        version: version,
+                        status: status,
+                        headers: [("Content-Type", "application/json; charset=utf-8")],
+                        body: body
                     )
                 }
                 logSelf.logRequest(
-                    method: "POST", path: "/completions", userAgent: logUserAgent,
-                    requestBody: logRequestBody, responseStatus: Int(status.code),
-                    startTime: startTime, model: model, errorMessage: message
+                    method: "POST",
+                    path: "/completions",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: Int(status.code),
+                    startTime: startTime,
+                    model: model,
+                    errorMessage: message
                 )
             }
         }

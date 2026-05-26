@@ -22,6 +22,8 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openStorageSettings
     /// Trigger a one-shot plaintext export of conversation/memory data.
     case exportPlaintextBackup
+    /// Open Settings → Privacy (Privacy Filter master switch + custom rules).
+    case openPrivacySettings
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -69,7 +71,10 @@ public enum WhatsNewContent {
     /// Release notes keyed by app version. Add a `WhatsNewRelease` entry
     /// here whose `version` matches `CFBundleShortVersionString` for each
     /// release that should announce changes on first launch after update.
-    public static let releases: [WhatsNewRelease] = [securityHardening_0_17_7]
+    public static let releases: [WhatsNewRelease] = [
+        securityHardening_0_17_7,
+        privacyFilter_0_19_0,
+    ]
 
     /// First-launch announcement for the #950 security audit fixes
     /// **plus** the at-rest encryption migration that ships alongside.
@@ -106,6 +111,36 @@ public enum WhatsNewContent {
                 description: "New pairings are agent-scoped and expire in 90 days. Older keys are marked Legacy.",
                 actionLabel: "Review",
                 action: .openAPIKeysSettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for the Privacy Filter feature.
+    /// Three pages: what it does, how the review flow keeps you in
+    /// control, and where to tune the regex catalog. The last page's
+    /// CTA deep-links to Settings → Privacy via `openPrivacySettings`.
+    private static let privacyFilter_0_19_0 = WhatsNewRelease(
+        version: "0.19.0",
+        pages: [
+            WhatsNewPage(
+                id: "privacy-filter-0.19.0:summary",
+                title: "Privacy Filter",
+                description:
+                    "Before anything leaves your Mac for a cloud model, Osaurus can scan for phone numbers, emails, names, addresses, and other sensitive data and swap them for placeholders. Responses are restored on the way back."
+            ),
+            WhatsNewPage(
+                id: "privacy-filter-0.19.0:review",
+                title: "You stay in control",
+                description:
+                    "Every redaction is shown to you before the request leaves — approve, edit, or send anyway. Replacements are highlighted inline in chat so you always know what shipped."
+            ),
+            WhatsNewPage(
+                id: "privacy-filter-0.19.0:customize",
+                title: "Tune what's scrubbed",
+                description:
+                    "Toggle built-in categories, add your own regex rules, and choose whether to auto-approve familiar redactions. Cloud-only — local models never round-trip through the filter.",
+                actionLabel: "Open Privacy settings",
+                action: .openPrivacySettings
             ),
         ]
     )
