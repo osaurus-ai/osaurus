@@ -1612,6 +1612,11 @@ struct RuntimePolicySourceTests {
                 && adapter.contains("case .required, .function(_)"),
             "Required or named local tool_choice must become template context instead of being reduced to a tools-available-only prompt."
         )
+        let tokenizerLoader = try Self.source("Services/ModelRuntime/SwiftTransformersTokenizerLoader.swift")
+        #expect(
+            tokenizerLoader.contains("toolChoiceRequired: Self.deepseekV4String(additionalContext?[\"tool_choice\"]) == \"required\""),
+            "DSV4 native prompt rendering must pass required tool_choice into DeepseekV4ChatEncoder so second-turn/named required tool calls keep the DSML must-call directive."
+        )
         #expect(
             registry.contains("invalidToolArgumentsEnvelope")
                 && registry.contains("\"invalid_tool_arguments\""),

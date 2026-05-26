@@ -586,7 +586,8 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             messages: dsv4Messages,
             thinkingMode: thinkingMode,
             reasoningEffort: effort,
-            dropEarlierReasoning: true
+            dropEarlierReasoning: true,
+            toolChoiceRequired: Self.deepseekV4String(additionalContext?["tool_choice"]) == "required"
         )
         if !addGenerationPrompt,
             let lastRole = dsv4Messages.last?.role,
