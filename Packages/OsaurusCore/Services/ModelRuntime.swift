@@ -1091,6 +1091,7 @@ public actor ModelRuntime {
     /// related through this path.
     private func generateEventStream(
         chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message],
+        rawPromptBuilder: (@Sendable () -> String)? = nil,
         parameters: GenerationParameters,
         stopSequences: [String],
         tools: [Tool]?,
@@ -1166,6 +1167,7 @@ public actor ModelRuntime {
                 container: holder.container,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
+                buildRawPrompt: rawPromptBuilder,
                 generation: parameters,
                 stopSequences: stopSequences,
                 draftStrategy: holder.draftStrategy,
@@ -1268,6 +1270,57 @@ public actor ModelRuntime {
         }
         try Self.throwIfTools(pendingTools)
         return accumulated
+    }
+
+    /// Stream a completion from a raw, pre-formatted prompt — no chat template,
+    /// no tools, no reasoning channel. Backs the OpenAI-legacy
+    /// `/v1/completions` endpoint (FIM autocomplete), where the prompt must
+    /// reach the model verbatim. Yields plain text deltas only.
+    func streamRawText(
+        prompt: String,
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        modelId: String,
+        modelName: String
+    ) async throws -> AsyncThrowingStream<String, Error> {
+        let events = try await generateEventStream(
+            chatBuilder: { [] },
+            rawPromptBuilder: { prompt },
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: nil,
+            toolChoice: nil,
+            modelId: modelId,
+            modelName: modelName
+        )
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        let producerTask = Task {
+            do {
+                for try await ev in events {
+                    if Task.isCancelled {
+                        continuation.finish()
+                        return
+                    }
+                    // Raw completions only surface generated text. Reasoning,
+                    // tool calls, and stats events are irrelevant to the
+                    // legacy completions wire format and are dropped.
+                    if case .tokens(let s) = ev, !s.isEmpty {
+                        continuation.yield(s)
+                    }
+                }
+                continuation.finish()
+            } catch {
+                if Task.isCancelled {
+                    continuation.finish()
+                } else {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+        continuation.onTermination = { @Sendable _ in
+            producerTask.cancel()
+        }
+        return stream
     }
 
     func streamWithTools(

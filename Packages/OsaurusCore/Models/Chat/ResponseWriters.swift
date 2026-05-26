@@ -292,6 +292,19 @@ final class SSEResponseWriter: ResponseWriter {
         }
     }
 
+    /// Emit a pre-encoded JSON object as one SSE `data:` line. Used by the
+    /// legacy `/v1/completions` stream, whose `text_completion` chunk shape
+    /// (`choices[].text`) differs from the chat `delta` chunks the typed
+    /// helpers above emit.
+    func writeRawJSONData(_ json: String, context: ChannelHandlerContext) {
+        var buffer = context.channel.allocator.buffer(capacity: json.utf8.count + 8)
+        buffer.writeString("data: ")
+        buffer.writeString(json)
+        buffer.writeString("\n\n")
+        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+        context.flush()
+    }
+
     func writeEnd(_ context: ChannelHandlerContext) {
         var tail = context.channel.allocator.buffer(capacity: 16)
         tail.writeString("data: [DONE]\n\n")

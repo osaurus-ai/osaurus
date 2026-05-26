@@ -433,6 +433,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleShowEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
                 handleChatCompletions(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/completions" || path == "/v1/completions" {
+                handleCompletions(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/generate" {
                 handleOllamaGenerate(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat" {
@@ -3692,6 +3694,245 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     errorMessage: error.localizedDescription
                 )
             }
+        }
+    }
+
+    // MARK: - Legacy Completions (/v1/completions)
+    // `CompletionRequest` lives in OpenAIAPI.swift alongside
+    // `ChatCompletionRequest`. The response DTOs below are encode-only.
+
+    private struct CompletionChoiceDTO: Encodable {
+        let text: String
+        let index: Int
+        let finish_reason: String?
+    }
+    private struct CompletionUsageDTO: Encodable {
+        let prompt_tokens: Int
+        let completion_tokens: Int
+        let total_tokens: Int
+    }
+    private struct CompletionResponseDTO: Encodable {
+        let id: String
+        let object: String
+        let created: Int
+        let model: String
+        let choices: [CompletionChoiceDTO]
+        let usage: CompletionUsageDTO?
+    }
+
+    private static func encodeCompletionJSON(_ dto: CompletionResponseDTO) -> String? {
+        guard let data = try? JSONEncoder().encode(dto) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// OpenAI-legacy `/v1/completions`: raw-prompt completion with a
+    /// `text_completion` response shape. Routes through the chat-template-
+    /// bypassing raw generation path so FIM prompts reach the model verbatim.
+    private func handleCompletions(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        guard let req = try? JSONDecoder().decode(CompletionRequest.self, from: data),
+            !req.prompt.isEmpty
+        else {
+            let body = Self.errorBody(
+                .openai(type: "invalid_request_error"),
+                message: "Invalid request format: 'prompt' is required"
+            )
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: body
+            )
+            logRequest(
+                method: "POST",
+                path: "/completions",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid completions request"
+            )
+            return
+        }
+
+        let accept = head.headers.first(name: "Accept") ?? ""
+        let wantsSSE = (req.stream ?? false) || accept.contains("text/event-stream")
+        let created = Int(Date().timeIntervalSince1970)
+        let responseId = Self.shortId(prefix: "cmpl-", length: 12)
+        let model = req.model
+        let prompt = req.prompt
+        let stop = req.stop
+        let params = GenerationParameters(
+            temperature: req.temperature,
+            maxTokens: req.resolvedMaxTokens,
+            maxTokensExplicit: req.maxTokens != nil,
+            topPOverride: req.topP
+        )
+        let promptTokens = TokenEstimator.estimate(prompt)
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        let version = head.version
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+
+        if wantsSSE {
+            let writer = SSEResponseWriter()
+            let writerBound = NIOLoopBound(writer, eventLoop: loop)
+            hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
+            let keepaliveTask = Self.startSSEKeepalive(
+                writer: writerBound, channel: context.channel, loop: loop, ctx: ctx
+            )
+            Task(priority: .userInitiated) {
+                defer { keepaliveTask.cancel() }
+                var accumulated = ""
+                let finishReason = "stop"
+                do {
+                    let stream = try await MLXService.shared.streamRawCompletion(
+                        prompt: prompt,
+                        parameters: params,
+                        requestedModel: model,
+                        stopSequences: stop
+                    )
+                    for try await delta in stream {
+                        if StreamingToolHint.isSentinel(delta) || delta.isEmpty { continue }
+                        accumulated += delta
+                        let chunk = CompletionResponseDTO(
+                            id: responseId, object: "text_completion", created: created, model: model,
+                            choices: [CompletionChoiceDTO(text: delta, index: 0, finish_reason: nil)],
+                            usage: nil
+                        )
+                        if let json = Self.encodeCompletionJSON(chunk) {
+                            hop { writerBound.value.writeRawJSONData(json, context: ctx.value) }
+                        }
+                    }
+                } catch {
+                    hop { writerBound.value.writeError(error.localizedDescription, context: ctx.value) }
+                }
+                let final = CompletionResponseDTO(
+                    id: responseId, object: "text_completion", created: created, model: model,
+                    choices: [CompletionChoiceDTO(text: "", index: 0, finish_reason: finishReason)],
+                    usage: nil
+                )
+                hop {
+                    if let json = Self.encodeCompletionJSON(final) {
+                        writerBound.value.writeRawJSONData(json, context: ctx.value)
+                    }
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST", path: "/completions", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseStatus: 200, startTime: startTime,
+                    model: model, tokensInput: promptTokens,
+                    tokensOutput: TokenEstimator.estimate(accumulated),
+                    temperature: req.temperature, maxTokens: req.resolvedMaxTokens
+                )
+            }
+            return
+        }
+
+        // Non-streaming
+        Task(priority: .userInitiated) {
+            do {
+                let stream = try await MLXService.shared.streamRawCompletion(
+                    prompt: prompt,
+                    parameters: params,
+                    requestedModel: model,
+                    stopSequences: stop
+                )
+                var text = ""
+                for try await delta in stream {
+                    if StreamingToolHint.isSentinel(delta) { continue }
+                    text += delta
+                }
+                let completionTokens = TokenEstimator.estimate(text)
+                let response = CompletionResponseDTO(
+                    id: responseId, object: "text_completion", created: created, model: model,
+                    choices: [CompletionChoiceDTO(text: text, index: 0, finish_reason: "stop")],
+                    usage: CompletionUsageDTO(
+                        prompt_tokens: promptTokens,
+                        completion_tokens: completionTokens,
+                        total_tokens: promptTokens + completionTokens
+                    )
+                )
+                let body = Self.encodeCompletionJSON(response) ?? "{}"
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                hop {
+                    Self.writeFullResponse(
+                        ctx: ctx, version: version, status: .ok, headers: headersCopy, body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST", path: "/completions", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseBody: body, responseStatus: 200,
+                    startTime: startTime, model: model, tokensInput: promptTokens,
+                    tokensOutput: completionTokens, temperature: req.temperature,
+                    maxTokens: req.resolvedMaxTokens, finishReason: .stop
+                )
+            } catch {
+                let message = error.localizedDescription
+                let status: HTTPResponseStatus =
+                    error is MLXService.RuntimePolicyError ? .badRequest : .internalServerError
+                let body = Self.errorBody(.openai(type: "internal_error"), message: message)
+                hop {
+                    Self.writeFullResponse(
+                        ctx: ctx, version: version, status: status,
+                        headers: [("Content-Type", "application/json; charset=utf-8")], body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST", path: "/completions", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseStatus: Int(status.code),
+                    startTime: startTime, model: model, errorMessage: message
+                )
+            }
+        }
+    }
+
+    /// Write a complete HTTP response (head + body + end, then close) on the
+    /// event loop. Must be called from within a `hop { }` so `ctx.value` is
+    /// touched on its loop. Mirrors the inline write the chat path uses.
+    private static func writeFullResponse(
+        ctx: NIOLoopBound<ChannelHandlerContext>,
+        version: HTTPVersion,
+        status: HTTPResponseStatus,
+        headers: [(String, String)],
+        body: String
+    ) {
+        var responseHead = HTTPResponseHead(version: version, status: status)
+        var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+        buffer.writeString(body)
+        var nioHeaders = HTTPHeaders()
+        for (name, value) in headers { nioHeaders.add(name: name, value: value) }
+        nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+        nioHeaders.add(name: "Connection", value: "close")
+        responseHead.headers = nioHeaders
+        let c = ctx.value
+        c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+        c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+        c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+            ctx.value.close(promise: nil)
         }
     }
 

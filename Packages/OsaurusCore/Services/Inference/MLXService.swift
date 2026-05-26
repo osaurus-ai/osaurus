@@ -117,6 +117,32 @@ actor MLXService: ToolCapableService {
         return out
     }
 
+    /// Stream a completion from a raw prompt, bypassing the chat template.
+    /// Backs the OpenAI-legacy `/v1/completions` endpoint (FIM autocomplete).
+    func streamRawCompletion(
+        prompt: String,
+        parameters: GenerationParameters,
+        requestedModel: String?,
+        stopSequences: [String]
+    ) async throws -> AsyncThrowingStream<String, Error> {
+        let model = try selectModel(requestedName: requestedModel)
+        try Self.validateRuntimePolicy(
+            modelName: model.name,
+            modelId: model.modelId,
+            messages: [],
+            parameters: parameters,
+            tools: [],
+            runtime: ServerRuntimeSettingsStore.snapshot()
+        )
+        return try await ModelRuntime.shared.streamRawText(
+            prompt: prompt,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            modelId: model.modelId,
+            modelName: model.name
+        )
+    }
+
     // MARK: - Message-based Tool-capable bridge
 
     func respondWithTools(

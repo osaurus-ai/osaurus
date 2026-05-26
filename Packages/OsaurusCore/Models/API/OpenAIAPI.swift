@@ -524,6 +524,56 @@ extension ChatMessage {
 }
 
 /// Chat completion request
+/// OpenAI-legacy `/v1/completions` request. Unlike chat, `prompt` is a raw
+/// string fed to the model verbatim (no chat template) — what FIM autocomplete
+/// tools (Continue, etc.) rely on for `<|fim_*|>` prompts.
+struct CompletionRequest: Decodable, Sendable {
+    let model: String
+    let prompt: String
+    let maxTokens: Int?
+    let temperature: Float?
+    let topP: Float?
+    let stop: [String]
+    let stream: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case model, prompt, temperature, stop, stream
+        case maxTokens = "max_tokens"
+        case topP = "top_p"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        model = (try? c.decode(String.self, forKey: .model)) ?? ""
+        // `prompt` may be a string or an array of strings. FIM clients send a
+        // single string; for an array we take the first entry.
+        if let s = try? c.decode(String.self, forKey: .prompt) {
+            prompt = s
+        } else if let arr = try? c.decode([String].self, forKey: .prompt) {
+            prompt = arr.first ?? ""
+        } else {
+            prompt = ""
+        }
+        maxTokens = try? c.decodeIfPresent(Int.self, forKey: .maxTokens)
+        temperature = try? c.decodeIfPresent(Float.self, forKey: .temperature)
+        topP = try? c.decodeIfPresent(Float.self, forKey: .topP)
+        // `stop` may be a string or an array of strings.
+        if let s = try? c.decode(String.self, forKey: .stop) {
+            stop = [s]
+        } else if let arr = try? c.decode([String].self, forKey: .stop) {
+            stop = arr
+        } else {
+            stop = []
+        }
+        stream = try? c.decodeIfPresent(Bool.self, forKey: .stream)
+    }
+
+    /// FIM completions are short; default generously when the client omits
+    /// `max_tokens` (OpenAI's legacy default of 16 is too small for most
+    /// autocomplete use).
+    var resolvedMaxTokens: Int { maxTokens ?? 256 }
+}
+
 struct ChatCompletionRequest: Codable, Sendable {
     let model: String
     var messages: [ChatMessage]
