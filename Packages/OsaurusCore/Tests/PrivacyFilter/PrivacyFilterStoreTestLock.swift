@@ -28,6 +28,8 @@
 
 import Foundation
 
+@testable import OsaurusCore
+
 /// Process-wide lock for `PrivacyFilterStore` test access. Thread-
 /// agnostic (`DispatchSemaphore`) so an async test body can lock on
 /// one thread, suspend on `await`, resume on another thread, and
