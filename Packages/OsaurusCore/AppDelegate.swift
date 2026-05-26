@@ -32,6 +32,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private var keychainDisabledTestMode: Bool {
         StorageKeyManager.disablesKeychainForProcess
     }
+    private var keychainDisabledUIPresentationMode: Bool {
+        ProcessInfo.processInfo.environment["OSAURUS_KEYCHAIN_FREE_SHOW_UI"] == "1"
+    }
 
     /// Runs before AppKit shows its first window. Anything that influences
     /// window painting on launch (activation policy, automatic-termination
@@ -417,12 +420,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
             }
 
-            if keychainDisabledTestMode {
+            if keychainDisabledTestMode && !keychainDisabledUIPresentationMode {
                 // Headless live-proof launches only need the local HTTP server.
             } else if presentOnboarding {
                 showOnboardingWindow()
             } else {
                 presentInitialWindow()
+            }
+
+            if keychainDisabledTestMode && !keychainDisabledUIPresentationMode {
+                ProcessInfo.processInfo.disableAutomaticTermination(
+                    "Osaurus keychain-free headless live proof server"
+                )
             }
 
             if !keychainDisabledTestMode {
