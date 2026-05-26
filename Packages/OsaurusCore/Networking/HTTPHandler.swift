@@ -3869,7 +3869,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let keepaliveTask = Self.startSSEKeepalive(
                 writer: writerBound, channel: context.channel, loop: loop, ctx: ctx
             )
-            Task(priority: .userInitiated) {
+            runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
                 var accumulated = ""
                 let finishReason = "stop"
@@ -3922,7 +3922,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         // Non-streaming
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
                 let stream = try await MLXService.shared.streamRawCompletion(
                     prompt: prompt,
