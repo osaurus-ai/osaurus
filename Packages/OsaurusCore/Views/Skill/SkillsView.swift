@@ -467,25 +467,23 @@ private struct ImportDropdownButton: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "square.and.arrow.down")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                 Text("Import", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
             }
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-                    .opacity(isHovering ? 0.8 : 1)
-            )
+            .foregroundStyle(theme.secondaryText)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        .tint(theme.secondaryText)
+        .fixedSize()
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground)
+                .opacity(isHovering ? 0.8 : 1)
+        )
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering
