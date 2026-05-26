@@ -12,12 +12,18 @@ import Security
 /// All config is agent-scoped: account format is `"{agentId}.{pluginId}.{key}"`.
 public enum ToolSecretsKeychain {
     private static let service = "ai.osaurus.tools"
+    private static let testStoreLock = NSLock()
+    private nonisolated(unsafe) static var testStore: [String: String] = [:]
 
     // MARK: - Agent-Scoped Secret Management
 
     @discardableResult
     public static func saveSecret(_ value: String, id: String, for pluginId: String, agentId: UUID) -> Bool {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
+        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
+            testStoreLock.withLock { testStore[account] = value }
+            return true
+        }
         guard let valueData = value.data(using: .utf8) else { return false }
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
 
@@ -37,6 +43,9 @@ public enum ToolSecretsKeychain {
 
     public static func getSecret(id: String, for pluginId: String, agentId: UUID) -> String? {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
+        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
+            return testStoreLock.withLock { testStore[account] }
+        }
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
 
         let query: [String: Any] = [
@@ -69,6 +78,10 @@ public enum ToolSecretsKeychain {
     @discardableResult
     public static func deleteSecret(id: String, for pluginId: String, agentId: UUID) -> Bool {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
+        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
+            testStoreLock.withLock { _ = testStore.removeValue(forKey: account) }
+            return true
+        }
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
 
         let query: [String: Any] = [
@@ -240,6 +253,17 @@ public enum ToolSecretsKeychain {
     }
 
     private static func fetchAllItems(attributesOnly: Bool) -> [[String: Any]] {
+        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
+            return testStoreLock.withLock {
+                testStore.map { account, value in
+                    var item: [String: Any] = [kSecAttrAccount as String: account]
+                    if !attributesOnly {
+                        item[kSecValueData as String] = Data(value.utf8)
+                    }
+                    return item
+                }
+            }
+        }
         if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -263,6 +287,15 @@ public enum ToolSecretsKeychain {
     }
 
     private static func deleteAllMatchingPrefix(_ prefix: String) {
+        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
+            testStoreLock.withLock {
+                let matchingAccounts = testStore.keys.filter { $0.hasPrefix(prefix) }
+                for account in matchingAccounts {
+                    testStore.removeValue(forKey: account)
+                }
+            }
+            return
+        }
         if KeychainQueryHelpers.disablesKeychainForProcess { return }
         let allItems = fetchAllItems(attributesOnly: true)
         for item in allItems {
