@@ -27,16 +27,6 @@ import Testing
 @MainActor
 struct PrivacyFilterPipelineCancelTests {
 
-    /// Same isolation as `PrivacyReviewServiceTests`: route every
-    /// store write to a temp dir so the suite can't clobber
-    /// `~/.osaurus/config/privacy-filter.json`.
-    init() {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("osaurus-PrivacyFilterPipelineCancelTests-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        PrivacyFilterStore.setOverrideDirectory(dir)
-    }
-
     /// Direct test of the typed error: confirms it conforms to
     /// `Equatable` so call sites can do `catch PrivacyFilterPipelineError.reviewCanceled`
     /// in pattern matches without an extra cast.
@@ -96,6 +86,9 @@ struct PrivacyFilterPipelineCancelTests {
     /// resolution that `applyOutbound` translates into the thrown
     /// `reviewCanceled` error.
     @Test func presenterCancel_resolvesAsCanceled() async {
+        let guard_ = acquirePrivacyStoreSandbox("PrivacyFilterPipelineCancelTests")
+        defer { guard_.release() }
+
         let service = PrivacyReviewService.shared
         PrivacyFilterStore.save(PrivacyFilterConfiguration())
 

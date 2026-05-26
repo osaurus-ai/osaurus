@@ -28,22 +28,12 @@ import Testing
 struct PrivacyFilterStorePersistenceTests {
 
     /// Per-test sandbox so the serial cases never see each other's
-    /// writes. Tests pair every `makeSandbox()` with a `defer
-    /// resetStore()` so subsequent suites don't pick up a temp dir
-    /// that's already been torn down.
-    private func makeSandbox() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "osaurus-PrivacyFilterStorePersistenceTests-\(UUID().uuidString)",
-                isDirectory: true
-            )
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        PrivacyFilterStore.setOverrideDirectory(dir)
-        return dir
-    }
-
-    private func resetStore() {
-        PrivacyFilterStore.setOverrideDirectory(nil)
+    /// writes. The returned guard MUST be released via `defer`
+    /// (`guard.release()`) — it holds the cross-suite
+    /// `PrivacyFilterStoreTestLock` for the test body and resets
+    /// the override directory at release.
+    private func makeSandbox() -> PrivacyStoreSandboxGuard {
+        acquirePrivacyStoreSandbox("PrivacyFilterStorePersistenceTests")
     }
 
     /// The canonical "did the toggle stick?" round-trip:
@@ -55,8 +45,8 @@ struct PrivacyFilterStorePersistenceTests {
     /// data after the user closed the app expecting the filter to
     /// be on.
     @Test func enabledTrue_persistsAcrossSnapshotInvalidation() throws {
-        let sandbox = makeSandbox()
-        defer { resetStore() }
+        let guard_ = makeSandbox()
+        defer { guard_.release() }
 
         var config = PrivacyFilterConfiguration()
         config.enabled = true
@@ -65,7 +55,7 @@ struct PrivacyFilterStorePersistenceTests {
         // File must exist immediately after `save` returns — this is
         // the exact contract that broke when `save()` was deferred
         // through `Task.detached`.
-        let onDisk = sandbox.appendingPathComponent("privacy-filter.json")
+        let onDisk = guard_.sandbox.appendingPathComponent("privacy-filter.json")
         #expect(FileManager.default.fileExists(atPath: onDisk.path))
 
         PrivacyFilterStore.invalidateSnapshot()
@@ -79,8 +69,8 @@ struct PrivacyFilterStorePersistenceTests {
     /// `decodeIfPresent` default (`false`), which would also surface
     /// to the user as "I turned it on and it forgot".
     @Test func fullConfiguration_persistsAcrossInvalidation() throws {
-        _ = makeSandbox()
-        defer { resetStore() }
+        let guard_ = makeSandbox()
+        defer { guard_.release() }
 
         var config = PrivacyFilterConfiguration()
         config.enabled = true
@@ -107,8 +97,9 @@ struct PrivacyFilterStorePersistenceTests {
     /// If the override mechanism silently kept the first sandbox,
     /// the second sandbox would stay empty and we'd catch it here.
     @Test func overrideDirectory_swapsBetweenSandboxes() throws {
-        let sandboxA = makeSandbox()
-        defer { resetStore() }
+        let guard_ = makeSandbox()
+        defer { guard_.release() }
+        let sandboxA = guard_.sandbox
 
         var configA = PrivacyFilterConfiguration()
         configA.enabled = true
@@ -119,8 +110,18 @@ struct PrivacyFilterStorePersistenceTests {
 
         // Swap to a second sandbox mid-flight (production callers
         // never do this, but tests routinely tear down and re-init
-        // — verifies the override is hot-swap safe).
-        let sandboxB = makeSandbox()
+        // — verifies the override is hot-swap safe). We swap the
+        // override DIRECTLY rather than going through
+        // `acquirePrivacyStoreSandbox` again, which would re-acquire
+        // the cross-suite lock the outer guard already holds.
+        let sandboxB = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "osaurus-PrivacyFilterStorePersistenceTests-swap-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try? FileManager.default.createDirectory(at: sandboxB, withIntermediateDirectories: true)
+        PrivacyFilterStore.setOverrideDirectory(sandboxB)
+
         var configB = PrivacyFilterConfiguration()
         configB.skipCodeBlocks = false
         PrivacyFilterStore.save(configB)

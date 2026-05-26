@@ -31,19 +31,6 @@ import Testing
 @MainActor
 struct PrivacyReviewServiceTests {
 
-    /// Route every test's `PrivacyFilterStore.save(...)` call to a
-    /// per-suite temp directory. Without this the tests' "defensive"
-    /// `PrivacyFilterStore.save(PrivacyFilterConfiguration())` lines
-    /// clobber the developer's real `~/.osaurus/config/privacy-filter.json`
-    /// on every `swift test` run, which is how the user's `enabled: true`
-    /// toggle was getting reset between runs.
-    init() {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("osaurus-PrivacyReviewServiceTests-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        PrivacyFilterStore.setOverrideDirectory(dir)
-    }
-
     private static func makeDetection(_ name: String = "Alice") async -> DetectedEntity {
         let map = RedactionMap(conversationID: UUID())
         let placeholder = await map.intern(name, as: .person)
@@ -62,6 +49,9 @@ struct PrivacyReviewServiceTests {
     /// resolve the review as `.canceled`, not hang the continuation
     /// (the original `withCheckedContinuation` implementation did).
     @Test func taskCancellation_resolvesAsCanceled() async {
+        let guard_ = acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
+        defer { guard_.release() }
+
         // Use a fresh service to avoid cross-test bleed via the shared
         // singleton's open-state map.
         let service = PrivacyReviewService.shared
@@ -109,6 +99,9 @@ struct PrivacyReviewServiceTests {
     /// when chat windows clobbered each other's registration on
     /// close.
     @Test func presenterToken_unregisterOnlyMatching() async {
+        let guard_ = acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
+        defer { guard_.release() }
+
         let service = PrivacyReviewService.shared
         PrivacyFilterStore.save(PrivacyFilterConfiguration())
 
@@ -152,6 +145,9 @@ struct PrivacyReviewServiceTests {
     /// touching the presenter. Tests the `PrivacyFilterStore.snapshot()`
     /// branch added to `review`.
     @Test func alwaysApproveByDefault_shortCircuitsReview() async {
+        let guard_ = acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
+        defer { guard_.release() }
+
         let service = PrivacyReviewService.shared
         var config = PrivacyFilterConfiguration()
         config.alwaysApproveByDefault = true

@@ -8,9 +8,14 @@
 //  properties pretty-print JSON the same way the existing
 //  request/response surfaces do.
 //
-//  Marked `.serialized` because `InsightsService.shared` is a
-//  process-wide singleton; concurrent tests would mutate the same
-//  log ring buffer and race on `await MainActor.run` settles.
+//  `InsightsService.shared` is a process-wide singleton, so each
+//  test must locate its own log inside the shared ring buffer.
+//  `.serialized` only orders tests within this suite — other
+//  suites running in parallel can prepend their own entries
+//  between our `logInference` call and the assertion. We tag
+//  every log with a UUID-suffixed model and look it up by that
+//  tag instead of trusting `logs.first`. PR #1244 CI run
+//  77781199384 (job test-core) caught the regression.
 //
 
 import Foundation
@@ -36,17 +41,27 @@ struct InsightsWireBodyRoundTripTests {
         await Task.yield()
     }
 
-    private func resetService() {
-        InsightsService.shared.clear()
+    /// Unique model identifier scoped to a single test run. Any
+    /// log that uses this string is provably ours — other suites
+    /// don't fabricate UUIDs into their model fields.
+    private func uniqueModel(_ tag: String) -> String {
+        "test-\(tag)-\(UUID().uuidString)"
+    }
+
+    /// Find the log this test wrote, ignoring anything written by
+    /// concurrently-running suites that may have prepended into
+    /// the shared ring buffer between `logInference` and assertion.
+    private func findLog(model: String) -> RequestLog? {
+        InsightsService.shared.logs.first { $0.model == model }
     }
 
     @Test func logInference_propagatesWireBodies() async {
-        resetService()
+        let model = uniqueModel("wirebody-propagate")
         let reqJSON = #"{"model":"gpt-4o","messages":[]}"#
         let respJSON = #"{"id":"abc","object":"chat.completion"}"#
         InsightsService.logInference(
             source: .chatUI,
-            model: "gpt-4o",
+            model: model,
             inputTokens: 12,
             outputTokens: 3,
             durationMs: 80,
@@ -56,8 +71,8 @@ struct InsightsWireBodyRoundTripTests {
             wireResponseBody: respJSON.data(using: .utf8)
         )
         await settle()
-        guard let log = InsightsService.shared.logs.first else {
-            Issue.record("Expected a log entry")
+        guard let log = findLog(model: model) else {
+            Issue.record("Expected a log entry for model=\(model)")
             return
         }
         #expect(log.wireRequestBody == reqJSON)
@@ -65,11 +80,11 @@ struct InsightsWireBodyRoundTripTests {
     }
 
     @Test func formattedWireRequestBody_prettyPrintsJSON() async {
-        resetService()
+        let model = uniqueModel("wirebody-pretty")
         let reqJSON = #"{"b":2,"a":1}"#
         InsightsService.logInference(
             source: .chatUI,
-            model: "gpt-4o",
+            model: model,
             inputTokens: 1,
             outputTokens: 1,
             durationMs: 10,
@@ -78,8 +93,8 @@ struct InsightsWireBodyRoundTripTests {
             wireRequestBody: reqJSON.data(using: .utf8)
         )
         await settle()
-        guard let log = InsightsService.shared.logs.first else {
-            Issue.record("Expected a log entry")
+        guard let log = findLog(model: model) else {
+            Issue.record("Expected a log entry for model=\(model)")
             return
         }
         // Sorted keys + newline indentation. `\` quoting is
@@ -98,14 +113,14 @@ struct InsightsWireBodyRoundTripTests {
     }
 
     @Test func formattedWireResponseBody_passesThroughSSEBodyVerbatim() async {
-        resetService()
+        let model = uniqueModel("wirebody-sse")
         // SSE bodies aren't valid JSON in aggregate — formatter must
         // return them verbatim instead of dropping them.
         let sse =
             "data: {\"id\":\"1\"}\n\ndata: {\"id\":\"2\"}\n\ndata: [DONE]\n\n"
         InsightsService.logInference(
             source: .chatUI,
-            model: "gpt-4o",
+            model: model,
             inputTokens: 1,
             outputTokens: 1,
             durationMs: 10,
@@ -114,18 +129,18 @@ struct InsightsWireBodyRoundTripTests {
             wireResponseBody: sse.data(using: .utf8)
         )
         await settle()
-        guard let log = InsightsService.shared.logs.first else {
-            Issue.record("Expected a log entry")
+        guard let log = findLog(model: model) else {
+            Issue.record("Expected a log entry for model=\(model)")
             return
         }
         #expect(log.formattedWireResponseBody == sse)
     }
 
     @Test func absentWireBodies_leaveLogFieldsNil() async {
-        resetService()
+        let model = uniqueModel("wirebody-absent")
         InsightsService.logInference(
             source: .chatUI,
-            model: "gpt-4o",
+            model: model,
             inputTokens: 1,
             outputTokens: 1,
             durationMs: 10,
@@ -133,8 +148,8 @@ struct InsightsWireBodyRoundTripTests {
             maxTokens: 1
         )
         await settle()
-        guard let log = InsightsService.shared.logs.first else {
-            Issue.record("Expected a log entry")
+        guard let log = findLog(model: model) else {
+            Issue.record("Expected a log entry for model=\(model)")
             return
         }
         #expect(log.wireRequestBody == nil)
