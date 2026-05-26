@@ -373,6 +373,72 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
     }
 
+    @Test func dsv4RequiredToolChoiceSurvivesToolResultHistory() async throws {
+        let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ2"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let fileReadTool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "file_read",
+                description: "Read a file.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "path": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("path")]),
+                ])
+            )
+        )
+        let lineCountCall: [String: any Sendable] = [
+            "id": "call_line_count_1",
+            "type": "function",
+            "function": [
+                "name": "line_count",
+                "arguments": ["text": "alpha\nbeta\ngamma"] as [String: any Sendable],
+            ] as [String: any Sendable],
+        ]
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                ["role": "user", "content": "Count lines in alpha beta gamma."],
+                ["role": "assistant", "content": "", "tool_calls": [lineCountCall]],
+                ["role": "tool", "content": "{\"lines\":3}", "tool_call_id": "call_line_count_1"],
+                [
+                    "role": "user",
+                    "content": "Now read /Users/eric/Desktop/testmandel/mandelbrot.py.",
+                ],
+            ],
+            tools: [fileReadTool.toTokenizerToolSpec()],
+            additionalContext: ["enable_thinking": false, "tool_choice": "required"]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(
+            decoded.contains("<tool_result>{\"lines\":3}</tool_result>"),
+            "DSV4 tool-history prompt must preserve the prior tool result. Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.contains(
+                "<tool_result>{\"lines\":3}</tool_result>\n\nNow read /Users/eric/Desktop/testmandel/mandelbrot.py."
+            ),
+            "DSV4 must merge the prior tool result and the next user request into one content block. Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.hasSuffix("<\u{FF5C}Assistant\u{FF5C}></think><\u{FF5C}action\u{FF5C}>"),
+            "DSV4 required/named tool_choice must preserve the action task after tool-result history. Decoded: \(decoded)"
+        )
+    }
+
     @Test func dsv4LocalTokenizerPreservesRawMaxPromptPath() async throws {
         let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
