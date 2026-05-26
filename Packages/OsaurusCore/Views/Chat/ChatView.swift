@@ -2683,18 +2683,41 @@ final class ChatSession: ObservableObject {
                     }
                 }
             } catch is CancellationError {
-                // Either the user dismissed the privacy review sheet
-                // (RemoteProviderService maps `reviewCanceled` →
-                // `CancellationError`) or the streaming Task was
-                // explicitly cancelled before any byte arrived. We
-                // want the same UX in both cases: drop the empty
-                // assistant turn we already appended, remove the
-                // user turn this run was attached to, and restore the
-                // original draft to the input box so the user can
-                // edit and resend without retyping.
-                debugLog("send: cancelled before any delta — restoring draft")
+                // Two distinct cancel sources land here and they need
+                // OPPOSITE turn-history outcomes:
+                //
+                //  1. User dismissed the privacy review sheet
+                //     (RemoteProviderService maps `reviewCanceled` →
+                //     `CancellationError`). The send never left the
+                //     device — drop the just-appended user + empty
+                //     assistant turns and restore the original draft
+                //     so the user can edit and resend without
+                //     retyping. Detected by `!stopRequested`: only
+                //     `stop()` flips that flag, and the review-cancel
+                //     path doesn't go through `stop()`.
+                //
+                //  2. User clicked Stop AFTER the engine started but
+                //     before the first delta (e.g. mid-engine-setup,
+                //     mid-prepare, network in-flight). The user turn
+                //     was deliberately sent — it MUST stay in the
+                //     transcript. `completeRunCleanup()` (called via
+                //     `finalizeRun` from `stop()`) will trim the
+                //     empty assistant placeholder; we just clear the
+                //     error and awaiting-review state here.
+                //
+                // Pre-PR behavior for case 2 was to let the
+                // CancellationError fall into the generic `catch`
+                // and surface "Error: cancelled" on the assistant
+                // bubble, which was its own bug. This branch fixes
+                // both cases.
                 lastStreamError = nil
-                handleCancelledBeforeFirstDelta()
+                isAwaitingPrivacyReview = false
+                if stopRequested {
+                    debugLog("send: stop() cancelled mid-prepare — keeping user turn")
+                } else {
+                    debugLog("send: cancelled before any delta — restoring draft")
+                    handleCancelledBeforeFirstDelta()
+                }
             } catch let pfError as PrivacyFilterPipelineError {
                 // Privacy filter blocked the send because it couldn't
                 // safely scrub (engine unavailable, substitution no-op,
@@ -2722,10 +2745,14 @@ final class ChatSession: ObservableObject {
 
     /// Drop the just-appended user + (empty) assistant turns when a
     /// send is cancelled before the network produced any data, and
-    /// hand the original draft back to the input field. Called only
-    /// from the streaming Task's `catch is CancellationError` branch
-    /// so the user-visible result is: privacy review cancel ⇒ text
-    /// reappears in the composer, no error bubble.
+    /// hand the original draft back to the input field. Called from
+    /// the streaming Task's `catch is CancellationError` branch
+    /// ONLY when the cancellation came from a privacy review
+    /// dismissal (the `!stopRequested` branch). User-driven
+    /// `stop()` keeps the user turn; see the catch handler's
+    /// comments for the two-case rationale. User-visible result:
+    /// privacy review cancel ⇒ text reappears in the composer, no
+    /// error bubble.
     private func handleCancelledBeforeFirstDelta() {
         isAwaitingPrivacyReview = false
         // Remove the trailing empty assistant turn (we always append

@@ -32,8 +32,12 @@ struct PrivacyFilterStorePersistenceTests {
     /// (`guard.release()`) — it holds the cross-suite
     /// `PrivacyFilterStoreTestLock` for the test body and resets
     /// the override directory at release.
-    private func makeSandbox() -> PrivacyStoreSandboxGuard {
-        acquirePrivacyStoreSandbox("PrivacyFilterStorePersistenceTests")
+    ///
+    /// `async` because the cross-suite lock is actor-backed (see
+    /// `PrivacyFilterStoreTestLock` for the MainActor-deadlock
+    /// rationale).
+    private func makeSandbox() async -> PrivacyStoreSandboxGuard {
+        await acquirePrivacyStoreSandbox("PrivacyFilterStorePersistenceTests")
     }
 
     /// The canonical "did the toggle stick?" round-trip:
@@ -44,8 +48,8 @@ struct PrivacyFilterStorePersistenceTests {
     /// If this regresses, the chat will silently send unscrubbed
     /// data after the user closed the app expecting the filter to
     /// be on.
-    @Test func enabledTrue_persistsAcrossSnapshotInvalidation() throws {
-        let guard_ = makeSandbox()
+    @Test func enabledTrue_persistsAcrossSnapshotInvalidation() async throws {
+        let guard_ = await makeSandbox()
         defer { guard_.release() }
 
         var config = PrivacyFilterConfiguration()
@@ -68,8 +72,8 @@ struct PrivacyFilterStorePersistenceTests {
     /// `Codable` regression that drops `enabled` in favour of the
     /// `decodeIfPresent` default (`false`), which would also surface
     /// to the user as "I turned it on and it forgot".
-    @Test func fullConfiguration_persistsAcrossInvalidation() throws {
-        let guard_ = makeSandbox()
+    @Test func fullConfiguration_persistsAcrossInvalidation() async throws {
+        let guard_ = await makeSandbox()
         defer { guard_.release() }
 
         var config = PrivacyFilterConfiguration()
@@ -96,8 +100,8 @@ struct PrivacyFilterStorePersistenceTests {
     /// override paths and asserts each landed at the right place.
     /// If the override mechanism silently kept the first sandbox,
     /// the second sandbox would stay empty and we'd catch it here.
-    @Test func overrideDirectory_swapsBetweenSandboxes() throws {
-        let guard_ = makeSandbox()
+    @Test func overrideDirectory_swapsBetweenSandboxes() async throws {
+        let guard_ = await makeSandbox()
         defer { guard_.release() }
         let sandboxA = guard_.sandbox
 

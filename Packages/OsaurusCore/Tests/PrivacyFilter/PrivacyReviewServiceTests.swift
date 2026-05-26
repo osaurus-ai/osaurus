@@ -49,7 +49,7 @@ struct PrivacyReviewServiceTests {
     /// resolve the review as `.canceled`, not hang the continuation
     /// (the original `withCheckedContinuation` implementation did).
     @Test func taskCancellation_resolvesAsCanceled() async {
-        let guard_ = acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
+        let guard_ = await acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
         defer { guard_.release() }
 
         // Use a fresh service to avoid cross-test bleed via the shared
@@ -99,7 +99,7 @@ struct PrivacyReviewServiceTests {
     /// when chat windows clobbered each other's registration on
     /// close.
     @Test func presenterToken_unregisterOnlyMatching() async {
-        let guard_ = acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
+        let guard_ = await acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
         defer { guard_.release() }
 
         let service = PrivacyReviewService.shared
@@ -145,7 +145,7 @@ struct PrivacyReviewServiceTests {
     /// touching the presenter. Tests the `PrivacyFilterStore.snapshot()`
     /// branch added to `review`.
     @Test func alwaysApproveByDefault_shortCircuitsReview() async {
-        let guard_ = acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
+        let guard_ = await acquirePrivacyStoreSandbox("PrivacyReviewServiceTests")
         defer { guard_.release() }
 
         let service = PrivacyReviewService.shared

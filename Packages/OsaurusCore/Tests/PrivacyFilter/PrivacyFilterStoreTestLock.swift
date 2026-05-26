@@ -18,28 +18,69 @@
 //  `PrivacyFilterStorePersistenceTests` flipped the shared snapshot
 //  mid-test.
 //
+//  IMPORTANT: this MUST be an actor-based lock, not a
+//  `DispatchSemaphore`. The first two suites are `@MainActor`, and
+//  their async test bodies acquire the lock and then suspend on
+//  `await` (e.g. `await outcomeTask.value`). A semaphore-based
+//  `wait()` from a sibling `@MainActor` test would block the
+//  MainActor cooperative scheduler while the lock-holding test is
+//  suspended — the holder can never resume to release the lock and
+//  the entire test process hangs. PR #1244 CI run 26464436962
+//  reproduced this exactly: `resetForAgent_savesPreviousSessionUnderOldAgent`
+//  hit the 60s xctest timeout while the spindump showed the main
+//  thread parked in `semaphore_wait_trap` called from
+//  `presenterCancel_resolvesAsCanceled`. The actor pattern below
+//  composes with Swift Concurrency — `await acquire()` yields the
+//  MainActor instead of blocking it.
+//
 //  Usage: every @Test that touches the store calls
-//  `withPrivacyFilterStoreLock { ... }` (or pairs `.lock()` with a
-//  `defer .unlock()` if its body needs async). NSLock is the right
-//  primitive here: same-thread lock/unlock from inside the test
-//  body (the closure runs on whichever thread Swift Testing
-//  scheduled the @Test on, and lock/unlock both fire from there).
+//  `await acquirePrivacyStoreSandbox(name)` and pairs the returned
+//  guard with `defer guard.release()` (sync release is fine — only
+//  acquisition needs to suspend).
 //
 
 import Foundation
 
 @testable import OsaurusCore
 
-/// Process-wide lock for `PrivacyFilterStore` test access. Thread-
-/// agnostic (`DispatchSemaphore`) so an async test body can lock on
-/// one thread, suspend on `await`, resume on another thread, and
-/// unlock from `defer` without crashing (`NSLock` /
-/// `os_unfair_lock` would).
-enum PrivacyFilterStoreTestLock {
-    private static let semaphore = DispatchSemaphore(value: 1)
+/// Process-wide lock for `PrivacyFilterStore` test access.
+/// Actor-backed so an `await acquire()` from a `@MainActor` test
+/// yields the MainActor (rather than blocking it like a
+/// `DispatchSemaphore.wait()` would) — see the file header for the
+/// CI hang this prevents.
+actor PrivacyFilterStoreTestLock {
+    static let shared = PrivacyFilterStoreTestLock()
 
-    static func lock() { semaphore.wait() }
-    static func unlock() { semaphore.signal() }
+    private var holder = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !holder {
+            holder = true
+            return
+        }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            waiters.append(cont)
+        }
+    }
+
+    nonisolated func release() {
+        // Hop into the actor's executor on a detached Task so the
+        // sync `defer { guard.release() }` callsite doesn't have to
+        // be async. The hand-off is FIFO via `waiters`, so ordering
+        // is preserved even though release runs slightly later than
+        // the defer point.
+        Task { await self.handoff() }
+    }
+
+    private func handoff() {
+        if let next = waiters.first {
+            waiters.removeFirst()
+            next.resume()
+        } else {
+            holder = false
+        }
+    }
 }
 
 /// Per-test sandbox returned by `acquirePrivacyStoreSandbox`. The
@@ -58,7 +99,7 @@ final class PrivacyStoreSandboxGuard {
         guard !released else { return }
         released = true
         PrivacyFilterStore.setOverrideDirectory(nil)
-        PrivacyFilterStoreTestLock.unlock()
+        PrivacyFilterStoreTestLock.shared.release()
     }
 
     deinit {
@@ -75,9 +116,15 @@ final class PrivacyStoreSandboxGuard {
 ///
 /// `name` is a human-readable prefix on the temp path so debug
 /// output from a failing run identifies which suite owns the dir.
+///
+/// `async` because acquisition routes through an actor (see
+/// `PrivacyFilterStoreTestLock` for the MainActor-deadlock this
+/// prevents). Sync test bodies should be converted to
+/// `@Test func ... async throws` — see the persistence suite for the
+/// pattern.
 @discardableResult
-func acquirePrivacyStoreSandbox(_ name: String) -> PrivacyStoreSandboxGuard {
-    PrivacyFilterStoreTestLock.lock()
+func acquirePrivacyStoreSandbox(_ name: String) async -> PrivacyStoreSandboxGuard {
+    await PrivacyFilterStoreTestLock.shared.acquire()
     let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent(
             "osaurus-\(name)-\(UUID().uuidString)",

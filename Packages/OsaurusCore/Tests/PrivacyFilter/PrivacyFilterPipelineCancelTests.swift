@@ -86,7 +86,7 @@ struct PrivacyFilterPipelineCancelTests {
     /// resolution that `applyOutbound` translates into the thrown
     /// `reviewCanceled` error.
     @Test func presenterCancel_resolvesAsCanceled() async {
-        let guard_ = acquirePrivacyStoreSandbox("PrivacyFilterPipelineCancelTests")
+        let guard_ = await acquirePrivacyStoreSandbox("PrivacyFilterPipelineCancelTests")
         defer { guard_.release() }
 
         let service = PrivacyReviewService.shared
