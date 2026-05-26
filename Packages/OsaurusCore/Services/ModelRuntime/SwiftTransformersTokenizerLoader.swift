@@ -584,7 +584,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
 
         let toolChoiceRequired =
             Self.deepseekV4String(additionalContext?["tool_choice"]) == "required"
+        let dsv4HasPriorToolResult = dsv4Messages.contains { $0.role == .tool }
         if toolChoiceRequired,
+            !dsv4HasPriorToolResult,
             let idx = dsv4Messages.lastIndex(where: { $0.role == .user || $0.role == .developer }),
             dsv4Messages[idx].task == nil
         {

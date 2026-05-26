@@ -245,6 +245,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         _ = DirectoryPickerService.shared
 
         if keychainDisabledTestMode {
+            log.warning(
+                "Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1; stored secrets will not be readable in this process"
+            )
             LaunchGuard.markStartupComplete()
         } else if LaunchGuard.isSafeMode {
             NotificationService.shared.postSafeModeActive()

@@ -91,9 +91,7 @@ enum ChatToolChoicePolicy {
             || text.contains(".json")
             || text.contains(".md")
             || text.contains(".txt")
-            || text.contains("/")
-            || text.contains(" lines ")
-            || text.contains(" line ")
+            || containsPathLikeTarget(text)
 
         let hasFileAction =
             text.contains(" read ")
@@ -106,5 +104,12 @@ enum ChatToolChoicePolicy {
             || text.hasPrefix("search ")
 
         return hasFileTarget && hasFileAction
+    }
+
+    private static func containsPathLikeTarget(_ text: String) -> Bool {
+        text.range(
+            of: #"(^|\s)(~?/|\.{1,2}/|/[^\s]+)"#,
+            options: .regularExpression
+        ) != nil
     }
 }

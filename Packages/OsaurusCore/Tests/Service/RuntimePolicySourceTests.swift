@@ -1316,7 +1316,9 @@ struct RuntimePolicySourceTests {
         #expect(appDelegate.contains("private var keychainDisabledTestMode"))
         #expect(appDelegate.contains("private var keychainDisabledUIPresentationMode"))
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
-        #expect(appDelegate.contains("if keychainDisabledTestMode {\n            LaunchGuard.markStartupComplete()"))
+        #expect(appDelegate.contains("Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1"))
+        #expect(appDelegate.contains("if keychainDisabledTestMode {"))
+        #expect(appDelegate.contains("LaunchGuard.markStartupComplete()"))
         #expect(appDelegate.contains("if !keychainDisabledTestMode {\n                await MCPProviderManager.shared.connectEnabledProviders()"))
         #expect(appDelegate.contains("if !keychainDisabledTestMode {\n            SandboxToolRegistrar.shared.start()"))
         #expect(appDelegate.contains("Headless live-proof launches only need the local HTTP server"))
@@ -1623,8 +1625,10 @@ struct RuntimePolicySourceTests {
             "DSV4 native prompt rendering must pass required tool_choice into DeepseekV4ChatEncoder so second-turn/named required tool calls keep the DSML must-call directive."
         )
         #expect(
-            tokenizerLoader.contains("dsv4Messages[idx].task = \"action\""),
-            "DSV4 required/named tool_choice must use the native action task rail, not hidden sampler overrides or forced thinking."
+            tokenizerLoader.contains("let dsv4HasPriorToolResult = dsv4Messages.contains { $0.role == .tool }")
+                && tokenizerLoader.contains("!dsv4HasPriorToolResult")
+                && tokenizerLoader.contains("dsv4Messages[idx].task = \"action\""),
+            "DSV4 first-turn required/named tool_choice may use the native action task rail, but multi-turn tool-result prompts must stay on the DSML directive path instead of leaking action metadata."
         )
         #expect(
             registry.contains("invalidToolArgumentsEnvelope")

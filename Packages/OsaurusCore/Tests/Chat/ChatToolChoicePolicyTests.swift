@@ -70,6 +70,34 @@ struct ChatToolChoicePolicyTests {
     }
 
     @Test
+    func conversationalSlashLineAndSearchTextDoNotForceToolChoice() {
+        let slashMention = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("file_read")],
+            userText: "Search Google for rock/roll history.",
+            attempt: 1
+        )
+        let lineQuestion = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("file_read")],
+            userText: "How many lines are in Hamlet?",
+            attempt: 1
+        )
+
+        #expect(Self.isAuto(slashMention))
+        #expect(Self.isAuto(lineQuestion))
+    }
+
+    @Test
+    func absolutePathWithFileActionRequiresToolChoice() {
+        let choice = ChatToolChoicePolicy.resolve(
+            tools: [Self.tool("file_read")],
+            userText: "Read /tmp/mandelbrot/source from disk.",
+            attempt: 1
+        )
+
+        #expect(Self.isRequired(choice))
+    }
+
+    @Test
     func negatedToolIntentKeepsAutoToolChoice() {
         let choice = ChatToolChoicePolicy.resolve(
             tools: [Self.tool("file_read")],
