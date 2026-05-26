@@ -684,12 +684,16 @@ struct RuntimePolicySourceTests {
             "ServerRuntimeSettingsStore.migratedFromLegacy must seed enableSSMReDerive=true for automatic hybrid cache reuse"
         )
         #expect(
-            store.contains("liveKVCodec: .engineSelected"),
-            "ServerRuntimeSettingsStore.migratedFromLegacy must seed engine-selected TurboQuant KV defaults"
+            store.contains("liveKVCodec: .native"),
+            "ServerRuntimeSettingsStore.migratedFromLegacy must keep first-run live KV on native/fp16 until TurboQuant has per-family live proof"
+        )
+        #expect(
+            !store.contains("normalized.cache.liveKVCodec = .engineSelected"),
+            "Legacy cache migration must not silently flip existing users to engine-selected TurboQuant KV"
         )
         #expect(
             store.contains("shouldRepairLegacyCacheDefaults"),
-            "ServerRuntimeSettingsStore must repair stale persisted cache defaults from pre-engine-selected installs"
+            "ServerRuntimeSettingsStore must still repair stale persisted hybrid cache companion defaults"
         )
     }
 
@@ -1125,7 +1129,8 @@ struct RuntimePolicySourceTests {
         #expect(handler.contains("func userInboundEventTriggered(context: ChannelHandlerContext, event: Any)"))
         #expect(handler.contains("if case ChannelEvent.inputClosed = event"))
         #expect(handler.contains("context.fireUserInboundEventTriggered(event)"))
-        #expect(handler.contains("intervalNanoseconds: 250_000_000"))
+        #expect(!handler.contains("intervalNanoseconds: 250_000_000"))
+        #expect(handler.contains("intervalNanoseconds: 15_000_000_000"))
         #expect(handler.contains("intervalNanoseconds: UInt64 = 15_000_000_000"))
         #expect(handler.contains("promise.futureResult.whenFailure"))
         #expect(handler.contains("ctx.value.close(promise: nil)"))

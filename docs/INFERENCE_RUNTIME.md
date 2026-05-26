@@ -49,11 +49,11 @@ per container at load time
 
 | Field | Value | Why |
 |---|---|---|
-| `modelKey` | `"<modelName>\|kv=turbo(3,3)\|cachefmt=2\|restore=fullhit-trim-eval1\|..."` | per-model isolation across loads; KV-mode, serializer, restore-contract, and topology tags prevent serving disk entries encoded under a different cache contract after a runtime update |
+| `modelKey` | `"<modelName>\|kv=fp16\|cachefmt=2\|restore=fullhit-trim-eval1\|..."` by default; `kv=engine-selected` or `kv=turbo(...)` only after explicit KV-codec opt-in | per-model isolation across loads; KV-mode, serializer, restore-contract, and topology tags prevent serving disk entries encoded under a different cache contract after a runtime update |
 | `diskCacheDir` | `OsaurusPaths.diskKVCache()` | osaurus-managed sandbox path |
 | `enableDiskCache` | `true` when probe-write succeeds, else `false` | graceful fallback to memory-only when the dir is read-only / out-of-disk |
 | `usePagedCache` | `true` | content-addressed paged blocks for prefix reuse |
-| `defaultKVMode` | `engine_selected` → `.turboQuant(3,3)` | ordinary full-history KV layers are TurboQuant-encoded automatically; DSV4/ZAYA/SSM/rotating companion caches keep their typed serializers and are not replaced by generic KV compression |
+| `defaultKVMode` | native/fp16 by default; `engine_selected` remains an explicit Server Settings opt-in that maps ordinary full-history KV layers to vmlx's TurboQuant policy | global TurboQuant cache defaults stay off until Qwen/Gemma/DSV4 cross-family live rows cover the historical loop/leak failure modes; DSV4/ZAYA/SSM/rotating companion caches keep their typed serializers and are not replaced by generic KV compression |
 | `defaultMaxKVSize` | `65536` | prefill window; `longPromptMultiplier=2.0` covers the 131K case |
 | `longPromptMultiplier` | `2.0` | rotating-cache cap kicks in only past 131K |
 | `ssmMaxEntries` | `50` | SSM state cap for hybrid Mamba/CCA companion cache |

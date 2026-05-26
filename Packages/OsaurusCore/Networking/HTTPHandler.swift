@@ -3890,15 +3890,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             // SSE keepalive: emit a `: ping` comment line every 15s so
             // intermediate proxies / load balancers do not idle out long
-            // tool-execution / reasoning pauses. Cancelled when the
-            // producer task finishes.
+            // tool-execution / reasoning pauses. Channel close futures and
+            // write failures handle disconnect cancellation; the keepalive
+            // cadence must not be shortened into a 250ms busy heartbeat.
             let keepaliveTask = Self.startSSEKeepalive(
                 writer: writerBound,
                 channel: context.channel,
                 loop: loop,
                 ctx: ctx,
-                disconnected: disconnected,
-                intervalNanoseconds: 250_000_000
+                disconnected: disconnected
             )
             runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }

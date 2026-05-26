@@ -889,7 +889,7 @@ public actor ModelRuntime {
     ) -> String {
         switch cache.liveKVCodec {
         case .engineSelected:
-            return "turbo(3,3)"
+            return "engine-selected"
         case .native, .none:
             return "fp16"
         case .turboQuant:

@@ -621,7 +621,7 @@ struct MLXBatchAdapterTests {
         var settings = VMLXServerRuntimeSettings()
 
         settings.cache.liveKVCodec = .engineSelected
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "turbo(3,3)")
+        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "engine-selected")
 
         settings.cache.liveKVCodec = .native
         #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")

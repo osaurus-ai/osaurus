@@ -143,7 +143,11 @@ public enum ServerRuntimeSettingsStore {
             normalized.mtp.mode = .auto
         }
         if shouldRepairLegacyCacheDefaults(normalized.cache) {
-            normalized.cache.liveKVCodec = .engineSelected
+            // Keep live KV codec conservative on upgrade. Engine-selected
+            // TurboQuant stays available as an explicit Server Settings
+            // choice, but it is not promoted globally until the Qwen/Gemma/
+            // DSV4 cross-family proof matrix covers the historical failure
+            // modes.
             normalized.cache.enableSSMReDerive = true
             writeCacheDefaultsMigrationMarker()
         }
@@ -241,10 +245,10 @@ public enum ServerRuntimeSettingsStore {
             smeltMode: .engineSelected
         )
 
-        // Cache: seed the engine-owned automatic topology. Prefix, paged KV,
-        // block-disk L2, automatic KV codec selection, and SSM rederive are
-        // on by default; architecture-specific caches still decide which
-        // companion state is valid at runtime.
+        // Cache: seed the engine-owned topology conservatively. Prefix,
+        // paged KV, block-disk L2, and SSM rederive are on by default, but
+        // live KV codec stays native/fp16 unless the user explicitly opts
+        // into engine-selected TurboQuant in Server Settings.
         settings.cache = VMLXServerCacheSettings(
             prefix: VMLXPrefixCacheSettings(
                 enabled: true,
@@ -258,7 +262,7 @@ public enum ServerRuntimeSettingsStore {
                 blockSize: nil,
                 maxBlocks: nil
             ),
-            liveKVCodec: .engineSelected,
+            liveKVCodec: .native,
             turboQuantKeyBits: nil,
             turboQuantValueBits: nil,
             defaultMaxKVSize: 65536,
