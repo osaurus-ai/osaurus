@@ -206,6 +206,42 @@ struct DSV4ParserPipelineTests {
         #expect(call.function.arguments["text"] == .string("alpha\nbeta\\gamma"))
     }
 
+    @Test("incomplete DSV4 DSML protocol opener at EOS does not leak to chat")
+    func incompleteDSMLProtocolOpenerAtEOSDoesNotLeakToChat() throws {
+        let dsml = "\u{FF5C}DSML\u{FF5C}"
+        let toolCallProcessor = ToolCallProcessor(format: .dsml, tools: fileReadToolSchema())
+        var events: [Generation] = []
+        let output = "\n\n<\(dsml)tool_c"
+
+        for ch in output {
+            events.append(
+                contentsOf: routeGenerationText(
+                    String(ch),
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        if let visible = toolCallProcessor.processEOS() {
+            events.append(
+                contentsOf: routeGenerationText(
+                    visible,
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        events.append(contentsOf: drainToolCallEvents(from: toolCallProcessor))
+
+        let visible = events.compactMap(\.chunk).joined()
+        let calls = events.compactMap(\.toolCall)
+
+        #expect(calls.isEmpty)
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(!visible.contains("DSML"))
+        #expect(!visible.contains("tool_c"))
+    }
+
     @Test("malformed live DSV4 aliases route every folder and git tool without leakage")
     func malformedLiveAliasesRouteFolderAndGitToolsWithoutLeakage() throws {
         let fixtures: [DSMLToolFixture] = [

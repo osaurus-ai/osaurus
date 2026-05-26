@@ -34,7 +34,7 @@ let package = Package(
         // live model, cache, parser, API, and UI evidence.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "b6ae4bf4fe88a0e7f8477f8aefc6456bc4df802c"
+            revision: "1e873cf8dffe2360b5c642ae603cd4f262fccda9"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
