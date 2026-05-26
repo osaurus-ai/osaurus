@@ -396,12 +396,14 @@ struct RuntimePolicySourceTests {
         // malformed JSON-shaped tool-attempt quarantine, and truncated
         // schema-less JSON tool-attempt quarantine at EOS, plus live
         // bare-name key/value DSV4 tool attempts such as
-        // `file_read\npath=...` being parsed as tools instead of visible text.
+        // `file_read\npath=...` being parsed as tools instead of visible text,
+        // and Qwen multi-turn tool/cache matrix coverage staying present in
+        // the vMLX regression harness.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "13b9519f0c9dc095075bf566287a25169a190416"
+        let expectedRuntimeHardenedRevision = "a0c7e4f784cd1979a11929c23f8011dd248aa905"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
