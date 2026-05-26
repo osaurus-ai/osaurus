@@ -192,17 +192,20 @@ final class ServerController: ObservableObject {
         if let existing = ServerRuntimeSettingsStore.load() {
             self.runtimeSettings = existing
         }
-        // Keep exposeToNetwork in sync with Bonjour-enabled agents
+        // Keep exposeToNetwork in sync with Bonjour-enabled agents.
+        // Only turn ON when a Bonjour agent requires it — never force
+        // it OFF, so the user's manual "expose to local network" setting
+        // is preserved across launches.
         agentsCancellable = AgentManager.shared.$agents
             .sink { agents in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     let shouldExpose = agents.contains { $0.bonjourEnabled }
-                    guard self.configuration.exposeToNetwork != shouldExpose else { return }
-                    self.configuration.exposeToNetwork = shouldExpose
-                    // Mirror into vmlx runtime settings so the
-                    // Settings panel reflects the override.
-                    self.runtimeSettings.network.host = shouldExpose ? "0.0.0.0" : "127.0.0.1"
+                    // Only act when an agent is forcing exposure ON.
+                    // If no agent requires it, leave the user's setting alone.
+                    guard shouldExpose, !self.configuration.exposeToNetwork else { return }
+                    self.configuration.exposeToNetwork = true
+                    self.runtimeSettings.network.host = "0.0.0.0"
                     self.saveConfiguration()
                     ServerRuntimeSettingsStore.save(self.runtimeSettings)
                     if self.isRunning {
