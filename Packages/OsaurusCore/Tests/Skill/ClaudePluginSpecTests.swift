@@ -22,6 +22,15 @@ import Testing
 
 @testable import OsaurusCore
 
+/// Serialized because the manifest-store + expander tests in this suite
+/// mutate the process-wide `OSAURUS_TEST_ROOT` env var via `setenv`
+/// (see `isolatedRoot(label:)`). Swift Testing runs `@Test` cases in
+/// parallel by default, which lets concurrent tests trample each
+/// other's value — `OsaurusPaths.root()` reads the env var on every
+/// call, so the wrong test's path wins and the manifest store reads
+/// from / writes to a directory it doesn't own. That's why CI was
+/// hanging the three `manifestStore…` cases to the xctest timeout.
+@Suite(.serialized)
 struct ClaudePluginSpecTests {
 
     // MARK: - Test root isolation
