@@ -168,6 +168,44 @@ struct DSV4ParserPipelineTests {
         #expect(call.function.arguments["text"] == .string("alpha\nbeta\ngamma"))
     }
 
+    @Test("live DSV4 bare-name JSON split after tool marker routes to a tool call")
+    func liveBareNameJSONAfterToolMarkerRoutesToToolCall() throws {
+        let toolCallProcessor = ToolCallProcessor(format: .dsml, tools: lineCountToolSchema())
+        var events: [Generation] = []
+        let output = #"line_count{"text":"alpha\nbeta\gamma"}"#
+
+        for ch in output {
+            events.append(
+                contentsOf: routeGenerationText(
+                    String(ch),
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        if let visible = toolCallProcessor.processEOS() {
+            events.append(
+                contentsOf: routeGenerationText(
+                    visible,
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        events.append(contentsOf: drainToolCallEvents(from: toolCallProcessor))
+
+        let visible = events.compactMap(\.chunk).joined()
+        let calls = events.compactMap(\.toolCall)
+
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(!visible.contains("line_count"))
+        #expect(!visible.contains(#"{"text":"#))
+        #expect(calls.count == 1)
+        let call = try #require(calls.first)
+        #expect(call.function.name == "line_count")
+        #expect(call.function.arguments["text"] == .string("alpha\nbeta\\gamma"))
+    }
+
     @Test("malformed live DSV4 aliases route every folder and git tool without leakage")
     func malformedLiveAliasesRouteFolderAndGitToolsWithoutLeakage() throws {
         let fixtures: [DSMLToolFixture] = [
