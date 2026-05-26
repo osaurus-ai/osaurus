@@ -13061,6 +13061,9 @@
     "No identity yet. Chat with Osaurus and the memory system will build your identity from session distillations." : {
 
     },
+    "No installed skills yet" : {
+
+    },
     "No invites issued yet" : {
 
     },
@@ -13383,6 +13386,9 @@
 
     },
     "No services match \"%@\"" : {
+
+    },
+    "No skills here" : {
 
     },
     "No skills match \"%@\"" : {

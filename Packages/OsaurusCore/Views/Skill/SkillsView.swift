@@ -27,13 +27,33 @@ struct SkillsView: View {
     @State private var isProcessing = false
     @State private var showProgress = false
     @State private var searchText = ""
+    @State private var selectedTab: SkillsTab = .all
 
-    /// Skills matching the current search query (name, description, category,
-    /// or keywords). Returns all skills when the query is empty.
+    /// Base skill set for a tab: All, Installed (user-created + plugin), or
+    /// Default (built-in).
+    private func skills(in tab: SkillsTab) -> [Skill] {
+        switch tab {
+        case .all: return skillManager.skills
+        case .installed: return skillManager.skills.filter { !$0.isBuiltIn }
+        case .defaults: return skillManager.skills.filter { $0.isBuiltIn }
+        }
+    }
+
+    private var tabCounts: [SkillsTab: Int] {
+        [
+            .all: skillManager.skills.count,
+            .installed: skillManager.skills.filter { !$0.isBuiltIn }.count,
+            .defaults: skillManager.skills.filter { $0.isBuiltIn }.count,
+        ]
+    }
+
+    /// Skills for the selected tab, further narrowed by the search query
+    /// (name, description, category, or keywords).
     private var filteredSkills: [Skill] {
+        let base = skills(in: selectedTab)
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return skillManager.skills }
-        return skillManager.skills.filter { skill in
+        guard !query.isEmpty else { return base }
+        return base.filter { skill in
             skill.name.lowercased().contains(query)
                 || skill.description.lowercased().contains(query)
                 || (skill.category?.lowercased().contains(query) ?? false)
@@ -89,17 +109,18 @@ struct SkillsView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
-                            // Hide the plugins section while searching so the
-                            // results focus on matching skills.
-                            if searchText.isEmpty {
+                            // Plugins are "installed" artifacts, so the section
+                            // only belongs on All/Installed — and not while
+                            // searching, so results focus on matching skills.
+                            if searchText.isEmpty && selectedTab != .defaults {
                                 InstalledPluginsSection(onMessage: { message, isError in
                                     showToast(message, isError: isError)
                                 })
                             }
 
                             let shown = filteredSkills
-                            if shown.isEmpty && !searchText.isEmpty {
-                                noSearchResults
+                            if shown.isEmpty {
+                                emptyState
                             }
 
                             ForEach(Array(shown.enumerated()), id: \.element.id) { index, skill in
@@ -369,16 +390,27 @@ struct SkillsView: View {
         }
     }
 
-    // MARK: - Search Empty State
+    // MARK: - Empty State
 
-    private var noSearchResults: some View {
+    @ViewBuilder
+    private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
+            Image(systemName: searchText.isEmpty ? "sparkles" : "magnifyingglass")
                 .font(.system(size: 28, weight: .light))
                 .foregroundColor(theme.tertiaryText)
-            Text("No skills match \"\(searchText)\"", bundle: .module)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
+            if !searchText.isEmpty {
+                Text("No skills match \"\(searchText)\"", bundle: .module)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+            } else if selectedTab == .installed {
+                Text("No installed skills yet", bundle: .module)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+            } else {
+                Text("No skills here", bundle: .module)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 48)
@@ -389,8 +421,7 @@ struct SkillsView: View {
     private var headerView: some View {
         ManagerHeaderWithTabs(
             title: L("Skills"),
-            subtitle: L("Specialized knowledge and guidance for the AI"),
-            count: skillManager.skills.isEmpty ? nil : skillManager.enabledCount
+            subtitle: L("Specialized knowledge and guidance for the AI")
         ) {
             HeaderIconButton("arrow.clockwise", isLoading: skillManager.isRefreshing, help: "Refresh skills") {
                 Task { @MainActor in
@@ -408,10 +439,12 @@ struct SkillsView: View {
             }
             .disabled(isProcessing || skillManager.isRefreshing)
         } tabsRow: {
-            HStack {
-                Spacer()
-                SearchField(text: $searchText, placeholder: "Search skills", width: 240)
-            }
+            HeaderTabsRow(
+                selection: $selectedTab,
+                counts: tabCounts,
+                searchText: $searchText,
+                searchPlaceholder: "Search skills"
+            )
         }
     }
 
