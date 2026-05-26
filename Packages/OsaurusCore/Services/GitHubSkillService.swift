@@ -898,6 +898,40 @@ public final class GitHubSkillService: ObservableObject {
         return result.sorted { $0.displayName < $1.displayName }
     }
 
+    // MARK: - Tolerant discovery probes
+
+    // Tolerate a missing directory (404 → none) but re-throw `.rateLimited`
+    // so `fetchPlugins` surfaces it. Plain `try?` swallowed the 403 too,
+    // making a throttled import silently report 0 skills.
+
+    private nonisolated func discoverSkillDirectoriesTolerant(
+        repo: GitHubRepo,
+        source: String
+    ) async throws -> [ClaudeSkillEntry] {
+        do {
+            return try await discoverSkillDirectories(repo: repo, source: source)
+        } catch let error as GitHubSkillError {
+            if case .rateLimited = error { throw error }
+            return []
+        } catch {
+            return []
+        }
+    }
+
+    private nonisolated func listDirectoryTolerant(
+        repo: GitHubRepo,
+        path: String
+    ) async throws -> [GitHubTreeEntry]? {
+        do {
+            return try await listDirectory(repo: repo, path: path)
+        } catch let error as GitHubSkillError {
+            if case .rateLimited = error { throw error }
+            return nil
+        } catch {
+            return nil
+        }
+    }
+
     // MARK: - Sibling Dependency Resolution
 
     /// Walk every plugin's agent markdown files looking for references to
@@ -1090,23 +1124,18 @@ public final class GitHubSkillService: ObservableObject {
             )
         }
 
-        // New-style plugins: discover from the source directory.  Walk it
-        // with a trailing slash semantically: when `source == ""` (external
-        // repo at root) we probe top-level paths like `skills`, `agents`.
+        // New-style plugins: discover from the source directory. Empty
+        // `source` (external repo at root) probes top-level `skills`/`agents`.
         let prefix = source.isEmpty ? "" : "\(source)/"
 
-        // Run the discovery probes concurrently. Each one is at least one
-        // HTTP round-trip; serializing them was the main contributor to the
-        // ~10-second wait on the picker for repos with ~13 plugins like
-        // `claude-for-legal`. The probes themselves go through the shared
-        // concurrency limiter (`SharedFetchLimiter`) to keep total in-flight
-        // GitHub calls below the rate-limit budget.
+        // Probe concurrently — serializing these round-trips was the main
+        // cause of the ~10s picker wait for repos with ~13 plugins.
         async let skillsTask: [ClaudeSkillEntry] =
-            (try? await discoverSkillDirectories(repo: sourceRepo, source: source)) ?? []
-        async let agentsListing =
-            (try? await listDirectory(repo: sourceRepo, path: "\(prefix)agents")) ?? nil
-        async let commandsListing =
-            (try? await listDirectory(repo: sourceRepo, path: "\(prefix)commands")) ?? nil
+            discoverSkillDirectoriesTolerant(repo: sourceRepo, source: source)
+        async let agentsListing: [GitHubTreeEntry]? =
+            listDirectoryTolerant(repo: sourceRepo, path: "\(prefix)agents")
+        async let commandsListing: [GitHubTreeEntry]? =
+            listDirectoryTolerant(repo: sourceRepo, path: "\(prefix)commands")
         async let hasClaudeMd: Bool = fileExists(repo: sourceRepo, path: "\(prefix)CLAUDE.md")
         async let hasConnectorsMd: Bool = fileExists(
             repo: sourceRepo,
@@ -1115,16 +1144,16 @@ public final class GitHubSkillService: ObservableObject {
         async let hasReadmeMd: Bool = fileExists(repo: sourceRepo, path: "\(prefix)README.md")
         async let hasMCPJson: Bool = fileExists(repo: sourceRepo, path: "\(prefix).mcp.json")
 
-        let skills = await skillsTask
+        let skills = try await skillsTask
         let agents: [ClaudeAgentEntry] =
-            (await agentsListing).map { entries in
+            (try await agentsListing).map { entries in
                 entries
                     .filter { $0.type == "file" && $0.name.hasSuffix(".md") }
                     .map { ClaudeAgentEntry(path: $0.path) }
                     .sorted { $0.displayName < $1.displayName }
             } ?? []
         let commands: [ClaudeCommandEntry] =
-            (await commandsListing).map { entries in
+            (try await commandsListing).map { entries in
                 entries
                     .filter { $0.type == "file" && $0.name.hasSuffix(".md") }
                     .map { ClaudeCommandEntry(path: $0.path) }

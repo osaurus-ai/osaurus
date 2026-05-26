@@ -486,6 +486,16 @@
         }
       }
     },
+    "%lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld"
+          }
+        }
+      }
+    },
     "%lld of %lld facts" : {
       "localizations" : {
         "en" : {
@@ -10244,16 +10254,6 @@
         }
       }
     },
-    "Importing %lld of %lld..." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Importing %1$lld of %2$lld..."
-          }
-        }
-      }
-    },
     "Importing..." : {
       "localizations" : {
         "de" : {
@@ -10577,6 +10577,9 @@
       }
     },
     "Installing" : {
+
+    },
+    "Installing selected plugins" : {
 
     },
     "Instructions" : {
@@ -23036,6 +23039,16 @@
     },
     "You may be asked to authenticate to sign the upload." : {
 
+    },
+    "You were renaming a conversation titled \"%@\" to \"%@\" but haven't saved it yet." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "You were renaming a conversation titled \"%1$@\" to \"%2$@\" but haven't saved it yet."
+          }
+        }
+      }
     },
     "You're already set up" : {
 
