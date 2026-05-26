@@ -302,8 +302,18 @@ struct InstalledPluginsSection: View {
     let onMessage: (String, Bool) -> Void
 
     @State private var pendingUninstall: InstalledPluginsAggregator.Summary?
+    /// Backs the alert's "Don't ask again" checkbox. An observable object
+    /// (rather than `@State`) because the global alert host snapshots the
+    /// accessory once at present-time — the toggle only updates visually if
+    /// the view it lives in subscribes to this model directly.
+    @StateObject private var uninstallPrompt = UninstallPromptModel()
     @State private var isExpanded = true
     @State private var isHeaderHovered = false
+
+    /// When the user checks "Don't ask again", skip the confirmation for the
+    /// rest of the app session. Static so it survives this view being
+    /// recreated as the user navigates between tabs.
+    @MainActor private static var skipUninstallConfirm = false
     /// Coalesces aggregator refreshes during heavy imports — claude-for-legal
     /// lands ~170 skills one-by-one, and refreshing on every tick produced
     /// visible jank behind the import sheet.
@@ -323,11 +333,15 @@ struct InstalledPluginsSection: View {
                         set: { if !$0 { pendingUninstall = nil } }
                     ),
                     message: pendingUninstall.map(Self.confirmMessage(for:)) ?? "",
-                    primaryButton: .destructive("Uninstall") {
-                        if let target = pendingUninstall { confirmUninstall(target) }
-                        pendingUninstall = nil
-                    },
-                    secondaryButton: .cancel("Cancel")
+                    accessory: AnyView(UninstallDontAskAgainToggle(model: uninstallPrompt)),
+                    buttons: [
+                        .cancel("Cancel"),
+                        .destructive("Uninstall") {
+                            if uninstallPrompt.dontAskAgain { Self.skipUninstallConfirm = true }
+                            if let target = pendingUninstall { confirmUninstall(target) }
+                            pendingUninstall = nil
+                        },
+                    ]
                 )
             }
         }
@@ -366,7 +380,7 @@ struct InstalledPluginsSection: View {
             ForEach(aggregator.plugins) { plugin in
                 PluginRow(
                     plugin: plugin,
-                    onUninstall: { pendingUninstall = plugin }
+                    onUninstall: { requestUninstall(plugin) }
                 )
             }
         }
@@ -492,6 +506,18 @@ struct InstalledPluginsSection: View {
             """
     }
 
+    /// Either confirm immediately (when the user opted out of the prompt this
+    /// session) or open the confirmation alert with a fresh, unchecked
+    /// "Don't ask again" box.
+    private func requestUninstall(_ plugin: InstalledPluginsAggregator.Summary) {
+        if Self.skipUninstallConfirm {
+            confirmUninstall(plugin)
+        } else {
+            uninstallPrompt.dontAskAgain = false
+            pendingUninstall = plugin
+        }
+    }
+
     private func confirmUninstall(_ plugin: InstalledPluginsAggregator.Summary) {
         let label = plugin.displayName
         let items = Self.pluralize(plugin.totalCount, "item")
@@ -517,6 +543,32 @@ struct InstalledPluginsSection: View {
 
     private static func pluralize(_ count: Int, _ noun: String) -> String {
         "\(count) \(noun)\(count == 1 ? "" : "s")"
+    }
+}
+
+// MARK: - Uninstall confirmation accessory
+
+@MainActor
+private final class UninstallPromptModel: ObservableObject {
+    @Published var dontAskAgain = false
+}
+
+/// "Don't ask again" checkbox shown beneath the uninstall-alert message.
+/// Owns an `@ObservedObject` so it re-renders on toggle even though the
+/// global alert host snapshots the accessory once at present-time.
+private struct UninstallDontAskAgainToggle: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject var model: UninstallPromptModel
+
+    var body: some View {
+        Toggle(isOn: $model.dontAskAgain) {
+            Text("Don't ask me again", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+        }
+        .toggleStyle(.checkbox)
+        .fixedSize()
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 }
 

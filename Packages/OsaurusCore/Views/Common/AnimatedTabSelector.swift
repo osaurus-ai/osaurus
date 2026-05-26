@@ -147,6 +147,22 @@ enum ToolsTab: String, CaseIterable, AnimatedTabItem {
     var title: String { rawValue }
 }
 
+// MARK: - Skills Tab (for SkillsView)
+
+enum SkillsTab: String, CaseIterable, AnimatedTabItem {
+    case all = "All"
+    case installed = "Installed"
+    case defaults = "Default"
+
+    var title: String {
+        switch self {
+        case .all: return L("All")
+        case .installed: return L("Installed")
+        case .defaults: return L("Default")
+        }
+    }
+}
+
 // MARK: - Plugins Tab (for PluginsView)
 
 enum PluginsTab: String, CaseIterable, AnimatedTabItem {
