@@ -28,7 +28,8 @@ struct ToolsTemplatesSection: View {
                 isOn: $draft.tools.enableAutoToolChoice
             )
             ServerSettingsPlannedBanner(
-                blurb: "Implicit tool-choice policy is persisted only; OpenAI-compatible requests still use the request's explicit tool choice and Osaurus chat-agent policy."
+                blurb:
+                    "Implicit tool-choice policy is persisted only; OpenAI-compatible requests still use the request's explicit tool choice and Osaurus chat-agent policy."
             )
 
             OptionalStringField(
@@ -52,7 +53,8 @@ struct ToolsTemplatesSection: View {
                 value: $draft.tools.mcpConfigFile
             )
             ServerSettingsPlannedBanner(
-                blurb: "MCP config-file override is persisted only; the current tool registry still owns provider loading."
+                blurb:
+                    "MCP config-file override is persisted only; the current tool registry still owns provider loading."
             )
 
             SettingsField(
@@ -75,7 +77,8 @@ struct ToolsTemplatesSection: View {
                     )
             }
             ServerSettingsPlannedBanner(
-                blurb: "Custom chat templates are persisted only; vmlx still renders with the loaded tokenizer's template."
+                blurb:
+                    "Custom chat templates are persisted only; vmlx still renders with the loaded tokenizer's template."
             )
         }
     }

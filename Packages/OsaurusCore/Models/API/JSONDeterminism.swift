@@ -27,7 +27,8 @@ extension JSONEncoder {
     /// path. Grep for `osaurusCanonical` to find existing call sites.
     static func osaurusCanonical(prettyPrinted: Bool = false) -> JSONEncoder {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = prettyPrinted
+        encoder.outputFormatting =
+            prettyPrinted
             ? [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]
             : [.sortedKeys, .withoutEscapingSlashes]
         return encoder

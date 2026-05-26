@@ -21,8 +21,6 @@ struct SkillsView: View {
     @State private var editingSkill: Skill?
     @State private var hasAppeared = false
     @State private var toastMessage: (text: String, isError: Bool)?
-    @State private var showImportPicker = false
-    @State private var showGitHubImport = false
     @State private var exportingSkill: Skill?
     @State private var isProcessing = false
     @State private var showProgress = false
@@ -109,15 +107,6 @@ struct SkillsView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
-                            // Plugins are "installed" artifacts, so the section
-                            // only belongs on All/Installed — and not while
-                            // searching, so results focus on matching skills.
-                            if searchText.isEmpty && selectedTab != .defaults {
-                                InstalledPluginsSection(onMessage: { message, isError in
-                                    showToast(message, isError: isError)
-                                })
-                            }
-
                             let shown = filteredSkills
                             if shown.isEmpty {
                                 emptyState
@@ -212,39 +201,6 @@ struct SkillsView: View {
                 }
             )
         }
-        .sheet(isPresented: $showGitHubImport) {
-            GitHubImportSheet(
-                onImport: { skills in
-                    Task { @MainActor in
-                        isProcessing = true
-                        defer { isProcessing = false }
-                        let imported = await skillManager.importSkillsFromMarkdown(skills)
-                        showGitHubImport = false
-                        if imported.count == 1 {
-                            showToast(L("Imported \"\(imported[0].name)\""))
-                        } else {
-                            showToast(L("Imported \(imported.count) skills"))
-                        }
-                    }
-                },
-                onCancel: {
-                    showGitHubImport = false
-                },
-                onPluginInstallComplete: { report in
-                    // The sheet shows its own summary screen; just refresh the
-                    // skills list and surface a short toast in the background.
-                    Task { @MainActor in
-                        await skillManager.refresh()
-                        let total =
-                            report.totalImportedSkills + report.totalImportedAgents
-                            + report.totalImportedCommands + report.totalImportedMCPProviders
-                        if total > 0 {
-                            showToast(L("Installed \(total) items"))
-                        }
-                    }
-                }
-            )
-        }
         .onChange(of: isProcessing || skillManager.isRefreshing) { _, newValue in
             if newValue {
                 // Delay showing the progress bar to avoid flickering for fast operations
@@ -270,20 +226,6 @@ struct SkillsView: View {
                 }
             }
         }
-        .fileImporter(
-            isPresented: $showImportPicker,
-            allowedContentTypes: [
-                .json,
-                UTType(filenameExtension: "md") ?? .plainText,
-                .zip,
-                UTType(filenameExtension: "zip") ?? .archive,
-            ],
-            allowsMultipleSelection: false
-        ) { result in
-            Task { @MainActor in
-                await handleImport(result)
-            }
-        }
         .onChange(of: exportingSkill) { _, skill in
             if let skill = skill {
                 Task { @MainActor in
@@ -293,64 +235,16 @@ struct SkillsView: View {
         }
     }
 
-    // MARK: - Import/Export
+    // MARK: - Export
 
-    @MainActor
-    private func handleImport(_ result: Result<[URL], Error>) async {
-        isProcessing = true
-        defer { isProcessing = false }
-        switch result {
-        case .success(let urls):
-            guard let url = urls.first else { return }
-
-            do {
-                // Start accessing the security-scoped resource
-                guard url.startAccessingSecurityScopedResource() else {
-                    showToast(L("Cannot access file"), isError: true)
-                    return
-                }
-                defer { url.stopAccessingSecurityScopedResource() }
-
-                let ext = url.pathExtension.lowercased()
-
-                if ext == "zip" {
-                    // Import from ZIP archive (Agent Skills compatible)
-                    let skill = try await skillManager.importSkillFromZip(url)
-                    let fileCount = skill.totalFileCount
-                    if fileCount > 0 {
-                        showToast(L("Imported \"\(skill.name)\" with \(fileCount) files"))
-                    } else {
-                        showToast(L("Imported \"\(skill.name)\""))
-                    }
-                } else if ext == "json" {
-                    // Import from JSON
-                    let content = try String(contentsOf: url, encoding: .utf8)
-                    guard let data = content.data(using: .utf8) else {
-                        showToast(L("Invalid file content"), isError: true)
-                        return
-                    }
-                    let skill = try await skillManager.importSkill(from: data)
-                    showToast(L("Imported \"\(skill.name)\""))
-                } else {
-                    // Import from Markdown (SKILL.md or .md)
-                    let content = try String(contentsOf: url, encoding: .utf8)
-                    let skill = try await skillManager.importSkillFromMarkdown(content)
-                    showToast(L("Imported \"\(skill.name)\""))
-                }
-            } catch {
-                showToast(L("Import failed: \(error.localizedDescription)"), isError: true)
-            }
-
-        case .failure(let error):
-            showToast(L("Import failed: \(error.localizedDescription)"), isError: true)
-        }
-    }
-
+    /// Export a user-created skill as SKILL.md or a ZIP bundle with
+    /// associated files. Kept here so the in-row Export button keeps
+    /// working after the broader Import dropdown migrated to the
+    /// Plugins tab.
     @MainActor
     private func exportSkill(_ skill: Skill) {
         let panel = NSSavePanel()
 
-        // If skill has associated files, export as ZIP; otherwise just SKILL.md
         if skill.hasAssociatedFiles {
             panel.allowedContentTypes = [.zip]
             panel.nameFieldStringValue = "\(skill.xplaceholder_agentSkillsNamex).zip"
@@ -370,13 +264,11 @@ struct SkillsView: View {
                     defer { self.isProcessing = false }
                     do {
                         if skill.hasAssociatedFiles {
-                            // export as ZIP
                             let zipURL = try await skillManager.exportSkillAsZip(skill)
                             try FileManager.default.copyItem(at: zipURL, to: url)
                             try? FileManager.default.removeItem(at: zipURL)
                             self.showToast(L("Exported \"\(skill.name)\" as ZIP"))
                         } else {
-                            // export as SKILL.md
                             let content = skillManager.exportSkillAsAgentSkills(skill)
                             try content.write(to: url, atomically: true, encoding: .utf8)
                             self.showToast(L("Exported \"\(skill.name)\" as SKILL.md"))
@@ -428,11 +320,6 @@ struct SkillsView: View {
                     await skillManager.refresh()
                 }
             }
-            ImportDropdownButton(
-                onGitHub: { showGitHubImport = true },
-                onLocal: { showImportPicker = true }
-            )
-            .disabled(isProcessing || skillManager.isRefreshing)
 
             HeaderPrimaryButton("Create Skill", icon: "plus") {
                 isCreating = true
@@ -460,74 +347,6 @@ struct SkillsView: View {
             withAnimation(theme.animationQuick()) {
                 toastMessage = nil
             }
-        }
-    }
-}
-
-// MARK: - Import Dropdown Button
-
-private struct ImportDropdownButton: View {
-    @Environment(\.theme) private var theme
-
-    let onGitHub: () -> Void
-    let onLocal: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        // Menu actions are dispatched via `dispatchAfterDismiss` so the
-        // parent state mutation runs *after* the menu popover has finished
-        // animating closed. Presenting a `.sheet` or `.fileImporter`
-        // synchronously from inside a `Menu` button can deadlock SwiftUI
-        // — historically the root cause of an instant beachball on this
-        // dropdown. See commit 31efc410.
-        Menu {
-            Button(action: { dispatchAfterDismiss(onGitHub) }) {
-                Label {
-                    Text("From GitHub", bundle: .module)
-                } icon: {
-                    Image(systemName: "link")
-                }
-            }
-            Divider()
-            Button(action: { dispatchAfterDismiss(onLocal) }) {
-                Label {
-                    Text("From File", bundle: .module)
-                } icon: {
-                    Image(systemName: "doc")
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "square.and.arrow.down")
-                    .font(.system(size: 13, weight: .medium))
-                Text("Import", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .foregroundStyle(theme.secondaryText)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .tint(theme.secondaryText)
-        .fixedSize()
-        .padding(.horizontal, 12)
-        .frame(height: 32)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground)
-                .opacity(isHovering ? 0.8 : 1)
-        )
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
-    }
-
-    private func dispatchAfterDismiss(_ action: @escaping () -> Void) {
-        Task { @MainActor in
-            try? await Task.sleepForPopoverDismiss()
-            action()
         }
     }
 }

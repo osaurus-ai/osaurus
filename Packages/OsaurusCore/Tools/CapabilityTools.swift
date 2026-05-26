@@ -261,7 +261,8 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             return .failure(
                 ToolEnvelope.failure(
                     kind: .invalidArgs,
-                    message: "Missing required argument `query` (search string). Legacy `queries` arrays are still accepted.",
+                    message:
+                        "Missing required argument `query` (search string). Legacy `queries` arrays are still accepted.",
                     field: "query",
                     expected: "single search query string",
                     tool: tool.name
@@ -287,7 +288,8 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
 
         let normalized = trimmed.replacingOccurrences(of: #"<|"|>"#, with: #"""#)
         if let data = normalized.data(using: .utf8),
-           let array = try? JSONSerialization.jsonObject(with: data) as? [String] {
+            let array = try? JSONSerialization.jsonObject(with: data) as? [String]
+        {
             return array
         }
 
@@ -298,7 +300,8 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             body = normalized
         }
 
-        return body
+        return
+            body
             .split(separator: ",")
             .map {
                 String($0)

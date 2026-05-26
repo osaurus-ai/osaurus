@@ -263,14 +263,24 @@ struct DSV4ParserPipelineTests {
             .init(
                 name: "file_write",
                 parameters: [
-                    .init(name: "path", value: "osaurus_probe.txt", string: true, expected: .string("osaurus_probe.txt")),
+                    .init(
+                        name: "path",
+                        value: "osaurus_probe.txt",
+                        string: true,
+                        expected: .string("osaurus_probe.txt")
+                    ),
                     .init(name: "content", value: "alpha\nbeta", string: true, expected: .string("alpha\nbeta")),
                 ]
             ),
             .init(
                 name: "file_edit",
                 parameters: [
-                    .init(name: "path", value: "osaurus_probe.txt", string: true, expected: .string("osaurus_probe.txt")),
+                    .init(
+                        name: "path",
+                        value: "osaurus_probe.txt",
+                        string: true,
+                        expected: .string("osaurus_probe.txt")
+                    ),
                     .init(name: "old_string", value: "alpha", string: true, expected: .string("alpha")),
                     .init(name: "new_string", value: "beta", string: true, expected: .string("beta")),
                 ]
@@ -301,7 +311,7 @@ struct DSV4ParserPipelineTests {
             .init(
                 name: "git_commit",
                 parameters: [
-                    .init(name: "message", value: "probe commit", string: true, expected: .string("probe commit")),
+                    .init(name: "message", value: "probe commit", string: true, expected: .string("probe commit"))
                 ]
             ),
         ]
@@ -601,7 +611,7 @@ struct DSV4ParserPipelineTests {
         let parameters: [String: any Sendable] = [
             "type": "object",
             "properties": [
-                "text": ["type": "string"] as [String: any Sendable],
+                "text": ["type": "string"] as [String: any Sendable]
             ] as [String: any Sendable],
             "required": ["text"],
         ]

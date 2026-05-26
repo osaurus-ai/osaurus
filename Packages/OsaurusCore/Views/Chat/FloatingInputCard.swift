@@ -1667,9 +1667,10 @@ extension FloatingInputCard {
 
     private func toggleThinking(id: String) {
         let thinkingOpt = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption }
-        let currentEnabled = selectedModel.flatMap {
-            ModelProfileRegistry.thinkingEnabled(for: $0, values: activeModelOptions)
-        } ?? false
+        let currentEnabled =
+            selectedModel.flatMap {
+                ModelProfileRegistry.thinkingEnabled(for: $0, values: activeModelOptions)
+            } ?? false
         let newEnabled = !currentEnabled
         let newVal = thinkingOpt?.inverted == true ? !newEnabled : newEnabled
 

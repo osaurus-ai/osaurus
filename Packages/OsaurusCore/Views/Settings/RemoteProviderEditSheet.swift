@@ -2322,7 +2322,9 @@ private struct NoTimeoutWarningContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Requests will run with no time limit. Before enabling:", bundle: .module)
-            bullet("A stalled provider or dropped connection can hang a request indefinitely. You'll have to stop it manually")
+            bullet(
+                "A stalled provider or dropped connection can hang a request indefinitely. You'll have to stop it manually"
+            )
             bullet("Upstream timeouts (LM Studio, proxies, tunnels) still apply")
             bullet("Only use this on trusted hardware for long-running work")
         }
