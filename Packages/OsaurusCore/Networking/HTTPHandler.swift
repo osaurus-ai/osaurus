@@ -3813,8 +3813,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         requestedModel: model,
                         stopSequences: stop
                     )
+                    // `streamRawCompletion` yields only plain generated text
+                    // (reasoning / tool / stats events are dropped upstream in
+                    // `ModelRuntime.streamRawText`), so no sentinel filtering is
+                    // needed here.
                     for try await delta in stream {
-                        if StreamingToolHint.isSentinel(delta) || delta.isEmpty { continue }
+                        if delta.isEmpty { continue }
                         accumulated += delta
                         let chunk = CompletionResponseDTO(
                             id: responseId, object: "text_completion", created: created, model: model,
@@ -3861,7 +3865,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 var text = ""
                 for try await delta in stream {
-                    if StreamingToolHint.isSentinel(delta) { continue }
                     text += delta
                 }
                 let completionTokens = TokenEstimator.estimate(text)
