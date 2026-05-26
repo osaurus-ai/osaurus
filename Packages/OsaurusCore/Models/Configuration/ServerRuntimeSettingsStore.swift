@@ -37,6 +37,8 @@ public enum ServerRuntimeSettingsStore {
     /// `VMLXServerRuntimeSettings.contractVersion` controls the JSON
     /// shape so we don't need a separate filename bump for v1.
     private static let fileName = "server-runtime.json"
+    private static let cacheDefaultsMigrationMarkerName =
+        ".server-runtime-cache-defaults-v2-migrated"
 
     // MARK: - Load / Save
 
@@ -140,7 +142,50 @@ public enum ServerRuntimeSettingsStore {
            normalized.mtp.acceptedTokensOnlyEnterBaseCache {
             normalized.mtp.mode = .auto
         }
+        if shouldRepairLegacyCacheDefaults(normalized.cache) {
+            // Keep live KV codec conservative on upgrade. Engine-selected
+            // TurboQuant stays available as an explicit Server Settings
+            // choice, but it is not promoted globally until the Qwen/Gemma/
+            // DSV4 cross-family proof matrix covers the historical failure
+            // modes.
+            normalized.cache.enableSSMReDerive = true
+            writeCacheDefaultsMigrationMarker()
+        }
         return normalized
+    }
+
+    private nonisolated static func shouldRepairLegacyCacheDefaults(
+        _ cache: VMLXServerCacheSettings
+    ) -> Bool {
+        guard !FileManager.default.fileExists(atPath: cacheDefaultsMigrationMarkerURL().path) else {
+            return false
+        }
+        return cache.prefix.enabled
+            && cache.prefix.legacyEntryCountCache == false
+            && cache.prefix.memoryLimitMB == nil
+            && cache.prefix.memoryPercent == 15.0
+            && cache.prefix.ttlMinutes == nil
+            && cache.pagedKV.enabled
+            && cache.pagedKV.blockSize == nil
+            && cache.pagedKV.maxBlocks == nil
+            && cache.liveKVCodec == .none
+            && cache.turboQuantKeyBits == nil
+            && cache.turboQuantValueBits == nil
+            && cache.defaultMaxKVSize == 65536
+            && cache.longPromptMultiplier == 2.0
+            && cache.storedKVCodec == .auto
+            && cache.legacyDisk.enabled == false
+            && cache.legacyDisk.maxSizeGB == nil
+            && cache.blockDisk.enabled
+            && cache.blockDisk.maxSizeGB == nil
+            && cache.blockDisk.directory == nil
+            && cache.enableSSMReDerive == false
+    }
+
+    private nonisolated static func writeCacheDefaultsMigrationMarker() {
+        let url = cacheDefaultsMigrationMarkerURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        try? Data().write(to: url, options: [.atomic])
     }
 
     // MARK: - Migration
@@ -200,11 +245,10 @@ public enum ServerRuntimeSettingsStore {
             smeltMode: .engineSelected
         )
 
-        // Cache: mirror the previously-hardcoded
-        // `ModelRuntime.buildCacheCoordinatorConfig` defaults so the
-        // first migrated config reproduces today's behavior exactly.
-        // Paged KV + block disk on, legacy disk off, SSM rederive off,
-        // fp16 KV, 64K rotating window, 2.0 long-prompt multiplier.
+        // Cache: seed the engine-owned topology conservatively. Prefix,
+        // paged KV, block-disk L2, and SSM rederive are on by default, but
+        // live KV codec stays native/fp16 unless the user explicitly opts
+        // into engine-selected TurboQuant in Server Settings.
         settings.cache = VMLXServerCacheSettings(
             prefix: VMLXPrefixCacheSettings(
                 enabled: true,
@@ -218,7 +262,7 @@ public enum ServerRuntimeSettingsStore {
                 blockSize: nil,
                 maxBlocks: nil
             ),
-            liveKVCodec: .none,
+            liveKVCodec: .native,
             turboQuantKeyBits: nil,
             turboQuantValueBits: nil,
             defaultMaxKVSize: 65536,
@@ -234,7 +278,7 @@ public enum ServerRuntimeSettingsStore {
                 maxSizeGB: nil,
                 directory: nil
             ),
-            enableSSMReDerive: false
+            enableSSMReDerive: true
         )
 
         // Multimodal: keep media-salt requirement on (paired with any
@@ -287,6 +331,10 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func fileURL() -> URL {
         directoryURL().appendingPathComponent(fileName)
+    }
+
+    private nonisolated static func cacheDefaultsMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(cacheDefaultsMigrationMarkerName)
     }
 
     private nonisolated static func legacyConfigurationFileURL() -> URL {

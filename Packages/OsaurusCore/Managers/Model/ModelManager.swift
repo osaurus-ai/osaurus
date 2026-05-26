@@ -424,7 +424,8 @@ final class ModelManager: NSObject, ObservableObject {
     ///   - `mlx-community/*`: trust the org; HF compat check confirms.
     ///   - `OsaurusAI/*`: must already exist in the registry (curated or org-fetched)
     ///     unknown OsaurusAI ids are rejected.
-    ///   - Other orgs: require `mlx`/`-mlx` in the repo id AND HF metadata confirming MLX.
+    ///   - Other orgs: require an MLX/vMLX artifact-family hint in the repo id
+    ///     AND HF metadata confirming MLX compatibility.
     func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -533,12 +534,19 @@ final class ModelManager: NSObject, ObservableObject {
 
     // MARK: - Private Methods
 
-    /// Heuristic for non-allowlisted orgs: the repo id should advertise MLX in its name
-    /// (e.g. `someuser/Llama-3-8B-mlx`, `someuser/Foo-mlx-4bit`)
-    static func nameLooksLikeMLX(_ repoId: String) -> Bool {
+    /// Heuristic for non-allowlisted orgs: the repo id should advertise MLX/vMLX
+    /// compatibility in its name. Do not require the literal token `MLX` only:
+    /// JANG/JANGTQ/MXFP/TurboQuant uploads are MLX-native artifact families and
+    /// should reach the Hugging Face metadata check instead of being rejected by
+    /// title text alone.
+    nonisolated static func nameLooksLikeMLX(_ repoId: String) -> Bool {
         let lower = repoId.lowercased()
         return lower.contains("-mlx") || lower.contains("_mlx") || lower.hasSuffix("/mlx")
             || lower.contains("mlx-")
+            || lower.contains("-mxfp") || lower.contains("_mxfp")
+            || lower.contains("-jang") || lower.contains("_jang")
+            || lower.contains("-jangtq") || lower.contains("_jangtq")
+            || lower.contains("turboquant")
     }
 
     static func sdkSupportedModelIds() -> Set<String> {

@@ -2,9 +2,10 @@
 //  ConcurrencySection.swift
 //  osaurus
 //
-//  Concurrency & batching controls. `maxConcurrentSequences` hot-resizes
-//  the resident BatchEngine and `prefillStepSize` is passed per request.
-//  The remaining contract fields persist for a follow-up runtime bridge.
+//  Concurrency & batching controls. `continuousBatching` gates the
+//  multi-slot scheduler, `maxConcurrentSequences` hot-resizes the resident
+//  BatchEngine, and `prefillStepSize` is passed per request. The remaining
+//  contract fields persist for a follow-up runtime bridge.
 //
 //  Live BatchEngine diagnostics live in `LiveActivitySection` (its own
 //  sidebar anchor) so users can monitor activity without scrolling
@@ -38,6 +39,13 @@ struct ConcurrencySection: View {
             )
             .onChange(of: maxConcurrentText) { _, _ in commitMaxConcurrent() }
 
+            SettingsToggle(
+                title: L("Continuous Batching"),
+                description:
+                    "When off, Osaurus pins the BatchEngine to one active slot even if Concurrent Sessions is higher.",
+                isOn: $draft.concurrency.continuousBatching
+            )
+
             OptionalIntField(
                 label: "Prompt Prefill Chunk Size",
                 placeholder: "Empty = engine default",
@@ -50,7 +58,7 @@ struct ConcurrencySection: View {
             SettingsSubsection(label: "Planned Batching Controls") {
                 VStack(alignment: .leading, spacing: 12) {
                     ServerSettingsPlannedBanner(
-                        blurb: "Persisted today; runtime consumers are not yet implemented."
+                        blurb: "Persisted today; runtime consumers for these fields are not yet implemented."
                     )
 
                     SettingsToggle(

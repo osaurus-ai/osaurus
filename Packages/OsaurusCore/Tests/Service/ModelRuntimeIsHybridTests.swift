@@ -56,6 +56,7 @@ struct ModelRuntimeIsHybridTests {
     func qwen3MoE_isHybrid() {
         for id in [
             "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
+            "dealignai/Qwen3.6-35B-A3B-MXFP4-CRACK-MTP",
             "qwen3.6-35b-a3b-jangtq4",
             "qwen3.5-vl-9b-8bit",
             "JANGQ-AI/Holo3-35B-A3B-JANGTQ",
@@ -162,6 +163,8 @@ struct ModelRuntimeIsHybridTests {
     func dsv4Flash_isNotMambaHybrid() {
         for id in [
             "JANGQ-AI/DeepSeekV4-Flash-JANGTQ",
+            "JANGQ-AI/DeepSeek-V4-Flash-JANGTQ2",
+            "DeepSeek-V4-Flash-JANGTQ2",
             "deepseekv4-flash-jangtq",
         ] {
             #expect(

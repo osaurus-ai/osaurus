@@ -14,6 +14,59 @@ import NIOHTTP1
 
 extension HTTPHandler {
 
+    final class HTTPRequestTaskRegistry: @unchecked Sendable {
+        private let lock = NSLock()
+        private var tasks: [UUID: Task<Void, Never>] = [:]
+        private var completedBeforeInsert: Set<UUID> = []
+        private var cancelled = false
+
+        func insert(id: UUID, task: Task<Void, Never>) {
+            let shouldCancel = lock.withLock {
+                if cancelled { return true }
+                if completedBeforeInsert.remove(id) == nil {
+                    tasks[id] = task
+                }
+                return false
+            }
+            if shouldCancel {
+                task.cancel()
+            }
+        }
+
+        func remove(id: UUID) {
+            lock.withLock {
+                if tasks.removeValue(forKey: id) == nil, !cancelled {
+                    completedBeforeInsert.insert(id)
+                }
+            }
+        }
+
+        func cancelAll() {
+            let snapshot = lock.withLock {
+                cancelled = true
+                let tasks = Array(tasks.values)
+                self.tasks.removeAll()
+                self.completedBeforeInsert.removeAll()
+                return tasks
+            }
+            for task in snapshot {
+                task.cancel()
+            }
+        }
+    }
+
+    final class RequestTaskOperation: @unchecked Sendable {
+        private let operation: () async -> Void
+
+        init(_ operation: @escaping () async -> Void) {
+            self.operation = operation
+        }
+
+        func run() async {
+            await operation()
+        }
+    }
+
     /// Build a `hop` closure that bounces the supplied block onto the
     /// channel's event loop, no-oping when the channel is no longer
     /// active. Every per-request `Task` captures `let hop = makeHop(...)`

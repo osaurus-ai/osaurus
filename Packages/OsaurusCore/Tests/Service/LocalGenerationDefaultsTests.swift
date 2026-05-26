@@ -87,8 +87,8 @@ struct LocalGenerationDefaultsTests {
     @Test("Nemotron-Cascade-2: no sampling fields, only EOS")
     func nemotronNoSamplingFields() {
         // Real Nemotron generation_config.json ships nothing but EOS/BOS/pad.
-        // We should return `.empty` sampling defaults so the caller's existing
-        // fallback ladder (request → runtime → hardcoded 0.7) kicks in.
+        // We should return `.empty` sampling defaults so callers can fall
+        // through request/runtime overrides to vmlx's own engine defaults.
         let d = Self.defaults(
             fromJSON: #"""
                 {

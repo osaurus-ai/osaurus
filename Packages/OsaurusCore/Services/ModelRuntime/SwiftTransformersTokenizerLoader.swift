@@ -80,6 +80,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         addGenerationPrompt: Bool
     ) throws -> [Int] {
         let env = ProcessInfo.processInfo.environment
+        let chatTemplateTools = Self.normalizedToolsForChatTemplate(tools)
         if let path = env["VMLX_CHAT_TEMPLATE_OVERRIDE"], !path.isEmpty,
             let src = try? String(contentsOfFile: path, encoding: .utf8)
         {
@@ -90,7 +91,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     addGenerationPrompt: addGenerationPrompt,
                     truncation: false,
                     maxLength: nil,
-                    tools: tools,
+                    tools: chatTemplateTools,
                     additionalContext: additionalContext
                 )
             } catch VMLXTokenizers.TokenizerError.missingChatTemplate {
@@ -128,7 +129,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 label: "LagunaMinimal",
                 template: MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal,
                 messages: messages,
-                tools: tools,
+                tools: chatTemplateTools,
                 additionalContext: additionalContext,
                 addGenerationPrompt: addGenerationPrompt
             )
@@ -145,7 +146,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     label: "MiniMaxM2Minimal",
                     template: MLXLMCommon.ChatTemplateFallbacks.minimaxM2Minimal,
                     messages: messages,
-                    tools: tools,
+                    tools: chatTemplateTools,
                     additionalContext: additionalContext,
                     addGenerationPrompt: addGenerationPrompt
                 )
@@ -164,7 +165,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 label: "Zaya1VLVisionToolMinimal",
                 template: MLXLMCommon.ChatTemplateFallbacks.zayaVLVisionToolMinimal,
                 messages: messages,
-                tools: tools,
+                tools: chatTemplateTools,
                 additionalContext: adjustedContext,
                 addGenerationPrompt: addGenerationPrompt
             )
@@ -187,7 +188,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         if hasDSV4Sentinel {
             return try applyDeepseekV4NativeTemplate(
                 messages: messages,
-                tools: tools,
+                tools: chatTemplateTools,
                 additionalContext: adjustedContext,
                 addGenerationPrompt: addGenerationPrompt
             )
@@ -200,7 +201,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 addGenerationPrompt: addGenerationPrompt,
                 truncation: false,
                 maxLength: nil,
-                tools: tools,
+                tools: chatTemplateTools,
                 additionalContext: adjustedContext
             )
         } catch VMLXTokenizers.TokenizerError.missingChatTemplate {
@@ -212,7 +213,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     label: "LagunaMinimal",
                     template: MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal,
                     messages: messages,
-                    tools: tools,
+                    tools: chatTemplateTools,
                     additionalContext: adjustedContext,
                     addGenerationPrompt: addGenerationPrompt
                 )
@@ -224,7 +225,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     label: "MiniMaxM2Minimal",
                     template: MLXLMCommon.ChatTemplateFallbacks.minimaxM2Minimal,
                     messages: messages,
-                    tools: tools,
+                    tools: chatTemplateTools,
                     additionalContext: additionalContext,
                     addGenerationPrompt: addGenerationPrompt
                 )
@@ -234,21 +235,21 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     label: "Zaya1VLVisionToolMinimal",
                     template: MLXLMCommon.ChatTemplateFallbacks.zayaVLVisionToolMinimal,
                     messages: messages,
-                    tools: tools,
+                    tools: chatTemplateTools,
                     additionalContext: adjustedContext,
                     addGenerationPrompt: addGenerationPrompt
                 )
             }
             if upstream.bosToken == "<bos>" {
                 let template =
-                    (tools?.isEmpty ?? true)
+                    (chatTemplateTools?.isEmpty ?? true)
                     ? MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal
                     : MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools
                 return try fallback(
                     label: "Gemma4",
                     template: template,
                     messages: messages,
-                    tools: tools,
+                    tools: chatTemplateTools,
                     additionalContext: additionalContext,
                     addGenerationPrompt: addGenerationPrompt
                 )
@@ -260,7 +261,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     label: "NemotronMinimal",
                     template: MLXLMCommon.ChatTemplateFallbacks.nemotronMinimal,
                     messages: messages,
-                    tools: tools,
+                    tools: chatTemplateTools,
                     additionalContext: additionalContext,
                     addGenerationPrompt: addGenerationPrompt
                 )
@@ -274,6 +275,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             let hasNemotronSentinel =
                 upstream.convertTokenToId("<|im_start|>") != nil
                 || upstream.convertTokenToId("<|im_end|>") != nil
+            if isGemma {
+                throw error
+            }
             let ordered: [(label: String, template: String)]
             if hasLagunaSentinel {
                 ordered = [("LagunaMinimal", MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal)]
@@ -284,16 +288,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                         MLXLMCommon.ChatTemplateFallbacks.zayaVLVisionToolMinimal
                     )
                 ]
-            } else if isGemma {
-                ordered = [
-                    ("Gemma4WithTools", MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools),
-                    ("Gemma4Minimal", MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal),
-                ]
             } else if hasNemotronSentinel {
                 ordered = [
                     ("NemotronMinimal", MLXLMCommon.ChatTemplateFallbacks.nemotronMinimal),
-                    ("Gemma4WithTools", MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools),
-                    ("Gemma4Minimal", MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal),
                 ]
             } else {
                 ordered = MLXLMCommon.ChatTemplateFallbacks.orderedFallbacks
@@ -304,7 +301,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                         label: candidate.label,
                         template: candidate.template,
                         messages: messages,
-                        tools: tools,
+                        tools: chatTemplateTools,
                         additionalContext: adjustedContext,
                         addGenerationPrompt: addGenerationPrompt
                     )
@@ -320,6 +317,67 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         messages.contains { message in
             contentContainsImage(message["content"])
         }
+    }
+
+    private static func normalizedToolsForChatTemplate(
+        _ tools: [[String: any Sendable]]?
+    ) -> [[String: any Sendable]]? {
+        tools?.map { normalizeChatTemplateValue($0) as? [String: any Sendable] ?? $0 }
+    }
+
+    private static func normalizeChatTemplateValue(_ value: any Sendable) -> any Sendable {
+        if var object = value as? [String: any Sendable] {
+            for (key, child) in object {
+                object[key] = normalizeChatTemplateValue(child)
+            }
+            normalizeNullableTypeUnion(&object)
+            return object
+        }
+
+        if let array = value as? [any Sendable] {
+            return array.map { normalizeChatTemplateValue($0) } as [any Sendable]
+        }
+
+        return value
+    }
+
+    private static func normalizeNullableTypeUnion(_ object: inout [String: any Sendable]) {
+        guard let entries = stringTypeArray(object["type"]) else { return }
+
+        var hasNull = false
+        var scalar: String?
+        for entry in entries {
+            if entry == "null" {
+                hasNull = true
+            } else if scalar == nil {
+                scalar = entry
+            } else {
+                return
+            }
+        }
+
+        guard let scalar else { return }
+        object["type"] = scalar
+        if hasNull {
+            object["nullable"] = true
+        }
+    }
+
+    private static func stringTypeArray(_ value: (any Sendable)?) -> [String]? {
+        if let strings = value as? [String] {
+            return strings
+        }
+
+        if let entries = value as? [any Sendable] {
+            var strings: [String] = []
+            for entry in entries {
+                guard let string = entry as? String else { return nil }
+                strings.append(string)
+            }
+            return strings
+        }
+
+        return nil
     }
 
     private static func contentContainsImage(_ content: Any?) -> Bool {
@@ -524,11 +582,23 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             effort = nil
         }
 
+        let toolChoiceRequired =
+            Self.deepseekV4String(additionalContext?["tool_choice"]) == "required"
+        let dsv4HasPriorToolResult = dsv4Messages.contains { $0.role == .tool }
+        if toolChoiceRequired,
+            !dsv4HasPriorToolResult,
+            let idx = dsv4Messages.lastIndex(where: { $0.role == .user || $0.role == .developer }),
+            dsv4Messages[idx].task == nil
+        {
+            dsv4Messages[idx].task = "action"
+        }
+
         var prompt = MLXLMCommon.DeepseekV4ChatEncoder().encode(
             messages: dsv4Messages,
             thinkingMode: thinkingMode,
             reasoningEffort: effort,
-            dropEarlierReasoning: true
+            dropEarlierReasoning: true,
+            toolChoiceRequired: toolChoiceRequired
         )
         if !addGenerationPrompt,
             let lastRole = dsv4Messages.last?.role,

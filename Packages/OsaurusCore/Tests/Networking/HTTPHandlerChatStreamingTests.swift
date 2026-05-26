@@ -19,6 +19,32 @@ fileprivate extension URLRequest {
 
 struct HTTPHandlerChatStreamingTests {
 
+    @Test func requestTaskRegistryCancelsTaskInsertedAfterChannelCancellation() async throws {
+        actor Probe {
+            private(set) var cancelled = false
+
+            func markCancelled() {
+                cancelled = true
+            }
+        }
+
+        let registry = HTTPHandler.HTTPRequestTaskRegistry()
+        let probe = Probe()
+        let task = Task<Void, Never> {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            }
+            await probe.markCancelled()
+        }
+        defer { task.cancel() }
+
+        registry.cancelAll()
+        registry.insert(id: UUID(), task: task)
+
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(await probe.cancelled)
+    }
+
     @Test func chatCompletions_agentHeaderDoesNotInjectAgentContext() async throws {
         actor Capture {
             var request: ChatCompletionRequest?

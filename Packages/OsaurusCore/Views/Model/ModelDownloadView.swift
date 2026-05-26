@@ -1674,11 +1674,11 @@ private struct HuggingFaceImportSheet: View {
                 && !ModelManager.nameLooksLikeMLX(repoId)
             {
                 errorMessage = L(
-                    "Repos outside mlx-community must have “mlx” in the repo name (e.g. user/Model-mlx-4bit)."
+                    "Repos outside mlx-community must advertise an MLX-native artifact family in the repo name, such as MLX, MXFP, JANG, JANGTQ, or TurboQuant."
                 )
             } else {
                 errorMessage = L(
-                    "This repo doesn't appear to be MLX-compatible. Try a model from mlx-community or one with “-mlx” in its name."
+                    "This repo did not pass the MLX-compatible metadata/file check. Use an MLX, MXFP, JANG, JANGTQ, or TurboQuant repo with config, tokenizer, and model weights."
                 )
             }
         }

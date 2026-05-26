@@ -57,8 +57,8 @@ struct ModelProfileRegistryTests {
         // JANGTQ is routed at weight-load time by vmlx (via weight_format:
         // "mxtq" in jang_config.json) — osaurus-side the *profile* is still
         // the generic Qwen thinking toggle. If Auto shadowed it we'd get
-        // different default thinking-state behavior (Auto defaults ON, Qwen
-        // defaults OFF). Locking the dispatch order here prevents that drift.
+        // a different family-specific option surface. Locking the dispatch
+        // order here prevents that drift without injecting hidden defaults.
         let profile = ModelProfileRegistry.profile(for: "qwen3.6-35b-a3b-jangtq2")
         #expect(profile?.displayName == QwenThinkingProfile.displayName)
     }
@@ -91,8 +91,8 @@ struct ModelProfileRegistryTests {
         #expect(profile?.thinkingOption == nil)
     }
 
-    @Test("Gemma 4 defaults thinking off so short API replies are visible")
-    func gemma4_defaultsThinkingOff() {
+    @Test("Gemma 4 exposes a thinking toggle without requiring parser-side fixes")
+    func gemma4_exposesThinkingToggle() {
         for id in [
             "gemma-4-26b-a4b-it-jang_4m-crack",
             "dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK",
@@ -101,20 +101,17 @@ struct ModelProfileRegistryTests {
             let profile = ModelProfileRegistry.profile(for: id)
             #expect(profile?.displayName == Gemma4ThinkingProfile.displayName)
             #expect(profile?.thinkingOption?.id == "disableThinking")
-            #expect(profile?.defaults["disableThinking"]?.boolValue == true)
+            let normalized = ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)
+            #expect(normalized["disableThinking"] == nil)
         }
     }
 
     /// Nemotron-3 Reasoning bundles (model_type=nemotron_h, hybrid Mamba+Attn+MoE)
     /// must match `NemotronThinkingProfile`, NOT the generic
-    /// `AutoThinkingProfile`. The two have different `disableThinking`
-    /// defaults — Nemotron defaults to thinking-OFF (defensive, mirroring
-    /// `QwenThinkingProfile`) because the SKU's training extends `<think>`
-    /// blocks through arbitrary self-verification on validation prompts
-    /// (the trapped-thinking pattern documented in
-    /// `jang/research/NEMOTRON-OMNI-RUNTIME-2026-04-28.md` §9). Auto would
-    /// default ON and surface the loop as visible UX regression.
-    @Test("Nemotron-3 reasoning bundles match NemotronThinkingProfile (default OFF)")
+    /// `AutoThinkingProfile`. The profile only exposes the family-specific
+    /// control surface; absent user/API options must not inject a hidden
+    /// `disableThinking` value or any parser-side behavior fix.
+    @Test("Nemotron-3 reasoning bundles match NemotronThinkingProfile")
     func nemotron3_matchesNemotronProfile() {
         for id in [
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
@@ -129,12 +126,8 @@ struct ModelProfileRegistryTests {
                 profile?.displayName == NemotronThinkingProfile.displayName,
                 "expected NemotronThinkingProfile for \(id), got \(profile?.displayName ?? "nil")"
             )
-            // Default-OFF guards against the trapped-thinking pattern.
-            let defaultDisable = profile?.defaults["disableThinking"]?.boolValue ?? false
-            #expect(
-                defaultDisable == true,
-                "Nemotron must default disableThinking=true to avoid trapped-thinking loops"
-            )
+            let normalized = ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)
+            #expect(normalized["disableThinking"] == nil)
         }
     }
 
@@ -163,10 +156,10 @@ struct ModelProfileRegistryTests {
     /// Laguna bundles (`model_type=laguna`) must match
     /// `LagunaThinkingProfile` so the chat-input area's reasoning toggle
     /// drives the `enable_thinking` Jinja kwarg honoured by the shipped
-    /// `laguna_glm_thinking_v5/chat_template.jinja`. Default-OFF mirrors
-    /// the chat template's own default — agentic-coding flows want
-    /// straight-to-answer; the toggle lets the user opt into CoT.
-    @Test("Laguna bundles match LagunaThinkingProfile (default OFF, all quant tiers)")
+    /// `laguna_glm_thinking_v5/chat_template.jinja`. Osaurus exposes the
+    /// control but leaves absent values absent so the shipped template/runtime
+    /// defaults remain authoritative.
+    @Test("Laguna bundles match LagunaThinkingProfile (all quant tiers)")
     func laguna_matchesLagunaProfile() {
         for id in [
             "OsaurusAI/Laguna-XS.2-mxfp4",
@@ -180,19 +173,16 @@ struct ModelProfileRegistryTests {
                 profile?.displayName == LagunaThinkingProfile.displayName,
                 "expected LagunaThinkingProfile for \(id), got \(profile?.displayName ?? "nil")"
             )
-            let defaultDisable = profile?.defaults["disableThinking"]?.boolValue ?? false
-            #expect(
-                defaultDisable == true,
-                "Laguna must default disableThinking=true to mirror the chat-template default"
-            )
+            let normalized = ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)
+            #expect(normalized["disableThinking"] == nil)
         }
     }
 
     /// Ling-2.6 Flash / Bailing uses `enable_thinking` to select the upstream
-    /// `detailed thinking on/off` directive. Osaurus defaults it off, but must
-    /// not clamp explicit user/API opt-in.
-    @Test("Ling bundles expose thinking toggle defaulted off")
-    func ling_matchesRuntimeProfileWithDefaultOffThinkingToggle() {
+    /// `detailed thinking on/off` directive. Osaurus exposes the option without
+    /// injecting a hidden default; explicit user/API choices still pass through.
+    @Test("Ling bundles expose thinking toggle")
+    func ling_matchesRuntimeProfileWithThinkingToggle() {
         for id in [
             "OsaurusAI/Ling-2.6-flash-MXFP4",
             "OsaurusAI/Ling-2.6-flash-JANGTQ",
@@ -205,7 +195,8 @@ struct ModelProfileRegistryTests {
                 "expected LingRuntimeProfile for \(id), got \(profile?.displayName ?? "nil")"
             )
             #expect(profile?.thinkingOption?.id == "disableThinking")
-            #expect(profile?.defaults["disableThinking"]?.boolValue == true)
+            let normalized = ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)
+            #expect(normalized["disableThinking"] == nil)
         }
 
         for id in ["linguistics-model-7b", "darling-llm"] {
@@ -225,11 +216,11 @@ struct ModelProfileRegistryTests {
         )
         #expect(staleLing["disableThinking"]?.boolValue == false)
 
-        let lingDefaults = ModelProfileRegistry.normalizedOptions(
+        let lingUnspecified = ModelProfileRegistry.normalizedOptions(
             for: "OsaurusAI/Ling-2.6-flash-JANGTQ",
             persisted: nil
         )
-        #expect(lingDefaults["disableThinking"]?.boolValue == true)
+        #expect(lingUnspecified["disableThinking"] == nil)
 
         let qwen = ModelProfileRegistry.normalizedOptions(
             for: "OsaurusAI/Qwen3.5-30B-A3B-JANGTQ",
@@ -241,11 +232,11 @@ struct ModelProfileRegistryTests {
         #expect(qwen["disableThinking"]?.boolValue == false)
         #expect(qwen["unrelated"] == nil)
 
-        let qwenDefaults = ModelProfileRegistry.normalizedOptions(
+        let qwenUnspecified = ModelProfileRegistry.normalizedOptions(
             for: "OsaurusAI/Qwen3.5-30B-A3B-JANGTQ",
             persisted: nil
         )
-        #expect(qwenDefaults["disableThinking"]?.boolValue == true)
+        #expect(qwenUnspecified["disableThinking"] == nil)
     }
 
     /// ZAYA1 (Zyphra; `model_type=zaya`) is served as reasoning-capable. The
@@ -271,7 +262,8 @@ struct ModelProfileRegistryTests {
             )
             #expect(profile?.thinkingOption?.id == "disableThinking")
             #expect(profile?.thinkingOption?.inverted == true)
-            #expect(profile?.defaults["disableThinking"]?.boolValue == true)
+            let normalized = ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)
+            #expect(normalized["disableThinking"] == nil)
         }
 
         // Non-text ZAYA and boundary-regression negatives: must NOT classify
@@ -300,15 +292,15 @@ struct ModelProfileRegistryTests {
         )
         #expect(explicitEnabled["disableThinking"]?.boolValue == false)
 
-        let defaults = ModelProfileRegistry.normalizedOptions(
+        let unspecified = ModelProfileRegistry.normalizedOptions(
             for: "Zyphra/Zaya1-8B-JANGTQ4",
             persisted: nil
         )
-        #expect(defaults["disableThinking"]?.boolValue == true)
+        #expect(unspecified["disableThinking"] == nil)
     }
 
-    @Test("Thinking helpers honor Zaya default and inverted toggle semantics")
-    func thinkingHelpers_honorZayaDefaultsAndInversion() {
+    @Test("Thinking helpers require explicit Zaya values and honor inverted toggle semantics")
+    func thinkingHelpers_requireExplicitZayaValuesAndHonorInversion() {
         let model = "Zyphra/Zaya1-8B-JANGTQ4"
 
         #expect(
@@ -316,9 +308,9 @@ struct ModelProfileRegistryTests {
                 for: model,
                 optionId: "disableThinking",
                 values: [:]
-            ) == true
+            ) == nil
         )
-        #expect(ModelProfileRegistry.thinkingEnabled(for: model, values: [:]) == false)
+        #expect(ModelProfileRegistry.thinkingEnabled(for: model, values: [:]) == nil)
         #expect(
             ModelProfileRegistry.thinkingEnabled(
                 for: model,
@@ -333,6 +325,30 @@ struct ModelProfileRegistryTests {
         )
     }
 
+    @Test("ModelOptionsStore migrates legacy injected defaults without deleting new explicit choices")
+    @MainActor
+    func modelOptionsStore_migratesLegacyDefaultsButPreservesNewExplicitChoices() throws {
+        let qwen = "qwen3.6-\(UUID().uuidString)"
+        let dsv4 = "deepseek-v4-flash-\(UUID().uuidString)"
+        let qwenKey = "model_options_\(qwen)"
+        let dsv4Key = "model_options_\(dsv4)"
+        defer {
+            UserDefaults.standard.removeObject(forKey: qwenKey)
+            UserDefaults.standard.removeObject(forKey: dsv4Key)
+        }
+
+        let encoder = JSONEncoder()
+        UserDefaults.standard.set(
+            try encoder.encode(["reasoningEffort": ModelOptionValue.string("instruct")]),
+            forKey: dsv4Key
+        )
+        #expect(ModelOptionsStore.shared.loadOptions(for: dsv4) == nil)
+
+        ModelOptionsStore.shared.saveOptions(["disableThinking": .bool(true)], for: qwen)
+        let explicitQwen = ModelOptionsStore.shared.loadOptions(for: qwen)
+        #expect(explicitQwen?["disableThinking"]?.boolValue == true)
+    }
+
     @Test("Hy3 bundles expose native reasoning_effort values")
     func hy3_matchesReasoningEffortProfile() {
         for id in [
@@ -343,7 +359,8 @@ struct ModelProfileRegistryTests {
         ] {
             let profile = ModelProfileRegistry.profile(for: id)
             #expect(profile?.displayName == Hy3ReasoningProfile.displayName)
-            #expect(profile?.defaults["reasoningEffort"]?.stringValue == "no_think")
+            let normalized = ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)
+            #expect(normalized["reasoningEffort"] == nil)
             #expect(profile?.thinkingOption?.id == nil)
         }
 
@@ -364,7 +381,8 @@ struct ModelProfileRegistryTests {
         ] {
             let profile = ModelProfileRegistry.profile(for: id)
             #expect(profile?.displayName == DSV4ReasoningProfile.displayName)
-            #expect(profile?.defaults["reasoningEffort"]?.stringValue == "instruct")
+            let normalized = ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)
+            #expect(normalized["reasoningEffort"] == nil)
             #expect(profile?.thinkingOption?.id == nil)
 
             let definitions = ModelProfileRegistry.options(for: id)

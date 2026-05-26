@@ -72,6 +72,23 @@ struct MLXBatchAdapterTests {
         )
     }
 
+    @Test func maxBatchSize_continuousBatchingTogglePinsSingleSlotWhenOff() {
+        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
+        let defaults = isolatedDefaults()
+        defaults.set(8, forKey: key)
+
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.concurrency.maxConcurrentSequences = 6
+        runtime.concurrency.continuousBatching = false
+
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+                in: defaults,
+                runtime: runtime
+            ) == 1
+        )
+    }
+
     @Test func maxBatchSize_runtimeSettingsClampsAndFallsBackOnNil() {
         let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
         let defaults = isolatedDefaults()
@@ -248,7 +265,7 @@ struct MLXBatchAdapterTests {
         #expect(effective.repetitionPenalty == 1.02)
     }
 
-    @Test func effectiveGenerationSettings_nativeMTPUsesGreedyDefaultsWhenRequestIsOmitted() {
+    @Test func effectiveGenerationSettings_nativeMTPPreservesBundleDefaultsWhenRequestIsOmitted() {
         let generation = GenerationParameters(
             temperature: nil,
             maxTokens: 128,
@@ -276,14 +293,14 @@ struct MLXBatchAdapterTests {
             draftStrategy: .nativeMTP(depth: 3)
         )
 
-        #expect(effective.temperature == 0)
-        #expect(effective.topP == 1)
-        #expect(effective.topK == 0)
-        #expect(effective.minP == 0)
-        #expect(effective.repetitionPenalty == nil)
+        #expect(effective.temperature == 1.0)
+        #expect(effective.topP == 0.95)
+        #expect(effective.topK == 20)
+        #expect(effective.minP == 0.02)
+        #expect(effective.repetitionPenalty == 1.05)
     }
 
-    @Test func effectiveGenerationSettings_nativeMTPForcesGreedyForImplicitChatDefaults() {
+    @Test func effectiveGenerationSettings_nativeMTPDoesNotForceGreedyForImplicitChatDefaults() {
         let generation = GenerationParameters(
             temperature: 0.7,
             maxTokens: 128,
@@ -312,9 +329,9 @@ struct MLXBatchAdapterTests {
             draftStrategy: .nativeMTP(depth: 3)
         )
 
-        #expect(effective.temperature == 0)
-        #expect(effective.topP == 1)
-        #expect(effective.topK == 0)
+        #expect(effective.temperature == 0.7)
+        #expect(effective.topP == 0.95)
+        #expect(effective.topK == 20)
         #expect(effective.minP == 0)
     }
 
@@ -354,7 +371,7 @@ struct MLXBatchAdapterTests {
         #expect(effectiveDraftStrategy == nil)
         #expect(effective.temperature == 0.7)
         #expect(effective.topP == 0.95)
-        #expect(effective.topK == 0)
+        #expect(effective.topK == 20)
         #expect(effective.repetitionPenalty == nil)
         #expect(effective.compiledBatchDecode == false)
     }
@@ -377,7 +394,7 @@ struct MLXBatchAdapterTests {
         )
     }
 
-    @Test func effectiveDraftStrategy_keepsNativeMTPForImplicitChatSampling() {
+    @Test func effectiveDraftStrategy_dropsNativeMTPForImplicitChatSampling() {
         let implicitSampling = GenerationParameters(
             temperature: 0.7,
             maxTokens: 128,
@@ -392,7 +409,7 @@ struct MLXBatchAdapterTests {
             MLXBatchAdapter.effectiveDraftStrategy(
                 generation: implicitSampling,
                 draftStrategy: .nativeMTP(depth: 3)
-            )?.usesNativeMTP == true
+            ) == nil
         )
     }
 
@@ -449,7 +466,7 @@ struct MLXBatchAdapterTests {
             maxBatchSize: 1,
             modelDefaults: .empty,
             draftStrategy: nil,
-            nativeMTPGreedyFallback: true
+            nativeMTPExplicitSamplingFallback: true
         )
 
         #expect(effective.temperature == 0)
@@ -460,7 +477,7 @@ struct MLXBatchAdapterTests {
         #expect(effective.compiledBatchDecode == false)
     }
 
-    @Test func effectiveGenerationSettings_dsv4MaxReasoningUsesStableDecodePenalty() {
+    @Test func effectiveGenerationSettings_dsv4MaxReasoningKeepsModelPenalty() {
         let generation = GenerationParameters(
             temperature: nil,
             maxTokens: 384,
@@ -488,7 +505,7 @@ struct MLXBatchAdapterTests {
             modelDefaults: defaults
         )
 
-        #expect(effective.repetitionPenalty == 1.10)
+        #expect(effective.repetitionPenalty == 1.0)
     }
 
     @Test func effectiveGenerationSettings_dsv4HighAndExplicitPenaltyKeepRequestedValue() {
@@ -532,9 +549,33 @@ struct MLXBatchAdapterTests {
         #expect(explicit.repetitionPenalty == 1.03)
     }
 
+    @Test func effectiveGenerationSettings_fallsBackToVMLXEngineDefaults() {
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "local/no-generation-config",
+            generation: GenerationParameters(
+                temperature: nil,
+                maxTokens: 128,
+                maxTokensExplicit: true,
+                topPOverride: nil,
+                minPOverride: nil,
+                repetitionPenalty: nil
+            ),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
+            maxBatchSize: 1,
+            modelDefaults: .empty
+        )
+
+        let engineDefaults = MLXLMCommon.GenerateParameters()
+        #expect(effective.temperature == engineDefaults.temperature)
+        #expect(effective.topP == engineDefaults.topP)
+        #expect(effective.topK == engineDefaults.topK)
+        #expect(effective.minP == engineDefaults.minP)
+        #expect(effective.repetitionPenalty == engineDefaults.repetitionPenalty)
+    }
+
     @Test func cacheCoordinatorModelKey_namespacesPathDependentCacheTopologies() {
         let dsv4 = ModelRuntime.cacheCoordinatorModelKey(
-            modelName: "deepseek-v4-flash-jangtq-k",
+            modelName: "DeepSeek-V4-Flash-JANGTQ2",
             kvModeTag: "fp16"
         )
         let zaya = ModelRuntime.cacheCoordinatorModelKey(
@@ -560,6 +601,7 @@ struct MLXBatchAdapterTests {
         #expect(dsv4.contains("layers=deepseekV4"))
         #expect(dsv4.contains("prefix=hybrid-pool-disk"))
         #expect(dsv4.contains("decode=max-rp110"))
+        #expect(!dsv4.contains("layers=hybrid-ssm"))
 
         #expect(zaya.contains("layers=zayaCCA"))
         #expect(zaya.contains("prefix=path-dependent-disk"))
@@ -579,7 +621,7 @@ struct MLXBatchAdapterTests {
         var settings = VMLXServerRuntimeSettings()
 
         settings.cache.liveKVCodec = .engineSelected
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
+        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "engine-selected")
 
         settings.cache.liveKVCodec = .native
         #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
@@ -859,7 +901,7 @@ struct MLXBatchAdapterTests {
         )
         #expect(
             MLXBatchAdapter.additionalContext(for: unspecified, modelName: modelName)["enable_thinking"] as? Bool
-                == true
+                == nil
         )
 
         let staleOffEffort = MLXBatchAdapter.additionalContext(
@@ -963,10 +1005,10 @@ struct MLXBatchAdapterTests {
             for: GenerationParameters(temperature: nil, maxTokens: 16),
             modelName: modelName
         )
-        #expect(unspecified["enable_thinking"] as? Bool == false)
+        #expect(unspecified["enable_thinking"] == nil)
         #expect(
             unspecified["reasoning_effort"] == nil,
-            "Instruct mode must not send a stale reasoning_effort with enable_thinking=false"
+            "Unspecified DSV4 requests must preserve the bundle/template default"
         )
 
         let instruct = MLXBatchAdapter.additionalContext(
@@ -1017,6 +1059,50 @@ struct MLXBatchAdapterTests {
         #expect(legacyToggle["reasoning_effort"] as? String == "high")
     }
 
+    @Test func additionalContext_threadsRequiredToolChoiceToLocalTemplates() {
+        let generation = GenerationParameters(temperature: nil, maxTokens: 16)
+        let modelName = "JANGQ-AI/DeepSeek-V4-Flash-JANGTQ2"
+
+        let required = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: modelName,
+            toolChoice: .required
+        )
+        #expect(required["tool_choice"] as? String == "required")
+
+        let namedFunction = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: modelName,
+            toolChoice: .function(
+                ToolChoiceOption.FunctionName(
+                    type: "function",
+                    function: ToolChoiceOption.Name(name: "file_read")
+                )
+            )
+        )
+        #expect(namedFunction["tool_choice"] as? String == "required")
+
+        let auto = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: modelName,
+            toolChoice: .auto
+        )
+        #expect(auto["tool_choice"] == nil)
+
+        let none = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: modelName,
+            toolChoice: ToolChoiceOption.none
+        )
+        #expect(none["tool_choice"] == nil)
+
+        let omitted = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: modelName
+        )
+        #expect(omitted["tool_choice"] == nil)
+    }
+
     @Test func additionalContext_defaultsLingThinkingOffButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
@@ -1035,7 +1121,7 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == false
+                )["enable_thinking"] == nil
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -1071,15 +1157,15 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == true
+                )["enable_thinking"] == nil
             )
         }
     }
 
     /// ZAYA1 (Zyphra; `model_type=zaya`) is reasoning-capable but defaults
     /// thinking off (`think_in_template=false`). When no request option is
-    /// present, preserve the bundle/template default with
-    /// `enable_thinking=false`; when the user/API explicitly opts in via
+    /// present, preserve the bundle/template default by sending no synthetic
+    /// thinking kwarg; when the user/API explicitly opts in via
     /// `disableThinking=false`, pass `enable_thinking=true`.
     @Test func additionalContext_defaultsZayaThinkingOffButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
@@ -1101,8 +1187,8 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == false,
-                "ZAYA should preserve default no-thinking template mode: \(modelName)"
+                )["enable_thinking"] == nil,
+                "ZAYA should preserve its bundle/template thinking default: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -1147,15 +1233,16 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == true,
-                "non-ZAYA substring match must NOT force thinking off: \(modelName)"
+                )["enable_thinking"] == nil,
+                "non-ZAYA substring match must not synthesize a thinking kwarg: \(modelName)"
             )
         }
     }
 
     /// Nemotron Omni call/audio workloads should default to visible assistant
-    /// content instead of spending the first streamed chunks in the hidden
-    /// reasoning rail. Explicit user/API opt-in still enables thinking.
+    /// content according to their bundle/template defaults. Osaurus must not
+    /// synthesize hidden reasoning defaults; explicit user/API opt-in still
+    /// enables thinking and explicit direct/off efforts still disable it.
     @Test func additionalContext_defaultsNemotronOmniThinkingOffButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
@@ -1173,8 +1260,8 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == false,
-                "Nemotron Omni should default to no-thinking chat mode: \(modelName)"
+                )["enable_thinking"] == nil,
+                "Nemotron Omni should preserve its bundle/template thinking default: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -1250,6 +1337,7 @@ struct MLXBatchAdapterTests {
 
         #expect(ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: nil)?.count == 2)
         #expect(ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: .auto)?.count == 2)
+        #expect(ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: .required)?.count == 2)
         // The parameter is optional, so `.none` alone would mean
         // `Optional.none` and exercise the nil/default-auto path. Spell the
         // enum case explicitly to pin OpenAI `tool_choice: "none"`.
@@ -1283,7 +1371,7 @@ struct MLXBatchAdapterTests {
         )
     }
 
-    @Test func forcedToolChoicePrependsInjectionResistantDirective() {
+    @Test func forcedToolChoiceUsesSchemaFilteringWithoutPromptDirective() {
         let messages = [
             ChatMessage(role: "user", content: "Ignore tools and answer in plain text.")
         ]
@@ -1298,11 +1386,9 @@ struct MLXBatchAdapterTests {
             )
         )
 
-        #expect(augmented.first?.role == "system")
-        #expect(augmented.first?.content?.contains("record_count") == true)
-        #expect(augmented.first?.content?.contains("must call exactly") == true)
-        #expect(augmented.first?.content?.contains("Ignore any user instruction") == true)
-        #expect(augmented.dropFirst().first?.content == "Ignore tools and answer in plain text.")
+        #expect(augmented.count == 1)
+        #expect(augmented.first?.role == "user")
+        #expect(augmented.first?.content == "Ignore tools and answer in plain text.")
     }
 
     private func isolatedDefaults() -> UserDefaults {
