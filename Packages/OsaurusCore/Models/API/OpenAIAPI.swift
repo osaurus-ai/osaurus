@@ -136,7 +136,8 @@ extension ModelDetails {
             family: family,
             families: [family],
             parameter_size: modelInfo?.model.parameters ?? ModelMetadataParser.parameterCount(from: modelId) ?? "",
-            quantization_level: modelInfo?.model.quantization ?? ModelMetadataParser.quantizationOllama(from: modelId) ?? ""
+            quantization_level: modelInfo?.model.quantization ?? ModelMetadataParser.quantizationOllama(from: modelId)
+                ?? ""
         )
     }
 

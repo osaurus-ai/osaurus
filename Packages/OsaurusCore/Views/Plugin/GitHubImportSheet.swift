@@ -2,7 +2,9 @@
 //  GitHubImportSheet.swift
 //  osaurus
 //
-//  Sheet for importing skills from GitHub repositories.
+//  Sheet for importing Claude plugins / skills from GitHub
+//  repositories. Owned by the Plugins tab — historically lived under
+//  `Views/Skill/` while Claude plugins were grouped with skills.
 //
 
 import SwiftUI

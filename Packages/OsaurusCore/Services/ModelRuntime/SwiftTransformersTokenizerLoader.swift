@@ -290,7 +290,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 ]
             } else if hasNemotronSentinel {
                 ordered = [
-                    ("NemotronMinimal", MLXLMCommon.ChatTemplateFallbacks.nemotronMinimal),
+                    ("NemotronMinimal", MLXLMCommon.ChatTemplateFallbacks.nemotronMinimal)
                 ]
             } else {
                 ordered = MLXLMCommon.ChatTemplateFallbacks.orderedFallbacks

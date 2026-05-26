@@ -225,6 +225,18 @@ public final class ClaudePluginInstaller {
                 pluginName: manifest.name
             )
 
+            // Load any previously persisted user_config so substitutions
+            // resolve on update without re-prompting the user. Sensitive
+            // values are pulled lazily through the keychain resolver below.
+            let userConfigValues = ClaudePluginManifestStore.loadUserConfig(pluginId: pluginId)
+            let expansionContext = ClaudePluginExpansionContext(
+                pluginId: pluginId,
+                userConfig: userConfigValues,
+                sensitiveResolver: { key in
+                    Self.readSensitiveUserConfig(pluginId: pluginId, key: key)
+                }
+            )
+
             // Replace semantics: wipe any artifacts this plugin previously
             // installed so re-running install on the same repo never piles
             // up duplicate schedules / commands / MCP providers (skills
@@ -274,6 +286,14 @@ public final class ClaudePluginInstaller {
                         var parsed = try Self.parseSkillWithFallback(
                             rewriteOutcome.rewritten,
                             skillPath: fetchedSkill.entry.path
+                        )
+                        // Substitute non-sensitive user_config values into
+                        // the skill body before persisting. Sensitive
+                        // values are never spliced into prose per the
+                        // Claude Code plugin spec.
+                        parsed.instructions = ClaudePluginVariableExpander.expand(
+                            parsed.instructions,
+                            context: expansionContext
                         )
                         parsed.pluginId = pluginId
                         if parsed.category == nil || parsed.category?.isEmpty == true {
@@ -432,11 +452,15 @@ public final class ClaudePluginInstaller {
                         frontmatter["description"]?
                         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
+                    let expandedTemplate = ClaudePluginVariableExpander.expand(
+                        body.trimmingCharacters(in: .whitespacesAndNewlines),
+                        context: expansionContext
+                    )
                     _ = SlashCommandRegistry.shared.create(
                         name: cmdName,
                         description: description,
                         icon: "text.bubble",
-                        template: body.trimmingCharacters(in: .whitespacesAndNewlines),
+                        template: expandedTemplate,
                         pluginId: pluginId
                     )
 
@@ -480,6 +504,28 @@ public final class ClaudePluginInstaller {
                             // values mark the key as a secret slot the user
                             // has to fill in later.
                             let classifiedEnv = classifyMCPEntries(server.env, scope: .env)
+                            // Apply CLAUDE_PLUGIN_* / user_config / env
+                            // substitution to the non-secret fields. Secret
+                            // env values are left untouched — they live in
+                            // Keychain and are spliced in at launch time.
+                            let expandedCommand = ClaudePluginVariableExpander.expand(
+                                command,
+                                context: expansionContext
+                            )
+                            let expandedArgs = ClaudePluginVariableExpander.expand(
+                                server.args,
+                                context: expansionContext
+                            )
+                            let expandedEnv = ClaudePluginVariableExpander.expand(
+                                classifiedEnv.regular,
+                                context: expansionContext
+                            )
+                            let expandedCwd = server.cwd.map {
+                                ClaudePluginVariableExpander.expand(
+                                    $0,
+                                    context: expansionContext
+                                )
+                            }
                             let provider = MCPProvider(
                                 name: "\(manifest.name): \(server.name)",
                                 url: "",
@@ -488,13 +534,13 @@ public final class ClaudePluginInstaller {
                                 pluginId: pluginId,
                                 transport: .stdio,
                                 executionHost: .sandbox,
-                                command: command,
-                                args: server.args,
-                                env: classifiedEnv.regular,
+                                command: expandedCommand,
+                                args: expandedArgs,
+                                env: expandedEnv,
                                 secretEnvKeys:
                                     Array(classifiedEnv.realSecrets.keys)
                                     + classifiedEnv.placeholderSecrets,
-                                workingDirectory: server.cwd
+                                workingDirectory: expandedCwd
                             )
                             MCPProviderManager.shared.addProvider(provider, token: nil)
                             for (key, value) in classifiedEnv.realSecrets {
@@ -634,10 +680,89 @@ public final class ClaudePluginInstaller {
                 }
             }
 
+            // Persist a snapshot so the Plugins tab can render rich cards
+            // (display name, version, license, keywords, etc.) without
+            // re-fetching `plugin.json` on every launch, and so the
+            // version-update check has a stable baseline to diff against.
+            let snapshot = ClaudePluginManifestSnapshot(
+                pluginId: pluginId,
+                name: manifest.name,
+                displayName: manifest.resolvedDisplayName,
+                description: manifest.description,
+                version: manifest.version,
+                sourceOwner: manifest.sourceRepo.owner,
+                sourceRepo: manifest.sourceRepo.name,
+                sourceBranch: manifest.sourceRepo.branch,
+                sourcePath: manifest.source,
+                authorName: manifest.authorName,
+                authorEmail: manifest.authorEmail,
+                authorURL: manifest.authorURL,
+                homepage: manifest.homepage,
+                repository: manifest.repository,
+                license: manifest.license,
+                keywords: manifest.keywords,
+                installedAt: Date(),
+                userConfigSpec: manifest.userConfigSpec,
+                declaresHooks: manifest.declaresHooks,
+                declaresUnsupportedComponents: manifest.declaresUnsupportedComponents,
+                declaredCounts: ClaudePluginManifestSnapshot.DeclaredCounts(
+                    skills: summary.importedSkillCount,
+                    agents: summary.importedAgentCount,
+                    commands: summary.importedCommandCount,
+                    mcp: summary.importedMCPProviderCount
+                )
+            )
+            ClaudePluginManifestStore.save(snapshot)
+
             report.perPlugin.append(summary)
         }
 
         return report
+    }
+
+    /// Resolve a sensitive `user_config` value via the per-plugin
+    /// Keychain namespace. Returns `nil` when running under the
+    /// keychain-disabled gate (`OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`)
+    /// or when the value has not been set.
+    nonisolated private static func readSensitiveUserConfig(
+        pluginId: String,
+        key: String
+    ) -> String? {
+        // Use the existing per-agent secret store, scoped to the default
+        // agent so the value is shared across agents (per spec: a single
+        // user_config bag per plugin install).
+        return ToolSecretsKeychain.getSecret(
+            id: "userconfig.\(key)",
+            for: pluginId,
+            agentId: Agent.defaultId
+        )
+    }
+
+    /// Write a sensitive `user_config` value into Keychain under the
+    /// shared default-agent namespace. Returns `false` when keychain
+    /// writes are disabled for the current process.
+    @discardableResult
+    public static func writeSensitiveUserConfig(
+        pluginId: String,
+        key: String,
+        value: String
+    ) -> Bool {
+        ToolSecretsKeychain.saveSecret(
+            value,
+            id: "userconfig.\(key)",
+            for: pluginId,
+            agentId: Agent.defaultId
+        )
+    }
+
+    /// Delete every sensitive `user_config` value associated with
+    /// `pluginId`. Called from `uninstall`. No-op when keychain writes
+    /// are disabled.
+    public static func deleteAllSensitiveUserConfig(pluginId: String) {
+        ToolSecretsKeychain.deleteAllSecrets(
+            for: pluginId,
+            agentId: Agent.defaultId
+        )
     }
 
     // MARK: - Concurrent fetch helpers
@@ -1331,7 +1456,9 @@ public final class ClaudePluginInstaller {
     // MARK: - Uninstall
 
     /// Remove every artifact previously installed for `pluginId` across skills,
-    /// schedules, slash commands, and MCP providers.
+    /// schedules, slash commands, and MCP providers. Also deletes the manifest
+    /// snapshot, user_config JSON, Keychain secrets, data directory, and
+    /// synthesised plugin-root cache.
     @discardableResult
     public func uninstall(pluginId: String) async -> ClaudePluginInstallReport.PluginSummary {
         var summary = ClaudePluginInstallReport.PluginSummary(
@@ -1346,6 +1473,13 @@ public final class ClaudePluginInstaller {
         summary.importedAgentCount = ScheduleManager.shared.deleteByPluginId(pluginId)
         summary.importedCommandCount = SlashCommandRegistry.shared.deleteByPluginId(pluginId)
         summary.importedMCPProviderCount = MCPProviderManager.shared.deleteByPluginId(pluginId)
+
+        // Clean up Claude-plugin specific persistence so re-installing
+        // doesn't leak old state. Order: secrets first (Keychain), then
+        // on-disk state via the manifest store (manifest + userconfig +
+        // data dir + cache dir).
+        Self.deleteAllSensitiveUserConfig(pluginId: pluginId)
+        ClaudePluginManifestStore.delete(pluginId: pluginId)
 
         return summary
     }

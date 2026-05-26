@@ -444,6 +444,94 @@ public enum OsaurusPaths {
         pluginDirectory(for: pluginId).appendingPathComponent("data", isDirectory: true)
     }
 
+    // MARK: - Claude plugins (imported via GitHub)
+
+    /// Root directory for Claude-plugin metadata and per-plugin storage:
+    /// `~/.osaurus/claude-plugins/`.
+    public static func claudePluginsRoot() -> URL {
+        root().appendingPathComponent("claude-plugins", isDirectory: true)
+    }
+
+    /// Per-plugin manifest snapshot directory:
+    /// `~/.osaurus/claude-plugins/manifests/`.
+    public static func claudePluginsManifestsDir() -> URL {
+        claudePluginsRoot().appendingPathComponent("manifests", isDirectory: true)
+    }
+
+    /// Per-plugin user-config (non-sensitive) JSON directory:
+    /// `~/.osaurus/claude-plugins/userconfig/`.
+    public static func claudePluginsUserConfigDir() -> URL {
+        claudePluginsRoot().appendingPathComponent("userconfig", isDirectory: true)
+    }
+
+    /// Per-plugin data directory parent (`CLAUDE_PLUGIN_DATA` root):
+    /// `~/.osaurus/claude-plugins/data/`.
+    public static func claudePluginsDataDir() -> URL {
+        claudePluginsRoot().appendingPathComponent("data", isDirectory: true)
+    }
+
+    /// Per-plugin synthesised source cache (`CLAUDE_PLUGIN_ROOT` target):
+    /// `~/.osaurus/claude-plugins/cache/`. Currently a placeholder so the
+    /// variable expander can hand out a stable path even though we don't
+    /// keep a full plugin checkout.
+    public static func claudePluginsCacheDir() -> URL {
+        claudePluginsRoot().appendingPathComponent("cache", isDirectory: true)
+    }
+
+    /// Per-plugin manifest snapshot file:
+    /// `~/.osaurus/claude-plugins/manifests/<safeId>.json`.
+    public static func claudePluginManifestFile(for pluginId: String) -> URL {
+        claudePluginsManifestsDir()
+            .appendingPathComponent("\(claudePluginSafeId(pluginId)).json")
+    }
+
+    /// Per-plugin user-config JSON file:
+    /// `~/.osaurus/claude-plugins/userconfig/<safeId>.json`.
+    public static func claudePluginUserConfigFile(for pluginId: String) -> URL {
+        claudePluginsUserConfigDir()
+            .appendingPathComponent("\(claudePluginSafeId(pluginId)).json")
+    }
+
+    /// Per-plugin data directory:
+    /// `~/.osaurus/claude-plugins/data/<safeId>/`. Created lazily on first
+    /// reference by `ClaudePluginVariableExpander`.
+    public static func claudePluginDataDir(for pluginId: String) -> URL {
+        claudePluginsDataDir()
+            .appendingPathComponent(claudePluginSafeId(pluginId), isDirectory: true)
+    }
+
+    /// Per-plugin synthesised source cache directory:
+    /// `~/.osaurus/claude-plugins/cache/<safeId>/`.
+    public static func claudePluginCacheDir(for pluginId: String) -> URL {
+        claudePluginsCacheDir()
+            .appendingPathComponent(claudePluginSafeId(pluginId), isDirectory: true)
+    }
+
+    /// Spec-compatible safe-id sanitiser for filesystem paths derived from a
+    /// Claude `pluginId`. Replaces anything outside `[A-Za-z0-9_-]` with `-`
+    /// so a pluginId like `github:owner/repo/name` becomes
+    /// `github-owner-repo-name`.
+    public static func claudePluginSafeId(_ pluginId: String) -> String {
+        let allowed = CharacterSet(
+            charactersIn:
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+        )
+        var out = ""
+        out.reserveCapacity(pluginId.count)
+        for scalar in pluginId.unicodeScalars {
+            if allowed.contains(scalar) {
+                out.unicodeScalars.append(scalar)
+            } else {
+                out.append("-")
+            }
+        }
+        // Collapse repeated dashes so we don't get unsightly `---` runs.
+        while out.contains("--") {
+            out = out.replacingOccurrences(of: "--", with: "-")
+        }
+        return out
+    }
+
     /// Per-plugin SQLite database file
     public static func pluginDatabaseFile(for pluginId: String) -> URL {
         pluginDataDirectory(for: pluginId).appendingPathComponent("data.db")

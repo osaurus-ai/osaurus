@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 
 // MARK: - Models
 
@@ -188,6 +189,14 @@ public struct MarketplacePlugin: Codable, Sendable {
     public let strict: Bool?
     public let skills: [String]?
     public let author: MarketplaceOwner?
+    /// Optional `version` field declared on the marketplace entry itself.
+    /// Falls back to `plugin.json.version` per the spec resolution order
+    /// (see `ClaudePluginVersionResolver`).
+    public let version: String?
+    public let homepage: String?
+    public let repository: String?
+    public let license: String?
+    public let keywords: [String]?
 
     public init(
         name: String,
@@ -195,7 +204,12 @@ public struct MarketplacePlugin: Codable, Sendable {
         source: MarketplaceSource? = nil,
         strict: Bool? = nil,
         skills: [String]? = nil,
-        author: MarketplaceOwner? = nil
+        author: MarketplaceOwner? = nil,
+        version: String? = nil,
+        homepage: String? = nil,
+        repository: String? = nil,
+        license: String? = nil,
+        keywords: [String]? = nil
     ) {
         self.name = name
         self.description = description
@@ -203,6 +217,11 @@ public struct MarketplacePlugin: Codable, Sendable {
         self.strict = strict
         self.skills = skills
         self.author = author
+        self.version = version
+        self.homepage = homepage
+        self.repository = repository
+        self.license = license
+        self.keywords = keywords
     }
 }
 
@@ -331,6 +350,36 @@ public struct ClaudePluginManifest: Sendable {
     /// In that case only `skills` is populated.
     public let isLegacy: Bool
 
+    // MARK: - Spec fields lifted from `.claude-plugin/plugin.json`
+    //
+    // All optional: legacy marketplaces and plugins without a per-plugin
+    // `plugin.json` keep working with these nil. The installer treats
+    // `displayName` as falling back to `name`, `version` as resolving via
+    // the precedence list in `resolvedVersion`, and `keywords/license/...`
+    // as purely display-side metadata.
+
+    /// Human-readable name. Falls back to `name` when omitted.
+    public let displayName: String?
+    /// Pinned version per spec resolution (plugin.json > marketplace > git SHA).
+    /// `nil` only when none of the three sources had a value.
+    public let version: String?
+    public let authorEmail: String?
+    public let authorURL: String?
+    public let homepage: String?
+    public let repository: String?
+    public let license: String?
+    public let keywords: [String]
+    public let userConfigSpec: [ClaudePluginUserConfigField]
+    /// Explicit `dependencies` array from `plugin.json` (vs the body-scan
+    /// heuristic). Stored but not yet honored (see `dependencies` in plan).
+    public let declaredDependencies: [String]
+    /// True when the plugin declared `hooks` (any shape). We don't execute
+    /// hooks yet — the detail view surfaces this so users know.
+    public let declaresHooks: Bool
+    /// True when the plugin declared `monitors` / `lspServers` / `themes`
+    /// / `outputStyles` / `bin/` (collectively the things we don't run yet).
+    public let declaresUnsupportedComponents: [String]
+
     public init(
         name: String,
         description: String?,
@@ -343,7 +392,19 @@ public struct ClaudePluginManifest: Sendable {
         claudeMdPath: String? = nil,
         auxMarkdownPaths: [String] = [],
         mcpJsonPath: String? = nil,
-        isLegacy: Bool = false
+        isLegacy: Bool = false,
+        displayName: String? = nil,
+        version: String? = nil,
+        authorEmail: String? = nil,
+        authorURL: String? = nil,
+        homepage: String? = nil,
+        repository: String? = nil,
+        license: String? = nil,
+        keywords: [String] = [],
+        userConfigSpec: [ClaudePluginUserConfigField] = [],
+        declaredDependencies: [String] = [],
+        declaresHooks: Bool = false,
+        declaresUnsupportedComponents: [String] = []
     ) {
         self.name = name
         self.description = description
@@ -357,12 +418,225 @@ public struct ClaudePluginManifest: Sendable {
         self.auxMarkdownPaths = auxMarkdownPaths
         self.mcpJsonPath = mcpJsonPath
         self.isLegacy = isLegacy
+        self.displayName = displayName
+        self.version = version
+        self.authorEmail = authorEmail
+        self.authorURL = authorURL
+        self.homepage = homepage
+        self.repository = repository
+        self.license = license
+        self.keywords = keywords
+        self.userConfigSpec = userConfigSpec
+        self.declaredDependencies = declaredDependencies
+        self.declaresHooks = declaresHooks
+        self.declaresUnsupportedComponents = declaresUnsupportedComponents
     }
+
+    /// User-facing display name. Falls back to `name`.
+    public var resolvedDisplayName: String { displayName ?? name }
 
     /// True when there is anything importable beyond skills.
     public var hasNonSkillArtifacts: Bool {
         !agents.isEmpty || !commands.isEmpty || claudeMdPath != nil || mcpJsonPath != nil
             || !auxMarkdownPaths.isEmpty
+    }
+}
+
+/// One entry in a plugin's `userConfig` block. Mirrors the schema documented
+/// at https://code.claude.com/docs/en/plugins-reference#user-configuration
+public struct ClaudePluginUserConfigField: Codable, Sendable, Hashable {
+    public enum FieldType: String, Codable, Sendable {
+        case string
+        case number
+        case boolean
+        case directory
+        case file
+    }
+
+    public let key: String
+    public let type: FieldType
+    public let title: String
+    public let description: String
+    public let sensitive: Bool
+    public let required: Bool
+    public let defaultValue: String?
+    /// For `string`, allow an array of values rather than a single one.
+    public let multiple: Bool
+    public let min: Double?
+    public let max: Double?
+
+    public init(
+        key: String,
+        type: FieldType,
+        title: String,
+        description: String,
+        sensitive: Bool = false,
+        required: Bool = false,
+        defaultValue: String? = nil,
+        multiple: Bool = false,
+        min: Double? = nil,
+        max: Double? = nil
+    ) {
+        self.key = key
+        self.type = type
+        self.title = title
+        self.description = description
+        self.sensitive = sensitive
+        self.required = required
+        self.defaultValue = defaultValue
+        self.multiple = multiple
+        self.min = min
+        self.max = max
+    }
+}
+
+/// Decoded shape of `.claude-plugin/plugin.json`. Unknown top-level keys are
+/// ignored per the spec ("Unrecognized fields"). The decoder is *defensive*:
+/// fields with the wrong type are dropped instead of failing the whole file,
+/// because the only thing the installer truly needs is the manifest from
+/// `marketplace.json` — `plugin.json` is purely additive metadata.
+public struct ClaudePluginJSON: Sendable {
+    public let name: String?
+    public let displayName: String?
+    public let version: String?
+    public let description: String?
+    public let authorName: String?
+    public let authorEmail: String?
+    public let authorURL: String?
+    public let homepage: String?
+    public let repository: String?
+    public let license: String?
+    public let keywords: [String]
+    public let userConfig: [ClaudePluginUserConfigField]
+    public let declaredDependencies: [String]
+    public let hasHooks: Bool
+    public let unsupportedComponents: [String]
+
+    /// Parse a `plugin.json` payload tolerantly. Returns `nil` on malformed
+    /// JSON; otherwise extracts whatever recognised fields are present and
+    /// silently drops the rest.
+    public static func parse(_ raw: String) -> ClaudePluginJSON? {
+        guard let data = raw.data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        let name = root["name"] as? String
+        let displayName = root["displayName"] as? String
+        let version = root["version"] as? String
+        let description = root["description"] as? String
+
+        var authorName: String? = nil
+        var authorEmail: String? = nil
+        var authorURL: String? = nil
+        if let author = root["author"] as? [String: Any] {
+            authorName = author["name"] as? String
+            authorEmail = author["email"] as? String
+            authorURL = author["url"] as? String
+        } else if let authorStr = root["author"] as? String {
+            authorName = authorStr
+        }
+
+        let homepage = root["homepage"] as? String
+        let repository = root["repository"] as? String
+        let license = root["license"] as? String
+
+        let keywords: [String] = (root["keywords"] as? [String]) ?? []
+
+        let userConfig = Self.parseUserConfig(root["userConfig"])
+        let declaredDependencies = Self.parseDependencies(root["dependencies"])
+
+        // Hooks may show up as an object, an array, or a path string. We
+        // treat any of them as "declares hooks". The installer just surfaces
+        // this — it doesn't execute them yet.
+        let hasHooks = root["hooks"] != nil
+
+        var unsupported: [String] = []
+        if root["lspServers"] != nil { unsupported.append("lspServers") }
+        if root["outputStyles"] != nil { unsupported.append("outputStyles") }
+        if root["channels"] != nil { unsupported.append("channels") }
+        if let experimental = root["experimental"] as? [String: Any] {
+            if experimental["themes"] != nil { unsupported.append("themes") }
+            if experimental["monitors"] != nil { unsupported.append("monitors") }
+        }
+
+        return ClaudePluginJSON(
+            name: name,
+            displayName: displayName,
+            version: version,
+            description: description,
+            authorName: authorName,
+            authorEmail: authorEmail,
+            authorURL: authorURL,
+            homepage: homepage,
+            repository: repository,
+            license: license,
+            keywords: keywords,
+            userConfig: userConfig,
+            declaredDependencies: declaredDependencies,
+            hasHooks: hasHooks,
+            unsupportedComponents: unsupported
+        )
+    }
+
+    private static func parseUserConfig(_ value: Any?) -> [ClaudePluginUserConfigField] {
+        guard let dict = value as? [String: Any] else { return [] }
+        var out: [ClaudePluginUserConfigField] = []
+        for (key, entryAny) in dict {
+            guard let entry = entryAny as? [String: Any] else { continue }
+            let typeStr = (entry["type"] as? String) ?? "string"
+            let type = ClaudePluginUserConfigField.FieldType(rawValue: typeStr) ?? .string
+            let title = (entry["title"] as? String) ?? key
+            let description = (entry["description"] as? String) ?? ""
+            let sensitive = (entry["sensitive"] as? Bool) ?? false
+            let required = (entry["required"] as? Bool) ?? false
+            let multiple = (entry["multiple"] as? Bool) ?? false
+            var defaultValue: String? = nil
+            if let s = entry["default"] as? String {
+                defaultValue = s
+            } else if let n = entry["default"] as? NSNumber {
+                defaultValue = n.stringValue
+            } else if let b = entry["default"] as? Bool {
+                defaultValue = b ? "true" : "false"
+            }
+            let minV =
+                (entry["min"] as? Double)
+                ?? (entry["min"] as? NSNumber).map { $0.doubleValue }
+            let maxV =
+                (entry["max"] as? Double)
+                ?? (entry["max"] as? NSNumber).map { $0.doubleValue }
+            out.append(
+                ClaudePluginUserConfigField(
+                    key: key,
+                    type: type,
+                    title: title,
+                    description: description,
+                    sensitive: sensitive,
+                    required: required,
+                    defaultValue: defaultValue,
+                    multiple: multiple,
+                    min: minV,
+                    max: maxV
+                )
+            )
+        }
+        return out.sorted { $0.key < $1.key }
+    }
+
+    private static func parseDependencies(_ value: Any?) -> [String] {
+        guard let arr = value as? [Any] else { return [] }
+        var out: [String] = []
+        for entry in arr {
+            if let s = entry as? String {
+                out.append(s)
+            } else if let dict = entry as? [String: Any],
+                let name = dict["name"] as? String
+            {
+                out.append(name)
+            }
+        }
+        return out
     }
 }
 
@@ -1143,6 +1417,14 @@ public final class GitHubSkillService: ObservableObject {
         )
         async let hasReadmeMd: Bool = fileExists(repo: sourceRepo, path: "\(prefix)README.md")
         async let hasMCPJson: Bool = fileExists(repo: sourceRepo, path: "\(prefix).mcp.json")
+        async let pluginJSONRaw: String? = fetchOptionalFileContent(
+            from: sourceRepo,
+            path: "\(prefix).claude-plugin/plugin.json"
+        )
+        async let sha: String? = fetchSourceSHA(
+            repo: sourceRepo,
+            path: source.isEmpty ? nil : source
+        )
 
         let skills = try await skillsTask
         let agents: [ClaudeAgentEntry] =
@@ -1166,20 +1448,177 @@ public final class GitHubSkillService: ObservableObject {
         if await hasReadmeMd { auxPaths.append("\(prefix)README.md") }
         let mcpJsonPath = await hasMCPJson ? "\(prefix).mcp.json" : nil
 
+        // Merge per-plugin `plugin.json` metadata on top of marketplace
+        // entry fields. Spec precedence:
+        //   displayName: plugin.json > <none>; falls back to `name` at use.
+        //   version: plugin.json > marketplace entry > git SHA > nil.
+        //   description: plugin.json > marketplace entry.
+        //   keywords/license/homepage/repository: plugin.json > marketplace entry.
+        //   author.{name,email,url}: plugin.json author block > marketplace `author.name`.
+        let pluginJSONString = await pluginJSONRaw
+        let parsedJSON = pluginJSONString.flatMap { ClaudePluginJSON.parse($0) }
+        let sourceSHA = await sha
+
+        let resolvedDescription = parsedJSON?.description ?? plugin.description
+        let resolvedAuthorName = parsedJSON?.authorName ?? plugin.author?.name
+        let resolvedAuthorEmail = parsedJSON?.authorEmail
+        let resolvedAuthorURL = parsedJSON?.authorURL
+        let resolvedHomepage = parsedJSON?.homepage ?? plugin.homepage
+        let resolvedRepository = parsedJSON?.repository ?? plugin.repository
+        let resolvedLicense = parsedJSON?.license ?? plugin.license
+        let resolvedKeywords: [String] = {
+            if let kw = parsedJSON?.keywords, !kw.isEmpty { return kw }
+            return plugin.keywords ?? []
+        }()
+        let resolvedVersion = ClaudePluginVersionResolver.resolve(
+            pluginJSONVersion: parsedJSON?.version,
+            marketplaceVersion: plugin.version,
+            sha: sourceSHA
+        )
+
         return ClaudePluginManifest(
             name: plugin.name,
-            description: plugin.description,
+            description: resolvedDescription,
             source: source.isEmpty ? plugin.name : source,
             sourceRepo: sourceRepo,
-            authorName: plugin.author?.name,
+            authorName: resolvedAuthorName,
             skills: skills,
             agents: agents,
             commands: commands,
             claudeMdPath: claudeMdPath,
             auxMarkdownPaths: auxPaths,
             mcpJsonPath: mcpJsonPath,
-            isLegacy: false
+            isLegacy: false,
+            displayName: parsedJSON?.displayName,
+            version: resolvedVersion,
+            authorEmail: resolvedAuthorEmail,
+            authorURL: resolvedAuthorURL,
+            homepage: resolvedHomepage,
+            repository: resolvedRepository,
+            license: resolvedLicense,
+            keywords: resolvedKeywords,
+            userConfigSpec: parsedJSON?.userConfig ?? [],
+            declaredDependencies: parsedJSON?.declaredDependencies ?? [],
+            declaresHooks: parsedJSON?.hasHooks ?? false,
+            declaresUnsupportedComponents: parsedJSON?.unsupportedComponents ?? []
         )
+    }
+
+    /// Spec-defined version resolution: prefer the value declared in
+    /// `plugin.json`, fall back to the marketplace entry, then the git
+    /// SHA at fetch time, then `nil`.
+    public enum ClaudePluginVersionResolver {
+        public static func resolve(
+            pluginJSONVersion: String?,
+            marketplaceVersion: String?,
+            sha: String?
+        ) -> String? {
+            if let v = pluginJSONVersion?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !v.isEmpty
+            {
+                return v
+            }
+            if let v = marketplaceVersion?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !v.isEmpty
+            {
+                return v
+            }
+            if let s = sha?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !s.isEmpty
+            {
+                // Short SHA (first 7 chars) matches the Claude Code spec's
+                // SHA-as-version convention.
+                return String(s.prefix(7))
+            }
+            return nil
+        }
+
+        /// True when `available` is strictly newer than `installed`.
+        ///
+        /// Both sides parse as semver → compare semver. Either side is a
+        /// SHA (or unparseable) → fall back to string inequality, matching
+        /// the spec's "SHA-versioned plugins update whenever the recorded
+        /// SHA differs" behavior.
+        public static func hasUpdate(installed: String?, available: String?) -> Bool {
+            guard
+                let available = available?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                !available.isEmpty
+            else {
+                return false
+            }
+            let installedTrimmed = (installed ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if installedTrimmed.isEmpty { return true }
+            if installedTrimmed == available { return false }
+            if let lhs = SemanticVersion.parse(installedTrimmed),
+                let rhs = SemanticVersion.parse(available)
+            {
+                return lhs < rhs
+            }
+            // Either side is a SHA / non-semver → any difference counts.
+            return true
+        }
+    }
+
+    /// Public helper used by `InstalledClaudePluginsAggregator` to probe
+    /// the source path's HEAD commit when checking for SHA-versioned
+    /// plugin updates.
+    public nonisolated func fetchSourceSHANonIsolated(
+        owner: String,
+        repo: String,
+        branch: String,
+        path: String?
+    ) async -> String? {
+        let r = GitHubRepo(owner: owner, name: repo, branch: branch)
+        return await fetchSourceSHA(repo: r, path: path)
+    }
+
+    /// Fetch the head commit SHA for the source path. Used to pin a
+    /// SHA-style version when neither `plugin.json` nor the marketplace
+    /// entry declare one (per the Claude Code plugin spec).
+    ///
+    /// Returns `nil` when the API call fails or the response is
+    /// unexpected — version resolution then falls back to `nil` and the
+    /// plugin is recorded as "unknown" version. `path == nil` queries
+    /// the whole repo HEAD (used when the plugin lives at the repo root).
+    private nonisolated func fetchSourceSHA(
+        repo: GitHubRepo,
+        path: String?
+    ) async -> String? {
+        var urlString = "https://api.github.com/repos/\(repo.owner)/\(repo.name)/commits"
+        var queryItems: [String] = ["per_page=1", "sha=\(repo.branch)"]
+        if let path, !path.isEmpty {
+            // Percent-encode the path so directories with characters like
+            // `+` / spaces round-trip safely through GitHub's query parser.
+            let allowed = CharacterSet.urlQueryAllowed.subtracting(
+                CharacterSet(charactersIn: "&=?")
+            )
+            let encoded = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
+            queryItems.append("path=\(encoded)")
+        }
+        urlString += "?" + queryItems.joined(separator: "&")
+        guard let url = URL(string: urlString) else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                http.statusCode == 200
+            else {
+                return nil
+            }
+            guard let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                let first = arr.first
+            else {
+                return nil
+            }
+            return first["sha"] as? String
+        } catch {
+            return nil
+        }
     }
 
     /// Resolve a `MarketplaceSource` to the concrete `(repo, basePath)` pair

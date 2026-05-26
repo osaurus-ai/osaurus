@@ -451,7 +451,10 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("Services/ModelRuntime.swift")
         let loadDone = try #require(source.range(of: #"trace?.mark("load_container_done")"#))
         let leaseAcquire = try #require(
-            source.range(of: "await ModelLease.shared.acquire(modelName)", range: loadDone.upperBound ..< source.endIndex)
+            source.range(
+                of: "await ModelLease.shared.acquire(modelName)",
+                range: loadDone.upperBound ..< source.endIndex
+            )
         )
         let postLoadWindow = String(source[loadDone.lowerBound ..< leaseAcquire.lowerBound])
 
@@ -1168,7 +1171,11 @@ struct RuntimePolicySourceTests {
             )
         )
         let ndjsonStreaming = String(handler[ndjsonStart.lowerBound ..< ndjsonEnd.lowerBound])
-        #expect(ndjsonStreaming.contains("let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: req.model)"))
+        #expect(
+            ndjsonStreaming.contains(
+                "let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: req.model)"
+            )
+        )
         #expect(ndjsonStreaming.contains("func markSemanticDeltaIfChannelActive()"))
         #expect(ndjsonStreaming.contains("await ModelRuntime.shared.unload(name: req.model)"))
         #expect(ndjsonStreaming.contains("try Task.checkCancellation()\n                    // Ollama-style NDJSON"))
@@ -1180,7 +1187,11 @@ struct RuntimePolicySourceTests {
             )
         )
         let anthropicStreaming = String(handler[anthropicStart.lowerBound ..< anthropicEnd.lowerBound])
-        #expect(anthropicStreaming.contains("let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)"))
+        #expect(
+            anthropicStreaming.contains(
+                "let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)"
+            )
+        )
         #expect(anthropicStreaming.contains("func markSemanticDeltaIfChannelActive()"))
         #expect(anthropicStreaming.contains("markSemanticDeltaIfChannelActive()"))
         #expect(anthropicStreaming.contains("await ModelRuntime.shared.unload(name: model)"))
@@ -1193,7 +1204,11 @@ struct RuntimePolicySourceTests {
             )
         )
         let responsesStreaming = String(handler[responsesStart.lowerBound ..< responsesEnd.lowerBound])
-        #expect(responsesStreaming.contains("let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)"))
+        #expect(
+            responsesStreaming.contains(
+                "let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)"
+            )
+        )
         #expect(responsesStreaming.contains("var emittedSemanticDelta = false"))
         #expect(responsesStreaming.contains("func markSemanticDeltaIfChannelActive()"))
         #expect(responsesStreaming.contains("!wasResidentBeforeStream && !emittedSemanticDelta"))
@@ -1211,8 +1226,16 @@ struct RuntimePolicySourceTests {
             "Per-request HTTP work must go through runRequestTask so channelInactive can cancel model loads/generation"
         )
         #expect(handler.components(separatedBy: "runRequestTask(priority: .userInitiated)").count >= 8)
-        #expect(handler.contains("try Task.checkCancellation()\n                    let stream = try await chatEngine.streamChat(request: enrichedReq)"))
-        #expect(handler.contains("try Task.checkCancellation()\n                let stream = try await chatEngine.streamChat(request: req)"))
+        #expect(
+            handler.contains(
+                "try Task.checkCancellation()\n                    let stream = try await chatEngine.streamChat(request: enrichedReq)"
+            )
+        )
+        #expect(
+            handler.contains(
+                "try Task.checkCancellation()\n                let stream = try await chatEngine.streamChat(request: req)"
+            )
+        )
         #expect(handler.contains("let stream = try await chatEngine.streamChat(request: req)"))
         #expect(handler.contains("let stream = try await self.chatEngine.streamChat(request: chatRequest)"))
         #expect(handler.contains("let stream = try await chatEngine.streamChat(request: internalReq)"))
@@ -1290,13 +1313,16 @@ struct RuntimePolicySourceTests {
         let end = try #require(
             appDelegate.range(
                 of: "public func applicationWillTerminate",
-                range: start.upperBound ..< appDelegate.endIndex))
+                range: start.upperBound ..< appDelegate.endIndex
+            )
+        )
         let body = String(appDelegate[start.lowerBound ..< end.lowerBound])
 
         let stopSessions = try #require(body.range(of: "ChatWindowManager.shared.stopAllSessions()"))
         let clearRuntime = try #require(body.range(of: "await ModelRuntime.shared.clearAll()"))
         let replyTerminate = try #require(
-            body.range(of: "NSApp.reply(toApplicationShouldTerminate: true)"))
+            body.range(of: "NSApp.reply(toApplicationShouldTerminate: true)")
+        )
 
         #expect(stopSessions.lowerBound < clearRuntime.lowerBound)
         #expect(clearRuntime.lowerBound < replyTerminate.lowerBound)
@@ -1324,7 +1350,11 @@ struct RuntimePolicySourceTests {
         #expect(appDelegate.contains("Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1"))
         #expect(appDelegate.contains("if keychainDisabledTestMode {"))
         #expect(appDelegate.contains("LaunchGuard.markStartupComplete()"))
-        #expect(appDelegate.contains("if !keychainDisabledTestMode {\n                await MCPProviderManager.shared.connectEnabledProviders()"))
+        #expect(
+            appDelegate.contains(
+                "if !keychainDisabledTestMode {\n                await MCPProviderManager.shared.connectEnabledProviders()"
+            )
+        )
         #expect(appDelegate.contains("if !keychainDisabledTestMode {\n            SandboxToolRegistrar.shared.start()"))
         #expect(appDelegate.contains("Headless live-proof launches only need the local HTTP server"))
         #expect(appDelegate.contains("keychainDisabledTestMode && !keychainDisabledUIPresentationMode"))
@@ -1437,7 +1467,9 @@ struct RuntimePolicySourceTests {
     @Test("ChatEngine stream wrapper does not accumulate reasoning sentinels as visible response text")
     func chatEngineStreamWrapperKeepsReasoningOutOfVisibleAccumulator() throws {
         let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
-        let reasoningDecode = try #require(chatEngine.range(of: "if let reasoning = StreamingReasoningHint.decode(delta)"))
+        let reasoningDecode = try #require(
+            chatEngine.range(of: "if let reasoning = StreamingReasoningHint.decode(delta)")
+        )
         let yieldReasoning = try #require(
             chatEngine.range(
                 of: "continuation.yield(delta)\n                        continue",
@@ -1599,7 +1631,9 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             toolsView.contains(".available: availableShown + runtimeShown")
-                && toolsView.contains(".sandbox: SandboxPluginLibrary.shared.plugins.count + builtInSandboxToolEntries.count"),
+                && toolsView.contains(
+                    ".sandbox: SandboxPluginLibrary.shared.plugins.count + builtInSandboxToolEntries.count"
+                ),
             "Tools tab badges must count the runtime rows they render so Settings cannot show 0 while chat has folder/sandbox tools."
         )
     }
@@ -1625,7 +1659,9 @@ struct RuntimePolicySourceTests {
         let tokenizerLoader = try Self.source("Services/ModelRuntime/SwiftTransformersTokenizerLoader.swift")
         #expect(
             tokenizerLoader.contains("let toolChoiceRequired =")
-                && tokenizerLoader.contains("Self.deepseekV4String(additionalContext?[\"tool_choice\"]) == \"required\"")
+                && tokenizerLoader.contains(
+                    "Self.deepseekV4String(additionalContext?[\"tool_choice\"]) == \"required\""
+                )
                 && tokenizerLoader.contains("toolChoiceRequired: toolChoiceRequired"),
             "DSV4 native prompt rendering must pass required tool_choice into DeepseekV4ChatEncoder so second-turn/named required tool calls keep the DSML must-call directive."
         )
@@ -1653,7 +1689,7 @@ struct RuntimePolicySourceTests {
             runtime[streamStart.lowerBound...].range(of: "// MARK: - Static helpers"),
             "The streamWithTools source slice should end before static helper declarations."
         )
-        let streamWithTools = runtime[streamStart.lowerBound..<streamEnd.lowerBound]
+        let streamWithTools = runtime[streamStart.lowerBound ..< streamEnd.lowerBound]
         let toolCase = try #require(
             streamWithTools.range(of: "case .toolInvocation(let name, let argsJSON):"),
             "ModelRuntime.streamWithTools must handle parsed vMLX toolInvocation events."
@@ -1709,7 +1745,9 @@ struct RuntimePolicySourceTests {
             "Generic local chat must not silently force enable_thinking=true."
         )
         #expect(
-            !adapter.contains("context[\"enable_thinking\"] = hasPositiveReasoningEffort\n            if hasPositiveReasoningEffort"),
+            !adapter.contains(
+                "context[\"enable_thinking\"] = hasPositiveReasoningEffort\n            if hasPositiveReasoningEffort"
+            ),
             "Family-specific reasoning profiles must not force enable_thinking=false by writing a false boolean when no positive effort was requested."
         )
         #expect(
