@@ -1130,7 +1130,7 @@ struct RuntimePolicySourceTests {
         #expect(handler.contains("if case ChannelEvent.inputClosed = event"))
         #expect(handler.contains("context.fireUserInboundEventTriggered(event)"))
         #expect(!handler.contains("intervalNanoseconds: 250_000_000"))
-        #expect(handler.contains("intervalNanoseconds: 15_000_000_000"))
+        #expect(handler.contains("let keepaliveTask = Self.startSSEKeepalive("))
         #expect(handler.contains("intervalNanoseconds: UInt64 = 15_000_000_000"))
         #expect(handler.contains("promise.futureResult.whenFailure"))
         #expect(handler.contains("ctx.value.close(promise: nil)"))
