@@ -13385,6 +13385,9 @@
     "No services match \"%@\"" : {
 
     },
+    "No skills match \"%@\"" : {
+
+    },
     "No system prompt" : {
 
     },
@@ -17922,6 +17925,9 @@
           }
         }
       }
+    },
+    "Search skills" : {
+
     },
     "Search tools" : {
 

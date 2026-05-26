@@ -26,6 +26,20 @@ struct SkillsView: View {
     @State private var exportingSkill: Skill?
     @State private var isProcessing = false
     @State private var showProgress = false
+    @State private var searchText = ""
+
+    /// Skills matching the current search query (name, description, category,
+    /// or keywords). Returns all skills when the query is empty.
+    private var filteredSkills: [Skill] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return skillManager.skills }
+        return skillManager.skills.filter { skill in
+            skill.name.lowercased().contains(query)
+                || skill.description.lowercased().contains(query)
+                || (skill.category?.lowercased().contains(query) ?? false)
+                || skill.keywords.contains { $0.lowercased().contains(query) }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -75,11 +89,20 @@ struct SkillsView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
-                            InstalledPluginsSection(onMessage: { message, isError in
-                                showToast(message, isError: isError)
-                            })
+                            // Hide the plugins section while searching so the
+                            // results focus on matching skills.
+                            if searchText.isEmpty {
+                                InstalledPluginsSection(onMessage: { message, isError in
+                                    showToast(message, isError: isError)
+                                })
+                            }
 
-                            ForEach(Array(skillManager.skills.enumerated()), id: \.element.id) { index, skill in
+                            let shown = filteredSkills
+                            if shown.isEmpty && !searchText.isEmpty {
+                                noSearchResults
+                            }
+
+                            ForEach(Array(shown.enumerated()), id: \.element.id) { index, skill in
                                 SkillRow(
                                     skill: skill,
                                     animationDelay: Double(index) * 0.03,
@@ -346,10 +369,25 @@ struct SkillsView: View {
         }
     }
 
+    // MARK: - Search Empty State
+
+    private var noSearchResults: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 28, weight: .light))
+                .foregroundColor(theme.tertiaryText)
+            Text("No skills match \"\(searchText)\"", bundle: .module)
+                .font(.system(size: 13))
+                .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
+    }
+
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
+        ManagerHeaderWithTabs(
             title: L("Skills"),
             subtitle: L("Specialized knowledge and guidance for the AI"),
             count: skillManager.skills.isEmpty ? nil : skillManager.enabledCount
@@ -369,6 +407,11 @@ struct SkillsView: View {
                 isCreating = true
             }
             .disabled(isProcessing || skillManager.isRefreshing)
+        } tabsRow: {
+            HStack {
+                Spacer()
+                SearchField(text: $searchText, placeholder: "Search skills", width: 240)
+            }
         }
     }
 
