@@ -950,7 +950,7 @@ extension OpenResponsesRequest {
             case .none:
                 openAIToolChoice = ToolChoiceOption.none
             case .required:
-                openAIToolChoice = .auto
+                openAIToolChoice = .required
             case .function(let name):
                 openAIToolChoice = .function(
                     ToolChoiceOption.FunctionName(

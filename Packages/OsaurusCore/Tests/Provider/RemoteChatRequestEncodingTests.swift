@@ -160,7 +160,7 @@ struct RemoteChatRequestEncodingTests {
         let providerId = UUID()
         defer { RemoteProviderKeychain.deleteAPIKey(for: providerId) }
 
-        let provider = RemoteProvider(
+        var provider = RemoteProvider(
             id: providerId,
             name: "Azure OpenAI Foundry",
             host: "example-resource.cognitiveservices.azure.com",
@@ -168,6 +168,17 @@ struct RemoteChatRequestEncodingTests {
             authType: .apiKey,
             providerType: .azureOpenAI
         )
+
+        if KeychainQueryHelpers.disablesKeychainForProcess {
+            #expect(!RemoteProviderKeychain.saveAPIKey("azure-secret", for: providerId))
+            #expect(provider.resolvedHeaders()["api-key"] == nil)
+
+            provider.customHeaders["api-key"] = "azure-secret"
+            let headers = provider.resolvedHeaders()
+            #expect(headers["api-key"] == "azure-secret")
+            #expect(headers["Authorization"] == nil)
+            return
+        }
 
         #expect(RemoteProviderKeychain.saveAPIKey("azure-secret", for: providerId))
 

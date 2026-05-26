@@ -49,15 +49,15 @@ per container at load time
 
 | Field | Value | Why |
 |---|---|---|
-| `modelKey` | `"<modelName>\|kv=fp16\|cachefmt=2\|restore=fullhit-trim-eval1\|..."` | per-model isolation across loads; KV-mode, serializer, restore-contract, and topology tags prevent serving disk entries encoded under a different cache contract after a runtime update |
+| `modelKey` | `"<modelName>\|kv=fp16\|cachefmt=2\|restore=fullhit-trim-eval1\|..."` by default; `kv=engine-selected` or `kv=turbo(...)` only after explicit KV-codec opt-in | per-model isolation across loads; KV-mode, serializer, restore-contract, and topology tags prevent serving disk entries encoded under a different cache contract after a runtime update |
 | `diskCacheDir` | `OsaurusPaths.diskKVCache()` | osaurus-managed sandbox path |
 | `enableDiskCache` | `true` when probe-write succeeds, else `false` | graceful fallback to memory-only when the dir is read-only / out-of-disk |
 | `usePagedCache` | `true` | content-addressed paged blocks for prefix reuse |
-| `defaultKVMode` | `.none` (fp16) | TurboQuant 3-bit / 4-bit codebooks have an open per-step drift bug (`CompilableTurboQuantKVCache.swift` iter-10 measurement); fp16 is the only safe default until that closes |
+| `defaultKVMode` | native/fp16 by default; `engine_selected` remains an explicit Server Settings opt-in that maps ordinary full-history KV layers to vmlx's TurboQuant policy | global TurboQuant cache defaults stay off until Qwen/Gemma/DSV4 cross-family live rows cover the historical loop/leak failure modes; DSV4/ZAYA/SSM/rotating companion caches keep their typed serializers and are not replaced by generic KV compression |
 | `defaultMaxKVSize` | `65536` | prefill window; `longPromptMultiplier=2.0` covers the 131K case |
 | `longPromptMultiplier` | `2.0` | rotating-cache cap kicks in only past 131K |
 | `ssmMaxEntries` | `50` | SSM state cap for hybrid Mamba/CCA companion cache |
-| `enableSSMReDerive` | `false` | disables vmlx's end-of-generation second-prefill SSM re-derive — see "Upstream runtime boundaries" below |
+| `enableSSMReDerive` | `true` | enables hybrid SSM/linear-attention companion-state rederive/store by default |
 
 `maxCacheBlocks`, `pagedBlockSize`, and `diskCacheMaxGB` are not
 overridden; vmlx's defaults are used so a library tuning bump lands
@@ -176,12 +176,10 @@ These are deliberately not papered over in osaurus because they belong in
   `LING_JANGTQ2_LONG_PROMPT_CRASH.md`.
 - vmlx pin `b9da180` reorders the SSM re-derive pass to run AFTER the
   generation yields completion `.info`, so the SSE stream no longer
-  stays open while the re-derive runs. Osaurus still sets
-  `enableSSMReDerive=false` for chat traffic — not for the old stream-
-  ordering reason but because osaurus's chat workload mutates the
-  system prefix every turn (memory injection, preflight capability
-  search, dynamic skills) so the SSM cache rarely lands a boundary-
-  matching hit and the re-derive cost is paid without warm-cache payoff.
+  stays open while the re-derive runs. Osaurus keeps
+  `enableSSMReDerive=true` so hybrid SSM/linear-attention rows can
+  restore companion state by default instead of silently degrading to
+  KV-only reuse.
 - A load-time `convertToBFloat16(model:)` crash has been observed after
   prior GPU faults on the same boot: `mlx::core::Fence::wait` ->
   `AGX::ComputeContext::endComputePass`. This is below the recoverable

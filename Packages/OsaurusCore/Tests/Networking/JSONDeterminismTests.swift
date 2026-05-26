@@ -48,6 +48,25 @@ struct JSONDeterminismTests {
     }
 
     @Test
+    func canonicalSerializationOptions_doNotEscapeSlashes() throws {
+        let payload: [String: Any] = ["path": "/Users/eric/Desktop/testmandel/mandelbrot.py"]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical)
+
+        #expect(String(decoding: data, as: UTF8.self) == "{\"path\":\"/Users/eric/Desktop/testmandel/mandelbrot.py\"}")
+    }
+
+    @Test
+    func canonicalEncoder_doesNotEscapeSlashes() throws {
+        struct Payload: Codable {
+            let path: String
+        }
+        let encoder = JSONEncoder.osaurusCanonical()
+        let data = try encoder.encode(Payload(path: "/usr/bin/env"))
+
+        #expect(String(decoding: data, as: UTF8.self) == "{\"path\":\"/usr/bin/env\"}")
+    }
+
+    @Test
     func jsonCanonicalization_normalizeRecursivelyValidates() throws {
         let nested: [String: Any] = [
             "outer": [

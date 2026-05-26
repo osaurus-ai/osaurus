@@ -161,6 +161,34 @@ struct FolderToolsResilienceTests {
         #expect(text == "(empty file)", "got: \(text)")
     }
 
+    @Test func fileRead_successPayloadIncludesRawContentForModelReplay() async throws {
+        let root = tmpRoot()
+        let path = root.appendingPathComponent("script.py")
+        try "#!/usr/bin/env python3\nprint('ok')\n".write(
+            to: path,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let tool = FileReadTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "script.py", "start_line": 1, "end_line": 1}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        #expect(result.contains(#"\/"#) == false)
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect(payload["path"] as? String == "script.py")
+        #expect(payload["content"] as? String == "#!/usr/bin/env python3")
+        #expect(payload["start_line"] as? Int == 1)
+        #expect(payload["end_line"] as? Int == 1)
+        #expect(payload["total_lines"] as? Int == 3)
+        #expect(payload["truncated"] as? Bool == false)
+        let text = try #require(payload["text"] as? String)
+        #expect(text.contains("1| #!/usr/bin/env python3"))
+        #expect(text.contains(#"\/"#) == false)
+    }
+
     // MARK: - file_write
 
     @Test func fileWrite_missingContent() async throws {

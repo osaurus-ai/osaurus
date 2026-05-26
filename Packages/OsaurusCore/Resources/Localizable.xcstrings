@@ -486,6 +486,16 @@
         }
       }
     },
+    "%lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld"
+          }
+        }
+      }
+    },
     "%lld of %lld facts" : {
       "localizations" : {
         "en" : {
@@ -7773,6 +7783,9 @@
         }
       }
     },
+    "ENDPOINT" : {
+
+    },
     "English-only model with highest recall" : {
       "localizations" : {
         "de" : {
@@ -10332,16 +10345,6 @@
         }
       }
     },
-    "Importing %lld of %lld..." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Importing %1$lld of %2$lld..."
-          }
-        }
-      }
-    },
     "Importing..." : {
       "localizations" : {
         "de" : {
@@ -10775,6 +10778,9 @@
       }
     },
     "Installing" : {
+
+    },
+    "Installing selected plugins" : {
 
     },
     "Instructions" : {
@@ -13268,6 +13274,9 @@
     "No identity yet. Chat with Osaurus and the memory system will build your identity from session distillations." : {
 
     },
+    "No installed skills yet" : {
+
+    },
     "No invites issued yet" : {
 
     },
@@ -13594,6 +13603,12 @@
 
     },
     "No services match \"%@\"" : {
+
+    },
+    "No skills here" : {
+
+    },
+    "No skills match \"%@\"" : {
 
     },
     "No system prompt" : {
@@ -14600,6 +14615,9 @@
           }
         }
       }
+    },
+    "Override the base URL to route through a proxy or self-hosted gateway. Leave as-is for the official endpoint." : {
+
     },
     "Overview" : {
       "localizations" : {
@@ -19222,6 +19240,9 @@
           }
         }
       }
+    },
+    "Search skills" : {
+
     },
     "Search tools" : {
 

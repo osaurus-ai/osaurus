@@ -35,8 +35,8 @@
 //  Bundles that ship BOTH files get the JANG `chat.sampling_defaults`
 //  applied first, with any fields the JANG config omits filled from
 //  `generation_config.json`. Bundles that ship neither return `.empty`
-//  and the caller's hardcoded fallback ladder takes over (unchanged from
-//  pre-PR behaviour).
+//  and the caller falls back to vmlx's own `GenerateParameters` defaults
+//  after request and server-runtime overrides.
 //
 //  We intentionally do NOT chase `jang_config.source_model.name` to
 //  re-resolve from the source model's own config directory — that

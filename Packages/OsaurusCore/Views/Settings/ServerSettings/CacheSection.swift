@@ -95,7 +95,7 @@ struct CacheSection: View {
             SettingsToggle(
                 title: L("Re-derive SSM State After Generation"),
                 description:
-                    "Hybrid Mamba models only. Off by default since chat workloads rarely re-hit the same boundary on the next turn.",
+                    "Hybrid Mamba models only. On by default so SSM companion state can be restored with prefix/L2 cache hits.",
                 isOn: $draft.cache.enableSSMReDerive
             )
 

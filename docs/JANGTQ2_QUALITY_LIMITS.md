@@ -102,10 +102,9 @@ documented quality floor:
   kernel manager. See `LING_JANGTQ2_LONG_PROMPT_CRASH.md` for the
   pre-fix crash trace; the doc is retained for archival reference.
 * ✅ Closed in vmlx pin `b9da180`: `coordinator.storeAfterGeneration`
-  now runs AFTER `.info` is yielded, not before. Osaurus still keeps
-  `enableSSMReDerive: false` for chat workloads with mutating system
-  prefixes — see the SSM re-derive comment block in
-  `Services/ModelRuntime.swift`.
+  now runs AFTER `.info` is yielded, not before. Osaurus defaults
+  `enableSSMReDerive: true` so hybrid SSM/linear-attention cache rows
+  restore companion state by default.
 * Osaurus prompt-bloat reduction (lazy tool schemas) — see
   `PROMPT_BLOAT_FOLLOWUP.md`. Most impactful single change to make
   JANGTQ2 useful again on chat workloads (since the 3500-token

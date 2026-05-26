@@ -130,6 +130,18 @@ enum ModelMetadataParser {
 
     private static func precisionFormat(from repoId: String) -> String? {
         let text = repoId.lowercased()
+        if let match = text.range(
+            of: #"mxfp(\d+)"#,
+            options: .regularExpression
+        ) {
+            return String(text[match]).uppercased()
+        }
+        if let match = text.range(
+            of: #"jangtq\d*"#,
+            options: .regularExpression
+        ) {
+            return String(text[match]).uppercased()
+        }
         if text.contains("fp16") { return "FP16" }
         if text.contains("bf16") { return "BF16" }
         if text.contains("fp32") { return "FP32" }

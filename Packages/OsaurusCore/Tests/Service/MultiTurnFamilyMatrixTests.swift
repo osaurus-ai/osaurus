@@ -194,6 +194,7 @@ struct CapabilityFromDirectoryTests {
     @Test(arguments: [
         "qwen2_vl", "qwen2_5_vl", "qwen3_vl",
         "qwen3_5", "qwen3_5_moe",
+        "qwen3_6", "qwen3_6_moe",
         "smolvlm",
         "nemotron_h_omni",
     ])

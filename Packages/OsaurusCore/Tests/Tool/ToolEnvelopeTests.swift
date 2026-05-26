@@ -93,6 +93,28 @@ struct ToolEnvelopeTests {
         #expect(result?["text"] as? String == "./\n├── a\n└── b")
     }
 
+    @Test func successDoesNotEscapeSlashesInToolReplayJSON() throws {
+        let text = "     1| #!/usr/bin/env python3\n"
+        let json = ToolEnvelope.success(tool: "file_read", text: text)
+
+        #expect(json.contains(#"\/"#) == false)
+        #expect(json.contains("#!/usr/bin/env python3"))
+        let payload = try #require(ToolEnvelope.successPayload(json) as? [String: Any])
+        #expect(payload["text"] as? String == text)
+    }
+
+    @Test func failureDoesNotEscapeSlashesInToolReplayJSON() throws {
+        let json = ToolEnvelope.failure(
+            kind: .executionError,
+            message: "File not found: /Users/eric/Desktop/testmandel/mandelbrot.py",
+            tool: "file_read"
+        )
+
+        #expect(json.contains(#"\/"#) == false)
+        #expect(json.contains("/Users/eric/Desktop/testmandel/mandelbrot.py"))
+        #expect(ToolEnvelope.failureMessage(json) == "File not found: /Users/eric/Desktop/testmandel/mandelbrot.py")
+    }
+
     // MARK: - Detection
 
     @Test func isErrorDetectsNewShape() {

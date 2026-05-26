@@ -26,6 +26,40 @@ struct SkillsView: View {
     @State private var exportingSkill: Skill?
     @State private var isProcessing = false
     @State private var showProgress = false
+    @State private var searchText = ""
+    @State private var selectedTab: SkillsTab = .all
+
+    /// Base skill set for a tab: All, Installed (user-created + plugin), or
+    /// Default (built-in).
+    private func skills(in tab: SkillsTab) -> [Skill] {
+        switch tab {
+        case .all: return skillManager.skills
+        case .installed: return skillManager.skills.filter { !$0.isBuiltIn }
+        case .defaults: return skillManager.skills.filter { $0.isBuiltIn }
+        }
+    }
+
+    private var tabCounts: [SkillsTab: Int] {
+        [
+            .all: skillManager.skills.count,
+            .installed: skillManager.skills.filter { !$0.isBuiltIn }.count,
+            .defaults: skillManager.skills.filter { $0.isBuiltIn }.count,
+        ]
+    }
+
+    /// Skills for the selected tab, further narrowed by the search query
+    /// (name, description, category, or keywords).
+    private var filteredSkills: [Skill] {
+        let base = skills(in: selectedTab)
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return base }
+        return base.filter { skill in
+            skill.name.lowercased().contains(query)
+                || skill.description.lowercased().contains(query)
+                || (skill.category?.lowercased().contains(query) ?? false)
+                || skill.keywords.contains { $0.lowercased().contains(query) }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -75,11 +109,21 @@ struct SkillsView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
-                            InstalledPluginsSection(onMessage: { message, isError in
-                                showToast(message, isError: isError)
-                            })
+                            // Plugins are "installed" artifacts, so the section
+                            // only belongs on All/Installed — and not while
+                            // searching, so results focus on matching skills.
+                            if searchText.isEmpty && selectedTab != .defaults {
+                                InstalledPluginsSection(onMessage: { message, isError in
+                                    showToast(message, isError: isError)
+                                })
+                            }
 
-                            ForEach(Array(skillManager.skills.enumerated()), id: \.element.id) { index, skill in
+                            let shown = filteredSkills
+                            if shown.isEmpty {
+                                emptyState
+                            }
+
+                            ForEach(Array(shown.enumerated()), id: \.element.id) { index, skill in
                                 SkillRow(
                                     skill: skill,
                                     animationDelay: Double(index) * 0.03,
@@ -346,13 +390,38 @@ struct SkillsView: View {
         }
     }
 
+    // MARK: - Empty State
+
+    @ViewBuilder
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: searchText.isEmpty ? "sparkles" : "magnifyingglass")
+                .font(.system(size: 28, weight: .light))
+                .foregroundColor(theme.tertiaryText)
+            if !searchText.isEmpty {
+                Text("No skills match \"\(searchText)\"", bundle: .module)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+            } else if selectedTab == .installed {
+                Text("No installed skills yet", bundle: .module)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+            } else {
+                Text("No skills here", bundle: .module)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
+    }
+
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
+        ManagerHeaderWithTabs(
             title: L("Skills"),
-            subtitle: L("Specialized knowledge and guidance for the AI"),
-            count: skillManager.skills.isEmpty ? nil : skillManager.enabledCount
+            subtitle: L("Specialized knowledge and guidance for the AI")
         ) {
             HeaderIconButton("arrow.clockwise", isLoading: skillManager.isRefreshing, help: "Refresh skills") {
                 Task { @MainActor in
@@ -369,6 +438,13 @@ struct SkillsView: View {
                 isCreating = true
             }
             .disabled(isProcessing || skillManager.isRefreshing)
+        } tabsRow: {
+            HeaderTabsRow(
+                selection: $selectedTab,
+                counts: tabCounts,
+                searchText: $searchText,
+                searchPlaceholder: "Search skills"
+            )
         }
     }
 
@@ -424,25 +500,23 @@ private struct ImportDropdownButton: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "square.and.arrow.down")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                 Text("Import", bundle: .module)
                     .font(.system(size: 13, weight: .medium))
             }
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-                    .opacity(isHovering ? 0.8 : 1)
-            )
+            .foregroundStyle(theme.secondaryText)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        .tint(theme.secondaryText)
+        .fixedSize()
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground)
+                .opacity(isHovering ? 0.8 : 1)
+        )
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering

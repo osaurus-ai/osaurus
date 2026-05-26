@@ -422,7 +422,25 @@ struct FileReadTool: OsaurusTool {
         } else {
             text = output
         }
-        return ToolEnvelope.success(tool: name, text: text)
+        let contentEnd = max(validStart - 1, lastLineIncluded)
+        let rawContent: String
+        if contentEnd > validStart - 1 {
+            rawContent = lines[(validStart - 1) ..< contentEnd].joined(separator: "\n")
+        } else {
+            rawContent = ""
+        }
+        return ToolEnvelope.success(
+            tool: name,
+            result: [
+                "text": text,
+                "content": rawContent,
+                "path": relativePath,
+                "start_line": validStart,
+                "end_line": lastLineIncluded,
+                "total_lines": lines.count,
+                "truncated": lastLineIncluded < validEnd,
+            ]
+        )
     }
 
     /// Pull text out of the file at `url`, throwing `binaryContent` when

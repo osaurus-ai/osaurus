@@ -116,7 +116,7 @@ data: [DONE]
 
 ### Function/Tool Calling
 
-Osaurus implements OpenAI‑compatible function calling via the `tools` array and optional `tool_choice` in the request. The server injects tool‑calling instructions into the prompt and parses assistant outputs for a top‑level `tool_calls` object, tolerating minor formatting (e.g., code fences).
+Osaurus implements OpenAI‑compatible function calling via the `tools` array and optional `tool_choice` in the request. Local model templates receive the active tool schema; a named `tool_choice` narrows that schema to the requested function instead of adding a generic prompt directive. The server parses assistant outputs for top-level `tool_calls`, tolerating minor formatting (e.g., code fences).
 
 Supported tool type: `function`.
 

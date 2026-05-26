@@ -174,7 +174,7 @@ struct GitHubImportSheet: View {
             return L("\(result.skills.count) skills available")
         case .pluginSelection(let result):
             return L("\(result.plugins.count) plugins available")
-        case .importing(let progress, let total): return L("Importing \(progress) of \(total)")
+        case .importing: return L("Installing selected plugins")
         case .installComplete(let report):
             let totals =
                 report.totalImportedSkills + report.totalImportedAgents
@@ -741,8 +741,9 @@ struct GitHubImportSheet: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Importing \(progress) of \(total)...", bundle: .module)
+                Text("\(progress) of \(total)", bundle: .module)
                     .font(.system(size: 12))
+                    .monospacedDigit()
                     .foregroundColor(theme.secondaryText)
             }
 
@@ -993,21 +994,21 @@ struct GitHubImportSheet: View {
         importState = .importing(progress: 0, total: totalSteps)
 
         activeTask = Task { @MainActor in
-            let report = await ClaudePluginInstaller.shared.install(
-                selections: selections,
-                from: result.repo,
-                progressHandler: { @MainActor current, total in
-                    // The installer runs on the main actor, so this fires
-                    // synchronously inside `install`. Updating `@State`
-                    // directly (no inner `Task`) avoids two problems:
-                    //   1. a flood of queued Tasks racing to set
-                    //      `importState`, which can leave us stuck at
-                    //      "N of N" because a late-arriving progress task
-                    //      overwrites `.installComplete`.
-                    //   2. one extra runloop tick of jank per artifact.
-                    importState = .importing(progress: current, total: total)
-                }
-            )
+            // Batch so SkillManager reloads `skills` once at the end instead
+            // of after every per-skill save — which made the Skills view
+            // behind this sheet flash continuously during a 170-skill import.
+            let report = await SkillManager.shared.batchUpdates {
+                await ClaudePluginInstaller.shared.install(
+                    selections: selections,
+                    from: result.repo,
+                    progressHandler: { @MainActor current, total in
+                        // Fires synchronously on the main actor; set `@State`
+                        // directly so late progress Tasks can't overwrite
+                        // `.installComplete`.
+                        importState = .importing(progress: current, total: total)
+                    }
+                )
+            }
             guard !Task.isCancelled else { return }
             onPluginInstallComplete?(report)
             importState = .installComplete(report)

@@ -43,4 +43,41 @@ struct ToolSerializationStabilityTests {
         let bData = try JSONSerialization.data(withJSONObject: b, options: [.sortedKeys])
         #expect(aData == bData)
     }
+
+    @Test
+    func toTokenizerToolSpec_normalizesNullableTypeUnionsForChatTemplates() throws {
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "lookup",
+                description: "Looks up an optional label.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "label": .object([
+                            "type": .array([.string("string"), .string("null")]),
+                            "description": .string("Optional label."),
+                        ]),
+                        "mode": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("fast"), .string("full")]),
+                        ]),
+                    ]),
+                    "required": .array([.string("label")]),
+                ])
+            )
+        )
+
+        let spec = tool.toTokenizerToolSpec()
+        let fn = try #require(spec["function"] as? [String: any Sendable])
+        let parameters = try #require(fn["parameters"] as? [String: any Sendable])
+        let properties = try #require(parameters["properties"] as? [String: any Sendable])
+        let label = try #require(properties["label"] as? [String: any Sendable])
+        let mode = try #require(properties["mode"] as? [String: any Sendable])
+
+        #expect(label["type"] as? String == "string")
+        #expect(label["nullable"] as? Bool == true)
+        #expect(mode["type"] as? String == "string")
+        #expect((mode["enum"] as? [String]) == ["fast", "full"])
+    }
 }

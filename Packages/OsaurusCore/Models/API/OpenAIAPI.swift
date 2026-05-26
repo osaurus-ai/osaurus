@@ -118,6 +118,49 @@ struct ModelDetails: Codable, Sendable {
     let quantization_level: String?
 }
 
+extension ModelDetails {
+    /// Ollama-compatible details for local MLX models.
+    ///
+    /// Prefer resolved bundle metadata when the model id maps to a downloaded
+    /// directory. Fall back to strict family-name helpers for local aliases
+    /// such as `_dsv4_band_pe2`, because `/api/tags` is often used by clients
+    /// before the user loads the model and those aliases still need honest
+    /// family metadata instead of `unknown`.
+    static func localMLXModelDetails(for modelId: String) -> ModelDetails {
+        let modelInfo = ModelInfo.load(modelId: modelId)
+        let family = localMLXFamily(for: modelId, architecture: modelInfo?.model.architecture)
+
+        return ModelDetails(
+            parent_model: "",
+            format: "safetensors",
+            family: family,
+            families: [family],
+            parameter_size: modelInfo?.model.parameters ?? ModelMetadataParser.parameterCount(from: modelId) ?? "",
+            quantization_level: modelInfo?.model.quantization ?? ModelMetadataParser.quantizationOllama(from: modelId) ?? ""
+        )
+    }
+
+    private static func localMLXFamily(for modelId: String, architecture: String?) -> String {
+        if let architecture,
+            !architecture.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            architecture.lowercased() != "unknown"
+        {
+            return architecture
+        }
+
+        if ModelFamilyNames.isDSV4Family(modelId) { return "deepseek_v4" }
+        if ModelFamilyNames.isQwenFamily(modelId) { return "qwen" }
+        if ModelFamilyNames.isGemmaFamily(modelId) { return "gemma" }
+        if ModelFamilyNames.isMiniMaxFamily(modelId) { return "minimax" }
+        if ModelFamilyNames.isLingFamily(modelId) { return "ling" }
+        if ModelFamilyNames.isZayaVLFamily(modelId) { return "zaya_vl" }
+        if ModelFamilyNames.isZayaFamily(modelId) { return "zaya" }
+        if ModelFamilyNames.isNemotronOmniFamily(modelId) { return "nemotron_omni" }
+
+        return "unknown"
+    }
+}
+
 /// Response for /models endpoint
 struct ModelsResponse: Codable, Sendable {
     var object: String = "list"
@@ -807,6 +850,7 @@ struct ToolFunction: Codable, Sendable {
 enum ToolChoiceOption: Codable, Sendable {
     case auto
     case none
+    case required
     case function(FunctionName)
 
     struct FunctionName: Codable, Sendable {
@@ -821,11 +865,12 @@ enum ToolChoiceOption: Codable, Sendable {
             switch str {
             case "auto": self = .auto
             case "none": self = .none
+            case "required": self = .required
             default:
                 throw DecodingError.dataCorruptedError(
                     in: container,
                     debugDescription:
-                        "Unsupported tool_choice string '\(str)'. Expected 'auto', 'none', or a typed function selector."
+                        "Unsupported tool_choice string '\(str)'. Expected 'auto', 'none', 'required', or a typed function selector."
                 )
             }
             return
@@ -841,6 +886,8 @@ enum ToolChoiceOption: Codable, Sendable {
             try container.encode("auto")
         case .none:
             try container.encode("none")
+        case .required:
+            try container.encode("required")
         case .function(let obj):
             try container.encode(obj)
         }
@@ -942,6 +989,50 @@ public enum JSONValue: Codable, Sendable, Equatable {
 // MARK: - JSONValue Conversions
 
 extension JSONValue {
+    /// Convert JSON Schema into the shape expected by local chat templates.
+    ///
+    /// Some local templates, notably Gemma-4's native tool template, treat
+    /// `type` as a scalar and run string filters over it. OpenAI/MCP schemas
+    /// commonly spell nullable fields as `type: ["string", "null"]`. That is
+    /// valid JSON Schema, but it is not renderable by those templates. The
+    /// transformation below is the lossless OpenAPI spelling of the same
+    /// schema: `type: "string", nullable: true`.
+    var chatTemplateSchemaValue: JSONValue {
+        switch self {
+        case .object(let obj):
+            var normalized = obj.mapValues { $0.chatTemplateSchemaValue }
+            Self.normalizeNullableTypeUnion(&normalized)
+            return .object(normalized)
+        case .array(let arr):
+            return .array(arr.map { $0.chatTemplateSchemaValue })
+        case .null, .bool, .number, .string:
+            return self
+        }
+    }
+
+    private static func normalizeNullableTypeUnion(_ object: inout [String: JSONValue]) {
+        guard case .array(let entries) = object["type"] else { return }
+
+        var hasNull = false
+        var scalar: String?
+        for entry in entries {
+            guard case .string(let typeName) = entry else { return }
+            if typeName == "null" {
+                hasNull = true
+            } else if scalar == nil {
+                scalar = typeName
+            } else {
+                return
+            }
+        }
+
+        guard let scalar else { return }
+        object["type"] = .string(scalar)
+        if hasNull {
+            object["nullable"] = .bool(true)
+        }
+    }
+
     /// Convert JSONValue to Sendable-compatible value for Jinja chat templates.
     /// Null values are dropped from dictionaries because Jinja's `Value(any:)` cannot
     /// handle `NSNull` and throws a runtime error. JSON Schema treats a missing key
@@ -1001,7 +1092,7 @@ extension ToolFunction {
             fn["description"] = description
         }
         if let parameters {
-            fn["parameters"] = parameters.sendableValue
+            fn["parameters"] = parameters.chatTemplateSchemaValue.sendableValue
         }
         return fn
     }

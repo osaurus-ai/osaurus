@@ -131,8 +131,8 @@ struct SystemPromptDefaultIdentityTests {
         let block = SystemPromptTemplates.capabilityDiscoveryNudge
         #expect(block.contains("capabilities_search"))
         #expect(block.contains("capabilities_load"))
-        #expect(block.contains(#"capabilities_search({"queries": ["<what you need>"]})"#))
-        #expect(!block.contains(#"capabilities_search({"query": "#))
+        #expect(block.contains(#"capabilities_search({"query": "<what you need>"})"#))
+        #expect(!block.contains(#"capabilities_search({"queries": "#))
     }
 }
 

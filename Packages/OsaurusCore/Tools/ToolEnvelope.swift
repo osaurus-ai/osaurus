@@ -299,7 +299,7 @@ public enum ToolEnvelope {
     ) -> String {
         if let data = try? JSONSerialization.data(
             withJSONObject: dict,
-            options: [.sortedKeys]
+            options: .osaurusCanonical
         ),
             let json = String(data: data, encoding: .utf8)
         {
@@ -318,7 +318,7 @@ public enum ToolEnvelope {
     ) -> String {
         if let data = try? JSONSerialization.data(
             withJSONObject: dict,
-            options: [.sortedKeys]
+            options: .osaurusCanonical
         ),
             let json = String(data: data, encoding: .utf8)
         {
