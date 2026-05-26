@@ -118,6 +118,56 @@ struct DSV4ParserPipelineTests {
         )
     }
 
+    @Test("live DSV4 tool_crs alias after bare tool marker routes to a tool call")
+    func liveToolCRSAliasAfterBareToolMarkerRoutesToToolCall() throws {
+        let dsml = "\u{FF5C}DSML\u{FF5C}"
+        let toolCallProcessor = ToolCallProcessor(format: .dsml, tools: lineCountToolSchema())
+        var events: [Generation] = []
+        let output = """
+            -line_count
+            <\(dsml)tool_crs>
+            <\(dsml)invoke name="line_count">
+            <\(dsml)parameter name="text" string="true">alpha
+            beta
+            gamma</\(dsml)parameter>
+            </\(dsml)inv>
+            </\(dsml)tool_crs>
+            """
+
+        for ch in output {
+            events.append(
+                contentsOf: routeGenerationText(
+                    String(ch),
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        if let visible = toolCallProcessor.processEOS() {
+            events.append(
+                contentsOf: routeGenerationText(
+                    visible,
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        events.append(contentsOf: drainToolCallEvents(from: toolCallProcessor))
+
+        let visible = events.compactMap(\.chunk).joined()
+        let calls = events.compactMap(\.toolCall)
+
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(!visible.contains("DSML"), "tool_crs DSML must not leak as visible text: \(visible)")
+        #expect(!visible.contains("tool_crs"))
+        #expect(!visible.contains("invoke name"))
+        #expect(!visible.contains("line_count"))
+        #expect(calls.count == 1)
+        let call = try #require(calls.first)
+        #expect(call.function.name == "line_count")
+        #expect(call.function.arguments["text"] == .string("alpha\nbeta\ngamma"))
+    }
+
     @Test("malformed live DSV4 aliases route every folder and git tool without leakage")
     func malformedLiveAliasesRouteFolderAndGitToolsWithoutLeakage() throws {
         let fixtures: [DSMLToolFixture] = [
@@ -463,6 +513,26 @@ struct DSV4ParserPipelineTests {
         ]
         let function: [String: any Sendable] = [
             "name": "file_read",
+            "parameters": parameters,
+        ]
+        return [
+            [
+                "type": "function",
+                "function": function,
+            ] as [String: any Sendable]
+        ]
+    }
+
+    private func lineCountToolSchema() -> [[String: any Sendable]] {
+        let parameters: [String: any Sendable] = [
+            "type": "object",
+            "properties": [
+                "text": ["type": "string"] as [String: any Sendable],
+            ] as [String: any Sendable],
+            "required": ["text"],
+        ]
+        let function: [String: any Sendable] = [
+            "name": "line_count",
             "parameters": parameters,
         ]
         return [
