@@ -328,6 +328,35 @@ Still not fixed by this row:
 Current Osaurus head: `19871f5fa3d3ad1d777d02195380725a67f9fb59`.
 Current vMLX pin: `f84b0dbd00a87e4722f7b3c700938a40e261c399`.
 
+## 2026-05-27 16:15 PDT - Current-head continuation: Gemma3n and ZAYA-VL remain red
+
+Current Osaurus head at this continuation: `82ba13af4bdd6091156946d04a84796401d1adc3`.
+Current vMLX pin: `f84b0dbd00a87e4722f7b3c700938a40e261c399`.
+
+Gemma3n E2B required-tool isolation:
+
+- Matrix artifact: `/tmp/osaurus-post1266-live-family-cache-matrix-20260527T230811Z`.
+- Named-tool isolation artifact: `/tmp/osaurus-pr1268-gemma3n-named-toolchoice-20260527T161410Z`.
+- Model: `gemma-3n-e2b-it-4bit`.
+- Result: fail.
+- Required and named `line_count` requests both returned visible prose explaining the function-call grammar instead of a structured tool call.
+- Cache/RAM boundary: app stayed healthy, TurboQuant KV remained 0, and swap stayed essentially unused. This is a template/model-family required-tool failure, not a low-memory or TurboQuant regression.
+- Do not infer Gemma3n required-tool support from Gemma4 evidence. Do not hide this with output stripping, hidden sampler changes, or prompt coercion.
+
+ZAYA-VL required-tool isolation:
+
+- Matrix artifact: `/tmp/osaurus-post1266-zaya-vl-current-20260527T231442Z`.
+- Fresh single-turn isolation artifact: `/tmp/osaurus-pr1268-zaya-vl-direct-second-20260527T231530Z`.
+- Named-history isolation artifact: `/tmp/osaurus-pr1268-zaya-vl-history-named-20260527T231530Z`.
+- Model: `zaya1-vl-8b-jangtq4`.
+- Result: fail.
+- Matrix turn 1 required `line_count` passed exactly and turn 2 visible answer returned `3 lines.`.
+- Matrix turn 3 after assistant/tool history stopped with empty assistant content and no structured tool call.
+- After that row, a fresh required `line_count` request also stopped with empty assistant content and zero completion tokens.
+- Cache topology was `layers=40`, `zayaCCALayers=40`, `companion=zaya-cca`, `restore=disk-backed`, with TurboQuant KV 0.
+- Cache counters moved (`disk_l2_misses +8`, `disk_l2_stores +5`) but no disk hit or ZAYA CCA companion hit was proven.
+- App stayed healthy and swap stayed essentially unused. This is a required-tool/runtime-cache boundary for the VL bundle; it is not a proof of ZAYA-VL production readiness.
+
 Build/launch findings:
 
 - `scripts/live-proof/build-keychain-free-osaurus.sh` built Release with Xcode signing disabled.
