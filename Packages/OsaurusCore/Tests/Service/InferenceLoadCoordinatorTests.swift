@@ -16,7 +16,7 @@ struct InferenceLoadCoordinatorTests {
 
     @Test func begin_end_balances_to_zero() async {
         await InferenceLoadCoordinatorTestLock.shared.run {
-            let coord = InferenceLoadCoordinator.shared
+            let coord = InferenceLoadCoordinator()
             await drainToZero(coord)
 
             await coord.beginChatGeneration()
@@ -35,7 +35,7 @@ struct InferenceLoadCoordinatorTests {
 
     @Test func double_end_clamps_at_zero() async {
         await InferenceLoadCoordinatorTestLock.shared.run {
-            let coord = InferenceLoadCoordinator.shared
+            let coord = InferenceLoadCoordinator()
             await drainToZero(coord)
 
             await coord.beginChatGeneration()
@@ -48,7 +48,7 @@ struct InferenceLoadCoordinatorTests {
 
     @Test func waitForChatIdle_returns_true_when_already_idle() async {
         await InferenceLoadCoordinatorTestLock.shared.run {
-            let coord = InferenceLoadCoordinator.shared
+            let coord = InferenceLoadCoordinator()
             await drainToZero(coord)
             let wentIdle = await coord.waitForChatIdle(timeoutMs: 100)
             #expect(wentIdle)
@@ -57,7 +57,7 @@ struct InferenceLoadCoordinatorTests {
 
     @Test func waitForChatIdle_resumes_when_chat_ends() async {
         await InferenceLoadCoordinatorTestLock.shared.run {
-            let coord = InferenceLoadCoordinator.shared
+            let coord = InferenceLoadCoordinator()
             await drainToZero(coord)
 
             await coord.beginChatGeneration()
@@ -82,7 +82,7 @@ struct InferenceLoadCoordinatorTests {
 
     @Test func waitForChatIdle_returns_false_on_timeout() async {
         await InferenceLoadCoordinatorTestLock.shared.run {
-            let coord = InferenceLoadCoordinator.shared
+            let coord = InferenceLoadCoordinator()
             await drainToZero(coord)
 
             await coord.beginChatGeneration()
@@ -94,7 +94,7 @@ struct InferenceLoadCoordinatorTests {
 
     @Test func multi_window_refcount_only_idles_when_all_end() async {
         await InferenceLoadCoordinatorTestLock.shared.run {
-            let coord = InferenceLoadCoordinator.shared
+            let coord = InferenceLoadCoordinator()
             await drainToZero(coord)
 
             await coord.beginChatGeneration()
