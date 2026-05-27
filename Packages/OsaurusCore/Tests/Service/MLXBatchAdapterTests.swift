@@ -1382,6 +1382,64 @@ struct MLXBatchAdapterTests {
         }
     }
 
+    /// MiniMax M2/M2.7 bundles are reasoning-capable. Live post-tool proof on
+    /// `minimax-m2.7-jang_k-crack` showed the omitted-template-default path can
+    /// spend the whole response in hidden reasoning after a tool result. Keep
+    /// ordinary local chat on the closed/no-thinking rail by default, matching
+    /// the other reasoning-capable local families while preserving explicit
+    /// thinking opt-in.
+    @Test func additionalContext_defaultsMiniMaxThinkingOffButHonorsExplicitOptIn() {
+        let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
+        let userEnabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(false)]
+        )
+
+        for modelName in [
+            "JANGQ-AI/MiniMax-M2.7-JANGTQ",
+            "minimax-m2.7-jang_k-crack",
+            "OsaurusAI/MiniMax-M2.7-JANGTQ4",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == false,
+                "MiniMax should default to the closed/no-thinking rail: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userEnabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "MiniMax must honor explicit thinking opt-in: \(modelName)"
+            )
+
+            let directOff = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("no_think")]
+                ),
+                modelName: modelName
+            )
+            #expect(directOff["enable_thinking"] as? Bool == false)
+            #expect(directOff["reasoning_effort"] == nil)
+
+            let apiReasoning = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("high")]
+                ),
+                modelName: modelName
+            )
+            #expect(apiReasoning["enable_thinking"] as? Bool == true)
+            #expect(apiReasoning["reasoning_effort"] as? String == "high")
+        }
+    }
+
     @Test func additionalContext_doesNotSendThinkingKwargForZayaVLTemplateSidecar() {
         let userEnabled = GenerationParameters(
             temperature: nil,
