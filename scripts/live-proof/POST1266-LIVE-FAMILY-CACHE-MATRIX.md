@@ -1,6 +1,8 @@
 # Post-1266 live family cache/tool matrix
 
-This follow-up is stacked because PR `#1266` is still open and draft at `878cabdbd2ccf2d581c0eda4b2537478e4343feb`.
+This document is the live evidence ledger for PR `#1268`, the consolidated
+post-1266 Osaurus/vMLX family runtime cache/tool matrix PR. Older runtime PRs
+must not be merged separately; their current replacement is PR `#1268`.
 
 ## Required proof buckets
 
@@ -42,6 +44,38 @@ Default family selection skips internal model IDs beginning with `_`; explicit `
 - Do not enable TurboQuant KV broadly unless the specific topology row proves it safe.
 
 ## Live artifacts
+
+## 2026-05-27 13:04 PDT - Exact-head keychain-free app refresh
+
+Current Osaurus head: `a1ae123fa989b65063605c56b5c2ae38326ba099`.
+No-sign Release app:
+`/tmp/osaurus-post1266-live-family-cache-matrix/build/DerivedData-pr1268-release-nosign-a1ae123f/Build/Products/Release/osaurus.app`.
+
+Launch mode:
+
+- `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`
+- No signing, notarization, `security`, or certificate lookup path.
+- `/health` was healthy before and after the Ling row.
+
+Inventory artifact:
+
+- `/tmp/osaurus-post1266-live-family-cache-matrix-20260527T200403Z`
+- Inventory count: `43`
+- Selected default matrix rows: Nemotron Omni, Ling, ZAYA text, DSV4 JANG, Qwen, Gemma3n, MiniMax.
+- HY3/Hunyuan remains unavailable in current `/v1/models`; `--model 'hy3|hunyuan'` selected no rows.
+
+Exact-head Ling artifact:
+
+- `/tmp/osaurus-post1266-live-family-cache-matrix-20260527T200411Z`
+- Model: `ling-2.6-flash-jangtq2-crack`
+- Classification: `pass`
+- Turn 1 required `line_count`: pass, exact `alpha\nbeta\ngamma`.
+- Turn 2 visible answer after tool result: `Three lines were counted.`, no protocol/reasoning leak.
+- Turn 3 second required `line_count`: pass, exact `one\ntwo`.
+- Cache topology: `layers=32`, `kvLayers=4`, `arraysLayers=28`, `companion=ssm`, `restore=disk-backed`.
+- Cache delta: `disk_l2_hits +1`, `disk_l2_misses +6`, `disk_l2_stores +4`, `companion_hits +1`, `ssm_companion_hits +1`.
+- TurboQuant KV layer count: `0`.
+- Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded.
 
 ### Nemotron Omni Nano JANGTQ CRACK
 
