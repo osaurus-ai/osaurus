@@ -40,3 +40,16 @@ Default family selection skips internal model IDs beginning with `_`; explicit `
 - Do not broaden parser stripping to hide bad model output.
 - Do not add forced thinking tags, hidden repetition penalties, synthetic sampler defaults, or template coercion.
 - Do not enable TurboQuant KV broadly unless the specific topology row proves it safe.
+
+## Live artifacts
+
+### Nemotron Omni Nano JANGTQ CRACK
+
+- Artifact: `/tmp/osaurus-pr1268-live-nemotron-rerun-20260527-111029`
+- Model: `nemotron-omni-nano-jangtq-crack`
+- Classification: `pass`
+- Turn 1 required `line_count`: pass, exact `alpha\nbeta\ngamma`
+- Turn 2 visible answer after tool result: pass, no protocol/reasoning leak
+- Turn 3 second required `line_count`: pass, exact `one\ntwo`
+- Cache delta: `disk_l2_hits +3`, `disk_l2_stores +3`, `companion_hits +3`, `ssm_companion_hits +3`
+- Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded

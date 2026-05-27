@@ -176,26 +176,60 @@ def assert_tool_call(choice: dict[str, Any], expected_text: str) -> tuple[bool, 
     return not failures, failures, call
 
 
-def counter_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, int]:
-    keys = [
-        "disk_l2_hits",
-        "disk_l2_misses",
-        "disk_l2_stores",
-        "paged_hits",
-        "paged_misses",
-        "prefix_hits",
-        "prefix_misses",
-        "ssm_companion_hits",
-        "ssm_companion_misses",
-        "ssm_companion_rederives",
-    ]
-    b = before.get("aggregate") or {}
-    a = after.get("aggregate") or {}
+def cache_counters(stats: dict[str, Any], model: str) -> dict[str, int]:
+    for row in stats.get("models") or []:
+        if row.get("name") != model:
+            continue
+        block = row.get("block_disk_store") or {}
+        paged = row.get("paged_cache") or {}
+        companion = row.get("companion_cache") or {}
+        ssm = row.get("ssm_companion_cache") or {}
+        zaya = row.get("zaya_cca_companion_cache") or {}
+        return {
+            "disk_l2_hits": int(block.get("hits") or 0),
+            "disk_l2_misses": int(block.get("misses") or 0),
+            "disk_l2_stores": int(block.get("stores") or 0),
+            "paged_hits": int(paged.get("hits") or 0),
+            "paged_misses": int(paged.get("misses") or 0),
+            "prefix_hits": int((stats.get("aggregate") or {}).get("prefix_hits") or 0),
+            "prefix_misses": int((stats.get("aggregate") or {}).get("prefix_misses") or 0),
+            "companion_hits": int(companion.get("hits") or 0),
+            "companion_misses": int(companion.get("misses") or 0),
+            "companion_rederives": int(companion.get("rederives") or 0),
+            "ssm_companion_hits": int(ssm.get("hits") or 0),
+            "ssm_companion_misses": int(ssm.get("misses") or 0),
+            "ssm_companion_rederives": int(ssm.get("rederives") or 0),
+            "zaya_cca_companion_hits": int(zaya.get("hits") or 0),
+            "zaya_cca_companion_misses": int(zaya.get("misses") or 0),
+            "zaya_cca_companion_rederives": int(zaya.get("rederives") or 0),
+        }
+    return {
+        "disk_l2_hits": 0,
+        "disk_l2_misses": 0,
+        "disk_l2_stores": 0,
+        "paged_hits": 0,
+        "paged_misses": 0,
+        "prefix_hits": 0,
+        "prefix_misses": 0,
+        "companion_hits": 0,
+        "companion_misses": 0,
+        "companion_rederives": 0,
+        "ssm_companion_hits": 0,
+        "ssm_companion_misses": 0,
+        "ssm_companion_rederives": 0,
+        "zaya_cca_companion_hits": 0,
+        "zaya_cca_companion_misses": 0,
+        "zaya_cca_companion_rederives": 0,
+    }
+
+
+def counter_delta(before: dict[str, Any], after: dict[str, Any], model: str) -> dict[str, int]:
+    keys = list(cache_counters(after, model).keys())
+    b = cache_counters(before, model)
+    a = cache_counters(after, model)
     out: dict[str, int] = {}
     for key in keys:
-        bv = b.get(key, 0) if isinstance(b.get(key, 0), int) else 0
-        av = a.get(key, 0) if isinstance(a.get(key, 0), int) else 0
-        out[key] = av - bv
+        out[key] = a.get(key, 0) - b.get(key, 0)
     return out
 
 
@@ -242,7 +276,7 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
     if call1 is None:
         after_cache = request_json(base_url, "/admin/cache-stats", timeout=10)
         write_json(row_dir / "99_cache_after_failure.json", after_cache)
-        summary["cache_delta"] = counter_delta(before_cache, after_cache)
+        summary["cache_delta"] = counter_delta(before_cache, after_cache, model)
         write_json(row_dir / "SUMMARY.json", summary)
         return summary
 
@@ -295,10 +329,27 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
     after_health = request_json(base_url, "/health", timeout=10)
     write_json(row_dir / "99_cache_after.json", after_cache)
     write_json(row_dir / "99_health_after.json", after_health)
-    delta = counter_delta(before_cache, after_cache)
+    delta = counter_delta(before_cache, after_cache, model)
     summary["cache_delta"] = delta
-    summary["cache_hit_proven"] = any(delta.get(k, 0) > 0 for k in ("disk_l2_hits", "paged_hits", "prefix_hits", "ssm_companion_hits"))
-    summary["cache_store_or_miss_seen"] = any(delta.get(k, 0) > 0 for k in ("disk_l2_stores", "disk_l2_misses", "paged_misses", "prefix_misses", "ssm_companion_misses", "ssm_companion_rederives"))
+    summary["cache_hit_proven"] = any(
+        delta.get(k, 0) > 0
+        for k in ("disk_l2_hits", "paged_hits", "prefix_hits", "companion_hits", "ssm_companion_hits", "zaya_cca_companion_hits")
+    )
+    summary["cache_store_or_miss_seen"] = any(
+        delta.get(k, 0) > 0
+        for k in (
+            "disk_l2_stores",
+            "disk_l2_misses",
+            "paged_misses",
+            "prefix_misses",
+            "companion_misses",
+            "companion_rederives",
+            "ssm_companion_misses",
+            "ssm_companion_rederives",
+            "zaya_cca_companion_misses",
+            "zaya_cca_companion_rederives",
+        )
+    )
     if not summary["cache_hit_proven"]:
         summary["boundaries"].append("cache counters moved but no hit counter was proven in this short row")
 
