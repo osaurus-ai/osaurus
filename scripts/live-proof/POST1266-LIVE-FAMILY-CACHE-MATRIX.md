@@ -144,3 +144,40 @@ Default family selection skips internal model IDs beginning with `_`; explicit `
 - Turn 3 second required `line_count`: failed; no structured tool call
 - Cache delta: `paged_hits +2`, `prefix_hits +2`, `disk_l2_stores +6`
 - Boundary: cache path proves activity, but chat/tool multi-turn behavior is not production-ready.
+
+## 2026-05-27 11:41 PDT - MiniMax direct-rail rerun on rebuilt PR #1268 app
+
+Current Osaurus head: `2659487918aa77038efa752f3c60295016d6adab`.
+No-sign Release app: `/tmp/osaurus-post1266-live-family-cache-matrix/build/DerivedData-pr1268-release-nosign-minimax-26594879/Build/Products/Release/osaurus.app`.
+Launch root: `/tmp/osaurus-pr1268-release-open-minimax-20260527-114043`.
+
+Focused source guard before rebuild:
+
+- `MLXBatchAdapterTests/additionalContext_defaultsMiniMaxThinkingOffButHonorsExplicitOptIn`: passed.
+
+Live artifact:
+
+- `/tmp/osaurus-pr1268-live-minimax-m27-after-direct-20260527-114108`
+
+Result:
+
+- `minimax-m2.7-jang_k-crack`: `pass`
+- Turn 1 required `line_count`: structured tool call, exact args.
+- Turn 2 after tool result: visible answer `The line_count tool counted 3 lines.`, no hidden-reasoning-only blank response.
+- Turn 3 second required `line_count`: structured tool call.
+- Cache topology: 62 KV layers, no TurboQuant KV, paged cache enabled, disk L2 enabled.
+- Cache proof delta: `paged_hits +2`, `prefix_hits +2`, `disk_l2_stores +5`, `disk_l2_misses +4`.
+- OpenAI-compatible response still does not emit token/s; duration and usage are recorded in the artifact.
+
+Interpretation:
+
+- The MiniMax post-tool hidden-reasoning failure from `/tmp/osaurus-pr1268-live-minimax-m27-20260527-111602` is fixed for this app path by defaulting MiniMax local chat to the direct/no-thinking rail while preserving explicit reasoning opt-in.
+- This is family/template context wiring, not a sampler override, repetition penalty, or output-suppression fix.
+
+Still not fixed by this row:
+
+- `zaya1-8b-jangtq4` text tool template still failed first required tool with visible `rmat:`.
+- `zaya1-vl-8b-jangtq4` tool path passed but CCA companion cache hit remains unproven.
+- `deepseek-v4-flash-jangtq2` still has second-turn newline escaping mismatch on `one\ntwo`.
+- `gemma-3n-e2b-it-4bit` still leaks tag-like tool text on first required tool.
+- HY3/Hunyuan is still unavailable in current `/v1/models` inventory.
