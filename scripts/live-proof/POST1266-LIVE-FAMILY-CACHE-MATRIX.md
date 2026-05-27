@@ -115,6 +115,16 @@ Current-head ZAYA text rerun:
 - Boundary: ZAYA text tool behavior is now passing; ZAYA CCA companion-hit reuse is still not proven.
 - Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded.
 
+Current-head Gemma3n E2B rerun:
+
+- Artifact: `/Users/eric/osaurus-pr1268-live/live-artifacts/osaurus-post1266-live-family-cache-matrix-20260527T230811Z`
+- Model: `gemma-3n-e2b-it-4bit`
+- Classification: `fail`
+- Failure: first required-tool turn emitted visible prose (`Okay, I understand...`) and no structured tool call.
+- Cache delta before failure: `disk_l2_stores +3`.
+- Boundary: do not promote Gemma3n required-tool support from Gemma4 evidence; this remains a source/template/model-family investigation item.
+- Token/s: not emitted by the OpenAI-compatible response; duration and usage artifacts are recorded.
+
 Current classification boundary to preserve:
 
 - Pass rows: Nemotron Omni, Ling, Qwen35, Gemma4 26B, MiniMax direct-rail.
