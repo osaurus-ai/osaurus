@@ -11,6 +11,7 @@ echo "configuration=Release"
 echo "signing=disabled"
 
 env \
+  DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
   OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
   xcodebuild \
     -workspace "$ROOT/osaurus.xcworkspace" \

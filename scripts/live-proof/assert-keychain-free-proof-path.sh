@@ -58,6 +58,7 @@ check_contains "$LAUNCHER" 'OSAURUS_TEST_ROOT="$TEST_ROOT"' "launcher isolates t
 check_absent_regex "$LAUNCHER" '(^|[^[:alnum:]_])(open|security|codesign|notarytool|xcodebuild)([[:space:]]|$)' "keychain/signing/LaunchServices command"
 
 check_contains "$BUILDER" "OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1" "builder disables keychain"
+check_contains "$BUILDER" "DEVELOPER_DIR=\"\${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}\"" "builder selects full Xcode"
 check_contains "$BUILDER" "CODE_SIGNING_ALLOWED=NO" "builder disables code signing"
 check_contains "$BUILDER" "CODE_SIGNING_REQUIRED=NO" "builder disables required signing"
 check_contains "$BUILDER" "CODE_SIGN_IDENTITY=" "builder clears signing identity"
