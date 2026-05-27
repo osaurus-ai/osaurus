@@ -134,6 +134,15 @@ Refresh after required-tool harness cap correction:
 - Failure: first required tool turn emitted visible tag-like text and no structured tool call.
 - Boundary: do not infer Gemma 3n support from Gemma 4 support.
 
+Refresh after Gemma3n fallback prompt correction:
+
+- Source/tests commit: `0292f08ae1a492b02f49dee0eda35b8faab22a17`
+- Live artifact: `/tmp/osaurus-pr1268-gemma3n-live-1a5b64d3-20260527-124255`
+- Rebuilt no-sign Release app health showed `gemma-3n-e2b-it-4bit` loaded/resident.
+- Classification remains `fail`.
+- Failure: first required `line_count` turn emitted visible prose (`Okay, I understand...`) and no structured tool call.
+- Boundary: the fallback now renders a concrete Gemma-style required-tool contract in source tests, but the live model row still does not satisfy required tool calling. Do not promote Gemma3n required-tool support in this PR.
+
 ### Gemma 4 26B A4B JANG_4M CRACK
 
 - Artifact: `/tmp/osaurus-pr1268-live-gemma4-26b-rerun-20260527-111555`
