@@ -260,6 +260,65 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("Create the probe file."), "Decoded: \(decoded)")
     }
 
+    @Test func gemma3nLocalTokenizerRendersRequiredToolContractFromFallback() async throws {
+        let defaultPath = "/Users/eric/models/mlx-community/gemma-3n-E2B-it-4bit"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA3N_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            ),
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("chat_template.jinja").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object([
+                            "type": .string("string"),
+                            "description": .string("Text to count lines for."),
+                        ])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                [
+                    "role": "user",
+                    "content": "Use line_count on alpha\nbeta\ngamma.",
+                ]
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("Function: line_count"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<start_function_call>call:name"), "Decoded: \(decoded)")
+        #expect(decoded.contains("MUST be a function call"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use line_count on alpha\nbeta\ngamma."), "Decoded: \(decoded)")
+        #expect(decoded.hasSuffix("<start_of_turn>model\n"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<|tool>declaration:"), "Decoded: \(decoded)")
+    }
+
     @Test func gemma4LocalTokenizerRendersFirstTurnChatUIToolSurface() async throws {
         let defaultPath = "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA4_TEST_MODEL"] ?? defaultPath
@@ -684,13 +743,21 @@ struct SwiftTransformersTokenizerLoaderTests {
             ]
         )
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+        let conversationSegment =
+            decoded.components(separatedBy: "<\u{FF5C}User\u{FF5C}>").dropFirst().joined(
+                separator: "<\u{FF5C}User\u{FF5C}>"
+            )
 
         #expect(
-            !decoded.contains("<\u{FF5C}DSML\u{FF5C}tool_calls>"),
+            !conversationSegment.contains("<\u{FF5C}DSML\u{FF5C}invoke name=\"line_count\">"),
             "Closed historical DSV4 tool calls must not be replayed before a later required tool call. Decoded: \(decoded)"
         )
         #expect(
-            !decoded.contains("<tool_result>{\"lines\":3}</tool_result>"),
+            !conversationSegment.contains("red\ngreen\nblue"),
+            "Closed historical DSV4 tool arguments must not be replayed before a later required tool call. Decoded: \(decoded)"
+        )
+        #expect(
+            !conversationSegment.contains("<tool_result>{\"lines\":3}</tool_result>"),
             "Closed historical DSV4 tool results must not poison the next required tool-call turn. Decoded: \(decoded)"
         )
         #expect(decoded.contains("The line_count tool counted 3 lines."))
