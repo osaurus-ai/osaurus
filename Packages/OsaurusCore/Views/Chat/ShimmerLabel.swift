@@ -94,7 +94,8 @@ final class ShimmerLabel: NSView {
     }
 
     private func applyColors() {
-        gradientLayer.colors = animating
+        gradientLayer.colors =
+            animating
             ? [baseColor.cgColor, highlightColor.cgColor, baseColor.cgColor]
             : [baseColor.cgColor, baseColor.cgColor, baseColor.cgColor]
         gradientLayer.locations = [0.0, 0.5, 1.0]

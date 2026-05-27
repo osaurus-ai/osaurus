@@ -1990,26 +1990,25 @@ final class ChatSession: ObservableObject {
 
             // Tools that render as plain timeline nodes (avoid render_chart /
             // share_artifact / agent-loop tools, which become specialised blocks).
-            let steps:
-                [(name: String, args: String, result: String)] = [
-                    (
-                        "db_insert",
-                        #"{"table":"food_log","row":{"name":"Oatmeal","calories":320}}"#,
-                        #"{"ok":true,"id":1}"#
-                    ),
-                    (
-                        "db_insert",
-                        #"{"table":"food_log","row":{"name":"Black coffee","calories":5}}"#,
-                        #"{"ok":true,"id":2}"#
-                    ),
-                    (
-                        "db_query",
-                        #"{"sql":"SELECT SUM(calories) AS total FROM food_log"}"#,
-                        #"{"total":325}"#
-                    ),
-                    ("file_read", #"{"path":"notes/diet.md"}"#, #"{"bytes":1840}"#),
-                    ("search_memory", #"{"query":"calorie target"}"#, #"{"hits":2}"#),
-                ]
+            let steps: [(name: String, args: String, result: String)] = [
+                (
+                    "db_insert",
+                    #"{"table":"food_log","row":{"name":"Oatmeal","calories":320}}"#,
+                    #"{"ok":true,"id":1}"#
+                ),
+                (
+                    "db_insert",
+                    #"{"table":"food_log","row":{"name":"Black coffee","calories":5}}"#,
+                    #"{"ok":true,"id":2}"#
+                ),
+                (
+                    "db_query",
+                    #"{"sql":"SELECT SUM(calories) AS total FROM food_log"}"#,
+                    #"{"total":325}"#
+                ),
+                ("file_read", #"{"path":"notes/diet.md"}"#, #"{"bytes":1840}"#),
+                ("search_memory", #"{"query":"calorie target"}"#, #"{"hits":2}"#),
+            ]
 
             // Longer thinking pass (lorem ipsum) so the thinking block can be
             // exercised at a realistic length.

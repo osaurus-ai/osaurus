@@ -89,17 +89,21 @@ enum ToolDisplayName {
         "sandbox_edit_file": ToolLabel(L("Editing a file in sandbox"), L("Edited a file in sandbox")),
         "sandbox_search_files": ToolLabel(L("Searching files in sandbox"), L("Searched files in sandbox")),
         "sandbox_install": ToolLabel(
-            L("Installing dependencies in sandbox"), L("Installed dependencies in sandbox")
+            L("Installing dependencies in sandbox"),
+            L("Installed dependencies in sandbox")
         ),
         "sandbox_npm_install": ToolLabel(
-            L("Installing npm packages in sandbox"), L("Installed npm packages in sandbox")
+            L("Installing npm packages in sandbox"),
+            L("Installed npm packages in sandbox")
         ),
         "sandbox_pip_install": ToolLabel(
-            L("Installing Python packages in sandbox"), L("Installed Python packages in sandbox")
+            L("Installing Python packages in sandbox"),
+            L("Installed Python packages in sandbox")
         ),
         "sandbox_process": ToolLabel(L("Managing a process in sandbox"), L("Managed a process in sandbox")),
         "sandbox_plugin_register": ToolLabel(
-            L("Registering a plugin in sandbox"), L("Registered a plugin in sandbox")
+            L("Registering a plugin in sandbox"),
+            L("Registered a plugin in sandbox")
         ),
         "sandbox_secret_check": ToolLabel(L("Checking a secret in sandbox"), L("Checked a secret in sandbox")),
         "sandbox_secret_set": ToolLabel(L("Saving a secret in sandbox"), L("Saved a secret in sandbox")),
