@@ -1334,7 +1334,7 @@ extension MessageTableRepresentable {
             guard isStreaming else { return nil }
             return blocks.last(where: {
                 if case .paragraph(_, _, true, _) = $0.kind { return true }
-                if case .thinking(_, _, true) = $0.kind { return true }
+                if case .thinking(_, _, true, _) = $0.kind { return true }
                 if case .typingIndicator = $0.kind { return true }
                 return false
             })?.id

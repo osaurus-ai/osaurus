@@ -19,9 +19,12 @@ enum BlockPosition: Equatable {
 struct ToolCallItem: Equatable {
     let call: ToolCall
     let result: String?
+    /// How long the call took to finish (seconds), shown as "· 1.2s". Nil until
+    /// measured / for calls whose duration wasn't recorded.
+    var duration: TimeInterval? = nil
 
     static func == (lhs: ToolCallItem, rhs: ToolCallItem) -> Bool {
-        lhs.call.id == rhs.call.id && lhs.result == rhs.result
+        lhs.call.id == rhs.call.id && lhs.result == rhs.result && lhs.duration == rhs.duration
     }
 }
 
@@ -30,7 +33,7 @@ enum ContentBlockKind: Equatable {
     case header(role: MessageRole, agentName: String, isFirstInGroup: Bool)
     case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
     case toolCallGroup(calls: [ToolCallItem])
-    case thinking(index: Int, text: String, isStreaming: Bool)
+    case thinking(index: Int, text: String, isStreaming: Bool, duration: TimeInterval?)
     case userMessage(text: String, attachments: [Attachment])
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
@@ -71,9 +74,9 @@ enum ContentBlockKind: Equatable {
         case let (.toolCallGroup(lCalls), .toolCallGroup(rCalls)):
             return lCalls == rCalls
 
-        case let (.thinking(lIdx, lText, lStream), .thinking(rIdx, rText, rStream)):
+        case let (.thinking(lIdx, lText, lStream, lDur), .thinking(rIdx, rText, rStream, rDur)):
             // Same optimization as paragraph
-            guard lIdx == rIdx && lStream == rStream else { return false }
+            guard lIdx == rIdx && lStream == rStream && lDur == rDur else { return false }
             guard lText.count == rText.count else { return false }
             return lText == rText
 
@@ -193,13 +196,18 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
-    static func thinking(turnId: UUID, index: Int, text: String, isStreaming: Bool, position: BlockPosition)
-        -> ContentBlock
-    {
+    static func thinking(
+        turnId: UUID,
+        index: Int,
+        text: String,
+        isStreaming: Bool,
+        duration: TimeInterval?,
+        position: BlockPosition
+    ) -> ContentBlock {
         ContentBlock(
             id: "think-\(turnId.uuidString)-\(index)",
             turnId: turnId,
-            kind: .thinking(index: index, text: text, isStreaming: isStreaming),
+            kind: .thinking(index: index, text: text, isStreaming: isStreaming, duration: duration),
             position: position
         )
     }
@@ -380,6 +388,7 @@ extension ContentBlock {
                         index: 0,
                         text: turn.thinking,
                         isStreaming: isStreaming && !hasVisibleContent,
+                        duration: turn.thinkingDuration,
                         position: .middle
                     )
                 )
@@ -412,6 +421,7 @@ extension ContentBlock {
                             index: 0,
                             text: "",
                             isStreaming: true,
+                            duration: nil,
                             position: .middle
                         )
                     )
@@ -485,7 +495,9 @@ extension ContentBlock {
                         flushRegularItems()
                         turnBlocks.append(.chart(turnId: turn.id, spec: spec.normalized, position: .middle))
                     } else {
-                        regularItems.append(ToolCallItem(call: call, result: result))
+                        regularItems.append(
+                            ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
+                        )
                     }
                 }
                 flushRegularItems()
@@ -503,7 +515,8 @@ extension ContentBlock {
                 )
             }
 
-            if !isStreaming && turn.role == .assistant,
+            // stats must be shown only on the final turn (intermediate tool calling turns should not display them)
+            if !isStreaming && turn.role == .assistant && isLastInGroup,
                 turn.timeToFirstToken != nil || turn.generationTokensPerSecond != nil
             {
                 turnBlocks.append(
@@ -532,7 +545,43 @@ extension ContentBlock {
             previousTurnId = turn.id
         }
 
+        // NOTE: coalescing of adjacent tool groups is applied at the display
+        // chokepoint (`BlockMemoizer.limited`), not here, so the incremental
+        // block cache keeps stable per-turn group ids while the view still sees
+        // a single stitched timeline (including across the incremental seam).
         return blocks
+    }
+
+    /// Merge directly-adjacent `.toolCallGroup` blocks into one. The agent loop
+    /// emits one tool call per assistant turn, so a run of tool calls becomes a
+    /// run of single-call group blocks; coalescing them lets the UI render the
+    /// whole run as a single connected timeline (rail + nodes) instead of N
+    /// disconnected lone nodes. Anything else between two groups (thinking, a
+    /// chart/artifact, the final answer) breaks the run, as intended. The merged
+    /// block keeps the first group's id/turnId so diffing stays stable.
+    ///
+    /// Applied to the array handed to the view (not the cache) so that the
+    /// memoizer's prefix/suffix incremental regeneration — which stores per-turn
+    /// group blocks — still renders consecutive calls as one connected rail the
+    /// moment the second call appears.
+    static func coalesceToolGroups(_ blocks: [ContentBlock]) -> [ContentBlock] {
+        var result: [ContentBlock] = []
+        result.reserveCapacity(blocks.count)
+        for block in blocks {
+            if case let .toolCallGroup(calls) = block.kind,
+                let prev = result.last,
+                case let .toolCallGroup(prevCalls) = prev.kind
+            {
+                result[result.count - 1] = .toolCallGroup(
+                    turnId: prev.turnId,
+                    calls: prevCalls + calls,
+                    position: prev.position
+                )
+            } else {
+                result.append(block)
+            }
+        }
+        return result
     }
 
     /// Reconstructs a SharedArtifact from an enriched share_artifact tool result.

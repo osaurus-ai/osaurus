@@ -174,14 +174,17 @@ final class BlockMemoizer {
     private func limited(streaming: Bool) -> [ContentBlock] {
         // synthetic stress thread for profiling — must not truncate (see MockChatData)
         if ProcessInfo.processInfo.environment["USE_MOCK_CHAT_DATA"] == "1" {
-            return cached
+            return ContentBlock.coalesceToolGroups(cached)
         }
         // during streaming, cap tightly to prevent layout thrash on every delta.
         // use a smooth transition: once streaming ends the cap rises gradually so
         // the table doesn't get a sudden burst of new rows all at once.
         let target = streaming ? streamingMaxBlocks : nonStreamingMaxBlocks
-        guard cached.count > target else { return cached }
-        return Array(cached.suffix(target))
+        let windowed = cached.count > target ? Array(cached.suffix(target)) : cached
+        // Coalesce adjacent tool groups for display. `cached` keeps the original
+        // per-turn group blocks (stable ids for incremental regen); the view sees
+        // a single connected timeline, stitched even across the regeneration seam.
+        return ContentBlock.coalesceToolGroups(windowed)
     }
 
     func clear() {

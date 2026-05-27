@@ -20,9 +20,14 @@ final class NativeThinkingView: NSView {
     // MARK: Subviews
 
     private let headerButton = NSButton()
+    /// Circular tinted node holding the thinking glyph, matching the tool
+    /// timeline nodes (this block is a separate borderless unit — no rail).
+    private let iconNode = NSView()
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: L("Thinking"))
-    private let streamingSpinner = NSProgressIndicator()
+    /// Shown in place of `titleLabel` while streaming — the title shimmers to
+    /// signal in-progress reasoning (replaces the old streaming spinner).
+    private let shimmerLabel = ShimmerLabel()
     private let charCountLabel = NSTextField(labelWithString: "")
     private let chevronView = NSImageView()
     private let separatorView = NSView()
@@ -43,13 +48,6 @@ final class NativeThinkingView: NSView {
     var onToggle: (() -> Void)?
     var onHeightChanged: (() -> Void)?
 
-    // MARK: Colors
-
-    private let thinkingTint = NSColor(red: 0.55, green: 0.45, blue: 0.85, alpha: 1)
-    private let cornerRadius: CGFloat = 10
-    /// reliable stroke in table cells — CALayer `borderWidth` is often invisible when layer-backed
-    private var borderStrokeLayer: CAShapeLayer?
-
     // MARK: Init
 
     override init(frame: NSRect) {
@@ -61,14 +59,6 @@ final class NativeThinkingView: NSView {
 
     override func layout() {
         super.layout()
-        updateBorderStrokePath()
-        // unshaped shadows force an offscreen rasterization every time the layer
-        // contents change — during streaming that's every token. supply a cheap
-        // rounded-rect path so CoreAnimation composites the shadow directly
-        if let layer {
-            let path = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).cgPath
-            layer.shadowPath = path
-        }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -86,28 +76,6 @@ final class NativeThinkingView: NSView {
         return mdv.hitTest(p)
     }
 
-    private func updateBorderStrokePath() {
-        let b = bounds
-        guard b.width > 2, b.height > 2 else { return }
-        if borderStrokeLayer == nil {
-            let stroke = CAShapeLayer()
-            stroke.fillColor = nil
-            stroke.lineWidth = 0.5
-            stroke.lineJoin = .round
-            layer?.addSublayer(stroke)
-            borderStrokeLayer = stroke
-        }
-        guard let stroke = borderStrokeLayer else { return }
-        let lw = stroke.lineWidth
-        let inset = lw / 2
-        // path is in stroke layer local coordinates (origin top-left for layer matching view bounds)
-        stroke.frame = b
-        let rect = CGRect(origin: .zero, size: b.size).insetBy(dx: inset, dy: inset)
-        let r = max(cornerRadius - inset, 0)
-        stroke.path = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).cgPath
-        stroke.strokeColor = thinkingTint.withAlphaComponent(0.22).cgColor
-    }
-
     // MARK: Configure
 
     func configure(
@@ -116,6 +84,7 @@ final class NativeThinkingView: NSView {
         width: CGFloat,
         isStreaming: Bool,
         isExpanded: Bool,
+        duration: TimeInterval?,
         theme: any ThemeProtocol,
         blockId: String,
         sessionRedactions: [String: String] = [:],
@@ -128,11 +97,38 @@ final class NativeThinkingView: NSView {
 
         let charCount = thinkingLength ?? thinking.count
 
-        titleLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
-        titleLabel.textColor = thinkingTint
+        // Thinking chrome follows the current theme's text color.
+        let tint = NSColor(theme.primaryText)
+        let titleFont = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
+        titleLabel.font = titleFont
+        titleLabel.textColor = tint
 
-        streamingSpinner.isHidden = !isStreaming
-        if isStreaming { streamingSpinner.startAnimation(nil) } else { streamingSpinner.stopAnimation(nil) }
+        iconView.contentTintColor = tint
+        iconNode.layer?.backgroundColor = tint.withAlphaComponent(0.15).cgColor
+        iconNode.layer?.borderColor = tint.withAlphaComponent(0.55).cgColor
+
+        // While streaming, shimmer the present-tense "Thinking" title; once done,
+        // show past tense with the elapsed time ("Thought for 30s") when known.
+        if isStreaming {
+            shimmerLabel.configure(
+                text: L("Thinking"),
+                font: titleFont,
+                baseColor: tint.withAlphaComponent(0.45),
+                highlightColor: tint
+            )
+            titleLabel.isHidden = true
+            shimmerLabel.isHidden = false
+            shimmerLabel.start()
+        } else {
+            shimmerLabel.stop()
+            shimmerLabel.isHidden = true
+            if let duration {
+                titleLabel.stringValue = "\(L("Thought for")) \(Self.formatDuration(duration))"
+            } else {
+                titleLabel.stringValue = L("Thought")
+            }
+            titleLabel.isHidden = false
+        }
 
         charCountLabel.isHidden = isExpanded || charCount == 0
         charCountLabel.stringValue = formatCharCount(charCount)
@@ -141,9 +137,6 @@ final class NativeThinkingView: NSView {
 
         updateChevron(expanded: isExpanded, animated: isExpanded != self.isExpanded)
         self.isExpanded = isExpanded
-
-        // layer chrome (fill + shadow) is set once in buildViews(). mutating CGColor
-        // per configure() would churn the layer on every streaming token
 
         contentContainer.isHidden = !isExpanded
         separatorView.isHidden = !isExpanded
@@ -199,17 +192,10 @@ final class NativeThinkingView: NSView {
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
 
-        // fill + shadow never change once the view exists, so bake them in here instead of
-        // reapplying inside configure() (which runs per streaming token)
-        layer?.cornerRadius = cornerRadius
+        // Borderless: no card fill, border, or shadow — the block reads as a
+        // standalone unit distinguished only by its glyph + title.
         layer?.masksToBounds = false
-        layer?.backgroundColor = thinkingTint.withAlphaComponent(0.05).cgColor
-        layer?.borderWidth = 0
-        layer?.borderColor = nil
-        layer?.shadowColor = thinkingTint.withAlphaComponent(0.04).cgColor
-        layer?.shadowOffset = CGSize(width: 0, height: 1)
-        layer?.shadowRadius = 2
-        layer?.shadowOpacity = 1
+        layer?.backgroundColor = NSColor.clear.cgColor
 
         // header button in back - transparent overlay covering the header row for click handling
         headerButton.translatesAutoresizingMaskIntoConstraints = false
@@ -217,21 +203,31 @@ final class NativeThinkingView: NSView {
         headerButton.target = self; headerButton.action = #selector(headerTapped)
         addSubview(headerButton)
 
-        // icons/labels
+        // Circular node (tinted fill + ring), matching the tool timeline nodes.
+        // Colors are applied per-theme in configure(); these are neutral defaults.
+        iconNode.translatesAutoresizingMaskIntoConstraints = false
+        iconNode.wantsLayer = true
+        iconNode.layer?.cornerRadius = 14
+        iconNode.layer?.borderWidth = 1.5
+        iconNode.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.15).cgColor
+        iconNode.layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.55).cgColor
+        addSubview(iconNode)
+
+        // glyph in the node foreground
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.image = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: nil)
-        iconView.contentTintColor = thinkingTint
+        iconView.image = NSImage(systemSymbolName: "brain", accessibilityDescription: nil)
+        iconView.contentTintColor = NSColor.labelColor
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        addSubview(iconView)
+        iconNode.addSubview(iconView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.isEditable = false; titleLabel.isBordered = false; titleLabel.drawsBackground = false
         addSubview(titleLabel)
 
-        streamingSpinner.translatesAutoresizingMaskIntoConstraints = false
-        streamingSpinner.style = .spinning; streamingSpinner.controlSize = .small
-        streamingSpinner.isIndeterminate = true; streamingSpinner.isHidden = true
-        addSubview(streamingSpinner)
+        // Shimmering "Thinking" title (streaming state); overlays titleLabel's slot.
+        shimmerLabel.translatesAutoresizingMaskIntoConstraints = false
+        shimmerLabel.isHidden = true
+        addSubview(shimmerLabel)
 
         charCountLabel.translatesAutoresizingMaskIntoConstraints = false
         charCountLabel.isEditable = false; charCountLabel.isBordered = false; charCountLabel.drawsBackground = false
@@ -268,18 +264,22 @@ final class NativeThinkingView: NSView {
             headerButton.topAnchor.constraint(equalTo: topAnchor),
             headerButton.heightAnchor.constraint(equalToConstant: headerH),
 
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            iconView.centerYAnchor.constraint(equalTo: topAnchor, constant: headerH / 2),
-            iconView.widthAnchor.constraint(equalToConstant: 18),
-            iconView.heightAnchor.constraint(equalToConstant: 18),
+            iconNode.leadingAnchor.constraint(equalTo: leadingAnchor),
+            iconNode.centerYAnchor.constraint(equalTo: topAnchor, constant: headerH / 2),
+            iconNode.widthAnchor.constraint(equalToConstant: 28),
+            iconNode.heightAnchor.constraint(equalToConstant: 28),
 
-            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
-            titleLabel.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
+            iconView.centerXAnchor.constraint(equalTo: iconNode.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: iconNode.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 14),
+            iconView.heightAnchor.constraint(equalToConstant: 14),
 
-            streamingSpinner.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
-            streamingSpinner.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            streamingSpinner.widthAnchor.constraint(equalToConstant: 16),
-            streamingSpinner.heightAnchor.constraint(equalToConstant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: iconNode.trailingAnchor, constant: 10),
+            titleLabel.centerYAnchor.constraint(equalTo: iconNode.centerYAnchor),
+
+            // Shimmer title occupies the same slot as titleLabel (only one shows).
+            shimmerLabel.leadingAnchor.constraint(equalTo: iconNode.trailingAnchor, constant: 10),
+            shimmerLabel.centerYAnchor.constraint(equalTo: iconNode.centerYAnchor),
 
             chevronView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             chevronView.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
@@ -337,5 +337,13 @@ final class NativeThinkingView: NSView {
         if count < 1000 { return "\(count) chars" }
         if count < 10_000 { return String(format: "%.1fk chars", Double(count) / 1000) }
         return "\(count / 1000)k chars"
+    }
+
+    /// Compact duration for "Thought for …": "320ms", "4.2s", "30s", "1m 5s".
+    private static func formatDuration(_ t: TimeInterval) -> String {
+        if t < 1 { return "\(Int((t * 1000).rounded()))ms" }
+        if t < 10 { return String(format: "%.1fs", t) }
+        if t < 60 { return "\(Int(t.rounded()))s" }
+        return "\(Int(t) / 60)m \(Int(t) % 60)s"
     }
 }
