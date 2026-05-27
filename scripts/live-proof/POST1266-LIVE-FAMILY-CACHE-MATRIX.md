@@ -61,13 +61,14 @@ Current-head Nemotron rerun:
 
 - Artifact: `/tmp/osaurus-post1266-live-family-cache-matrix-20260527T203002Z`
 - Model: `nemotron-omni-nano-jangtq-crack`
-- Classification: `pass_with_cache_boundary`
+- Classification: `pass`
 - Source/runtime fix: vMLX `bdd43452f86566574f3ea8c1a68a0993b7e25192` removes the late required-tool system tail that previously leaked `system` into multiline tool arguments.
 - Turn 1 required `line_count`: pass, exact multiline args.
 - Turn 2 visible answer after tool result: pass, `Three lines were counted.`, no protocol/reasoning leak.
 - Turn 3 second required `line_count`: pass.
 - Cache topology: `layers=29`, `kvLayers=6`, `mambaLayers=23`, `companion=ssm`, `restore=disk-backed`.
-- Cache delta: `disk_l2_misses +9`, `disk_l2_stores +3`, no hit counter proven in this short row, `ssm_companion_hits +0`.
+- Immediate harness cache delta: `disk_l2_misses +9`, `disk_l2_stores +3`.
+- Post-row cache refresh: `99_postrow_cache_refresh.json` shows `disk_l2_hits +3`, `disk_l2_stores +8`, `companion_hits +3`, and `ssm_companion_hits +3`.
 - TurboQuant KV layer count: `0`.
 - Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded.
 
