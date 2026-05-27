@@ -170,7 +170,7 @@ struct SwiftTransformersTokenizerLoaderTests {
                 ])
             )
         )
-        let finalUser = "Now use line_count on this exact text:\none\ntwo"
+        let finalUser = "Now use line_count on exactly this new text, preserving newlines:\none\ntwo"
         let tokenIds = try tokenizer.applyChatTemplate(
             messages: [
                 ["role": "user", "content": "Use line_count on this text:\nred\ngreen\nblue"],
@@ -206,6 +206,7 @@ struct SwiftTransformersTokenizerLoaderTests {
         let afterFinalUser = decoded[finalUserRange.upperBound...]
 
         #expect(afterFinalUser.contains(reminder), "Decoded: \(decoded)")
+        #expect(decoded.contains("<parameter=text>\none\ntwo\n</parameter>"), "Decoded: \(decoded)")
         #expect(!decoded.contains("Previous tool result available."), "Decoded: \(decoded)")
         #expect(!decoded.contains(#"<zyphra_tool_response>\n{"lines":3}"#), "Decoded: \(decoded)")
         #expect(!decoded.contains("Use line_count on this text:\nred\ngreen\nblue"), "Decoded: \(decoded)")
