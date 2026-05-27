@@ -26,10 +26,10 @@ import Testing
 /// mutate the process-wide `OSAURUS_TEST_ROOT` env var via `setenv`
 /// (see `isolatedRoot(label:)`). Swift Testing runs `@Test` cases in
 /// parallel by default, which lets concurrent tests trample each
-/// other's value — `OsaurusPaths.root()` reads the env var on every
-/// call, so the wrong test's path wins and the manifest store reads
-/// from / writes to a directory it doesn't own. That's why CI was
-/// hanging the three `manifestStore…` cases to the xctest timeout.
+/// other's value. Tests that also mutate `OsaurusPaths.overrideRoot`
+/// must additionally run through `StoragePathsTestLock` so they cannot
+/// race other serialized suites that share the same process-global path
+/// override.
 @Suite(.serialized)
 struct ClaudePluginSpecTests {
 
@@ -75,6 +75,17 @@ struct ClaudePluginSpecTests {
             }
         }
         return (root, teardown)
+    }
+
+    private static func withIsolatedRoot<T: Sendable>(
+        label: String,
+        _ body: @Sendable (_ root: URL) async throws -> T
+    ) async rethrows -> T {
+        try await StoragePathsTestLock.shared.run {
+            let (root, teardown) = Self.isolatedRoot(label: label)
+            defer { teardown() }
+            return try await body(root)
+        }
     }
 
     // MARK: - plugin.json decoding
@@ -280,19 +291,18 @@ struct ClaudePluginSpecTests {
     /// `${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_DATA}` must resolve
     /// to the per-plugin paths owned by `OsaurusPaths` so MCP servers can
     /// read from / write to a stable location.
-    @Test func expandsPluginRootAndDataPaths() {
-        let (_, teardown) = Self.isolatedRoot(label: "expander-paths")
-        defer { teardown() }
+    @Test func expandsPluginRootAndDataPaths() async {
+        await Self.withIsolatedRoot(label: "expander-paths") { _ in
+            let pluginId = "github:owner/repo/example"
+            let ctx = ClaudePluginExpansionContext(pluginId: pluginId)
+            let input = "root=${CLAUDE_PLUGIN_ROOT} data=${CLAUDE_PLUGIN_DATA}"
+            let expanded = ClaudePluginVariableExpander.expand(input, context: ctx)
 
-        let pluginId = "github:owner/repo/example"
-        let ctx = ClaudePluginExpansionContext(pluginId: pluginId)
-        let input = "root=${CLAUDE_PLUGIN_ROOT} data=${CLAUDE_PLUGIN_DATA}"
-        let expanded = ClaudePluginVariableExpander.expand(input, context: ctx)
-
-        #expect(expanded.contains(OsaurusPaths.claudePluginCacheDir(for: pluginId).path))
-        #expect(expanded.contains(OsaurusPaths.claudePluginDataDir(for: pluginId).path))
-        #expect(!expanded.contains("${CLAUDE_PLUGIN_ROOT}"))
-        #expect(!expanded.contains("${CLAUDE_PLUGIN_DATA}"))
+            #expect(expanded.contains(OsaurusPaths.claudePluginCacheDir(for: pluginId).path))
+            #expect(expanded.contains(OsaurusPaths.claudePluginDataDir(for: pluginId).path))
+            #expect(!expanded.contains("${CLAUDE_PLUGIN_ROOT}"))
+            #expect(!expanded.contains("${CLAUDE_PLUGIN_DATA}"))
+        }
     }
 
     /// `${user_config.KEY}` substitutes from the non-sensitive bag.
@@ -357,34 +367,34 @@ struct ClaudePluginSpecTests {
     /// Expansion must be idempotent — running it twice on the same
     /// string mustn't keep substituting fresh values. This pins the
     /// caller-friendly contract that `expand(expand(x)) == expand(x)`.
-    @Test func expandIsIdempotent() {
-        let (_, teardown) = Self.isolatedRoot(label: "expander-idempotent")
-        defer { teardown() }
-        let ctx = ClaudePluginExpansionContext(
-            pluginId: "github:o/r/p",
-            userConfig: ["FOO": "bar"]
-        )
-        let input = "${CLAUDE_PLUGIN_DATA}/work-${user_config.FOO}"
-        let once = ClaudePluginVariableExpander.expand(input, context: ctx)
-        let twice = ClaudePluginVariableExpander.expand(once, context: ctx)
-        #expect(once == twice)
+    @Test func expandIsIdempotent() async {
+        await Self.withIsolatedRoot(label: "expander-idempotent") { _ in
+            let ctx = ClaudePluginExpansionContext(
+                pluginId: "github:o/r/p",
+                userConfig: ["FOO": "bar"]
+            )
+            let input = "${CLAUDE_PLUGIN_DATA}/work-${user_config.FOO}"
+            let once = ClaudePluginVariableExpander.expand(input, context: ctx)
+            let twice = ClaudePluginVariableExpander.expand(once, context: ctx)
+            #expect(once == twice)
+        }
     }
 
     /// Subprocess env overlay exports the two filesystem paths plus a
     /// `CLAUDE_PLUGIN_OPTION_<KEY>` for each user_config value. This is
     /// the shape Claude Code injects into MCP processes.
-    @Test func subprocessEnvIncludesPluginOptions() {
-        let (_, teardown) = Self.isolatedRoot(label: "expander-subprocess")
-        defer { teardown() }
-        let ctx = ClaudePluginExpansionContext(
-            pluginId: "github:o/r/p",
-            userConfig: ["REGION": "us-west-2", "DEBUG": "1"]
-        )
-        let env = ClaudePluginVariableExpander.subprocessEnv(context: ctx)
-        #expect(env["CLAUDE_PLUGIN_ROOT"]?.isEmpty == false)
-        #expect(env["CLAUDE_PLUGIN_DATA"]?.isEmpty == false)
-        #expect(env["CLAUDE_PLUGIN_OPTION_REGION"] == "us-west-2")
-        #expect(env["CLAUDE_PLUGIN_OPTION_DEBUG"] == "1")
+    @Test func subprocessEnvIncludesPluginOptions() async {
+        await Self.withIsolatedRoot(label: "expander-subprocess") { _ in
+            let ctx = ClaudePluginExpansionContext(
+                pluginId: "github:o/r/p",
+                userConfig: ["REGION": "us-west-2", "DEBUG": "1"]
+            )
+            let env = ClaudePluginVariableExpander.subprocessEnv(context: ctx)
+            #expect(env["CLAUDE_PLUGIN_ROOT"]?.isEmpty == false)
+            #expect(env["CLAUDE_PLUGIN_DATA"]?.isEmpty == false)
+            #expect(env["CLAUDE_PLUGIN_OPTION_REGION"] == "us-west-2")
+            #expect(env["CLAUDE_PLUGIN_OPTION_DEBUG"] == "1")
+        }
     }
 
     // MARK: - Manifest store
@@ -392,167 +402,163 @@ struct ClaudePluginSpecTests {
     /// Round-trip: save a snapshot, load by id, and confirm every
     /// persisted field survives. Uses an isolated test root so the
     /// per-test JSON lives under `/tmp/...`.
-    @Test func manifestStoreRoundTripsSnapshot() {
-        let (_, teardown) = Self.isolatedRoot(label: "manifest-store-rt")
-        defer { teardown() }
+    @Test func manifestStoreRoundTripsSnapshot() async {
+        await Self.withIsolatedRoot(label: "manifest-store-rt") { _ in
+            let snap = ClaudePluginManifestSnapshot(
+                pluginId: "github:acme/widgets/renewals",
+                name: "renewals",
+                displayName: "Renewals",
+                description: "Tracks contract renewals.",
+                version: "1.0.0",
+                sourceOwner: "acme",
+                sourceRepo: "widgets",
+                sourceBranch: "main",
+                sourcePath: "renewals",
+                authorName: "Ada",
+                authorEmail: "ada@example.com",
+                authorURL: nil,
+                homepage: "https://example.com",
+                repository: "https://github.com/acme/widgets",
+                license: "MIT",
+                keywords: ["contracts", "renewals"],
+                installedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                userConfigSpec: [
+                    ClaudePluginUserConfigField(
+                        key: "API_KEY",
+                        type: .string,
+                        title: "API Key",
+                        description: "Vendor key",
+                        sensitive: true,
+                        required: true
+                    )
+                ],
+                declaresHooks: true,
+                declaresUnsupportedComponents: ["channels"],
+                declaredCounts: .init(skills: 2, agents: 1, commands: 0, mcp: 1)
+            )
 
-        let snap = ClaudePluginManifestSnapshot(
-            pluginId: "github:acme/widgets/renewals",
-            name: "renewals",
-            displayName: "Renewals",
-            description: "Tracks contract renewals.",
-            version: "1.0.0",
-            sourceOwner: "acme",
-            sourceRepo: "widgets",
-            sourceBranch: "main",
-            sourcePath: "renewals",
-            authorName: "Ada",
-            authorEmail: "ada@example.com",
-            authorURL: nil,
-            homepage: "https://example.com",
-            repository: "https://github.com/acme/widgets",
-            license: "MIT",
-            keywords: ["contracts", "renewals"],
-            installedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            userConfigSpec: [
-                ClaudePluginUserConfigField(
-                    key: "API_KEY",
-                    type: .string,
-                    title: "API Key",
-                    description: "Vendor key",
-                    sensitive: true,
-                    required: true
-                )
-            ],
-            declaresHooks: true,
-            declaresUnsupportedComponents: ["channels"],
-            declaredCounts: .init(skills: 2, agents: 1, commands: 0, mcp: 1)
-        )
-
-        #expect(ClaudePluginManifestStore.save(snap) == true)
-        let loaded = ClaudePluginManifestStore.load(pluginId: snap.pluginId)
-        #expect(loaded != nil)
-        #expect(loaded == snap)
+            #expect(ClaudePluginManifestStore.save(snap) == true)
+            let loaded = ClaudePluginManifestStore.load(pluginId: snap.pluginId)
+            #expect(loaded != nil)
+            #expect(loaded == snap)
+        }
     }
 
     /// `all()` should sort by displayName and tolerate corrupt files —
     /// one bad JSON shouldn't blank the grid for every other plugin.
-    @Test func manifestStoreAllSkipsCorruptFiles() {
-        let (_, teardown) = Self.isolatedRoot(label: "manifest-store-all")
-        defer { teardown() }
+    @Test func manifestStoreAllSkipsCorruptFiles() async {
+        await Self.withIsolatedRoot(label: "manifest-store-all") { _ in
+            let good = ClaudePluginManifestSnapshot(
+                pluginId: "github:o/r/good",
+                name: "good",
+                displayName: "Good Plugin",
+                description: nil,
+                version: nil,
+                sourceOwner: "o",
+                sourceRepo: "r",
+                installedAt: Date(),
+                declaredCounts: .init(skills: 0, agents: 0, commands: 0, mcp: 0)
+            )
+            let other = ClaudePluginManifestSnapshot(
+                pluginId: "github:o/r/another",
+                name: "another",
+                displayName: "Another Plugin",
+                description: nil,
+                version: nil,
+                sourceOwner: "o",
+                sourceRepo: "r",
+                installedAt: Date(),
+                declaredCounts: .init(skills: 0, agents: 0, commands: 0, mcp: 0)
+            )
+            ClaudePluginManifestStore.save(good)
+            ClaudePluginManifestStore.save(other)
 
-        let good = ClaudePluginManifestSnapshot(
-            pluginId: "github:o/r/good",
-            name: "good",
-            displayName: "Good Plugin",
-            description: nil,
-            version: nil,
-            sourceOwner: "o",
-            sourceRepo: "r",
-            installedAt: Date(),
-            declaredCounts: .init(skills: 0, agents: 0, commands: 0, mcp: 0)
-        )
-        let other = ClaudePluginManifestSnapshot(
-            pluginId: "github:o/r/another",
-            name: "another",
-            displayName: "Another Plugin",
-            description: nil,
-            version: nil,
-            sourceOwner: "o",
-            sourceRepo: "r",
-            installedAt: Date(),
-            declaredCounts: .init(skills: 0, agents: 0, commands: 0, mcp: 0)
-        )
-        ClaudePluginManifestStore.save(good)
-        ClaudePluginManifestStore.save(other)
+            // Drop a non-JSON file alongside the snapshots to simulate
+            // corruption. `all()` must skip it without throwing.
+            let dir = OsaurusPaths.claudePluginsManifestsDir()
+            let garbage = dir.appendingPathComponent("garbage.json")
+            try? Data("not json".utf8).write(to: garbage)
 
-        // Drop a non-JSON file alongside the snapshots to simulate
-        // corruption. `all()` must skip it without throwing.
-        let dir = OsaurusPaths.claudePluginsManifestsDir()
-        let garbage = dir.appendingPathComponent("garbage.json")
-        try? Data("not json".utf8).write(to: garbage)
-
-        let all = ClaudePluginManifestStore.all()
-        let names = all.map(\.displayName)
-        #expect(names == ["Another Plugin", "Good Plugin"])
+            let all = ClaudePluginManifestStore.all()
+            let names = all.map(\.displayName)
+            #expect(names == ["Another Plugin", "Good Plugin"])
+        }
     }
 
     /// `delete(pluginId:)` removes the manifest, user-config, and data
     /// directories so an uninstall leaves no residue.
-    @Test func manifestStoreDeleteRemovesAllSidecars() {
-        let (_, teardown) = Self.isolatedRoot(label: "manifest-store-del")
-        defer { teardown() }
+    @Test func manifestStoreDeleteRemovesAllSidecars() async {
+        await Self.withIsolatedRoot(label: "manifest-store-del") { _ in
+            let pluginId = "github:o/r/del"
+            let snap = ClaudePluginManifestSnapshot(
+                pluginId: pluginId,
+                name: "del",
+                displayName: "Delete Me",
+                description: nil,
+                version: nil,
+                sourceOwner: "o",
+                sourceRepo: "r",
+                installedAt: Date(),
+                declaredCounts: .init(skills: 0, agents: 0, commands: 0, mcp: 0)
+            )
+            ClaudePluginManifestStore.save(snap)
+            ClaudePluginManifestStore.saveUserConfig(
+                pluginId: pluginId,
+                values: ["DEBUG": "1"]
+            )
+            _ = ClaudePluginManifestStore.ensureDataDir(for: pluginId)
 
-        let pluginId = "github:o/r/del"
-        let snap = ClaudePluginManifestSnapshot(
-            pluginId: pluginId,
-            name: "del",
-            displayName: "Delete Me",
-            description: nil,
-            version: nil,
-            sourceOwner: "o",
-            sourceRepo: "r",
-            installedAt: Date(),
-            declaredCounts: .init(skills: 0, agents: 0, commands: 0, mcp: 0)
-        )
-        ClaudePluginManifestStore.save(snap)
-        ClaudePluginManifestStore.saveUserConfig(
-            pluginId: pluginId,
-            values: ["DEBUG": "1"]
-        )
-        _ = ClaudePluginManifestStore.ensureDataDir(for: pluginId)
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: OsaurusPaths.claudePluginManifestFile(for: pluginId).path
+                )
+            )
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: OsaurusPaths.claudePluginUserConfigFile(for: pluginId).path
+                )
+            )
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: OsaurusPaths.claudePluginDataDir(for: pluginId).path
+                )
+            )
 
-        #expect(
-            FileManager.default.fileExists(
-                atPath: OsaurusPaths.claudePluginManifestFile(for: pluginId).path
-            )
-        )
-        #expect(
-            FileManager.default.fileExists(
-                atPath: OsaurusPaths.claudePluginUserConfigFile(for: pluginId).path
-            )
-        )
-        #expect(
-            FileManager.default.fileExists(
-                atPath: OsaurusPaths.claudePluginDataDir(for: pluginId).path
-            )
-        )
+            ClaudePluginManifestStore.delete(pluginId: pluginId)
 
-        ClaudePluginManifestStore.delete(pluginId: pluginId)
-
-        #expect(
-            !FileManager.default.fileExists(
-                atPath: OsaurusPaths.claudePluginManifestFile(for: pluginId).path
+            #expect(
+                !FileManager.default.fileExists(
+                    atPath: OsaurusPaths.claudePluginManifestFile(for: pluginId).path
+                )
             )
-        )
-        #expect(
-            !FileManager.default.fileExists(
-                atPath: OsaurusPaths.claudePluginUserConfigFile(for: pluginId).path
+            #expect(
+                !FileManager.default.fileExists(
+                    atPath: OsaurusPaths.claudePluginUserConfigFile(for: pluginId).path
+                )
             )
-        )
-        #expect(
-            !FileManager.default.fileExists(
-                atPath: OsaurusPaths.claudePluginDataDir(for: pluginId).path
+            #expect(
+                !FileManager.default.fileExists(
+                    atPath: OsaurusPaths.claudePluginDataDir(for: pluginId).path
+                )
             )
-        )
-        #expect(ClaudePluginManifestStore.load(pluginId: pluginId) == nil)
-        #expect(ClaudePluginManifestStore.loadUserConfig(pluginId: pluginId).isEmpty)
+            #expect(ClaudePluginManifestStore.load(pluginId: pluginId) == nil)
+            #expect(ClaudePluginManifestStore.loadUserConfig(pluginId: pluginId).isEmpty)
+        }
     }
 
     /// User-config snapshot round-trips its keyed values verbatim. This
     /// is the non-sensitive store; sensitive keys go through Keychain.
-    @Test func manifestStoreUserConfigRoundTrip() {
-        let (_, teardown) = Self.isolatedRoot(label: "manifest-store-uc")
-        defer { teardown() }
-
-        let pluginId = "github:o/r/uc"
-        ClaudePluginManifestStore.saveUserConfig(
-            pluginId: pluginId,
-            values: ["REGION": "us-west-2", "DEBUG": "true"]
-        )
-        let loaded = ClaudePluginManifestStore.loadUserConfig(pluginId: pluginId)
-        #expect(loaded["REGION"] == "us-west-2")
-        #expect(loaded["DEBUG"] == "true")
+    @Test func manifestStoreUserConfigRoundTrip() async {
+        await Self.withIsolatedRoot(label: "manifest-store-uc") { _ in
+            let pluginId = "github:o/r/uc"
+            ClaudePluginManifestStore.saveUserConfig(
+                pluginId: pluginId,
+                values: ["REGION": "us-west-2", "DEBUG": "true"]
+            )
+            let loaded = ClaudePluginManifestStore.loadUserConfig(pluginId: pluginId)
+            #expect(loaded["REGION"] == "us-west-2")
+            #expect(loaded["DEBUG"] == "true")
+        }
     }
 
     /// `claudePluginSafeId` must collapse path separators / colons so

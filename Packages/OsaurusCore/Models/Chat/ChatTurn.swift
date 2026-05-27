@@ -65,6 +65,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Call `notifyContentChanged()` after batch appends to update UI.
     func appendContent(_ s: String) {
         guard !s.isEmpty else { return }
+        // First visible content marks the end of any thinking phase.
+        finalizeThinkingDuration()
         contentChunks.append(s)
         _contentLength += s.count
         _cachedContent = nil  // Invalidate cache
@@ -134,6 +136,7 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Efficiently append thinking without triggering immediate UI update.
     func appendThinking(_ s: String) {
         guard !s.isEmpty else { return }
+        if thinkingStartedAt == nil { thinkingStartedAt = Date() }
         thinkingChunks.append(s)
         _thinkingLength += s.count
         _cachedThinking = nil  // Invalidate cache
@@ -176,8 +179,33 @@ final class ChatTurn: ObservableObject, Identifiable {
     var toolCallId: String? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn
     @Published var toolResults: [String: String] = [:]
+    /// Wall-clock duration (seconds) each tool call took to finish, keyed by call
+    /// id. Recorded by `setToolResult(_:for:)` and persisted so a reloaded chat
+    /// still shows "· 1.2s" next to the tool title.
+    @Published var toolCallDurations: [String: TimeInterval] = [:]
+    /// How long the model spent thinking (seconds) — from the first reasoning
+    /// token to the first content/tool that follows. Drives "Thought for 30s";
+    /// persisted so it survives reload.
+    @Published var thinkingDuration: TimeInterval?
+    /// First reasoning-token time (ephemeral), used to compute `thinkingDuration`.
+    private var thinkingStartedAt: Date?
     /// Tool name detected during streaming before the full invocation is ready.
-    var pendingToolName: String? = nil
+    var pendingToolName: String? = nil {
+        didSet {
+            // First detection of a tool starts the clock; the imminent call
+            // append consumes this in `markToolCallStarted`. Covers the server
+            // `done` path where the call + result arrive together (the visible
+            // "running" period is this pending phase, not a group-node phase).
+            if pendingToolName != nil, pendingToolStartedAt == nil {
+                pendingToolStartedAt = Date()
+            }
+        }
+    }
+    /// Start time captured at first `pendingToolName` set, consumed by the next
+    /// `markToolCallStarted` so duration spans the whole detect→result window.
+    private var pendingToolStartedAt: Date?
+    /// Per-call start times (ephemeral) used to compute `toolCallDurations`.
+    private var toolCallStartedAt: [String: Date] = [:]
     /// Accumulated preview of tool arguments during streaming (tail-truncated)
     var pendingToolArgPreview: String? = nil
     /// Total bytes of tool arguments received during streaming
@@ -213,6 +241,44 @@ final class ChatTurn: ObservableObject, Identifiable {
     var unclosedReasoning: Bool = false
 
     private static let maxArgPreviewLength = 500
+
+    /// Durations shorter than this aren't shown — they're indistinguishable from
+    /// "instant" and usually mean the call + result arrived in the same tick
+    /// without an observable execution window.
+    private static let minDisplayableToolDuration: TimeInterval = 0.05
+
+    /// Mark a tool call as started so its duration can be measured. Idempotent;
+    /// uses the pending-detection start when present (so the timer spans the
+    /// whole detect→result window), else now.
+    func markToolCallStarted(_ callId: String) {
+        // A tool following reasoning also ends the thinking phase.
+        finalizeThinkingDuration()
+        guard toolCallStartedAt[callId] == nil else { return }
+        toolCallStartedAt[callId] = pendingToolStartedAt ?? Date()
+        pendingToolStartedAt = nil
+    }
+
+    /// Record the thinking duration once, at the first content/tool that follows
+    /// reasoning. No-op for turns without thinking, after it's measured, or below
+    /// the display threshold.
+    private func finalizeThinkingDuration() {
+        guard thinkingDuration == nil, let start = thinkingStartedAt else { return }
+        let elapsed = Date().timeIntervalSince(start)
+        if elapsed >= Self.minDisplayableToolDuration {
+            thinkingDuration = elapsed
+        }
+    }
+
+    /// Set a tool call's result and record how long it took (if we saw it start).
+    /// Use this instead of assigning `toolResults` directly so durations persist.
+    func setToolResult(_ result: String, for callId: String) {
+        toolResults[callId] = result
+        guard toolCallDurations[callId] == nil, let start = toolCallStartedAt[callId] else { return }
+        let elapsed = Date().timeIntervalSince(start)
+        if elapsed >= Self.minDisplayableToolDuration {
+            toolCallDurations[callId] = elapsed
+        }
+    }
 
     /// Appends a tool-argument fragment to the preview, keeping only the trailing window.
     func appendToolArgFragment(_ fragment: String) {

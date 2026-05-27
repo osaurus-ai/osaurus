@@ -1184,11 +1184,12 @@ final class NativeMessageCellView: NSTableCellView {
                 sameKind: sameKind
             )
 
-        case let .thinking(_, text, isStreaming):
+        case let .thinking(_, text, isStreaming, duration):
             configureAsThinking(
                 block: block,
                 text: text,
                 isStreaming: isStreaming,
+                duration: duration,
                 context: context,
                 sameKind: sameKind
             )
@@ -1418,6 +1419,7 @@ final class NativeMessageCellView: NSTableCellView {
         block: ContentBlock,
         text: String,
         isStreaming: Bool,
+        duration: TimeInterval?,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -1435,7 +1437,7 @@ final class NativeMessageCellView: NSTableCellView {
         }
         let tv = nativeThinkingView!
         let thinkingLen: Int?
-        if case .thinking(_, _, _) = block.kind { thinkingLen = text.count } else { thinkingLen = nil }
+        if case .thinking = block.kind { thinkingLen = text.count } else { thinkingLen = nil }
 
         let isExpanded = context.expandedIds.contains(block.id)
         tv.configure(
@@ -1444,6 +1446,7 @@ final class NativeMessageCellView: NSTableCellView {
             width: context.width - 32,
             isStreaming: isStreaming,
             isExpanded: isExpanded,
+            duration: duration,
             theme: context.theme,
             blockId: block.id,
             sessionRedactions: context.sessionRedactions,
@@ -1485,6 +1488,7 @@ final class NativeMessageCellView: NSTableCellView {
             expandedIds: context.expandedIds,
             width: context.width - 32,
             theme: context.theme,
+            isStreaming: context.isStreaming,
             onToggle: { id in context.onToggleExpand(id) },
             onHeightChanged: { [weak self] in
                 guard let self, let gv = self.nativeToolCallGroupView, let id = self.currentBlockId else { return }
@@ -2324,11 +2328,13 @@ enum NativeCellHeightEstimator {
             // 4 top + ~22 content + 6 bottom (tight to header / thinking row above)
             return 32
 
-        case let .pendingToolCall(_, argPreview, _):
-            // header row + 52pt arg box + cell vertical insets
-            return argPreview != nil ? 112 : 62
+        case .pendingToolCall:
+            // Mirrors a single running group row (node + shimmer title) so the
+            // pending → group transition doesn't change height: 8pt top inset +
+            // node row + 8pt bottom inset, node centered at the same Y as a group row.
+            return NativeToolCallRowView.rowHeaderHeight + 8
 
-        case let .thinking(_, text, _):
+        case let .thinking(_, text, _, _):
             if !isExpanded { return 56 }
             let innerW = max(width - 64, 100)
             let charsPerLine = max(Int(innerW / 7), 20)
@@ -2376,8 +2382,8 @@ enum NativeCellHeightEstimator {
             return max(h, 48)
 
         case let .toolCallGroup(calls):
-            // each row self-sizes at ~41pt (40pt header + 1pt separator)
-            return CGFloat(calls.count) * 41 + 8
+            // each row self-sizes at the node header height + 1pt reserved gap
+            return CGFloat(calls.count) * (NativeToolCallRowView.rowHeaderHeight + 1) + 8
 
         case let .preflightCapabilities(items):
             return 8 + PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: width)

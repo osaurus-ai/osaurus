@@ -308,18 +308,14 @@ final class NativePendingToolCallView: NSView {
 
     // MARK: Subviews
 
-    private let pulseLayer = CALayer()
-    private let pulseHost = NSView()
+    /// Circular running node, matching the completed timeline node
+    /// (status-tinted fill + accent ring) with the category glyph in front.
+    private let node = NSView()
     private let categoryIcon = NSImageView()
-    private let nameLabel = NSTextField(labelWithString: "")
-    private let sizeLabel = NSTextField(labelWithString: "")
-    private let argsContainer = NSView()
-    private let argsLabel = NSTextField(labelWithString: "")
+    /// Always running here, so the title shimmers to signal progress.
+    private let shimmerLabel = ShimmerLabel()
 
-    // MARK: State
-
-    nonisolated(unsafe) private var pulseTimer: Timer?
-    private var isPulseUp = false
+    private static let nodeSize: CGFloat = 28
 
     // MARK: Init
 
@@ -330,19 +326,14 @@ final class NativePendingToolCallView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    deinit {
-        pulseTimer?.invalidate()
-    }
-
-    /// Stop the pulse when the cell leaves the window so recycled/offscreen
-    /// instances don't keep driving CATransaction ticks.
+    /// Stop the shimmer when the cell leaves the window so recycled/offscreen
+    /// instances don't keep animating.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
-            startPulse()
+            shimmerLabel.start()
         } else {
-            pulseTimer?.invalidate()
-            pulseTimer = nil
+            shimmerLabel.stop()
         }
     }
 
@@ -354,54 +345,27 @@ final class NativePendingToolCallView: NSView {
         argSize: Int,
         theme: any ThemeProtocol
     ) {
+        // Running node: accent-colored circle + category glyph.
         let category = ToolCategory.from(toolName: toolName)
-        categoryIcon.image = NSImage(systemSymbolName: category.icon, accessibilityDescription: nil)
-        categoryIcon.contentTintColor = NSColor(theme.secondaryText)
+        let accent = NSColor(theme.accentColor)
+        node.layer?.backgroundColor = accent.withAlphaComponent(0.14).cgColor
+        node.layer?.borderColor = accent.withAlphaComponent(0.55).cgColor
+        let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        categoryIcon.image = NSImage(systemSymbolName: category.icon, accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg)
+        categoryIcon.contentTintColor = accent
 
-        nameLabel.stringValue = toolName
-        nameLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
-        nameLabel.textColor = NSColor(theme.primaryText)
-
-        if argSize > 0 {
-            let kb = Double(argSize) / 1024.0
-            sizeLabel.stringValue = argSize < 1024 ? "\(argSize) B" : String(format: "%.1f KB", kb)
-            sizeLabel.isHidden = false
-        } else {
-            sizeLabel.isHidden = true
-        }
-        sizeLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        sizeLabel.textColor = NSColor(theme.tertiaryText)
-
-        pulseLayer.backgroundColor = NSColor(theme.accentColor).cgColor
-
-        if let preview = argPreview, !preview.isEmpty {
-            argsLabel.stringValue = Self.normalizedArgPreviewForDisplay(preview)
-            argsLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-            argsLabel.textColor = NSColor(theme.tertiaryText)
-            argsContainer.isHidden = false
-            argsContainer.layer?.backgroundColor = NSColor(theme.secondaryBackground).withAlphaComponent(0.5).cgColor
-        } else {
-            argsContainer.isHidden = true
-        }
-
-        startPulse()
-    }
-
-    /// streamed JSON often contains literal `\n` / `\t` pairs; show them as real newlines for the preview
-    private static func normalizedArgPreviewForDisplay(_ raw: String) -> String {
-        raw
-            .replacingOccurrences(of: "\\n", with: "\n")
-            .replacingOccurrences(of: "\\r", with: "\r")
-            .replacingOccurrences(of: "\\t", with: "\t")
-    }
-
-    override func layout() {
-        super.layout()
-        let w = argsContainer.bounds.width - 16
-        if w > 1, abs(argsLabel.preferredMaxLayoutWidth - w) > 0.5 {
-            argsLabel.preferredMaxLayoutWidth = w
-            argsLabel.invalidateIntrinsicContentSize()
-        }
+        // Always running: shimmer the friendly title to signal progress. The
+        // view mirrors the running group row exactly (node + shimmer title), so
+        // the pending → running-group → done transition is seamless — no args
+        // box flashing in and out. `argPreview`/`argSize` are unused.
+        shimmerLabel.configure(
+            text: ToolDisplayName.friendly(for: toolName, running: true),
+            font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+            baseColor: NSColor(theme.primaryText).withAlphaComponent(0.4),
+            highlightColor: NSColor(theme.primaryText)
+        )
+        shimmerLabel.start()
     }
 
     // MARK: - Private: Build
@@ -410,102 +374,39 @@ final class NativePendingToolCallView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
 
-        // Pulse dot host
-        pulseHost.translatesAutoresizingMaskIntoConstraints = false
-        pulseHost.wantsLayer = true
-        pulseLayer.cornerRadius = 4
-        pulseLayer.frame = CGRect(x: 0, y: 0, width: 8, height: 8)
-        pulseHost.layer?.addSublayer(pulseLayer)
-        addSubview(pulseHost)
+        // Circular running node
+        node.translatesAutoresizingMaskIntoConstraints = false
+        node.wantsLayer = true
+        node.layer?.cornerRadius = Self.nodeSize / 2
+        node.layer?.borderWidth = 1.5
+        addSubview(node)
 
-        // Category icon
+        // Category glyph in the node foreground
         categoryIcon.translatesAutoresizingMaskIntoConstraints = false
         categoryIcon.imageScaling = .scaleProportionallyUpOrDown
-        addSubview(categoryIcon)
+        node.addSubview(categoryIcon)
 
-        // Name label
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.isEditable = false
-        nameLabel.isBordered = false
-        nameLabel.drawsBackground = false
-        nameLabel.maximumNumberOfLines = 1
-        addSubview(nameLabel)
+        // Shimmering title
+        shimmerLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(shimmerLabel)
 
-        // Size label
-        sizeLabel.translatesAutoresizingMaskIntoConstraints = false
-        sizeLabel.isEditable = false
-        sizeLabel.isBordered = false
-        sizeLabel.drawsBackground = false
-        sizeLabel.isHidden = true
-        addSubview(sizeLabel)
-
-        // Args container
-        argsContainer.translatesAutoresizingMaskIntoConstraints = false
-        argsContainer.wantsLayer = true
-        argsContainer.layer?.cornerRadius = 4
-        argsContainer.isHidden = true
-        addSubview(argsContainer)
-
-        // Args label inside container
-        argsLabel.translatesAutoresizingMaskIntoConstraints = false
-        argsLabel.isEditable = false
-        argsLabel.isBordered = false
-        argsLabel.drawsBackground = false
-        argsLabel.usesSingleLineMode = false
-        argsLabel.maximumNumberOfLines = 3
-        argsLabel.lineBreakMode = .byWordWrapping
-        if let cell = argsLabel.cell as? NSTextFieldCell {
-            cell.wraps = true
-        }
-        argsContainer.addSubview(argsLabel)
-
-        let rowH: CGFloat = 32
+        // Node vertically centered in the cell so it lands at the same spot as
+        // the running group row's node (seamless pending → group transition).
         NSLayoutConstraint.activate([
-            pulseHost.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            pulseHost.centerYAnchor.constraint(equalTo: topAnchor, constant: rowH / 2),
-            pulseHost.widthAnchor.constraint(equalToConstant: 8),
-            pulseHost.heightAnchor.constraint(equalToConstant: 8),
+            node.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            node.centerYAnchor.constraint(equalTo: centerYAnchor),
+            node.widthAnchor.constraint(equalToConstant: Self.nodeSize),
+            node.heightAnchor.constraint(equalToConstant: Self.nodeSize),
 
-            categoryIcon.leadingAnchor.constraint(equalTo: pulseHost.trailingAnchor, constant: 8),
-            categoryIcon.centerYAnchor.constraint(equalTo: pulseHost.centerYAnchor),
-            categoryIcon.widthAnchor.constraint(equalToConstant: 12),
-            categoryIcon.heightAnchor.constraint(equalToConstant: 12),
+            categoryIcon.centerXAnchor.constraint(equalTo: node.centerXAnchor),
+            categoryIcon.centerYAnchor.constraint(equalTo: node.centerYAnchor),
+            categoryIcon.widthAnchor.constraint(equalToConstant: 14),
+            categoryIcon.heightAnchor.constraint(equalToConstant: 14),
 
-            nameLabel.leadingAnchor.constraint(equalTo: categoryIcon.trailingAnchor, constant: 8),
-            nameLabel.centerYAnchor.constraint(equalTo: pulseHost.centerYAnchor),
-
-            sizeLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
-            sizeLabel.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-
-            argsContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            argsContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            argsContainer.topAnchor.constraint(equalTo: topAnchor, constant: rowH + 4),
-            argsContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            // ~3 lines of 10pt monospace + vertical padding
-            argsContainer.heightAnchor.constraint(equalToConstant: 52),
-
-            argsLabel.leadingAnchor.constraint(equalTo: argsContainer.leadingAnchor, constant: 8),
-            argsLabel.trailingAnchor.constraint(equalTo: argsContainer.trailingAnchor, constant: -8),
-            argsLabel.topAnchor.constraint(equalTo: argsContainer.topAnchor, constant: 4),
-            argsLabel.bottomAnchor.constraint(lessThanOrEqualTo: argsContainer.bottomAnchor, constant: -4),
+            shimmerLabel.leadingAnchor.constraint(equalTo: node.trailingAnchor, constant: 10),
+            shimmerLabel.centerYAnchor.constraint(equalTo: node.centerYAnchor),
+            shimmerLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
         ])
-    }
-
-    private func startPulse() {
-        pulseTimer?.invalidate()
-        pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.applyPulseTick()
-            }
-        }
-    }
-
-    private func applyPulseTick() {
-        isPulseUp.toggle()
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(0.4)
-        pulseLayer.opacity = isPulseUp ? 1.0 : 0.3
-        CATransaction.commit()
     }
 }
 
