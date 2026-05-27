@@ -18,6 +18,8 @@ enum ModelSortOption: String, CaseIterable, Identifiable {
     case compatibility
     case sizeAsc
     case sizeDesc
+    case newest
+    case oldest
 
     var id: String { rawValue }
 
@@ -29,6 +31,8 @@ enum ModelSortOption: String, CaseIterable, Identifiable {
         case .compatibility: return "Compatibility"
         case .sizeAsc: return "Size (Smallest first)"
         case .sizeDesc: return "Size (Largest first)"
+        case .newest: return "Newest"
+        case .oldest: return "Oldest"
         }
     }
 
@@ -40,6 +44,8 @@ enum ModelSortOption: String, CaseIterable, Identifiable {
         case .compatibility: return "checkmark.seal"
         case .sizeAsc: return "arrow.up.circle"
         case .sizeDesc: return "arrow.down.circle"
+        case .newest: return "calendar.badge.clock"
+        case .oldest: return "calendar"
         }
     }
 }
@@ -1217,6 +1223,22 @@ struct ModelDownloadView: View {
                 let l = lhs.totalSizeEstimateBytes ?? Int64.max
                 let r = rhs.totalSizeEstimateBytes ?? Int64.max
                 if l != r { return sortOption == .sizeAsc ? l < r : l > r }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        case .newest, .oldest:
+            // Models without a known HF `lastModified` timestamp drop to the
+            // bottom so dated entries always lead the list regardless of order.
+            return models.sorted { lhs, rhs in
+                switch (lhs.releasedAt, rhs.releasedAt) {
+                case let (l?, r?):
+                    if l != r { return sortOption == .newest ? l > r : l < r }
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                case (nil, nil):
+                    break
+                }
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
         }
