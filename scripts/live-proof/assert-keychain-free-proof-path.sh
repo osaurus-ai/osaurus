@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 AGENTS="$ROOT/AGENTS.md"
 LAUNCHER="$ROOT/scripts/live-proof/launch-keychain-free-osaurus.sh"
+BUILDER="$ROOT/scripts/live-proof/build-keychain-free-osaurus.sh"
 fail=0
 
 check_contains() {
@@ -38,9 +39,14 @@ if [[ ! -f "$LAUNCHER" ]]; then
   echo "FAIL missing $LAUNCHER" >&2
   exit 1
 fi
+if [[ ! -f "$BUILDER" ]]; then
+  echo "FAIL missing $BUILDER" >&2
+  exit 1
+fi
 
 check_contains "$AGENTS" "Keychain-Free Validation Gate" "keychain-free validation gate"
 check_contains "$AGENTS" "OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1" "keychain-disabled env rule"
+check_contains "$AGENTS" "scripts/live-proof/build-keychain-free-osaurus.sh" "approved no-sign build wrapper"
 check_contains "$AGENTS" "OSAURUS_TEST_ROOT=/tmp/..." "isolated test root rule"
 check_contains "$AGENTS" "In keychain-disabled test mode, Osaurus Keychain wrappers must not perform" "no SecItem CRUD in disabled mode rule"
 check_contains "$AGENTS" "If Xcode, codesign, CodeSigningHelper, or Keychain UI" "stop-on-keychain rule"
@@ -50,6 +56,14 @@ check_contains "$AGENTS" "Shell-only guards, \`rg\` audits, direct script checks
 check_contains "$LAUNCHER" "OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1" "launcher disables keychain"
 check_contains "$LAUNCHER" 'OSAURUS_TEST_ROOT="$TEST_ROOT"' "launcher isolates test root"
 check_absent_regex "$LAUNCHER" '(^|[^[:alnum:]_])(open|security|codesign|notarytool|xcodebuild)([[:space:]]|$)' "keychain/signing/LaunchServices command"
+
+check_contains "$BUILDER" "OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1" "builder disables keychain"
+check_contains "$BUILDER" "CODE_SIGNING_ALLOWED=NO" "builder disables code signing"
+check_contains "$BUILDER" "CODE_SIGNING_REQUIRED=NO" "builder disables required signing"
+check_contains "$BUILDER" "CODE_SIGN_IDENTITY=" "builder clears signing identity"
+check_contains "$BUILDER" "AD_HOC_CODE_SIGNING_ALLOWED=NO" "builder disables ad-hoc signing"
+check_contains "$BUILDER" "ENABLE_USER_SCRIPT_SANDBOXING=NO" "builder disables user script sandboxing"
+check_absent_regex "$BUILDER" '(^|[^[:alnum:]_])(open|security|codesign|notarytool)([[:space:]]|$)' "keychain/signing/LaunchServices command"
 
 "$ROOT/scripts/live-proof/assert-keychain-disabled-source-coverage.sh"
 

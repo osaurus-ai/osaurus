@@ -35,6 +35,11 @@ reasoning/tool, cancellation, or server-panel work:
 - Shell-only guards, `rg` audits, direct script checks, and direct execution of
   an already-built app through `scripts/live-proof/launch-keychain-free-osaurus.sh`
   are the default validation routes while this gate is active.
+- If Eric explicitly approves a local dev app build, use
+  `scripts/live-proof/build-keychain-free-osaurus.sh` only. It builds Release
+  with signing disabled and sets `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`; launch
+  the resulting app only through
+  `scripts/live-proof/launch-keychain-free-osaurus.sh`.
 
 ## Model Runtime Non-Negotiables
 
