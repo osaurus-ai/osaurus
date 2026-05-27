@@ -45,6 +45,38 @@ Default family selection skips internal model IDs beginning with `_`; explicit `
 
 ## Live artifacts
 
+## 2026-05-27 current-head boundary
+
+Current Osaurus head: `d94dfe3fea3ad3a683ee6341bf27d639688de0c0`.
+Current vMLX pin: `bdd43452f86566574f3ea8c1a68a0993b7e25192`.
+
+This head pins the Nemotron required-tool tail/template fix. Do not treat this
+ledger as a merge claim until CI is green; the current-head no-sign app and
+Nemotron live row are captured below.
+
+Active no-sign build path reserved for the current-head rerun:
+`/tmp/osaurus-post1266-live-family-cache-matrix/build/DerivedData-pr1268-release-nosign-d94dfe3f`.
+
+Current-head Nemotron rerun:
+
+- Artifact: `/tmp/osaurus-post1266-live-family-cache-matrix-20260527T203002Z`
+- Model: `nemotron-omni-nano-jangtq-crack`
+- Classification: `pass_with_cache_boundary`
+- Source/runtime fix: vMLX `bdd43452f86566574f3ea8c1a68a0993b7e25192` removes the late required-tool system tail that previously leaked `system` into multiline tool arguments.
+- Turn 1 required `line_count`: pass, exact multiline args.
+- Turn 2 visible answer after tool result: pass, `Three lines were counted.`, no protocol/reasoning leak.
+- Turn 3 second required `line_count`: pass.
+- Cache topology: `layers=29`, `kvLayers=6`, `mambaLayers=23`, `companion=ssm`, `restore=disk-backed`.
+- Cache delta: `disk_l2_misses +9`, `disk_l2_stores +3`, no hit counter proven in this short row, `ssm_companion_hits +0`.
+- TurboQuant KV layer count: `0`.
+- Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded.
+
+Current classification boundary to preserve:
+
+- Pass rows: Nemotron Omni, Ling, Qwen35, Gemma4 26B, MiniMax direct-rail.
+- Partial/fail rows: ZAYA text, ZAYA-VL CCA companion hit, DSV4 JANGTQ2 newline escaping, Gemma3n required-tool live fail, HY3 missing from `/v1/models`.
+- TurboQuant KV remains default-off/native unless a row explicitly opts in and proves the family/topology; current pass rows record TurboQuant KV as `0` or absent rather than proving broad TurboQuant safety.
+
 ## 2026-05-27 13:04 PDT - Exact-head keychain-free app refresh
 
 Current Osaurus head: `a1ae123fa989b65063605c56b5c2ae38326ba099`.
