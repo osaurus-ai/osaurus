@@ -53,3 +53,94 @@ Default family selection skips internal model IDs beginning with `_`; explicit `
 - Turn 3 second required `line_count`: pass, exact `one\ntwo`
 - Cache delta: `disk_l2_hits +3`, `disk_l2_stores +3`, `companion_hits +3`, `ssm_companion_hits +3`
 - Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded
+
+### Ling 2.6 Flash JANGTQ2 CRACK
+
+- Artifact: `/tmp/osaurus-pr1268-live-ling-20260527-111100`
+- Model: `ling-2.6-flash-jangtq2-crack`
+- Classification: `pass`
+- Turn 1 required `line_count`: pass, exact `alpha\nbeta\ngamma`
+- Turn 2 visible answer after tool result: pass, no protocol/reasoning leak
+- Turn 3 second required `line_count`: pass, exact `one\ntwo`
+- Cache delta: `disk_l2_hits +1`, `disk_l2_stores +3`, `companion_hits +1`, `ssm_companion_hits +1`
+- Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded
+
+### ZAYA text JANGTQ4
+
+- Artifact: `/tmp/osaurus-pr1268-live-zaya-text-20260527-111115`
+- Model: `zaya1-8b-jangtq4`
+- Classification: `fail`
+- Failure: first required `line_count` turn returned visible `rmat:\n\n`, no structured tool call, and stopped by length.
+- Boundary: do not infer ZAYA text tool support from ZAYA-VL proof.
+
+### ZAYA-VL JANGTQ4
+
+- Artifact: `/tmp/osaurus-pr1268-live-zaya-vl-topology-strict-20260527-111224`
+- Model: `zaya1-vl-8b-jangtq4`
+- Classification: `pass_with_cache_boundary`
+- Turn 1 required `line_count`: pass, exact `alpha\nbeta\ngamma`
+- Turn 2 visible answer after tool result: pass, no protocol/reasoning leak
+- Turn 3 second required `line_count`: pass, exact `one\ntwo`
+- Cache delta: `disk_l2_hits +3`, `disk_l2_stores +4`, but `zaya_cca_companion_hits +0` and `zaya_cca_companion_misses +3`
+- Boundary: ZAYA CCA companion hit is not proven in this row.
+- Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded
+
+### DSV4 plain affine JANG
+
+- Artifact: `/tmp/osaurus-pr1268-live-dsv4-jang-20260527-111317`
+- Model: `deepseek-v4-flash-jang`
+- Classification: `error`
+- Result: Osaurus correctly refused the plain affine DSV4 JANG bundle and directed use of JANGTQ2/JANGTQ-K instead.
+- Boundary: this is a production guard, not a live chat pass.
+
+### DSV4 Flash JANGTQ2
+
+- Artifact: `/tmp/osaurus-pr1268-live-dsv4-jangtq2-multiline-20260527-111419`
+- Model: `deepseek-v4-flash-jangtq2`
+- Classification: `fail`
+- Turn 1 required `line_count`: pass, exact `alpha\nbeta\ngamma`
+- Turn 2 visible answer after tool result: pass, no protocol/reasoning leak
+- Turn 3 second required `line_count`: failed; argument came back as literal `one\\ntwo` instead of `one\ntwo`
+- Cache delta: `disk_l2_misses +17`, `disk_l2_stores +4`, no cache hit proven in this short row
+- Boundary: do not normalize `\\n` broadly as a fake fix; root cause needs DSV4 tool-history/schema-path investigation.
+
+### Qwen 3.5 35B A3B 4-bit
+
+- Artifact: `/tmp/osaurus-pr1268-live-qwen35-rerun-20260527-111520`
+- Model: `qwen3.5-35b-a3b-4bit`
+- Classification: `pass`
+- Turn 1 required `line_count`: pass, exact `alpha\nbeta\ngamma`
+- Turn 2 visible answer after tool result: pass, no protocol/reasoning leak
+- Turn 3 second required `line_count`: pass, exact `one\ntwo`
+- Cache delta: `disk_l2_hits +3`, `disk_l2_stores +4`, `companion_hits +3`, `ssm_companion_hits +3`
+- Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded
+
+### Gemma 3n E2B 4-bit
+
+- Artifact: `/tmp/osaurus-pr1268-live-gemma3n-e2b-20260527-111528`
+- Model: `gemma-3n-e2b-it-4bit`
+- Classification: `fail`
+- Failure: first required tool turn emitted visible tag-like text and no structured tool call.
+- Boundary: do not infer Gemma 3n support from Gemma 4 support.
+
+### Gemma 4 26B A4B JANG_4M CRACK
+
+- Artifact: `/tmp/osaurus-pr1268-live-gemma4-26b-rerun-20260527-111555`
+- Model: `gemma-4-26b-a4b-it-jang_4m-crack`
+- Classification: `pass`
+- Turn 1 required `line_count`: pass, exact `alpha\nbeta\ngamma`
+- Turn 2 visible answer after tool result: pass, no protocol/reasoning leak
+- Turn 3 second required `line_count`: pass, exact `one\ntwo`
+- Cache delta: `disk_l2_hits +1`, `disk_l2_stores +4`
+- Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded
+
+### MiniMax M2.7 JANG_K CRACK
+
+- Artifact: `/tmp/osaurus-pr1268-live-minimax-m27-20260527-111602`
+- Model: `minimax-m2.7-jang_k-crack`
+- Classification: `fail`
+- Turn 1 required `line_count`: pass
+- Turn 2 visible answer after tool result: failed; response was hidden reasoning only with blank visible content and length stop
+- Turn 3 second required `line_count`: failed; no structured tool call
+- Cache delta: `paged_hits +2`, `prefix_hits +2`, `disk_l2_stores +6`
+- Boundary: cache path proves activity, but chat/tool multi-turn behavior is not production-ready.

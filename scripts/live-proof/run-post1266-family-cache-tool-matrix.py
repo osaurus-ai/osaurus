@@ -233,6 +233,33 @@ def counter_delta(before: dict[str, Any], after: dict[str, Any], model: str) -> 
     return out
 
 
+def model_cache_topology(stats: dict[str, Any], model: str) -> dict[str, Any]:
+    for row in stats.get("models") or []:
+        if row.get("name") == model:
+            return row.get("cache_topology") or {}
+    return {}
+
+
+def cache_boundaries_for_topology(family: str, delta: dict[str, int], topology: dict[str, Any]) -> list[str]:
+    boundaries: list[str] = []
+    zaya_layers = int(topology.get("zaya_cca_layer_count") or 0)
+    tags = topology.get("tags") or []
+    ssm_required = (
+        family != "zaya"
+        and (
+            int(topology.get("mamba_layer_count") or 0) > 0
+            or any(str(tag) == "companion=ssm" for tag in tags)
+        )
+    )
+    if family == "zaya" or zaya_layers > 0:
+        if delta.get("zaya_cca_companion_hits", 0) <= 0:
+            boundaries.append("ZAYA CCA companion hit was not proven")
+    if ssm_required:
+        if delta.get("ssm_companion_hits", 0) <= 0 and delta.get("companion_hits", 0) <= 0:
+            boundaries.append("SSM companion hit was not proven")
+    return boundaries
+
+
 def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[str, Any]:
     row_dir = out_dir / re.sub(r"[^A-Za-z0-9_.-]+", "_", model)
     row_dir.mkdir(parents=True, exist_ok=True)
@@ -256,7 +283,7 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
     req1 = {
         "model": model,
         "messages": [
-            {"role": "user", "content": "Use the line_count tool on exactly this text, preserving newlines: alpha\\nbeta\\ngamma"}
+            {"role": "user", "content": f"Use the line_count tool on exactly this text, preserving newlines:\n{text1}"}
         ],
         "tools": TOOL_SCHEMA,
         "tool_choice": "required",
@@ -311,7 +338,7 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
     text3 = "one\ntwo"
     messages3 = messages2 + [
         {"role": "assistant", "content": visible2},
-        {"role": "user", "content": "Now use line_count on exactly this new text, preserving newlines: one\\ntwo"},
+        {"role": "user", "content": f"Now use line_count on exactly this new text, preserving newlines:\n{text3}"},
     ]
     req3 = {"model": model, "messages": messages3, "tools": TOOL_SCHEMA, "tool_choice": "required", "max_tokens": 160}
     write_json(row_dir / "03_second_required_tool_request.json", req3)
@@ -330,7 +357,9 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
     write_json(row_dir / "99_cache_after.json", after_cache)
     write_json(row_dir / "99_health_after.json", after_health)
     delta = counter_delta(before_cache, after_cache, model)
+    topology = model_cache_topology(after_cache, model)
     summary["cache_delta"] = delta
+    summary["cache_topology"] = topology
     summary["cache_hit_proven"] = any(
         delta.get(k, 0) > 0
         for k in ("disk_l2_hits", "paged_hits", "prefix_hits", "companion_hits", "ssm_companion_hits", "zaya_cca_companion_hits")
@@ -352,10 +381,11 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
     )
     if not summary["cache_hit_proven"]:
         summary["boundaries"].append("cache counters moved but no hit counter was proven in this short row")
+    summary["boundaries"].extend(cache_boundaries_for_topology(summary["family"], delta, topology))
 
     if summary["failures"]:
         summary["classification"] = "fail"
-    elif summary["cache_hit_proven"]:
+    elif summary["cache_hit_proven"] and not summary["boundaries"]:
         summary["classification"] = "pass"
     else:
         summary["classification"] = "pass_with_cache_boundary"
