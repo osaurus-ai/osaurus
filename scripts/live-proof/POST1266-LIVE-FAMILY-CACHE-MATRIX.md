@@ -47,19 +47,21 @@ Default family selection skips internal model IDs beginning with `_`; explicit `
 
 ## 2026-05-27 current-head boundary
 
-Current Osaurus head: `d94dfe3fea3ad3a683ee6341bf27d639688de0c0`.
+Current Osaurus head: `19871f5fa3d3ad1d777d02195380725a67f9fb59`.
 Current vMLX pin: `bdd43452f86566574f3ea8c1a68a0993b7e25192`.
 
-This head pins the Nemotron required-tool tail/template fix. Do not treat this
-ledger as a merge claim until CI is green; the current-head no-sign app and
-Nemotron live row are captured below.
+This head includes the Nemotron required-tool tail/template fix and the DSV4
+multiline required-tool fix. The current-head no-sign app was built from
+`/Users/eric/osaurus-pr1268-live` with signing disabled and launched with
+`OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
 
-Active no-sign build path reserved for the current-head rerun:
-`/tmp/osaurus-post1266-live-family-cache-matrix/build/DerivedData-pr1268-release-nosign-d94dfe3f`.
+Current no-sign build path:
+`/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-release-nosign-19871f5f`.
 
 Current-head Nemotron rerun:
 
-- Artifact: `/tmp/osaurus-post1266-live-family-cache-matrix-20260527T203002Z`
+- Cold artifact: `/Users/eric/osaurus-pr1268-live/live-artifacts/osaurus-post1266-live-family-cache-matrix-20260527T225816Z`
+- Warm artifact: `/Users/eric/osaurus-pr1268-live/live-artifacts/osaurus-post1266-live-family-cache-matrix-20260527T225904Z`
 - Model: `nemotron-omni-nano-jangtq-crack`
 - Classification: `pass`
 - Source/runtime fix: vMLX `bdd43452f86566574f3ea8c1a68a0993b7e25192` removes the late required-tool system tail that previously leaked `system` into multiline tool arguments.
@@ -67,15 +69,57 @@ Current-head Nemotron rerun:
 - Turn 2 visible answer after tool result: pass, `Three lines were counted.`, no protocol/reasoning leak.
 - Turn 3 second required `line_count`: pass.
 - Cache topology: `layers=29`, `kvLayers=6`, `mambaLayers=23`, `companion=ssm`, `restore=disk-backed`.
-- Immediate harness cache delta: `disk_l2_misses +9`, `disk_l2_stores +3`.
-- Post-row cache refresh: `99_postrow_cache_refresh.json` shows `disk_l2_hits +3`, `disk_l2_stores +8`, `companion_hits +3`, and `ssm_companion_hits +3`.
+- Warm cache delta: `disk_l2_hits +3`, `disk_l2_stores +4`, `companion_hits +3`, and `ssm_companion_hits +3`.
 - TurboQuant KV layer count: `0`.
+- Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded.
+
+Current-head Ling rerun:
+
+- Artifact: `/Users/eric/osaurus-pr1268-live/live-artifacts/osaurus-post1266-live-family-cache-matrix-20260527T230017Z`
+- Model: `ling-2.6-flash-jangtq2-crack`
+- Classification: `pass`
+- Turn 1 required `line_count`: pass, exact multiline args.
+- Turn 2 visible answer after tool result: pass, `Three lines were counted.`, no protocol/reasoning leak.
+- Turn 3 second required `line_count`: pass.
+- Cache topology: `layers=32`, `kvLayers=4`, `arraysLayers=28`, `companion=ssm`, `restore=disk-backed`.
+- Cache delta: `disk_l2_hits +1`, `disk_l2_misses +6`, `disk_l2_stores +3`, `companion_hits +1`, `ssm_companion_hits +1`.
+- TurboQuant KV layer count: `0`.
+- Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded.
+
+Current-head DSV4 JANGTQ2 rerun:
+
+- Artifact: `/Users/eric/osaurus-pr1268-live/live-artifacts/osaurus-post1266-live-family-cache-matrix-20260527T225647Z`
+- Model: `deepseek-v4-flash-jangtq2`
+- Classification: `pass_with_cache_boundary`
+- Turn 1 required `line_count`: pass, exact multiline args.
+- Turn 2 visible answer after tool result: pass, no protocol/reasoning leak.
+- Turn 3 second required `line_count`: pass. This closes the earlier literal `one\\ntwo` multiline-argument failure.
+- Cache topology: `layers=43`, `rotatingLayers=2`, `rotatingWrapperLayers=41`, `hybridPoolLayers=41`, `restore=disk-backed`.
+- Cache delta: `disk_l2_misses +10`, `disk_l2_stores +4`; delayed refresh still showed `disk_l2_hits +0`.
+- TurboQuant KV layer count: `0`.
+- Boundary: DSV4 CSA/HSA/SWA disk-backed pool restore/stores are visible, but cache hit is not proven in this short row.
+- Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded.
+
+Current-head ZAYA text rerun:
+
+- Cold artifact: `/Users/eric/osaurus-pr1268-live/live-artifacts/osaurus-post1266-live-family-cache-matrix-20260527T230106Z`
+- Warm artifact: `/Users/eric/osaurus-pr1268-live/live-artifacts/osaurus-post1266-live-family-cache-matrix-20260527T230305Z`
+- Model: `zaya1-8b-jangtq4`
+- Classification: `pass_with_cache_boundary`
+- Turn 1 required `line_count`: pass, exact multiline args.
+- Turn 2 visible answer after tool result: pass, `There were 3 lines counted.`, no protocol/reasoning leak.
+- Turn 3 second required `line_count`: pass. This closes the earlier abbreviated `one\ntw...` argument failure on this bundle.
+- Cache topology: `layers=80`, `kvLayers=40`, `zayaCCALayers=40`, `companion=zaya-cca`, `restore=disk-backed`.
+- Warm cache delta: `disk_l2_hits +3`, `disk_l2_misses +8`, `disk_l2_stores +4`, but `zaya_cca_companion_hits +0` and `zaya_cca_companion_misses +3`.
+- TurboQuant KV layer count: `0`.
+- Boundary: ZAYA text tool behavior is now passing; ZAYA CCA companion-hit reuse is still not proven.
 - Token/s: not emitted by the OpenAI-compatible response; durations and usage artifacts are recorded.
 
 Current classification boundary to preserve:
 
 - Pass rows: Nemotron Omni, Ling, Qwen35, Gemma4 26B, MiniMax direct-rail.
-- Partial/fail rows: ZAYA text, ZAYA-VL CCA companion hit, DSV4 JANGTQ2 newline escaping, Gemma3n required-tool live fail, HY3 missing from `/v1/models`.
+- Partial rows: DSV4 JANGTQ2 cache-hit proof, ZAYA text CCA companion hit, ZAYA-VL CCA companion hit.
+- Fail/unavailable rows: Gemma3n required-tool live fail, HY3 missing from `/v1/models`.
 - TurboQuant KV remains default-off/native unless a row explicitly opts in and proves the family/topology; current pass rows record TurboQuant KV as `0` or absent rather than proving broad TurboQuant safety.
 
 ## 2026-05-27 13:04 PDT - Exact-head keychain-free app refresh
