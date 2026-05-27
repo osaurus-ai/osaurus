@@ -8,7 +8,8 @@ mkdir -p "$(dirname "$DERIVED_DATA")"
 
 echo "derived_data=$DERIVED_DATA"
 echo "configuration=Release"
-echo "signing=disabled"
+echo "xcode_signing=disabled"
+echo "bundle_seal=ad-hoc-keychain-free"
 
 env \
   DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
@@ -32,5 +33,10 @@ if [[ ! -x "$BIN" ]]; then
   echo "missing built app executable: $BIN" >&2
   exit 66
 fi
+
+# macOS 26 rejects the raw CODE_SIGNING_ALLOWED=NO bundle for UI launch
+# because app resources are not sealed. This ad-hoc seal uses no identity,
+# certificate, timestamp, notarization, or login Keychain item.
+/usr/bin/codesign --force --deep --sign - --timestamp=none "$APP"
 
 echo "app=$APP"

@@ -268,3 +268,30 @@ Still not fixed by this row:
 - `deepseek-v4-flash-jangtq2` still has second-turn newline escaping mismatch on `one\ntwo`.
 - `gemma-3n-e2b-it-4bit` still leaks tag-like tool text on first required tool.
 - HY3/Hunyuan is still unavailable in current `/v1/models` inventory.
+
+## 2026-05-27 16:00 PDT - Current-head PR #1268 DSV4 rerun and dev-launch correction
+
+Current Osaurus head: `19871f5fa3d3ad1d777d02195380725a67f9fb59`.
+Current vMLX pin: `f84b0dbd00a87e4722f7b3c700938a40e261c399`.
+
+Build/launch findings:
+
+- `scripts/live-proof/build-keychain-free-osaurus.sh` built Release with Xcode signing disabled.
+- Direct binary launch through `launch-keychain-free-osaurus.sh` was blocked by macOS policy on this machine (`AppleSystemPolicy` refused the raw unsigned bundle).
+- The workable keychain-free UI path is:
+  - build with Xcode signing disabled,
+  - apply local ad-hoc bundle sealing with `/usr/bin/codesign --sign - --timestamp=none`,
+  - launch foreground UI through `open-keychain-free-osaurus.sh`, which sets `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1` and `OSAURUS_TEST_ROOT` via `launchctl setenv` before `open -n`.
+- This uses no signing identity, certificate, notarization, `security(1)`, or login Keychain item.
+
+Focused DSV4 app row:
+
+- Artifact: `/tmp/osaurus-pr1268-live-dsv4-jangtq2-clean-19871f5f-20260527-160007`
+- Model: `deepseek-v4-flash-jangtq2`
+- Classification: `pass_with_cache_boundary`
+- Turn 1 required `line_count`: pass, exact `alpha\nbeta\ngamma`
+- Turn 2 visible answer after tool result: pass, no protocol/reasoning leak
+- Turn 3 second required `line_count`: pass, exact `one\ntwo`
+- No sampler overrides in script payloads.
+- Boundary: this short rerun did not prove DSV4 cache-hit counters; `/admin/cache-stats` did not retain a DSV4 model row at summary capture. Use earlier warm DSV4 artifacts for disk L2 hit proof until a fresh current-head cache-hit rerun is captured.
+- Additional boundary: this row proves the OpenAI-compatible app/server tool path. Do not promote it as signed/notarized release proof while `CodeSigningHelper.xpc` remains active.
