@@ -189,8 +189,8 @@ class SystemMonitorService: ObservableObject {
         // the dashboard reported `Available: 0 GB` even when Finder showed
         // tens of GB free. `OsaurusPaths.volumeFreeBytes` uses the modern
         // URL-keyed `.volumeAvailableCapacityForImportantUsageKey` first
-        // (the value Finder shows) and falls back to the legacy API only
-        // when the modern query is unavailable. Same helper as
+        // (the value Finder shows) and falls back to the legacy API when
+        // the modern query is unavailable or returns 0. Same helper as
         // `ModelDownloadService.freeBytesOnVolume` so the two read-outs
         // can never silently drift.
         let gb = 1024.0 * 1024.0 * 1024.0
