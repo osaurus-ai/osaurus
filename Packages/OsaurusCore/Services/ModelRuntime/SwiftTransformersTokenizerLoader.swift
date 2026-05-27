@@ -65,7 +65,12 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
     {%- if system_message is string and system_message | length > 0 -%}
         {{ system_message | trim + '\n\n' }}
     {%- endif -%}
-    {{ 'You have access to the following functions. If a function call is required, reply only with <start_function_call>call:name{arg:<escape>value<escape>}<end_function_call>.\n\n' }}
+    {{ 'You have access to the following functions.\n' }}
+    {{ 'When a function call is required, do not explain, do not summarize, and do not answer in prose.\n' }}
+    {{ 'Output exactly one function call using this grammar:\n' }}
+    {{ '<start_function_call>call:FUNCTION_NAME{ARGUMENT_NAME:<escape>ARGUMENT_VALUE<escape>}<end_function_call>\n' }}
+    {{ 'Example:\nUser asks: Count the lines in this text: alpha\nbeta\ngamma\n' }}
+    {{ 'Assistant replies: <start_function_call>call:line_count{text:<escape>alpha\nbeta\ngamma<escape>}<end_function_call>\n\n' }}
     {%- for tool in tools -%}
         {%- set fn = tool['function'] if tool['function'] is defined else tool -%}
         {{ 'Function: ' + fn['name'] + '\n' }}

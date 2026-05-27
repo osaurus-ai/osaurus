@@ -311,7 +311,8 @@ struct SwiftTransformersTokenizerLoaderTests {
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
         #expect(decoded.contains("Function: line_count"), "Decoded: \(decoded)")
-        #expect(decoded.contains("<start_function_call>call:name"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<start_function_call>call:FUNCTION_NAME"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<start_function_call>call:line_count"), "Decoded: \(decoded)")
         #expect(decoded.contains("MUST be a function call"), "Decoded: \(decoded)")
         #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
         #expect(decoded.contains("Use line_count on alpha\nbeta\ngamma."), "Decoded: \(decoded)")
