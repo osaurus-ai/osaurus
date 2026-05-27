@@ -165,6 +165,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // path can run. Idempotent; safe if a future migration moves this.
         DocumentAdaptersBootstrap.registerBuiltIns()
 
+        // Register every default-agent configure-tool domain. This is what
+        // wires `osaurus_provider_add`, `osaurus_model_download`, etc. into
+        // `ToolRegistry` and feeds the system-prompt domain menu. Adding a
+        // new domain is one new file under `Tools/Configuration/` plus one
+        // register call in `ConfigurationDomainBootstrap`.
+        ConfigurationDomainBootstrap.registerBuiltIns()
+
         // Detect repeated startup crashes and enter safe mode if needed
         LaunchGuard.checkOnLaunch()
 

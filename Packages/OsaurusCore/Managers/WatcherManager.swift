@@ -427,6 +427,18 @@ public final class WatcherManager {
     /// during processing are caught on the next iteration because lastKnown represents
     /// the pre-dispatch state, not the post-settle state.
     private func processCurrentState(for watcher: Watcher) {
+        // Watchers MUST target an explicit custom agent. nil and built-in
+        // agentIds were previously coerced to `Agent.defaultId`, anonymously
+        // routing filesystem-watch dispatches onto the Default agent.
+        if let rejection = Agent.rejectBuiltInForExternalSurface(
+            watcher.agentId,
+            source: "watcher/processCurrentState"
+        ) {
+            print("[Osaurus] [\(watcher.name)] watcher skipped: \(rejection.message)")
+            phases[watcher.id] = .idle
+            return
+        }
+
         let currentPhase = phases[watcher.id] ?? .idle
 
         // Only enter from debouncing (normal FSEvent path) or idle (runNow path)
@@ -595,14 +607,21 @@ public final class WatcherManager {
             WatcherStore.save(updatedWatcher)
             refresh()
 
+            // processCurrentState rejects watchers without a real custom-
+            // agent id up front, so `watcher.agentId` is guaranteed non-nil
+            // here. The previous `?? Agent.defaultId` notification fallback
+            // would have mis-attributed result toasts to the Default agent.
+            var userInfo: [String: Any] = [
+                "watcherId": watcher.id,
+                "sessionId": chatSessionId,
+            ]
+            if let agentId = watcher.agentId {
+                userInfo["agentId"] = agentId
+            }
             NotificationCenter.default.post(
                 name: .watcherExecutionCompleted,
                 object: nil,
-                userInfo: [
-                    "watcherId": watcher.id,
-                    "sessionId": chatSessionId,
-                    "agentId": watcher.agentId ?? Agent.defaultId,
-                ]
+                userInfo: userInfo
             )
             print("[Osaurus] Watcher completed: \(watcher.name)")
 
