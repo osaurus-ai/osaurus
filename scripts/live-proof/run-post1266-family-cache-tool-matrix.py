@@ -66,6 +66,12 @@ TOOL_SCHEMA = [
     }
 ]
 
+# Tool-call proofs must not fail just because a reasoning-capable family
+# spends tokens restating the requested schema before emitting the protocol
+# block. This is a harness cap only; production/API defaults stay model-owned.
+REQUIRED_TOOL_MAX_TOKENS = 768
+VISIBLE_ANSWER_MAX_TOKENS = 160
+
 
 def now_slug() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -287,7 +293,7 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
         ],
         "tools": TOOL_SCHEMA,
         "tool_choice": "required",
-        "max_tokens": 160,
+        "max_tokens": REQUIRED_TOOL_MAX_TOKENS,
     }
     write_json(row_dir / "01_required_tool_request.json", req1)
     t0 = time.time()
@@ -314,7 +320,13 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
         {"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps({"lines": 3})},
         {"role": "user", "content": "Answer visibly in one short sentence: how many lines were counted? Do not call a tool."},
     ]
-    req2 = {"model": model, "messages": messages2, "tools": TOOL_SCHEMA, "tool_choice": "none", "max_tokens": 120}
+    req2 = {
+        "model": model,
+        "messages": messages2,
+        "tools": TOOL_SCHEMA,
+        "tool_choice": "none",
+        "max_tokens": VISIBLE_ANSWER_MAX_TOKENS,
+    }
     write_json(row_dir / "02_visible_after_tool_request.json", req2)
     t0 = time.time()
     resp2 = request_json(base_url, "/v1/chat/completions", req2, timeout=timeout)
@@ -340,7 +352,13 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
         {"role": "assistant", "content": visible2},
         {"role": "user", "content": f"Now use line_count on exactly this new text, preserving newlines:\n{text3}"},
     ]
-    req3 = {"model": model, "messages": messages3, "tools": TOOL_SCHEMA, "tool_choice": "required", "max_tokens": 160}
+    req3 = {
+        "model": model,
+        "messages": messages3,
+        "tools": TOOL_SCHEMA,
+        "tool_choice": "required",
+        "max_tokens": REQUIRED_TOOL_MAX_TOKENS,
+    }
     write_json(row_dir / "03_second_required_tool_request.json", req3)
     t0 = time.time()
     resp3 = request_json(base_url, "/v1/chat/completions", req3, timeout=timeout)

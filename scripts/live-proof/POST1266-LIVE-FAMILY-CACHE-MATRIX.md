@@ -73,6 +73,17 @@ Default family selection skips internal model IDs beginning with `_`; explicit `
 - Failure: first required `line_count` turn returned visible `rmat:\n\n`, no structured tool call, and stopped by length.
 - Boundary: do not infer ZAYA text tool support from ZAYA-VL proof.
 
+Refresh after required-tool harness cap correction:
+
+- Direct probe: `/tmp/osaurus-pr1268-zaya-text-token-budget-probe-20260527-1204`
+- Full rerun: `/tmp/osaurus-pr1268-live-zaya-text-required768-20260527-1208`
+- Classification remains `fail` / partial, but for a narrower reason:
+  - Turn 1 required `line_count`: pass, exact `alpha\nbeta\ngamma`.
+  - Turn 2 visible answer after tool result: pass, no protocol/reasoning leak.
+  - Turn 3 second required `line_count`: structured tool call emitted, but argument was abbreviated as `one\ntw...` instead of exact `one\ntwo`.
+- Cache delta on the full rerun: `disk_l2_hits +3`, `disk_l2_stores +4`, `zaya_cca_companion_hits +0`, `zaya_cca_companion_misses +3`.
+- Boundary: current evidence no longer supports a broad "missing ZAYA text tool schema" diagnosis; it supports an exact-argument reliability issue after tool history plus unproven ZAYA CCA companion-hit reuse.
+
 ### ZAYA-VL JANGTQ4
 
 - Artifact: `/tmp/osaurus-pr1268-live-zaya-vl-topology-strict-20260527-111224`
@@ -176,7 +187,7 @@ Interpretation:
 
 Still not fixed by this row:
 
-- `zaya1-8b-jangtq4` text tool template still failed first required tool with visible `rmat:`.
+- `zaya1-8b-jangtq4` text required-tool turn now passes with the corrected proof cap, but the multi-turn exact-argument row remains partial because turn 3 returned `one\ntw...` instead of exact `one\ntwo`.
 - `zaya1-vl-8b-jangtq4` tool path passed but CCA companion cache hit remains unproven.
 - `deepseek-v4-flash-jangtq2` still has second-turn newline escaping mismatch on `one\ntwo`.
 - `gemma-3n-e2b-it-4bit` still leaks tag-like tool text on first required tool.
