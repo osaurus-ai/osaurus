@@ -24,30 +24,17 @@ reasoning/tool, cancellation, or server-panel work:
   signing or user authentication. If a prompt appears, stop the lane, document
   the artifact as blocked, and switch to a keychain-free proof path.
 - Do not treat an unsigned Xcode build flag as sufficient proof of
-  keychain-safety. If Xcode, certificate-backed codesign, CodeSigningHelper,
-  or Keychain UI appears in the lane, stop. The only allowed local signing
-  step in this proof lane is ad-hoc sealing with `/usr/bin/codesign --sign -`
-  and `--timestamp=none`, which uses no identity, certificate, notarization,
-  or login Keychain item.
+  keychain-safety. If Xcode, codesign, CodeSigningHelper, or Keychain UI
+  appears in the lane, stop.
 - Do not run Osaurus SwiftPM/Xcode validation lanes (`swift test`,
   `swift build`, `xcrun swift`, `xcodebuild`, `swift-driver`,
   `swift-frontend`, package plugin builds, or Cmlx compile jobs) unless Eric
   explicitly approves that exact lane. These paths can still invoke Apple
   signing, package, or keychain-adjacent services even when the test itself
   looks source-only.
-- Shell-only guards, `rg` audits, direct script checks, direct execution of an
-  already-built app through `scripts/live-proof/launch-keychain-free-osaurus.sh`,
-  and foreground UI launch through
-  `scripts/live-proof/open-keychain-free-osaurus.sh` are the default validation
-  routes while this gate is active.
-- If Eric explicitly approves a local dev app build, use
-  `scripts/live-proof/build-keychain-free-osaurus.sh` only. It builds Release
-  with Xcode signing disabled, applies only a keychain-free ad-hoc seal needed
-  for macOS UI launch, and sets `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`. Launch
-  the resulting app for UI proof through
-  `scripts/live-proof/open-keychain-free-osaurus.sh`; use
-  `scripts/live-proof/launch-keychain-free-osaurus.sh` only for direct binary
-  diagnostics where macOS policy permits direct execution.
+- Shell-only guards, `rg` audits, direct script checks, and direct execution of
+  an already-built app through `scripts/live-proof/launch-keychain-free-osaurus.sh`
+  are the default validation routes while this gate is active.
 
 ## Model Runtime Non-Negotiables
 
