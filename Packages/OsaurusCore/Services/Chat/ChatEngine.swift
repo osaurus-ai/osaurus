@@ -858,6 +858,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     var reasoning = ""
                     var terminalStopReason = "stop"
                     for try await delta in stream {
+                        try Task.checkCancellation()
                         if let stats = StreamingStatsHint.decode(delta) {
                             if let stopReason = stats.stopReason, !stopReason.isEmpty {
                                 terminalStopReason = stopReason
@@ -963,6 +964,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             var terminalStopReason = "stop"
             var authoritativeOutputTokens: Int?
             for try await delta in stream {
+                try Task.checkCancellation()
                 if let stats = StreamingStatsHint.decode(delta) {
                     authoritativeOutputTokens = stats.tokenCount
                     if let stopReason = stats.stopReason, !stopReason.isEmpty {

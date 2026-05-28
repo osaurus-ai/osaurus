@@ -298,6 +298,15 @@ public actor ModelRuntime {
         activeGenerationTask = nil
     }
 
+    /// Cancel the active decode for `name` without evicting the loaded
+    /// container. HTTP non-streaming callers use this when the client drops
+    /// before any response body can be written; otherwise the server can keep
+    /// decoding for a request nobody is still reading.
+    func cancelGeneration(name: String) async {
+        await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
+        await cancelActiveGeneration(for: name)
+    }
+
     private func allocateLoadingTaskID() -> UInt64 {
         nextLoadingTaskID &+= 1
         return nextLoadingTaskID

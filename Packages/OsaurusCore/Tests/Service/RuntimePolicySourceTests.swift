@@ -1179,6 +1179,8 @@ struct RuntimePolicySourceTests {
     func httpChannelCloseCancelsPerRequestStreamingTasks() throws {
         let handler = try Self.source("Networking/HTTPHandler.swift")
         let helper = try Self.source("Networking/HTTPLoopHelpers.swift")
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
 
         #expect(helper.contains("final class HTTPRequestTaskRegistry"))
         #expect(helper.contains("func cancelAll()"))
@@ -1207,6 +1209,12 @@ struct RuntimePolicySourceTests {
         #expect(handler.contains("if disconnected.value { throw CancellationError() }"))
         #expect(handler.contains("let channelClosed = SendableBool(false)"))
         #expect(handler.contains("let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)"))
+        #expect(handler.contains("let responseFinished = SendableBool(false)"))
+        #expect(handler.contains("let wasResidentBeforeComplete = SendableBool(false)"))
+        #expect(handler.contains("await ModelRuntime.shared.cancelGeneration(name: model)"))
+        #expect(handler.contains("wasResidentBeforeComplete.value = await ModelRuntime.shared.isResident(name: model)"))
+        #expect(handler.contains("try Task.checkCancellation()\n                    var resp = try await chatEngine.completeChat(request: enrichedReq)"))
+        #expect(handler.contains("var resp = try await chatEngine.completeChat(request: enrichedReq)\n                    try Task.checkCancellation()"))
         #expect(handler.contains("var emittedSemanticDelta = false"))
         #expect(handler.contains("func markSemanticDeltaIfConnected()"))
         #expect(handler.contains("if self._isChannelActive.value && !disconnected.value && !channelClosed.value"))
@@ -1283,6 +1291,10 @@ struct RuntimePolicySourceTests {
         )
         let errorCaught = String(handler[errorStart.lowerBound ..< errorEnd.lowerBound])
         #expect(errorCaught.contains("requestTasks.cancelAll()"))
+        #expect(runtime.contains("func cancelGeneration(name: String) async"))
+        #expect(runtime.contains("await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)"))
+        #expect(chatEngine.contains("for try await delta in stream {\n                        try Task.checkCancellation()"))
+        #expect(chatEngine.contains("for try await delta in stream {\n                try Task.checkCancellation()"))
 
         #expect(
             !handler.contains("\n        Task(priority: .userInitiated)"),

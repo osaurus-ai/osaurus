@@ -4626,15 +4626,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logTemperature = req.temperature
             let logMaxTokens = req.resolvedMaxTokens
             let logSelf = self
+            let responseFinished = SendableBool(false)
+            let wasResidentBeforeComplete = SendableBool(false)
+            context.channel.closeFuture.whenComplete { _ in
+                guard !responseFinished.value else { return }
+                Task {
+                    await ModelRuntime.shared.cancelGeneration(name: model)
+                    if !wasResidentBeforeComplete.value {
+                        await ModelRuntime.shared.unload(name: model)
+                    }
+                }
+            }
             runRequestTask(priority: .userInitiated) {
                 do {
                     httpTrace.mark("http_task_start")
+                    wasResidentBeforeComplete.value = await ModelRuntime.shared.isResident(name: model)
                     let chatEngine = self.chatEngine
                     let enrichedReq = req
                     httpTrace.mark("http_context_passthrough_done")
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
                     httpTrace.mark("http_complete_chat_start")
+                    try Task.checkCancellation()
                     var resp = try await chatEngine.completeChat(request: enrichedReq)
+                    try Task.checkCancellation()
                     httpTrace.mark("http_complete_chat_done")
                     // Compute prefix evidence from the exact request sent to
                     // the OpenAI-compatible server path. Agent context is
@@ -4662,6 +4676,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     headers.append(contentsOf: cors)
                     let headersCopy = headers
                     hop {
+                        responseFinished.value = true
                         var responseHead = HTTPResponseHead(version: head.version, status: .ok)
                         var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
                         buffer.writeString(body)
@@ -4738,6 +4753,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let headers: [(String, String)] = [("Content-Type", "application/json; charset=utf-8")]
                     let headersCopy = headers
                     hop {
+                        responseFinished.value = true
                         var responseHead = HTTPResponseHead(version: head.version, status: status)
                         var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
                         buffer.writeString(body)
