@@ -572,3 +572,29 @@ Gemma3n result and fix:
   - `MLXServiceRuntimePolicyTests`: 7/7 passed.
   - `SwiftTransformersTokenizerLoaderTests/gemma3nLocalTokenizerDoesNotInventRequiredToolContractFromFallback`: passed.
 - Gemma3n remains unsupported for required tool calling until a native/stamped Gemma3n tool contract exists and passes live multi-turn proof.
+
+## 2026-05-28 07:21 PDT - Latest-head DSV4 and ZAYA repeat-cache probes
+
+Current Osaurus head: `13f7fd9455006d55242d77375a5c9dcf2841266c`.
+Current vMLX main pin: `cc3f5f4dc1317ffa09c46050ba0847f495887747`.
+No-sign/keychain-free app: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-release-nosign-13f7fd94/Build/Products/Release/osaurus.app`.
+
+Artifacts:
+
+- DSV4 repeat-cache: `/tmp/osaurus-pr1268-13f7fd94-dsv4-repeat-cache-20260528-071614`.
+- ZAYA CCA repeat-cache: `/tmp/osaurus-pr1268-13f7fd94-zaya-cca-repeat-cache-20260528-071813`.
+
+DSV4 result:
+
+- PASS: three identical required `line_count` requests routed to structured tool calls with exact args `red\ngreen\nblue`.
+- PASS: no visible DSML/protocol leakage on any tool turn.
+- Topology: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating layers, disk-backed restore required, TurboQuant KV 0.
+- Boundary: disk L2 hits stayed `0`; misses/stores moved. Latest head no longer reproduces the earlier third-repeat tool-routing failure, but DSV4 warm disk-hit readiness remains unproven.
+
+ZAYA result:
+
+- PASS: three identical required `line_count` requests routed to structured tool calls with exact args `red\ngreen\nblue`.
+- PASS: no visible protocol leakage on any tool turn.
+- PASS: disk L2 reuse moved on repeat turns (`disk_hits +1` on turn 2 and `+1` on turn 3).
+- Topology: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV 0.
+- Boundary: ZAYA CCA companion hits stayed `0` while CCA companion misses increased. Do not claim CCA companion-hit reuse from this PR; claim behavior correctness plus disk-L2 reuse only.

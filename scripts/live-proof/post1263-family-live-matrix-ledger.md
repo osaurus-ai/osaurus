@@ -20,7 +20,7 @@ Each promoted row needs current-head evidence for:
 
 ## Architecture cache requirements
 
-- Full KV models: prefix/L2 disk reuse, and TurboQuant KV only when explicitly enabled and proven for the row.
+- Full KV models: prefix/L2 disk reuse; `engineSelected` may choose TurboQuant KV by default only for proven/simple full-KV topology rows and must record the effective KV mode.
 - Qwen/Ling/Nemotron hybrid SSM/Mamba: KV plus SSM/companion state proof; TurboQuant KV is not a substitute.
 - ZAYA/CCA/VL: CCA companion/pooling proof, VL media payload where applicable, and cache salt isolation.
 - DSV4: CSA/HSA/SWA hybrid-pool topology plus disk restore/hit proof; TurboQuant KV is not a substitute.
@@ -40,6 +40,17 @@ Each promoted row needs current-head evidence for:
 - Do not apply forced-behavior fixes, hidden sampler overrides, forced thinking/tool wrappers, or broad parser masks to make rows look green.
 
 ## Current #1268 merge boundary
+
+### 2026-05-28 07:20 PDT final PR merge boundary
+
+- Current Osaurus PR: `#1268`, head `13f7fd9455006d55242d77375a5c9dcf2841266c`, open, not draft, mergeable, not merged by agent.
+- Current vMLX main and Osaurus pin: `cc3f5f4dc1317ffa09c46050ba0847f495887747`; verified present on `osaurus-ai/vmlx-swift` main.
+- GitHub checks on `13f7fd94`: `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
+- Final local source/hygiene guard on `13f7fd94` passed: keychain-free proof path, no hidden sampler defaults, no forced behavior, OpenResponses/cache wiring, server-settings runtime wiring, reasoning routing, HTTP cancellation, required tool-choice routing, model tool/capability surfaces, vMLX pin/checkout readiness, and PR artifact hygiene.
+- Final no-sign/keychain-free app from `13f7fd94` launched at `build/DerivedData-pr1268-release-nosign-13f7fd94/Build/Products/Release/osaurus.app` and `/health` returned healthy.
+- Gemma3n required-tool handling is a support-boundary fix, not a promotion: vMLX no longer infers tool support from Gemma3n `model_type`, and Osaurus blocks known unsupported Gemma3n tool requests before decode.
+- Default cache policy is `engineSelected` with topology gating: proven simple full-KV rows may default to TurboQuant KV; DSV4, ZAYA/ZAYA-VL, Gemma rotating, and hybrid SSM/companion-cache rows stay native/fp16 unless explicitly overridden or separately proven safe.
+- No agent should merge Osaurus without explicit user approval. vMLX main is managed directly and contains the runtime fixes consumed by this PR.
 
 ### 2026-05-28 06:16 PDT runtime-proof boundary
 
@@ -107,3 +118,26 @@ Each promoted row needs current-head evidence for:
   - `MLXServiceRuntimePolicyTests`: 7/7 passed.
   - `SwiftTransformersTokenizerLoaderTests/gemma3nLocalTokenizerDoesNotInventRequiredToolContractFromFallback`: passed.
 - This is a support-boundary fix, not a promotion. Gemma3n remains unsupported for required tool calling until a native/stamped Gemma3n tool contract exists and passes live multi-turn proof.
+
+### 2026-05-28 07:21 PDT latest-head DSV4/ZAYA repeat-cache probes
+
+Current Osaurus head: `13f7fd9455006d55242d77375a5c9dcf2841266c`.
+Current vMLX main pin: `cc3f5f4dc1317ffa09c46050ba0847f495887747`.
+No-sign/keychain-free app: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-release-nosign-13f7fd94/Build/Products/Release/osaurus.app`.
+
+DSV4 repeat-cache artifact:
+
+- `/tmp/osaurus-pr1268-13f7fd94-dsv4-repeat-cache-20260528-071614`
+- Model: `deepseek-v4-flash-jangtq2`.
+- Three identical required `line_count` requests all passed with exact args `red\ngreen\nblue`, `finish_reason=tool_calls`, and no visible content/protocol leak.
+- Topology stayed DSV4 hybrid-pool: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating layers, disk-backed restore required, TurboQuant KV 0.
+- Cache boundary: disk L2 hits stayed `0`; misses/stores moved (`misses 2 -> 4 -> 6`, `stores 0 -> 1 -> 2`). This proves the prior third-repeat tool-routing failure is not reproducing on `13f7fd94`, but it still does not prove DSV4 warm disk-hit readiness.
+
+ZAYA CCA repeat-cache artifact:
+
+- `/tmp/osaurus-pr1268-13f7fd94-zaya-cca-repeat-cache-20260528-071813`
+- Model: `zaya1-8b-jangtq4`.
+- Three identical required `line_count` requests all passed with exact args `red\ngreen\nblue`, `finish_reason=tool_calls`, and no visible content/protocol leak.
+- Topology: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV 0.
+- Disk L2 reuse is proven in this row: turn 2 `disk_hits +1`, turn 3 `disk_hits +1`.
+- CCA companion-hit reuse is still not proven: `zaya_cca_companion_hits` remained `0`, while `zaya_cca_companion_misses` increased on turns 2 and 3. Keep the row classified as behavior-pass/disk-reuse-pass with CCA companion-hit boundary.
