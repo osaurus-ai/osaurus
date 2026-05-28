@@ -39,8 +39,6 @@ public enum ServerRuntimeSettingsStore {
     private static let fileName = "server-runtime.json"
     private static let cacheDefaultsMigrationMarkerName =
         ".server-runtime-cache-defaults-v2-migrated"
-    private static let engineSelectedCacheRepairMarkerName =
-        ".server-runtime-engine-selected-cache-v3-repaired"
 
     // MARK: - Load / Save
 
@@ -146,17 +144,13 @@ public enum ServerRuntimeSettingsStore {
             normalized.mtp.mode = .auto
         }
         if shouldRepairLegacyCacheDefaults(normalized.cache) {
-            // Keep live KV codec conservative on upgrade. Engine-selected
-            // TurboQuant stays available as an explicit Server Settings
-            // choice, but it is not promoted globally until the Qwen/Gemma/
-            // DSV4 cross-family proof matrix covers the historical failure
-            // modes.
+            // Keep companion-cache repair independent from the live KV codec.
+            // Engine-selected is the default policy now, but ModelRuntime
+            // only resolves it to TurboQuant for proven full-KV rows and
+            // leaves hybrid/rotating/CCA/DSV4 rows on fp16 unless explicitly
+            // overridden.
             normalized.cache.enableSSMReDerive = true
             writeCacheDefaultsMigrationMarker()
-        }
-        if shouldRepairAutoMigratedEngineSelectedCacheDefault(normalized.cache) {
-            normalized.cache.liveKVCodec = .native
-            writeEngineSelectedCacheRepairMarker()
         }
         return normalized
     }
@@ -189,46 +183,8 @@ public enum ServerRuntimeSettingsStore {
             && cache.enableSSMReDerive == false
     }
 
-    private nonisolated static func shouldRepairAutoMigratedEngineSelectedCacheDefault(
-        _ cache: VMLXServerCacheSettings
-    ) -> Bool {
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: cacheDefaultsMigrationMarkerURL().path),
-            !fileManager.fileExists(atPath: engineSelectedCacheRepairMarkerURL().path)
-        else {
-            return false
-        }
-        return cache.prefix.enabled
-            && cache.prefix.legacyEntryCountCache == false
-            && cache.prefix.memoryLimitMB == nil
-            && cache.prefix.memoryPercent == 15.0
-            && cache.prefix.ttlMinutes == nil
-            && cache.pagedKV.enabled
-            && cache.pagedKV.blockSize == nil
-            && cache.pagedKV.maxBlocks == nil
-            && cache.liveKVCodec == .engineSelected
-            && cache.turboQuantKeyBits == nil
-            && cache.turboQuantValueBits == nil
-            && cache.defaultMaxKVSize == 65536
-            && cache.longPromptMultiplier == 2.0
-            && cache.storedKVCodec == .auto
-            && cache.legacyDisk.enabled == false
-            && cache.legacyDisk.maxSizeGB == nil
-            && cache.legacyDisk.directory == nil
-            && cache.blockDisk.enabled
-            && cache.blockDisk.maxSizeGB == nil
-            && cache.blockDisk.directory == nil
-            && cache.enableSSMReDerive
-    }
-
     private nonisolated static func writeCacheDefaultsMigrationMarker() {
         let url = cacheDefaultsMigrationMarkerURL()
-        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
-        try? Data().write(to: url, options: [.atomic])
-    }
-
-    private nonisolated static func writeEngineSelectedCacheRepairMarker() {
-        let url = engineSelectedCacheRepairMarkerURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         try? Data().write(to: url, options: [.atomic])
     }
@@ -290,10 +246,12 @@ public enum ServerRuntimeSettingsStore {
             smeltMode: .engineSelected
         )
 
-        // Cache: seed the engine-owned topology conservatively. Prefix,
-        // paged KV, block-disk L2, and SSM rederive are on by default, but
-        // live KV codec stays native/fp16 unless the user explicitly opts
-        // into engine-selected TurboQuant in Server Settings.
+        // Cache: seed the engine-owned topology with automatic policy.
+        // Prefix, paged KV, block-disk L2, and SSM rederive are on by
+        // default. Engine-selected live KV is resolved by ModelRuntime per
+        // model family/topology: proven full-KV rows get TurboQuant, while
+        // hybrid/rotating/CCA/DSV4 rows stay native/fp16 unless explicitly
+        // overridden.
         settings.cache = VMLXServerCacheSettings(
             prefix: VMLXPrefixCacheSettings(
                 enabled: true,
@@ -307,7 +265,7 @@ public enum ServerRuntimeSettingsStore {
                 blockSize: nil,
                 maxBlocks: nil
             ),
-            liveKVCodec: .native,
+            liveKVCodec: .engineSelected,
             turboQuantKeyBits: nil,
             turboQuantValueBits: nil,
             defaultMaxKVSize: 65536,
@@ -380,10 +338,6 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func cacheDefaultsMigrationMarkerURL() -> URL {
         directoryURL().appendingPathComponent(cacheDefaultsMigrationMarkerName)
-    }
-
-    private nonisolated static func engineSelectedCacheRepairMarkerURL() -> URL {
-        directoryURL().appendingPathComponent(engineSelectedCacheRepairMarkerName)
     }
 
     private nonisolated static func legacyConfigurationFileURL() -> URL {

@@ -821,7 +821,16 @@ public actor ModelRuntime {
         // for path-dependent caches such as DSV4's SWA+CSA+HSA pool and
         // ZAYA's CCA state: a content hash alone proves prompt identity, not
         // cache-layout compatibility.
-        let kvModeTag = cacheKVModeTag(for: settings.cache)
+        let effectiveDefaultKVMode = defaultKVMode(
+            for: settings.cache,
+            modelName: modelName,
+            cacheTopology: cacheTopology
+        )
+        let kvModeTag = cacheKVModeTag(
+            for: settings.cache,
+            modelName: modelName,
+            cacheTopology: cacheTopology
+        )
         let scopedKey = Self.cacheCoordinatorModelKey(
             modelName: modelName,
             kvModeTag: kvModeTag,
@@ -841,9 +850,7 @@ public actor ModelRuntime {
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
             ssmMaxEntries: 50
         )
-        if settings.cache.liveKVCodec == .engineSelected {
-            config.defaultKVMode = .turboQuant()
-        }
+        config.defaultKVMode = effectiveDefaultKVMode
         if diskCacheDir != nil, !diskDirUsable {
             config.enableDiskCache = false
             config.diskCacheDir = nil
@@ -886,20 +893,66 @@ public actor ModelRuntime {
     /// Stable fingerprint for the effective live KV codec. Appended to
     /// the L2 disk-cache model key so a mid-session change to the
     /// actual KV representation doesn't serve stale entries.
-    nonisolated static func cacheKVModeTag(
-        for cache: VMLXServerCacheSettings
-    ) -> String {
+    nonisolated static func defaultKVMode(
+        for cache: VMLXServerCacheSettings,
+        modelName: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> KVQuantizationMode {
         switch cache.liveKVCodec {
         case .engineSelected:
-            return "engine-selected"
+            return shouldUseTurboQuantByDefault(
+                modelName: modelName,
+                cacheTopology: cacheTopology
+            ) ? .turboQuant() : .none
         case .native, .none:
-            return "fp16"
+            return .none
         case .turboQuant:
-            guard case .turboQuant(let keyBits, let valueBits) = cache.defaultKVMode else {
-                return "fp16"
-            }
+            return cache.defaultKVMode
+        }
+    }
+
+    nonisolated static func cacheKVModeTag(
+        for cache: VMLXServerCacheSettings,
+        modelName: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> String {
+        switch defaultKVMode(for: cache, modelName: modelName, cacheTopology: cacheTopology) {
+        case .none:
+            return "fp16"
+        case .affine(let bits, let groupSize):
+            return "affine(\(bits),\(groupSize))"
+        case .turboQuant(let keyBits, let valueBits):
             return "turbo(\(keyBits),\(valueBits))"
         }
+    }
+
+    nonisolated static func shouldUseTurboQuantByDefault(
+        modelName: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> Bool {
+        // Hybrid and path-dependent caches keep fp16 live KV by default until
+        // a row proves TurboQuant for that exact topology. TurboQuant KV is
+        // not a substitute for SSM/CCA/CSA/HSA/SWA companion-state restore.
+        if ModelFamilyNames.isDSV4Family(modelName)
+            || ModelFamilyNames.isZayaFamily(modelName)
+            || ModelFamilyNames.isZayaVLFamily(modelName)
+            || ModelFamilyNames.isGemmaFamily(modelName)
+            || Self.isKnownHybridModel(name: modelName)
+        {
+            return false
+        }
+        if let cacheTopology {
+            if cacheTopology.mambaLayerCount > 0
+                || cacheTopology.arraysLayerCount > 0
+                || cacheTopology.hybridPoolLayerCount > 0
+                || cacheTopology.rotatingKVLayerCount > 0
+                || cacheTopology.rotatingWrapperLayerCount > 0
+            {
+                return false
+            }
+            return cacheTopology.kvLayerCount > 0
+        }
+        return ModelFamilyNames.isMiniMaxFamily(modelName)
     }
 
     nonisolated static func cacheCoordinatorModelKey(

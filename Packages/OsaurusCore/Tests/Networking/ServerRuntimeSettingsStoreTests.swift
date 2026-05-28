@@ -39,7 +39,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.cache.pagedKV.enabled == true)
             #expect(migrated.cache.blockDisk.enabled == true)
             #expect(migrated.cache.legacyDisk.enabled == false)
-            #expect(migrated.cache.liveKVCodec == .native)
+            #expect(migrated.cache.liveKVCodec == .engineSelected)
             #expect(migrated.cache.defaultMaxKVSize == 65536)
             #expect(migrated.cache.longPromptMultiplier == 2.0)
             #expect(migrated.cache.enableSSMReDerive == true)
@@ -65,7 +65,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.cache.pagedKV.enabled == true)
             #expect(snapshot.cache.blockDisk.enabled == true)
             #expect(snapshot.cache.legacyDisk.enabled == false)
-            #expect(snapshot.cache.liveKVCodec == .native)
+            #expect(snapshot.cache.liveKVCodec == .engineSelected)
             #expect(snapshot.cache.defaultMaxKVSize == 65536)
             #expect(snapshot.cache.longPromptMultiplier == 2.0)
             #expect(snapshot.cache.enableSSMReDerive == true)
@@ -183,7 +183,7 @@ struct ServerRuntimeSettingsStoreTests {
         }
     }
 
-    @Test @MainActor func load_repairsAutoMigratedEngineSelectedCacheDefaultToNative() async throws {
+    @Test @MainActor func load_preservesAutoMigratedEngineSelectedCacheDefault() async throws {
         let dir = try makeTempDirectory()
         try await withOverriddenDirectory(dir) {
             var autoMigrated = VMLXServerRuntimeSettings()
@@ -209,17 +209,12 @@ struct ServerRuntimeSettingsStoreTests {
 
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let loaded = try #require(ServerRuntimeSettingsStore.load())
-            #expect(loaded.cache.liveKVCodec == .native)
+            #expect(loaded.cache.liveKVCodec == .engineSelected)
             #expect(loaded.cache.enableSSMReDerive == true)
 
             let data = try Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
             let persisted = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
-            #expect(persisted.cache.liveKVCodec == .native)
-            #expect(
-                FileManager.default.fileExists(
-                    atPath: dir.appendingPathComponent(".server-runtime-engine-selected-cache-v3-repaired").path
-                )
-            )
+            #expect(persisted.cache.liveKVCodec == .engineSelected)
         }
     }
 

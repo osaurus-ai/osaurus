@@ -96,10 +96,10 @@ require_text "$MTP_UI" 'value: \$draft\.mtp\.draftTokenLimit' \
 echo "--- persisted automatic defaults ---"
 require_text "$STORE" 'continuousBatching: true' \
   "migration defaults continuous batching on"
-require_text "$STORE" 'liveKVCodec: \.native' \
-  "migration defaults KV codec to native/fp16"
+require_text "$STORE" 'liveKVCodec: \.engineSelected' \
+  "migration defaults KV codec to engine-selected"
 reject_text "$STORE" 'normalized\.cache\.liveKVCodec = \.engineSelected' \
-  "legacy migration silently enabling engine-selected TurboQuant KV"
+  "legacy migration overwrites explicit existing live-KV choices"
 require_text "$STORE" 'blockDisk: VMLXBlockDiskCacheSettings' \
   "migration creates block-disk cache settings"
 require_text "$STORE" 'enabled: true,\n                maxSizeGB: nil,\n                directory: nil' \
@@ -116,10 +116,10 @@ require_text "$FLAGS" 'runtime\.concurrency\.maxConcurrentSequences' \
   "runtime consumes max concurrent sequence setting"
 require_text "$RUNTIME" 'settings\.cacheCoordinatorConfig' \
   "runtime delegates cache settings into vMLX cache coordinator"
-require_text "$RUNTIME" 'if settings\.cache\.liveKVCodec == \.engineSelected' \
-  "runtime maps engine-selected codec"
-require_text "$RUNTIME" 'config\.defaultKVMode = \.turboQuant\(\)' \
-  "runtime auto-selects TurboQuant KV for engine-selected cache"
+require_text "$RUNTIME" 'shouldUseTurboQuantByDefault' \
+  "runtime gates engine-selected TurboQuant by model family/topology"
+require_text "$RUNTIME" 'config\.defaultKVMode = effectiveDefaultKVMode' \
+  "runtime applies effective topology-gated KV mode"
 require_text "$RUNTIME" 'cacheDiskDirectoryOverride' \
   "runtime resolves server settings disk cache directory"
 require_text "$RUNTIME" 'cache\.blockDisk\.enabled' \

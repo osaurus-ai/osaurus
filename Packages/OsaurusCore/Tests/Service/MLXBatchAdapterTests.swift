@@ -621,19 +621,63 @@ struct MLXBatchAdapterTests {
         var settings = VMLXServerRuntimeSettings()
 
         settings.cache.liveKVCodec = .engineSelected
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "engine-selected")
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "MiniMax-M2.7-JANG_K-CRACK"
+            ) == "turbo(3,3)"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "DeepSeek-V4-Flash-JANGTQ2"
+            ) == "fp16"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "ZAYA1-VL-8B-JANGTQ4"
+            ) == "fp16"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "Qwen3.6-35B-A3B-MXFP4-CRACK-MTP"
+            ) == "fp16"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "Gemma-4-26B-A4B-it-JANG_4M-CRACK"
+            ) == "fp16"
+        )
 
         settings.cache.liveKVCodec = .native
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "MiniMax-M2.7-JANG_K-CRACK"
+            ) == "fp16"
+        )
 
         settings.cache.liveKVCodec = .turboQuant
         settings.cache.turboQuantKeyBits = nil
         settings.cache.turboQuantValueBits = nil
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "DeepSeek-V4-Flash-JANGTQ2"
+            ) == "fp16"
+        )
 
         settings.cache.turboQuantKeyBits = 4
         settings.cache.turboQuantValueBits = 3
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "turbo(4,3)")
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "DeepSeek-V4-Flash-JANGTQ2"
+            ) == "turbo(4,3)"
+        )
     }
 
     @Test func cacheCoordinatorModelKey_alignsWithKnownHybridFamilies() {

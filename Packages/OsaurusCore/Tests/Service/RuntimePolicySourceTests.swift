@@ -408,7 +408,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "de07006a2426f482d3c16adea5644c0803efb2cd"
+        let expectedRuntimeHardenedRevision = "c300e496505dd4aa027fcb0f0c69d0fa6aca270a"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -692,20 +692,32 @@ struct RuntimePolicySourceTests {
             "ServerRuntimeSettingsStore.migratedFromLegacy must seed enableSSMReDerive=true for automatic hybrid cache reuse"
         )
         #expect(
-            store.contains("liveKVCodec: .native"),
-            "ServerRuntimeSettingsStore.migratedFromLegacy must keep first-run live KV on native/fp16 until TurboQuant has per-family live proof"
+            store.contains("liveKVCodec: .engineSelected"),
+            "ServerRuntimeSettingsStore.migratedFromLegacy must use engine-selected live KV so proven full-KV rows default to TurboQuant"
         )
         #expect(
             !store.contains("normalized.cache.liveKVCodec = .engineSelected"),
-            "Legacy cache migration must not silently flip existing users to engine-selected TurboQuant KV"
+            "Legacy cache migration must not overwrite explicit existing live-KV choices"
         )
         #expect(
-            store.contains("shouldRepairAutoMigratedEngineSelectedCacheDefault"),
-            "ServerRuntimeSettingsStore must demote the old auto-migrated engine-selected cache default back to native/fp16"
+            store.contains("Engine-selected live KV is resolved by ModelRuntime per"),
+            "ServerRuntimeSettingsStore must document that engine-selected is topology-gated by ModelRuntime"
         )
         #expect(
             store.contains("shouldRepairLegacyCacheDefaults"),
             "ServerRuntimeSettingsStore must still repair stale persisted hybrid cache companion defaults"
+        )
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        #expect(
+            runtime.contains("shouldUseTurboQuantByDefault"),
+            "ModelRuntime must resolve engine-selected cache policy per family/topology instead of enabling TurboQuant globally"
+        )
+        #expect(
+            runtime.contains("ModelFamilyNames.isDSV4Family(modelName)")
+                && runtime.contains("ModelFamilyNames.isZayaFamily(modelName)")
+                && runtime.contains("ModelFamilyNames.isZayaVLFamily(modelName)")
+                && runtime.contains("Self.isKnownHybridModel(name: modelName)"),
+            "Engine-selected TurboQuant must stay off by default for DSV4, ZAYA/ZAYA-VL, and hybrid topologies until exact rows prove it"
         )
     }
 

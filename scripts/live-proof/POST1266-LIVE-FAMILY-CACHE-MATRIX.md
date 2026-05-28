@@ -130,7 +130,7 @@ Current classification boundary to preserve:
 - Pass rows: Nemotron Omni, Ling, Qwen35, Gemma4 26B, MiniMax direct-rail.
 - Partial rows: DSV4 JANGTQ2 cache-hit proof, ZAYA text CCA companion hit, ZAYA-VL CCA companion hit.
 - Fail/unavailable rows: Gemma3n required-tool live fail, HY3 missing from `/v1/models`.
-- TurboQuant KV remains default-off/native unless a row explicitly opts in and proves the family/topology; current pass rows record TurboQuant KV as `0` or absent rather than proving broad TurboQuant safety.
+- TurboQuant KV is engine-selected by default but topology-gated: proven full-KV rows may resolve to TurboQuant, while hybrid/rotating/CCA/DSV4 rows remain native/fp16 unless explicitly overridden. Current hybrid/companion pass rows record TurboQuant KV as `0` or absent rather than proving broad TurboQuant safety.
 
 ## 2026-05-27 13:04 PDT - Exact-head keychain-free app refresh
 
