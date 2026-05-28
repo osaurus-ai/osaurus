@@ -420,3 +420,34 @@ Result:
 - Cache delta from `/admin/cache-stats`: `disk_l2_hits +1`, `disk_l2_misses +3`, `zaya_cca_companion_misses +1`.
 - Cache topology: `layers=40`, `zayaCCALayers=40`, `companion=zaya-cca`, `restore=disk-backed`, TurboQuant KV layer count `0`.
 - Boundary: this proves disk L2 reuse on the ZAYA-VL media/tool row and companion-cache accounting, but not a ZAYA CCA companion hit. Do not claim ZAYA CCA hit reuse until a row records `zaya_cca_companion_hits > 0`.
+
+## 2026-05-28 05:49 PDT - DSV4 required-tool action-rail proof after vMLX main update
+
+Current Osaurus head: `bbc4338532010adabf0fd1773ef0e66f712beabb`.
+Runtime-equivalent no-sign Release app: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-094bf705-nosign/Build/Products/Release/osaurus.app`.
+Current vMLX main pin: `d3d76b4c11c1f3e83e787f0464120087167c1609`.
+Launch mode: `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, `OSAURUS_TEST_ROOT=/tmp/osaurus-pr1268-bbc43385-keychain-free-dsv4-20260528-054718`.
+
+Artifact:
+
+- `/tmp/osaurus-pr1268-bbc43385-dsv4-required-action-proof-20260528-054910`
+
+Result:
+
+- PASS: `deepseek-v4-flash-jangtq2` required `line_count` routed to a structured tool call with exact multiline argument `alpha\nbeta\ngamma`.
+- PASS: tool-result follow-up returned visible final answer `The line count of the given text is 3.` with no DSML/protocol leakage.
+- PASS: second required `line_count` after prior tool history routed to a structured tool call with exact multiline argument `one\ntwo`.
+- PASS: no turn timed out. Durations were 21.119s, 2.962s, and 19.786s.
+- PASS: health after run was healthy, resident model `deepseek-v4-flash-jangtq2`, no inflight requests.
+
+Cache/topology after run:
+
+- `disk_l2_misses`: 12.
+- `disk_l2_stores`: 5.
+- `disk_l2_hits`: 0 for this fresh-root run.
+- DSV4 topology: 43 layers, 41 `hybridPoolLayers`, 41 `rotatingWrapperLayers`, 2 `rotatingLayers`, `restore=disk-backed`, TurboQuant KV layers 0.
+
+Boundary:
+
+- This proves the prior DSV4 required-tool multi-turn timeout/leak class is fixed by routing fallback required-tool prompts through the native DSV4 action rail.
+- It does not claim a warm repeat cache-hit row for DSV4; this run was a fresh-root correctness proof.
