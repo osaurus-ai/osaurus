@@ -14,6 +14,7 @@ Current boundary:
 - No-sign app proof boundary: code-equivalent build `695d5869ea9821732649bffb3789469568e6db55`
 - Current app observation at this audit refresh: no-sign build `DerivedData-pr1268-release-nosign-695d5869` is healthy with `deepseek-v4-flash-jangtq2` resident, no in-flight requests, and DSV4 cache topology still 43 layers / 41 hybrid-pool / 2 rotating / TurboQuant KV 0.
 - Fresh Nemotron Omni MXFP4 row is red/partial, not production-clear: `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-20260528-102745` proves cold structured `line_count` tool turns, visible tool-result answer, no protocol leakage, 29-layer topology with 23 Mamba/SSM layers, and SSM companion topology; however it records no disk L2 hit. The immediate repeat `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-repeat-20260528-102806` fails turn 3 because `tool_choice: "required"` returns visible text `Two lines were counted.` instead of a structured tool call, all three responses report the same `prefix_hash`, and the requested model is no longer resident by the after-snapshot. Treat Nemo Omni MXFP4 required-tool repeat/cache behavior as red until root-caused without prompt coercion.
+- Fresh ZAYA text JANGTQ4 row is red/partial, not production-clear: `/tmp/osaurus-pr1268-c9fdc4c3-zaya-text-jangtq4-tool-cache-20260528-103322` proves first structured `line_count`, visible tool-result answer, ZAYA CCA topology, disk-backed restore requirement, and no protocol leakage; however turn 3 emitted a structured `line_count` call with argument ` ... ` instead of exact `one\ntwo`, and disk L2 hits stayed 0. Treat ZAYA text required-tool argument fidelity and repeat-cache proof as red until root-caused without parser repair.
 
 This file is a completion audit against the full runtime objective. It is not a
 marketing summary. A row marked partial means the PR documents or implements
@@ -54,7 +55,7 @@ or surface.
 | MiniMax | Partial/green selected rows | Selected MiniMax M2.7 JANG/JANGTQ tool/cache rows pass; MiMo is excluded. |
 | MiMo | Red/excluded | No meaningful Osaurus live row because current local MiMo lane is not working/imported enough. |
 | Ling/Bailing | Partial/red | Ling selected SSM rows pass; Bailing availability and long-prompt/runtime rows remain incomplete. |
-| ZAYA text | Partial | ZAYA text CCA topology/tool rows pass; direct-mode and companion-hit depth are not fully production-clear. |
+| ZAYA text | Red/partial | Current JANGTQ4 row proves CCA topology and leak-free structured tool envelopes, but turn 3 argument fidelity failed with ` ... ` and disk L2 hits stayed 0; direct-mode and companion-hit depth are not production-clear. |
 | ZAYA VL | Partial | Real image/media rows pass for selected artifacts; CCA companion-hit depth and sibling coverage remain. |
 | Nemotron Omni | Red/partial | MXFP4 cold row proves first structured tool turn, tool-result answer, second structured tool turn, no protocol leak, and SSM topology, but repeat row ignored required tool choice on turn 3 and did not produce disk L2 reuse proof; audio/video/resume rows also remain. |
 | HY3/Hunyuan | Red | No imported local model id/live Osaurus row at the current boundary. |

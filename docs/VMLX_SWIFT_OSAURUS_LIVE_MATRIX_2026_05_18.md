@@ -24,6 +24,15 @@ row is production-clear.
 - Repeat result: turn 3 failed because `tool_choice: "required"` produced visible text `Two lines were counted.` with `finish_reason: "stop"` instead of a structured tool call; all three repeat responses reported the same `prefix_hash`, and the after-snapshot no longer had Nemotron resident.
 - Verdict: Nemotron Omni MXFP4 remains red/partial for repeat required-tool/cache behavior. This must not be hidden with prompt coercion or parser repair.
 
+## 2026-05-28 ZAYA text JANGTQ4 required-tool red row
+
+- Osaurus head at check: `c9fdc4c38ee53f748805d89c0312a9c61ecf1662`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-c9fdc4c3-zaya-text-jangtq4-tool-cache-20260528-103322`.
+- Result: turn 1 produced a structured `line_count` call with exact `red\ngreen\nblue`; turn 2 answered `3 lines were counted.`; turn 3 produced a structured `line_count` call but with argument ` ... ` instead of exact `one\ntwo`.
+- Topology: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: ZAYA text JANGTQ4 remains red/partial for multi-turn required-tool argument fidelity and repeat L2 reuse. This must not be hidden with parser repair.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:

@@ -58,6 +58,18 @@ Each promoted row needs current-head evidence for:
   - The after-snapshot had no Nemotron model cache entry and no requested model resident, so repeat topology/cache evidence is not green.
 - Verdict: Nemo/Nemotron Omni MXFP4 is red/partial for repeat required-tool/cache behavior. Do not fix this with prompt coercion or synthetic required-tool system text; root-cause the template/cache/tool-choice path.
 
+### 2026-05-28 10:34 PDT ZAYA text JANGTQ4 live red row
+
+- Current Osaurus PR head checked before this row: `c9fdc4c38ee53f748805d89c0312a9c61ecf1662`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-c9fdc4c3-zaya-text-jangtq4-tool-cache-20260528-103322`.
+- `zaya1-8b-jangtq4` turn 1 returned one structured `line_count` call with exact `red\ngreen\nblue` arguments and no visible protocol leak.
+- Turn 2 returned visible answer `3 lines were counted.` with no extra tool call and no protocol leak.
+- Turn 3 returned a structured `line_count` call with no visible protocol leak, but the argument was ` ... ` instead of exact `one\ntwo`.
+- Cache topology showed 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, `requires_disk_backed_restore: true`, `requires_ssm_companion_state: true`, and TurboQuant KV layer count 0.
+- This row failed strict promotion because `turn3_args_exact` was false and disk L2 hits stayed 0 while misses/stores moved.
+- Verdict: ZAYA text JANGTQ4 is red/partial for multi-turn required-tool argument fidelity and repeat L2 reuse. Do not hide the ` ... ` argument with parser repair; root-cause template/history/cache behavior.
+
 ### 2026-05-28 10:09 PDT current coordination boundary
 
 - Current Osaurus PR: `#1268`, head `80e8749144d50b9783c5cc37a84b1cb03b8fdfa4`, open, not draft, mergeable, not merged by agent.
