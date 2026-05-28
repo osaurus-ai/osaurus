@@ -1895,6 +1895,11 @@ struct RuntimePolicySourceTests {
             "Nemotron Omni bundles are the explicit multimodal exception: live ordinary chat must default to the closed/no-thinking rail instead of hidden reasoning-only output."
         )
         #expect(
+            adapter.contains("if ModelFamilyNames.isGemmaFamily(modelName)")
+                && adapter.contains("context[\"enable_thinking\"] = false"),
+            "Gemma4 bundles must default to the closed/no-thinking rail for local API requests, matching their UI profile default without parser-side output repair."
+        )
+        #expect(
             !adapter.contains("dsv4MaxReasoningRepetitionPenalty")
                 && !adapter.contains("repeated \"thinking\" token loop"),
             "Decode-loop problems must not be hidden behind DSV4-specific forced repetition-penalty guards."

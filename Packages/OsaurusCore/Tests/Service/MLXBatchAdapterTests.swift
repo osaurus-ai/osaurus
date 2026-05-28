@@ -1484,6 +1484,61 @@ struct MLXBatchAdapterTests {
         }
     }
 
+    /// Gemma4 defaults to the closed/no-thinking rail for ordinary local API
+    /// requests, matching the UI profile default. This is model-option wiring,
+    /// not output repair: explicit thinking opt-in still reaches the template.
+    @Test func additionalContext_defaultsGemma4ThinkingOffButHonorsExplicitOptIn() {
+        let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
+        let userEnabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(false)]
+        )
+
+        for modelName in [
+            "gemma-4-26b-a4b-it-jang_4m-crack",
+            "dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK",
+            "OsaurusAI/gemma4-it-26b-a4b",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == false,
+                "Gemma4 should default to the closed/no-thinking rail: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userEnabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "Gemma4 must honor explicit thinking opt-in: \(modelName)"
+            )
+
+            let directOff = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("no_think")]
+                ),
+                modelName: modelName
+            )
+            #expect(directOff["enable_thinking"] as? Bool == false)
+            #expect(directOff["reasoning_effort"] == nil)
+
+            let apiReasoning = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("high")]
+                ),
+                modelName: modelName
+            )
+            #expect(apiReasoning["enable_thinking"] as? Bool == true)
+            #expect(apiReasoning["reasoning_effort"] as? String == "high")
+        }
+    }
+
     @Test func additionalContext_doesNotSendThinkingKwargForZayaVLTemplateSidecar() {
         let userEnabled = GenerationParameters(
             temperature: nil,

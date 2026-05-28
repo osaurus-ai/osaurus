@@ -296,6 +296,27 @@ ZAYA CCA repeat-cache artifact:
 - Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV 0.
 - Keep Gemma4 classified as behavior-pass/rotating-topology-pass with a disk-hit boundary. Do not claim warm rotating-state disk-hit reuse from this row.
 
+### 2026-05-28 11:28 PDT Gemma4 local API default rail and L2 proof
+
+- Source fix: `MLXBatchAdapter.additionalContext` now routes Gemma-family local API requests to `enable_thinking=false` when the request omits reasoning/thinking options, matching the existing Gemma UI profile default without parser-side output repair or prompt coercion.
+- Explicit opt-in is preserved: `disableThinking=false` and positive `reasoningEffort` still produce `enable_thinking=true`; direct/off efforts such as `no_think` keep `enable_thinking=false`.
+- Focused Swift tests passed before live proof:
+  - `MLXBatchAdapterTests/additionalContext_defaultsGemma4ThinkingOffButHonorsExplicitOptIn`
+  - `RuntimePolicySourceTests`
+  - `MLXBatchAdapterTests`
+- No-sign app build: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-gemma-default-nosign/Build/Products/Release/osaurus.app`, built with signing disabled and launched through `scripts/live-proof/open-keychain-free-osaurus.sh` with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
+- Cold artifact: `/tmp/osaurus-pr1268-gemma-default-gemma4-jang4m-tool-cache-20260528-112756`.
+  - Turn 1 required `line_count`: exact args `red\ngreen\nblue`, `finish_reason=tool_calls`, no visible content, no protocol leak.
+  - Turn 2 after tool result: visible `3 lines were counted.`, no tool calls, no protocol leak.
+  - Turn 3 required `line_count` after assistant/tool history: exact args `one\ntwo`, no visible content, no protocol leak.
+  - Cache topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV 0.
+  - Cold cache movement: `disk_l2_misses +2`, `disk_l2_stores +4`.
+- Warm repeat artifact: `/tmp/osaurus-pr1268-gemma-default-gemma4-jang4m-tool-cache-repeat-20260528-112822`.
+  - All turn/tool/history checks passed again.
+  - Disk L2 reuse is now proven for this row: `disk_l2_hits +1`, `disk_l2_misses +0`, `disk_l2_stores +4`.
+  - Required cache evidence passed: cache topology, disk-backed restore, rotating KV layer count, and disk L2 hit.
+- Status update: Gemma4 JANG_4M is now behavior-pass, rotating-topology-pass, and disk-L2-hit-pass on the patched #1268 app path. This does not promote Gemma3n, Gemma 31B, or unrelated Gemma siblings.
+
 ### 2026-05-28 07:40 PDT DSV4 five-repeat required-tool cache boundary
 
 - Artifact: `/tmp/osaurus-pr1268-f93929ec-dsv4-repeat-cache-20260528-074001`.
