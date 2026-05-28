@@ -28,27 +28,30 @@ Each promoted row needs current-head evidence for:
 - HY3/Hunyuan/MiMo-style SWA/CCA paths: run only against an actual local model id and require topology-specific companion or SWA proof.
 - MiMo V2.5: expected source topology is 9 full-attention KV layers plus 39 SWA rotating layers. Prefix/L2 disk proof is required; TurboQuant KV is allowed only for full-attention `KVCacheSimple` layers when explicitly enabled and must not replace SWA rotating state.
 
-## Current starting boundary
+## Historical starting boundary
 
 - Base head at creation: `3b2a4f38fdbc08d5a195cf40689414dc469ab5f2`.
 - vMLX pin at creation: `531439a05bb3c5334aa551a07481fc5234644329`.
-- Current MiMo-aware vMLX pin staged for this branch: `d69a12168fe6d5c89cb2756ca478f0ea7e18c7d3`.
-- Current PR `#1266` head after ZAYA VL history-media fix: `229e51fdbc1adb282f4e861ba4ce1209befe480b`.
-- Current vMLX pin after ZAYA VL history-media fix: `0c39f5a8bd68b5316f5e56e5bd94cc67b8fe8704`.
+- MiMo-aware vMLX pin once staged for this branch: `d69a12168fe6d5c89cb2756ca478f0ea7e18c7d3`.
+- PR `#1266` head after ZAYA VL history-media fix: `229e51fdbc1adb282f4e861ba4ce1209befe480b`.
+- vMLX pin after ZAYA VL history-media fix: `0c39f5a8bd68b5316f5e56e5bd94cc67b8fe8704`.
 - `#1263` is still open on GitHub at creation time; this PR is stacked rather than post-merge until GitHub state changes.
 - Do not merge by agent.
 - Do not apply forced-behavior fixes, hidden sampler overrides, forced thinking/tool wrappers, or broad parser masks to make rows look green.
 
 ## Current #1268 merge boundary
 
-- Current Osaurus PR: `#1268`, head `8c3f1356b274542aa2ab2fb73be44202141ab7d7`.
-- Current vMLX main and Osaurus pin: `e2327f5ee52bacbae08eb9f3b3fa74709d74af07`.
-- GitHub status at 2026-05-28 00:26 PDT: PR open, not draft, mergeable, not merged; `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
+- Current Osaurus PR: `#1268`, head `86304f7e333ab26811be9f394877168c2ff129d1`.
+- Current vMLX main and Osaurus pin: `e00e1e3184036ed1ba512e4a66e84fc1a0d268a3`.
+- GitHub status at 2026-05-28 02:35 PDT: PR open, not draft, mergeable, not merged; `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
 - Only `#1268` remains open from the `#1247` through `#1268` runtime stack; older related work has been consolidated rather than kept as separate merge targets.
-- Exact-head no-sign Release proof exists for Gemma 4 26B JANG_4M at `8c3f1356` and vMLX `e2327f5`.
-- The remaining all-family matrix is intentionally not promoted as complete on this PR head. Nemo Omni, Ling, ZAYA, DSV4, Qwen, MiniMax, and HY3/Hunyuan need follow-on exact-head rows before claiming the broader post-merge runtime matrix is complete.
+- Exact-head no-sign Release app build exists for Osaurus head `86304f7e` pinned to vMLX `e00e1e3`; it launched keychain-free from `build/DerivedData-pr1268-release-nosign-86304f7e/Build/Products/Release/osaurus.app` and `/health` returned `status: healthy` with no resident model.
+- Exact-head source guards passed on `86304f7e`: vMLX pin checkout, no hidden sampler defaults, OpenResponses/cache wiring, no forced behavior/template coercion, conservative server runtime settings, chat reasoning routing, tool-choice routing, model tool capability surfaces, HTTP load cancellation, and keychain-free path.
+- Exact-head focused Swift tests passed on `86304f7e`: `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening` and `SwiftTransformersTokenizerLoaderTests/zayaTextLocalTokenizerRendersZyphraToolsNotGemmaFallback`.
+- Exact-head no-sign live model proof is intentionally not promoted as complete for every family on `86304f7e`. Nemo Omni, Ling, ZAYA, DSV4, Qwen, MiniMax, and HY3/Hunyuan need follow-on exact-head rows before claiming the broader post-merge runtime matrix is complete.
 - MiMo V2.5 is explicitly excluded from the current merge gate because the current local MiMo lane is not working/imported enough for a meaningful Osaurus live row.
 - TurboQuant/`engineSelected` remains explicit opt-in. Native/fp16 is the default and the legacy migration does not silently flip users into TurboQuant KV.
+- No agent should merge Osaurus without explicit user approval. vMLX main is managed directly and already contains the no-forced-thinking fix required by this PR.
 
 ## Row status ledger
 
