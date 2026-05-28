@@ -686,3 +686,27 @@ Result:
 - Topology: 29 layers, 6 KV layers, 23 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layers 0.
 - Token/s: OpenAI-compatible tool turns emitted zero completion tokens; visible answer row emitted 6 completion tokens at 16.39 tok/s cold and 18.82 tok/s warm.
 - Classification: pass for Nemotron Omni MXFP4 text required-tool/history/cache proof. This supersedes the earlier MXFP4 repeat-required red row; audio/video/resume behavior remains separate unproven coverage.
+
+## 2026-05-28 13:43 PDT - DSV4 JANGTQ2 exact-head active-tool warm cache proof
+
+Artifacts:
+
+- Cold row: `/tmp/osaurus-pr1268-2455c4ce-dsv4-jangtq2-required-cache-cold-20260528-131817`.
+- Warm row: `/tmp/osaurus-pr1268-2455c4ce-dsv4-jangtq2-required-cache-warm-20260528-133223`.
+
+Build/runtime boundary:
+
+- Osaurus head: `2455c4cec48ed0d613b9741fc1ebfa91152b9711`.
+- vMLX pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- No-sign Release app: `/Users/eric/osaurus-pr1268-live/build/DerivedData/Build/Products/Release/osaurus.app`.
+- Launch mode: keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
+
+Result:
+
+- PASS: cold and warm rows routed turn 1 required `line_count` to a structured tool call with exact args `red\ngreen\nblue`, no visible content, and no DSML/protocol leakage.
+- PASS: cold and warm rows routed turn 3 second required `line_count` after assistant/tool history to a structured tool call with exact args `one\ntwo`, no visible content, and no DSML/protocol leakage.
+- PASS: cold and warm tool-result follow-ups returned visible line-count answers with `finish_reason: "stop"`.
+- PASS: warm row proved DSV4 active-tool disk cache reuse with `disk_l2_hits +1`, `disk_l2_misses +0`, and `disk_l2_stores +5`.
+- Topology: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating KV layers, disk-backed restore required, TurboQuant KV layers 0.
+- Token/s: OpenAI-compatible tool turns emitted zero completion tokens; visible answer row emitted 21 completion tokens at 0.31 tok/s cold and 18 completion tokens at 0.32 tok/s warm.
+- Boundary: functional/tool/cache proof is green for JANGTQ2 under the explicit harness max-token cap, but speed remains poor and JANGTQ-K generic required-tool behavior remains red/partial.
