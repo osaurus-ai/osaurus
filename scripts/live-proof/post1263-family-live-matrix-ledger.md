@@ -161,3 +161,12 @@ ZAYA CCA repeat-cache artifact:
 - Cache delta: `disk_l2_hits +0`, `disk_l2_misses +2`, `disk_l2_stores +4`.
 - Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV 0.
 - Keep Gemma4 classified as behavior-pass/rotating-topology-pass with a disk-hit boundary. Do not claim warm rotating-state disk-hit reuse from this row.
+
+### 2026-05-28 07:40 PDT DSV4 five-repeat required-tool cache boundary
+
+- Artifact: `/tmp/osaurus-pr1268-f93929ec-dsv4-repeat-cache-20260528-074001`.
+- Turns 1, 2, 4, and 5 emitted structured `line_count` tool calls with exact args `red\ngreen\nblue` and no DSML/protocol leak.
+- Turn 3 emitted a structured `line_count` call, but arguments were the server validator error object for missing required property `text`.
+- Disk L2 hits stayed `0`; misses reached `10`; stores reached `5`.
+- Topology remained DSV4 hybrid pool: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating layers, disk-backed restore required, TurboQuant KV 0.
+- Keep DSV4 JANGTQ2 classified as fresh multi-turn tool-correctness pass but repeat-cache/tool-argument-stability partial. Do not claim DSV4 repeat-cache readiness from this PR.

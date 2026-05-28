@@ -633,3 +633,17 @@ Result:
 - Cache delta: `disk_l2_hits +0`, `disk_l2_misses +2`, `disk_l2_stores +4`.
 - Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV 0.
 - Classification: pass with cache boundary. This row proves latest-head Gemma4 tool/history behavior and rotating topology, but still does not prove warm disk-hit reuse for Gemma rotating state.
+
+## 2026-05-28 07:40 PDT - DSV4 five-repeat required-tool cache boundary
+
+Artifact:
+
+- DSV4 five-repeat cache probe: `/tmp/osaurus-pr1268-f93929ec-dsv4-repeat-cache-20260528-074001`.
+
+Result:
+
+- Turns 1, 2, 4, and 5 routed to structured `line_count` tool calls with exact args `red\ngreen\nblue` and no DSML/protocol leakage.
+- Turn 3 routed to `line_count`, but the argument payload was the validator error object: missing required property `text`.
+- Disk cache counters moved monotonically but never hit: `disk_l2_hits` stayed `0`, `disk_l2_misses` reached `10`, `disk_l2_stores` reached `5`.
+- Topology stayed DSV4 hybrid pool: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating layers, disk-backed restore required, TurboQuant KV 0.
+- Classification: fail for repeated required-tool argument stability and still no DSV4 disk-hit proof. Keep the fresh multi-turn DSV4 correctness row, but do not claim repeat-cache readiness for DSV4 JANGTQ2.
