@@ -41,13 +41,13 @@ Each promoted row needs current-head evidence for:
 
 ## Current #1268 merge boundary
 
-- Current Osaurus PR: `#1268`, head `86304f7e333ab26811be9f394877168c2ff129d1`.
-- Current vMLX main and Osaurus pin: `e00e1e3184036ed1ba512e4a66e84fc1a0d268a3`.
-- GitHub status at 2026-05-28 02:35 PDT: PR open, not draft, mergeable, not merged; `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
+- Current Osaurus PR: `#1268`, head `ec7a68fc` before this ledger-only correction.
+- Current vMLX main and Osaurus pin: `26cf3d8743a97e47c4e1672f9110e4c9fac6c206`.
+- GitHub status at 2026-05-28 02:49 PDT for the previous docs-only head `9c62dae1`: PR open, not draft, mergeable, not merged; `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
 - Only `#1268` remains open from the `#1247` through `#1268` runtime stack; older related work has been consolidated rather than kept as separate merge targets.
-- Exact-head no-sign Release app build exists for Osaurus head `86304f7e` pinned to vMLX `e00e1e3`; it launched keychain-free from `build/DerivedData-pr1268-release-nosign-86304f7e/Build/Products/Release/osaurus.app` and `/health` returned `status: healthy` with no resident model.
-- Exact-head source guards passed on `86304f7e`: vMLX pin checkout, no hidden sampler defaults, OpenResponses/cache wiring, no forced behavior/template coercion, conservative server runtime settings, chat reasoning routing, tool-choice routing, model tool capability surfaces, HTTP load cancellation, and keychain-free path.
-- Exact-head focused Swift tests passed on `86304f7e`: `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening` and `SwiftTransformersTokenizerLoaderTests/zayaTextLocalTokenizerRendersZyphraToolsNotGemmaFallback`.
+- Exact-head no-sign Release app proof must be refreshed after the `ec7a68fc` DSV4 action-rail pin. The older successful no-sign app build at `86304f7e` proved the pre-action-rail vMLX pin and must not be reused as proof for `26cf3d8`.
+- Exact-head source guards must be refreshed after the `ec7a68fc` DSV4 action-rail pin. The previous guard pass at `86304f7e` remains useful history but is not final proof for the new pin.
+- Focused vMLX proof for the new DSV4 action-rail fix passed before repin: `DeepseekV4ChatTemplateFallbackFocusedTests` ran 29 tests with 0 failures against vMLX `26cf3d8`.
 - Exact-head no-sign live model proof is intentionally not promoted as complete for every family on `86304f7e`. Nemo Omni, Ling, ZAYA, DSV4, Qwen, MiniMax, and HY3/Hunyuan need follow-on exact-head rows before claiming the broader post-merge runtime matrix is complete.
 - MiMo V2.5 is explicitly excluded from the current merge gate because the current local MiMo lane is not working/imported enough for a meaningful Osaurus live row.
 - TurboQuant/`engineSelected` remains explicit opt-in. Native/fp16 is the default and the legacy migration does not silently flip users into TurboQuant KV.
