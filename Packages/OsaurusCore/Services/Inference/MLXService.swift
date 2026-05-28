@@ -267,6 +267,11 @@ actor MLXService: ToolCapableService {
         if modalities.contains(.audio), !media.supportsAudio {
             issues.append("Model capability detection reports audio as unsupported.")
         }
+        if !tools.isEmpty,
+            !supportsLocalToolCalling(modelName: modelName, modelId: modelId)
+        {
+            issues.append("Model capability detection reports tool calling as unsupported.")
+        }
         if isBlockedProductionModel(modelName: modelName, modelId: modelId) {
             issues.append(
                 "ZAYA1-VL JANGTQ_K is a diagnostic artifact with a proven first-token fidelity failure; use zaya1-vl-8b-mxfp4 or zaya1-vl-8b-jangtq4 for production serving."
@@ -286,6 +291,93 @@ actor MLXService: ToolCapableService {
             .lowercased()
             .replacingOccurrences(of: "-", with: "_")
         return combined.contains("zaya1_vl_8b_jangtq_k")
+    }
+
+    nonisolated static func supportsLocalToolCalling(
+        modelName: String,
+        modelId: String,
+        modelDirectory: URL? = nil
+    ) -> Bool {
+        if let directory = modelDirectory ?? localModelDirectory(modelId: modelId),
+            let format = resolvedToolCallFormat(in: directory)
+        {
+            return format != nil
+        }
+
+        let combined = "\(modelName) \(modelId)"
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+        if combined.contains("gemma_3n") || combined.contains("gemma3n") {
+            return false
+        }
+
+        // Unknown/local-unscanned bundles remain permissive; vmlx still owns
+        // parsing for supported models. Explicitly known unsupported families
+        // are blocked above so the API does not leak template/tool markers.
+        return true
+    }
+
+    private nonisolated static func localModelDirectory(modelId: String) -> URL? {
+        let parts = modelId.split(separator: "/").map(String.init)
+        let base = DirectoryPickerService.effectiveModelsDirectory()
+        let url = parts.reduce(base) { $0.appendingPathComponent($1, isDirectory: true) }
+        let resolved = url.resolvingSymlinksInPath()
+        guard FileManager.default.fileExists(
+            atPath: resolved.appendingPathComponent("config.json").path
+        ) else {
+            return nil
+        }
+        return resolved
+    }
+
+    private nonisolated static func resolvedToolCallFormat(in directory: URL) -> ToolCallFormat?? {
+        if let jangData = try? Data(contentsOf: directory.appendingPathComponent("jang_config.json")),
+            let explicit = explicitToolFormat(inJangConfig: jangData)
+        {
+            return explicit
+        }
+
+        guard
+            let configData = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
+            let modelType = modelType(inConfig: configData)
+        else {
+            return nil
+        }
+        return ToolCallFormat.infer(from: modelType, configData: configData)
+    }
+
+    private nonisolated static func explicitToolFormat(inJangConfig data: Data) -> ToolCallFormat?? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let candidates: [Any?] = [
+            ((root["chat"] as? [String: Any])?["tool_calling"] as? [String: Any])?["parser"],
+            ((root["chat"] as? [String: Any])?["tool_calling"] as? [String: Any])?["format"],
+            (root["tool_calling"] as? [String: Any])?["parser"],
+            (root["tool_calling"] as? [String: Any])?["format"],
+        ]
+        for candidate in candidates {
+            if let raw = candidate as? String {
+                return ToolCallFormat.fromCapabilityName(raw)
+            }
+        }
+        return nil
+    }
+
+    private nonisolated static func modelType(inConfig data: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let text = root["text_config"] as? [String: Any],
+            let modelType = text["model_type"] as? String,
+            !modelType.isEmpty
+        {
+            return modelType
+        }
+        if let modelType = root["model_type"] as? String, !modelType.isEmpty {
+            return modelType
+        }
+        return nil
     }
 
     private nonisolated static func requestedModalities(

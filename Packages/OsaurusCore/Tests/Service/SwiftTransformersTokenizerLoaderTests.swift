@@ -386,7 +386,7 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(!decoded.contains("Tool result: {\"lines\":3}"), "Decoded: \(decoded)")
     }
 
-    @Test func gemma3nLocalTokenizerRendersRequiredToolContractFromFallback() async throws {
+    @Test func gemma3nLocalTokenizerDoesNotInventRequiredToolContractFromFallback() async throws {
         let defaultPath = "/Users/eric/models/mlx-community/gemma-3n-E2B-it-4bit"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA3N_TEST_MODEL"] ?? defaultPath
         let modelURL = URL(fileURLWithPath: modelPath)
@@ -436,13 +436,12 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
-        #expect(decoded.contains("<|tool>declaration:line_count"), "Decoded: \(decoded)")
-        #expect(decoded.contains("<|tool_call>call:FUNCTION_NAME"), "Decoded: \(decoded)")
-        #expect(decoded.contains("<|tool_call>call:line_count{text:<|\"|>alpha\nbeta\ngamma.<|\"|>}<tool_call|>"), "Decoded: \(decoded)")
-        #expect(decoded.contains("MUST be a function call"), "Decoded: \(decoded)")
-        #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<|tool>declaration:line_count"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<|tool_call>call:FUNCTION_NAME"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<|tool_call>call:line_count"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("MUST be a function call"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
         #expect(decoded.contains("Use line_count on alpha\nbeta\ngamma."), "Decoded: \(decoded)")
-        #expect(decoded.hasSuffix("<|turn>model\n"), "Decoded: \(decoded)")
         #expect(!decoded.contains("<start_function_call>"), "Decoded: \(decoded)")
     }
 
