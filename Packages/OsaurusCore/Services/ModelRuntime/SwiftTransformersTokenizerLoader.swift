@@ -240,7 +240,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 && upstream.convertTokenToId("<end_of_turn>") != nil
             )
         let hasZayaVLChatSentinel =
-            (modelTypeIsZayaVL || hasZayaChatTokens)
+            modelTypeIsZayaVL
             && !hasGemma3TurnSentinel
         let hasDSV4Sentinel =
             !hasZayaVLVisionSentinel
