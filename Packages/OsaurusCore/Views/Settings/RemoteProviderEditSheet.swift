@@ -446,7 +446,7 @@ private struct AddProviderFlow: View {
         knownProtocol = config.providerProtocol
         knownPort = config.port.map(String.init) ?? ""
         knownBasePath = config.basePath
-        manualModelIdsText = ""
+        manualModelIdsText = config.defaultManualModelIds.joined(separator: "\n")
         testResult = nil
     }
 
