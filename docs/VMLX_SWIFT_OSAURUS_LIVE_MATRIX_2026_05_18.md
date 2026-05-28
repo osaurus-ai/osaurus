@@ -299,6 +299,14 @@ Kimi is intentionally excluded from this matrix for now per current scope.
 
 ## Open Items
 
+- Current #1268 merge boundary: Osaurus head
+  `695d5869ea9821732649bffb3789469568e6db55`, pinned to vMLX main
+  `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`, is open, not draft,
+  mergeable, and green for `shellcheck`, `swiftlint`, `test-cli`,
+  `test-core`, and `update_release_draft`. A no-sign/keychain-free Release app
+  from `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`
+  returned `/health` healthy. This is a merge boundary for the consolidated PR,
+  not a blanket production-clear claim for every architecture row.
 - The final Osaurus app has not yet run the full UI/API matrix for Qwen-VL,
   Gemma VLM, ZAYA-VL, Nemotron Omni, DSV4, MiniMax, Ling, Hy3, and the parser
   families listed above.
