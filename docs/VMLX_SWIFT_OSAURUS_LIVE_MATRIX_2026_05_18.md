@@ -42,6 +42,15 @@ row is production-clear.
 - Topology: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: Ling JANGTQ2 is green for this parser/tool/history row, but cache proof remains partial because disk L2 hits stayed 0 while misses/stores moved.
 
+## 2026-05-28 MiniMax M2.7 small JANGTQ required-tool green row
+
+- Osaurus head at check: `0bba84c9bc8d1b60a872d29bd28e9af3aee586dd`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-0bba84c9-minimax-small-jangtq-tool-cache-20260528-103659`.
+- Result: turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered `There were three lines counted.`; turn 3 produced exact structured `line_count` args `one\ntwo`; no protocol leakage appeared.
+- Topology: 62 full-KV layers, no SSM/CCA companion requirement, disk L2 hit `+1`, TurboQuant KV layer count 0.
+- Verdict: MiniMax M2.7 small JANGTQ is green for this parser/tool/history/cache row. Sibling JANG/JANGTQ-K, speed, RAM, and MiMo-adjacent rows remain separate.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:
