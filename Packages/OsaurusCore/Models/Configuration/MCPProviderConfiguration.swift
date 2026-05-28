@@ -66,6 +66,13 @@ public struct MCPOAuthConfig: Codable, Sendable, Equatable {
     public var registrationEndpoint: String?
     /// When the cached metadata was last refreshed.
     public var serverMetadataCachedAt: Date?
+    /// Optional fixed loopback port for the OAuth callback. When non-nil, `signIn`
+    /// binds the loopback server with `LoopbackPort.fixed(...)` instead of
+    /// `.ephemeral`. Required for vendors that demand an exact-match redirect URI
+    /// registered ahead of time (HubSpot's MCP Auth Apps do this) — RFC 8252 §7.3
+    /// strongly recommends servers accept any loopback port, but in practice
+    /// several confidential-client OAuth providers don't.
+    public var loopbackPort: UInt16?
 
     public init(
         clientId: String? = nil,
@@ -76,7 +83,8 @@ public struct MCPOAuthConfig: Codable, Sendable, Equatable {
         authorizationEndpoint: String? = nil,
         tokenEndpoint: String? = nil,
         registrationEndpoint: String? = nil,
-        serverMetadataCachedAt: Date? = nil
+        serverMetadataCachedAt: Date? = nil,
+        loopbackPort: UInt16? = nil
     ) {
         self.clientId = clientId
         self.redirectURI = redirectURI
@@ -87,6 +95,7 @@ public struct MCPOAuthConfig: Codable, Sendable, Equatable {
         self.tokenEndpoint = tokenEndpoint
         self.registrationEndpoint = registrationEndpoint
         self.serverMetadataCachedAt = serverMetadataCachedAt
+        self.loopbackPort = loopbackPort
     }
 }
 
