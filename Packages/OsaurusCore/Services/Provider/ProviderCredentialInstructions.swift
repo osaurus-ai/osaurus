@@ -145,8 +145,7 @@ public enum ProviderCredentialInstructionsCatalog {
                         label: L("Deployments"),
                         placeholder: L("gpt-4o, gpt-4o-mini"),
                         helpText: L(
-                            "One or more Azure deployment names — comma or newline-separated. "
-                                + "Stored as the provider's model list."
+                            "One or more Azure deployment names — comma or newline-separated. Stored as the provider's model list."
                         ),
                         isRequired: true
                     ),
