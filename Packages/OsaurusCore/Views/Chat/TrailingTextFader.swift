@@ -15,7 +15,14 @@ final class TrailingTextFader {
 
     /// If a single recorded append exceeds this, treat it as a full rebuild and
     /// don't animate (avoids a giant gradient on cache hits / width changes).
-    private let appendAnimationCap = 64
+    ///
+    /// Must be comfortably above `StreamingDeltaProcessor.maxBufferSize` (64),
+    /// since that throttle's flush condition can overshoot its target by up to
+    /// the size of the final delta. The vmlx-swift runtime emits 5-11-char token
+    /// chunks, so flushes routinely land at 65-75 chars — at the old cap of 64,
+    /// every one of those was treated as a "big rebuild" and the streaming fade
+    /// was suppressed, even though they're just normal token bursts.
+    private let appendAnimationCap = 128
 
     private weak var textView: NSTextView?
     /// Active fade ranges, oldest first. Indices refer to textStorage character offsets.

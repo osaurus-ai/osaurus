@@ -59,6 +59,33 @@ struct MCPProviderConfigurationMigrationTests {
         #expect(decoded.oauth?.clientId == "client_abc")
         #expect(decoded.oauth?.scopes == ["read", "write"])
         #expect(decoded.oauth?.resource == "https://mcp.linear.app/mcp")
+        // Public-native (DCR) clients leave the loopback port unspecified.
+        // Confirm the default doesn't accidentally get promoted to a fixed
+        // port — that would break the ephemeral-port redirect URI vendors
+        // like Linear / Notion expect.
+        #expect(decoded.oauth?.loopbackPort == nil)
+    }
+
+    @Test func newJSONRoundTripsConfidentialOAuthLoopbackPort() throws {
+        // HubSpot's MCP Auth Apps require an exact-match redirect URI, so
+        // the loopback port is pinned in the saved provider record. Make
+        // sure the field round-trips so a refresh after a relaunch keeps
+        // binding the same port the user registered with HubSpot.
+        let provider = MCPProvider(
+            id: UUID(),
+            name: "HubSpot",
+            url: "https://mcp.hubspot.com",
+            authType: .oauth,
+            oauth: MCPOAuthConfig(
+                clientId: "client_abc",
+                redirectURI: "http://127.0.0.1:33267/callback",
+                tokenEndpoint: "https://mcp.hubspot.com/oauth/v3/token",
+                loopbackPort: 33267
+            )
+        )
+        let encoded = try JSONEncoder().encode(provider)
+        let decoded = try JSONDecoder().decode(MCPProvider.self, from: encoded)
+        #expect(decoded.oauth?.loopbackPort == 33267)
     }
 
     @Test func oauthTokensDoNotPersistInJSON() throws {

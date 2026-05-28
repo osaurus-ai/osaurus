@@ -315,7 +315,11 @@ final class RailLineView: NSView {
     private static let animationKey = "rail.draw"
 
     private var drawPending = false
-    private var pendingDelay: CFTimeInterval = 0
+    /// Absolute begin time (CACurrentMediaTime()-based) captured when `drawIn`
+    /// is called. Stored absolute, not relative, so a deferred layout pass
+    /// can't drift the begin time later than the rail/ring/icon animations
+    /// scheduled in the same configure() call.
+    private var pendingBeginAt: CFTimeInterval = 0
 
     /// Backing layer (returned from `makeBackingLayer`) — kept typed so we never
     /// need to force-cast `layer`.
@@ -328,7 +332,26 @@ final class RailLineView: NSView {
         shape.fillColor = NSColor.clear.cgColor
         shape.strokeEnd = 1
         wantsLayer = true
+        // Disable CALayer's default implicit animations on the properties
+        // we touch / lay out. Without this, post-finish cell recreation
+        // (when the tool call's row goes through teardown + redequeue)
+        // triggers 0.25s implicit bounds/position/strokeEnd transitions
+        // that look identical to a re-play of the rail draw animation.
+        shape.actions = Self.suppressedActions
     }
+
+    private static let suppressedActions: [String: CAAction] = [
+        "bounds": NSNull(),
+        "position": NSNull(),
+        "strokeEnd": NSNull(),
+        "strokeColor": NSNull(),
+        "fillColor": NSNull(),
+        "path": NSNull(),
+        "opacity": NSNull(),
+        "hidden": NSNull(),
+        "contents": NSNull(),
+        "transform": NSNull(),
+    ]
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -355,15 +378,23 @@ final class RailLineView: NSView {
         shape.path = p
     }
 
-    /// Animate the rail drawing in after `delay`. Safe to call from `configure`:
-    /// it holds at `strokeEnd = 0` until the begin time, then sweeps to full.
-    /// Ignores repeat calls while a draw is already pending/in-flight, so the
-    /// per-token reconfigures that fire mid-stream can't restart or cut it short.
-    func drawIn(delay: CFTimeInterval) {
+    /// Animate the rail drawing in at `beginAt` (absolute `CACurrentMediaTime()`
+    /// timeline). Safe to call from `configure`: holds at `strokeEnd = 0` until
+    /// the begin time, then sweeps to full. Ignores repeat calls while a draw
+    /// is already pending/in-flight, so per-token reconfigures can't restart
+    /// or cut it short.
+    func drawIn(beginAt: CFTimeInterval) {
         if drawPending || shape.animation(forKey: Self.animationKey) != nil { return }
         drawPending = true
-        pendingDelay = delay
+        pendingBeginAt = beginAt
+        // Hide synchronously WITHOUT triggering CALayer's default 0.25s
+        // implicit animation on `strokeEnd`. Before this fix the rail
+        // briefly fade-collapsed from 1→0 instead of being invisible,
+        // racing the subsequent explicit draw-in animation.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         shape.strokeEnd = 0
+        CATransaction.commit()
         if bounds.height > 0 {
             startDrawIfReady()
         } else {
@@ -386,10 +417,20 @@ final class RailLineView: NSView {
         anim.fromValue = 0
         anim.toValue = 1
         anim.duration = Self.drawDuration
-        anim.beginTime = CACurrentMediaTime() + pendingDelay
-        anim.fillMode = .backwards  // hold at 0 until the (possibly delayed) begin time
+        anim.beginTime = pendingBeginAt
+        // `.both` + `removedOnCompletion = false` makes the presentation
+        // strictly track the animation: hidden (fromValue) before begin,
+        // animating during, and pinned to toValue afterwards. We don't
+        // rely on the model value matching the presentation.
+        anim.fillMode = .both
+        anim.isRemovedOnCompletion = false
         anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        shape.strokeEnd = 1  // model value lands full when the animation is removed
+        // Set model to final state with implicit actions disabled so the
+        // 1→ assignment doesn't trigger CALayer's default fade.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shape.strokeEnd = 1
+        CATransaction.commit()
         shape.add(anim, forKey: Self.animationKey)
     }
 }
@@ -408,7 +449,16 @@ final class TimelineNodeView: NSView {
     static let ringDrawDuration: CFTimeInterval = 0.34
 
     private var drawPending = false
-    private var pendingDelay: CFTimeInterval = 0
+    /// Absolute begin time captured at `drawRing` call site so a deferred
+    /// layout pass can't desync the ring's begin from the icon/title
+    /// animations scheduled in the same configure() call.
+    private var pendingBeginAt: CFTimeInterval = 0
+    /// Target disc fill captured synchronously in `drawRing` before the
+    /// model value is cleared. We must clear immediately so the disc
+    /// doesn't render at the target color in the window between
+    /// `drawRing` and `startDrawIfReady` (which can be deferred via
+    /// layout) — otherwise the disc pops in before the ring traces.
+    private var pendingFillTarget: CGColor?
 
     /// Backing layer (returned from `makeBackingLayer`) — kept typed so we never
     /// need to force-cast `layer`.
@@ -419,7 +469,22 @@ final class TimelineNodeView: NSView {
         shape.lineWidth = 1.5
         shape.strokeEnd = 1
         wantsLayer = true
+        // See RailLineView.suppressedActions — same rationale.
+        shape.actions = Self.suppressedActions
     }
+
+    private static let suppressedActions: [String: CAAction] = [
+        "bounds": NSNull(),
+        "position": NSNull(),
+        "strokeEnd": NSNull(),
+        "strokeColor": NSNull(),
+        "fillColor": NSNull(),
+        "path": NSNull(),
+        "opacity": NSNull(),
+        "hidden": NSNull(),
+        "contents": NSNull(),
+        "transform": NSNull(),
+    ]
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -459,12 +524,23 @@ final class TimelineNodeView: NSView {
         shape.path = p
     }
 
-    /// Trace the ring in clockwise (+ fade the fill in) after `delay`.
-    func drawRing(delay: CFTimeInterval) {
+    /// Trace the ring in clockwise (+ fade the fill in) starting at `beginAt`
+    /// (absolute `CACurrentMediaTime()` timeline).
+    func drawRing(beginAt: CFTimeInterval) {
         if drawPending || shape.animation(forKey: Self.animationKey) != nil { return }
         drawPending = true
-        pendingDelay = delay
+        pendingBeginAt = beginAt
+        pendingFillTarget = shape.fillColor
+        // Hide the disc + ring synchronously (no implicit fades). Before
+        // this fix, the disc rendered at its target color during the
+        // window between `drawRing` and the deferred `startDrawIfReady`
+        // — which manifested as the colored disc popping in before the
+        // ring traced over it.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         shape.strokeEnd = 0
+        shape.fillColor = NSColor.clear.cgColor
+        CATransaction.commit()
         if bounds.width > 1 {
             startDrawIfReady()
         } else {
@@ -481,21 +557,31 @@ final class TimelineNodeView: NSView {
     private func startDrawIfReady() {
         guard drawPending, bounds.width > 1 else { return }
         drawPending = false
-        let begin = CACurrentMediaTime() + pendingDelay
+        let begin = pendingBeginAt
+        let fillTarget = pendingFillTarget ?? shape.fillColor
         let stroke = CABasicAnimation(keyPath: "strokeEnd")
         stroke.fromValue = 0
         stroke.toValue = 1
+        stroke.fillMode = .both
         stroke.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        // Fade the disc fill in alongside the ring so the node isn't a bare ring.
         let fill = CABasicAnimation(keyPath: "fillColor")
         fill.fromValue = NSColor.clear.cgColor
-        fill.toValue = shape.fillColor
+        fill.toValue = fillTarget
+        fill.fillMode = .both
         let group = CAAnimationGroup()
         group.animations = [stroke, fill]
         group.duration = Self.ringDrawDuration
         group.beginTime = begin
-        group.fillMode = .backwards  // hold hidden (strokeEnd 0 / clear fill) until begin
-        shape.strokeEnd = 1  // resting model values
+        group.fillMode = .both
+        group.isRemovedOnCompletion = false
+        // Restore model to final state (without triggering implicit fades)
+        // so subsequent property reads / future animations see the right
+        // baseline. The explicit animation drives the presentation.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shape.strokeEnd = 1
+        shape.fillColor = fillTarget
+        CATransaction.commit()
         shape.add(group, forKey: Self.animationKey)
     }
 }
@@ -771,6 +857,22 @@ final class NativeToolCallRowView: NSView {
     var onToggle: (() -> Void)?
     var onHeightChanged: (() -> Void)?
 
+    /// Implicit-animation suppression dict for layers we mount in this row
+    /// (icon, name, shimmer). Prevents CALayer's default 0.25s `contents`
+    /// / `bounds` / `position` / `opacity` transitions from running when
+    /// the cell is redequeued post-finish — which otherwise reads as a
+    /// spurious re-play of the appearance animation.
+    static let suppressedLayerActions: [String: CAAction] = [
+        "bounds": NSNull(),
+        "position": NSNull(),
+        "contents": NSNull(),
+        "opacity": NSNull(),
+        "hidden": NSNull(),
+        "transform": NSNull(),
+        "backgroundColor": NSNull(),
+        "foregroundColor": NSNull(),
+    ]
+
     // MARK: Init
 
     override init(frame: NSRect) {
@@ -844,12 +946,20 @@ final class NativeToolCallRowView: NSView {
         currentItemId = item.call.id
         currentItem = item
 
+
         // Node: category icon shape in the foreground. The icon/circle colors and
         // the running shimmer are applied in `applyStatusAndShimmer()` below.
         let category = ToolCategory.from(toolName: item.call.function.name)
         let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        // Suppress the default `contents` action so the symbol swap doesn't
+        // run its own 0.25s implicit fade alongside `playNodeAppearance`'s
+        // explicit opacity animation (the two would race and pop the icon in
+        // before the ring finishes tracing).
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         categoryIcon.image = NSImage(systemSymbolName: category.icon, accessibilityDescription: nil)?
             .withSymbolConfiguration(cfg)
+        CATransaction.commit()
 
         // Rail connects consecutive calls; a lone call (only row) shows none.
         let railColor = NSColor(theme.tertiaryText).withAlphaComponent(0.28).cgColor
@@ -860,13 +970,17 @@ final class NativeToolCallRowView: NSView {
         // A freshly connected segment (streaming append) sweeps in; everything
         // else shows fully. `showFull`/`drawIn` are no-ops mid-draw, so the
         // per-token reconfigures that follow can't interrupt the animation.
+        // Capture `now` once so the rail/ring/icon animations scheduled below
+        // share an anchor — deferred-layout starts can't drift the rail or
+        // ring later than the icon's already-locked begin time.
+        let now = CACurrentMediaTime()
         if let delay = drawRailAboveAfter, !railAbove.isHidden {
-            railAbove.drawIn(delay: delay)
+            railAbove.drawIn(beginAt: now + delay)
         } else {
             railAbove.showFull()
         }
         if let delay = drawRailBelowAfter, !railBelow.isHidden {
-            railBelow.drawIn(delay: delay)
+            railBelow.drawIn(beginAt: now + delay)
         } else {
             railBelow.showFull()
         }
@@ -913,7 +1027,7 @@ final class NativeToolCallRowView: NSView {
         // Freshly appearing node: stage in the ring → glyph → title. Otherwise
         // (load / reuse / already revealed) show the full ring with no animation.
         if let delay = animateAppearanceAfter {
-            playNodeAppearance(delay: delay)
+            playNodeAppearance(beginAt: now + delay)
         } else {
             categoryBg.showRingFull()
         }
@@ -1227,15 +1341,23 @@ final class NativeToolCallRowView: NSView {
         categoryIcon.translatesAutoresizingMaskIntoConstraints = false
         categoryIcon.wantsLayer = true  // animatable for the staged glyph reveal
         categoryIcon.imageScaling = .scaleProportionallyUpOrDown
+        // Suppress implicit CALayer animations on `contents`/`opacity`/`bounds`
+        // etc. Post-finish cell teardown + redequeue otherwise rebuilds the
+        // image view from zero bounds → 14×14, animating the glyph in over
+        // 0.25s and giving the impression the appearance sequence is replaying.
+        categoryIcon.layer?.actions = Self.suppressedLayerActions
         categoryBg.addSubview(categoryIcon)
 
         // Shimmering title (running state); overlays the static nameLabel slot.
         shimmerLabel.translatesAutoresizingMaskIntoConstraints = false
         shimmerLabel.isHidden = true
+        shimmerLabel.wantsLayer = true
+        shimmerLabel.layer?.actions = Self.suppressedLayerActions
         addSubview(shimmerLabel)
 
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.wantsLayer = true  // animatable for the appended-node title bloom
+        nameLabel.layer?.actions = Self.suppressedLayerActions
         nameLabel.isEditable = false; nameLabel.isBordered = false; nameLabel.drawsBackground = false
         nameLabel.lineBreakMode = .byTruncatingTail; nameLabel.maximumNumberOfLines = 1
         nameLabel.alignment = .left
@@ -1522,9 +1644,17 @@ final class NativeToolCallRowView: NSView {
     private func applyStatusAndShimmer() {
         guard let item = currentItem, let theme = lastConfiguredTheme else { return }
         let color = nodeStatusColor(item: item, theme: theme)
+        // Suppress CALayer's default property actions. Setting `fillColor` /
+        // `strokeColor` / `contentTintColor` otherwise spins up implicit
+        // 0.25s fades on the disc and tint, which race the explicit ring /
+        // icon / title appearance animations scheduled in
+        // `playNodeAppearance` and read as the node glitch-popping in.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         categoryIcon.contentTintColor = color
         categoryBg.fillColor = color.withAlphaComponent(0.14).cgColor
         categoryBg.strokeColor = color.withAlphaComponent(0.55).cgColor
+        CATransaction.commit()
 
         if isRunning(item) {
             shimmerLabel.configure(
@@ -1551,25 +1681,43 @@ final class NativeToolCallRowView: NSView {
     /// Purely presentational: model values stay at rest and `fillMode = .backwards`
     /// holds each stage hidden until its begin time, so there's no pre-flash and
     /// the per-token reconfigures that follow can't disturb an in-flight reveal.
-    private func playNodeAppearance(delay: CFTimeInterval) {
-        let begin = CACurrentMediaTime() + delay
+    private func playNodeAppearance(beginAt begin: CFTimeInterval) {
         let ringDuration = TimelineNodeView.ringDrawDuration
+        let iconDuration: CFTimeInterval = 0.20
+        let titleDuration: CFTimeInterval = 0.24
+
+        // Strict sequencing: rail (already done by `begin`) → ring →
+        // icon → title, each waiting for the previous to fully complete.
+        // The earlier overlap (icon at ring*0.75, title 0.16s after that)
+        // read as "rushing" — stages stepped on each other instead of
+        // letting the eye track one element at a time.
+        let iconBegin = begin + ringDuration
+        let titleBegin = iconBegin + iconDuration
 
         // 1) Ring traces in clockwise (the disc fill fades in alongside it).
-        categoryBg.drawRing(delay: delay)
+        // Passing the absolute begin time (rather than a relative delay)
+        // guarantees the ring's begin matches the icon/title begin even
+        // if the node's layout pass is deferred a frame.
+        categoryBg.drawRing(beginAt: begin)
 
-        // 2) Glyph settles in — subtle fade + slight scale — as the ring finishes.
+        // 2) Glyph settles in — subtle fade + slight scale — after the ring.
+        // `fillMode = .backwards` is set on both the group AND each child
+        // so the layer reliably presents `fromValue` (opacity 0, scaled
+        // 0.6) before `beginTime` regardless of CAAnimationGroup-vs-child
+        // fillMode inheritance quirks.
         if let iconLayer = categoryIcon.layer {
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = 0.0
             fade.toValue = 1.0
+            fade.fillMode = .backwards
             let scale = CABasicAnimation(keyPath: "transform.scale")
             scale.fromValue = 0.6
             scale.toValue = 1.0
+            scale.fillMode = .backwards
             let group = CAAnimationGroup()
             group.animations = [fade, scale]
-            group.duration = 0.20
-            group.beginTime = begin + ringDuration * 0.75
+            group.duration = iconDuration
+            group.beginTime = iconBegin
             group.fillMode = .backwards
             group.timingFunction = CAMediaTimingFunction(name: .easeOut)
             iconLayer.add(group, forKey: "icon.appear")
@@ -1581,13 +1729,15 @@ final class NativeToolCallRowView: NSView {
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = 0.0
             fade.toValue = 1.0
+            fade.fillMode = .backwards
             let slide = CABasicAnimation(keyPath: "transform.translation.x")
             slide.fromValue = -8.0
             slide.toValue = 0.0
+            slide.fillMode = .backwards
             let group = CAAnimationGroup()
             group.animations = [fade, slide]
-            group.duration = 0.24
-            group.beginTime = begin + ringDuration * 0.75 + 0.16
+            group.duration = titleDuration
+            group.beginTime = titleBegin
             group.fillMode = .backwards
             group.timingFunction = CAMediaTimingFunction(name: .easeOut)
             titleLayer.add(group, forKey: "title.appear")

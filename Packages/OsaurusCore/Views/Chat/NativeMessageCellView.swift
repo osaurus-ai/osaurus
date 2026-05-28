@@ -47,6 +47,33 @@ struct CellRenderingContext {
     /// bubbles. Empty dict means no privacy redactions in this
     /// session yet (the highlight pass short-circuits).
     var sessionRedactions: [String: String] = [:]
+    /// Coordinator-scoped predicate: has the chart with this block id ever
+    /// been drawn (and thus already played its entry animation) in the
+    /// current chat? Used by `configureAsChart` to suppress the animation
+    /// when a recycled cell re-mounts a NativeChartView for a chart the
+    /// user has already seen.
+    var hasChartBeenDrawn: ((String) -> Bool)? = nil
+    /// Coordinator-scoped callback: record that the chart with this block
+    /// id has been drawn so subsequent re-mounts skip the entry animation.
+    var markChartDrawn: ((String) -> Void)? = nil
+    /// Coordinator-scoped chart view cache lookup. Returning a non-nil
+    /// view lets `configureAsChart` reparent an existing (already-rendered)
+    /// `NativeChartView` instead of allocating a fresh `AAChartView`/
+    /// WKWebView — eliminating the visible re-render when a chart row
+    /// scrolls back into view after cell recycling.
+    var cachedChartView: ((String) -> NativeChartView?)? = nil
+    /// Coordinator-scoped callback: stash a newly created chart view in
+    /// the coordinator's cache so subsequent re-mounts hit the lookup
+    /// above. Pruned to the current block ids on each `applyBlocks`.
+    var cacheChartView: ((String, NativeChartView) -> Void)? = nil
+    /// Same pattern as `cachedChartView`, but for tool-call groups. When
+    /// the tool finishes and blocks reflow, NSTableView often redequeues
+    /// the row into a different cell — without this cache the old
+    /// `NativeToolCallGroupView` is torn down and a fresh one is mounted
+    /// from zero bounds, which reads as the appearance animation
+    /// replaying.
+    var cachedToolGroupView: ((String) -> NativeToolCallGroupView?)? = nil
+    var cacheToolGroupView: ((String, NativeToolCallGroupView) -> Void)? = nil
 }
 
 // MARK: - Cell-Isolated ExpandedBlocksStore Proxy
@@ -1471,9 +1498,33 @@ final class NativeMessageCellView: NSTableCellView {
         context: CellRenderingContext,
         sameKind: Bool
     ) {
-        if !sameKind || nativeToolCallGroupView == nil {
+        // Consult the cache up front. `sameKind` alone isn't enough — the
+        // same cell can be asked to render a *different* tool-call group
+        // block id in back-to-back configures (snapshot diff reorder /
+        // recycle). The existing `nativeToolCallGroupView` belongs to the
+        // PREVIOUS block id; reusing it for the new block puts it under
+        // the wrong cache binding and the new block's actual cached
+        // view stays orphaned. Remount whenever the currently mounted
+        // gv isn't the one the cache says belongs to `block.id`.
+        let cachedGV = context.cachedToolGroupView?(block.id)
+        let needsRemount = !sameKind
+            || nativeToolCallGroupView == nil
+            || nativeToolCallGroupView !== cachedGV && cachedGV != nil
+        if needsRemount {
             removeAllContentViews()
-            let gv = NativeToolCallGroupView()
+            // Reuse a cached group view for this block id when one exists.
+            // The cached instance retains its rendered layers (ring stroke,
+            // icon, title), so reparenting after a cell recycle paints
+            // instantly with no re-animation. Cache misses (first
+            // appearance, or session-switch pruning) create fresh.
+            let gv: NativeToolCallGroupView
+            if let cached = cachedGV {
+                cached.removeFromSuperview()
+                gv = cached
+            } else {
+                gv = NativeToolCallGroupView()
+                context.cacheToolGroupView?(block.id, gv)
+            }
             gv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(gv)
             NSLayoutConstraint.activate([
@@ -1722,7 +1773,12 @@ final class NativeMessageCellView: NSTableCellView {
                 width: bubbleWidth - 24,
                 theme: theme,
                 cacheKey: block.id,
-                isStreaming: context.isStreaming
+                // User messages are never themselves streaming — the
+                // global `context.isStreaming` flag is true whenever the
+                // assistant is generating, but propagating that here
+                // would light up the streaming cursor / trailing fade on
+                // the user bubble. Always false for user bubbles.
+                isStreaming: false
             )
             // User bubble: the verbatim string in `ChatTurn.content`
             // is what the user TYPED, but the wire saw the
@@ -1964,9 +2020,28 @@ final class NativeMessageCellView: NSTableCellView {
         context: CellRenderingContext,
         sameKind: Bool
     ) {
-        if !sameKind || nativeChartView == nil {
+        // See `configureAsToolCallGroup` for the same-kind/different-id
+        // explanation — chart cells suffer the identical bug if we trust
+        // `sameKind` alone.
+        let cachedCV = context.cachedChartView?(block.id)
+        let needsRemount = !sameKind
+            || nativeChartView == nil
+            || nativeChartView !== cachedCV && cachedCV != nil
+        if needsRemount {
             removeAllContentViews()
-            let cv = NativeChartView()
+            // Reuse a cached NativeChartView for this block id when one exists.
+            // The cached instance still holds its rendered WKWebView contents,
+            // so reparenting avoids a fresh chart load (no flash, no animation).
+            // Cache misses (first appearance, or after session-switch pruning)
+            // fall back to a new instance and seed the cache.
+            let cv: NativeChartView
+            if let cached = cachedCV {
+                cached.removeFromSuperview()
+                cv = cached
+            } else {
+                cv = NativeChartView()
+                context.cacheChartView?(block.id, cv)
+            }
             cv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(cv)
             let bottomToCell = cv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
@@ -1990,7 +2065,9 @@ final class NativeMessageCellView: NSTableCellView {
         wantsLayer = true
         layer?.masksToBounds = true
         let blockId = block.id
-        nativeChartView?.configure(spec: spec, theme: context.theme)
+        let animateInitialDraw = !(context.hasChartBeenDrawn?(blockId) ?? false)
+        nativeChartView?.configure(spec: spec, theme: context.theme, animateInitialDraw: animateInitialDraw)
+        context.markChartDrawn?(blockId)
         DispatchQueue.main.async { [weak self] in
             guard let self, let cv = self.nativeChartView else { return }
             guard self.currentBlockId == blockId else { return }
@@ -2063,7 +2140,12 @@ final class NativeMessageCellView: NSTableCellView {
         nativeHeaderHeightConstraint = nil
         nativeMarkdownView?.removeFromSuperview(); nativeMarkdownView = nil
         nativeThinkingView?.removeFromSuperview(); nativeThinkingView = nil
-        nativeToolCallGroupView?.removeFromSuperview(); nativeToolCallGroupView = nil
+        // Coordinator-cached views: only call `removeFromSuperview` if
+        // we're still the parent. After cache reuse the view may live
+        // in a sibling cell already; blindly calling `removeFromSuperview`
+        // would yank the view out of its new home and the row-now-owning
+        // cell would render empty until the next reconfigure.
+        detachIfStillParented(nativeToolCallGroupView); nativeToolCallGroupView = nil
         nativePendingView?.removeFromSuperview(); nativePendingView = nil
         nativeTypingView?.removeFromSuperview(); nativeTypingView = nil
         nativeArtifactView?.removeFromSuperview(); nativeArtifactView = nil
@@ -2075,7 +2157,7 @@ final class NativeMessageCellView: NSTableCellView {
         // chart keeps rendering at its previous frame underneath the new
         // content — visible as charts bleeding through unrelated rows once
         // the user starts scrolling and recycling kicks in.
-        nativeChartView?.removeFromSuperview(); nativeChartView = nil
+        detachIfStillParented(nativeChartView); nativeChartView = nil
         nativePreflightView?.removeFromSuperview(); nativePreflightView = nil
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
@@ -2091,6 +2173,18 @@ final class NativeMessageCellView: NSTableCellView {
         userBubbleWidthConstraint = nil
         userAttachmentsHeight = 0
         userMessageInlineEditActive = false
+    }
+
+    /// Only call `removeFromSuperview()` if the view is still parented
+    /// to us. Cache-shared content views (tool-call group, chart) may
+    /// have already been reparented into a sibling cell via the
+    /// coordinator's cache; in that case removing them would steal them
+    /// back from the cell that legitimately owns them now, and that cell
+    /// would silently render empty until a reconfigure repositioned the
+    /// view. No-op when `view` is nil.
+    private func detachIfStillParented(_ view: NSView?) {
+        guard let view, view.superview === self else { return }
+        view.removeFromSuperview()
     }
 }
 

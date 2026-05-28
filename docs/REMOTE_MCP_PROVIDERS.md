@@ -48,9 +48,24 @@ Used by Linear, Notion, Vercel, Supabase, Cloudflare, Hugging Face, Sentry, Stri
 
 No client ID, secret, or redirect URI to configure — Osaurus uses [RFC 7591 Dynamic Client Registration](https://datatracker.ietf.org/doc/html/rfc7591) to register itself with the vendor on the fly.
 
+#### OAuth 2.1 (manual Client ID + Client Secret)
+
+Used by HubSpot.
+
+Some vendors require confidential-client OAuth and don't publish a `registration_endpoint`, so DCR can't bootstrap a client. For these the connect-known sheet renders an extra setup card:
+
+1. Click **Open [Provider] docs** to land on the vendor's OAuth-app instructions.
+2. Register a new OAuth app and **copy this exact redirect URI** into its allowed list — the sheet shows it with a **Copy** button (e.g. `http://127.0.0.1:33267/callback` for HubSpot).
+3. Paste the resulting **Client ID** and **Client Secret** into the form.
+4. Click **Sign In with [Provider]**, complete the browser flow, then **Add Provider**.
+
+The Client Secret is stored in your macOS Keychain alongside access/refresh tokens and is sent only to the vendor's token endpoint. The loopback port is pinned to the value the vendor expects, so future refreshes keep working without re-registering the app.
+
+> HubSpot specifics — Create your app at **HubSpot Developer Portal → Development → MCP Auth Apps**, paste `http://127.0.0.1:33267/callback` as the redirect URL, and copy the issued Client ID + Client Secret. Private App PATs (`pat-na1-…`) do not authenticate against `mcp.hubspot.com` and will return 401 — they only work with HubSpot's REST APIs and the self-hosted Developer MCP npm package.
+
 #### API Key (bearer token)
 
-Used by GitHub Copilot MCP, Atlassian Rovo MCP, HubSpot, Zapier.
+Used by GitHub Copilot MCP, Atlassian Rovo MCP, Zapier.
 
 - A secure text field labeled **API Key**.
 - A **Where do I get my key?** link that opens the vendor's docs.
@@ -92,7 +107,7 @@ The catalog is hardcoded in [`MCPProviderTemplate.swift`](../Packages/OsaurusCor
 | **Exa Search**       | Search              | None     | `https://mcp.exa.ai/mcp`                                                                            |
 | **GitHub**           | Software            | API Key  | `https://api.githubcopilot.com/mcp/`                                                                |
 | **Google Workspace** | Productivity        | _self-hosted_ | (user-supplied — see [community project](https://github.com/taylorwilsdon/google_workspace_mcp)) |
-| **HubSpot**          | CRM                 | API Key  | `https://app.hubspot.com/mcp/v1/http`                                                               |
+| **HubSpot**          | CRM                 | OAuth (manual app) | `https://mcp.hubspot.com`                                                                 |
 | **Hugging Face**     | AI                  | OAuth    | `https://huggingface.co/mcp`                                                                        |
 | **Keenable**         | Search              | None     | `https://api.keenable.ai/mcp`                                                                       |
 | **Linear**           | Project Management  | OAuth    | `https://mcp.linear.app/mcp`                                                                        |
@@ -117,6 +132,7 @@ URLs are vetted against the upstream [`awesome-remote-mcp-servers`](https://gith
 The catalog only includes providers whose remote MCP server supports either:
 
 - OAuth 2.1 with Dynamic Client Registration ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)), or
+- OAuth 2.1 with manual Client ID + Client Secret entry against a vendor with a single documented redirect URI (HubSpot's MCP Auth Apps), or
 - a documented bearer-token / API-key fallback (used for GitHub and Atlassian, whose OAuth requires a pre-registered app), or
 - no authentication at all.
 

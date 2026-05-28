@@ -10,23 +10,31 @@
 //  to one a user would build by hand, so removing or editing a template later
 //  never affects already-saved providers.
 //
-//  Three template kinds:
+//  Four template kinds:
 //
-//  1. **OAuth+DCR** (`authType == .oauth`, `selfHostingHelpURL == nil`)
+//  1. **OAuth+DCR** (`authType == .oauth`, `requiresManualOAuthCredentials == false`)
 //     The default. Tap a card and the connect-known screen runs the full
 //     RFC 7591 dynamic-client-registration sign-in flow against the vendor.
 //     Includes Linear, Notion, Vercel, Supabase, Cloudflare, etc.
 //
-//  2. **Bearer-token / API-key** (`authType == .bearerToken`, `apiKeyHelpURL != nil`)
+//  2. **OAuth without DCR** (`authType == .oauth`, `requiresManualOAuthCredentials == true`)
+//     Vendors whose remote MCP requires confidential-client OAuth and does not
+//     publish a `registration_endpoint`, so the user must register an OAuth
+//     app in the vendor's developer portal and paste the resulting client_id
+//     + client_secret. `oauthFixedLoopbackPort` pins the loopback redirect URI
+//     so the user can register it once with the vendor. Currently HubSpot's
+//     MCP Auth Apps.
+//
+//  3. **Bearer-token / API-key** (`authType == .bearerToken`, `apiKeyHelpURL != nil`)
 //     Two flavours, all routed through the same connect-known API-key screen:
-//       - Vendors that issue dashboard-generated personal API keys (HubSpot, Zapier).
+//       - Vendors that issue dashboard-generated personal API keys (Zapier).
 //       - Vendors whose remote MCP supports OAuth in principle but does *not*
 //         publish RFC 9728 PRM / RFC 7591 DCR, so the spec-compliant auto-flow
 //         can never bootstrap a client. Currently GitHub Copilot MCP and
 //         Atlassian Rovo MCP — both accept a personal access token / API key
 //         as a documented bearer-auth fallback.
 //
-//  3. **Self-hosting** (`selfHostingHelpURL != nil`)
+//  4. **Self-hosting** (`selfHostingHelpURL != nil`)
 //     For services that don't ship a hosted MCP at all — currently just Google
 //     Workspace. Tapping opens the help URL externally and routes the sheet to
 //     the Custom form so the user can paste their own deployed endpoint.
@@ -68,6 +76,22 @@ public struct MCPProviderTemplate: Identifiable, Sendable, Equatable {
     /// sheet to `.configureCustom` instead of `.configureKnown` so the user can
     /// paste in their own endpoint and credentials once the server is running.
     public let selfHostingHelpURL: URL?
+    /// When true (only honoured for `authType == .oauth`), the connect-known
+    /// screen renders a "paste Client ID + Client Secret" form instead of the
+    /// usual one-tap Sign In button. Used for vendors whose ASM publishes no
+    /// `registration_endpoint` (no RFC 7591 DCR) and instead requires the
+    /// user to register an OAuth app in a developer portal.
+    public let requiresManualOAuthCredentials: Bool
+    /// Where to send the user to create the OAuth app for vendors with
+    /// `requiresManualOAuthCredentials == true`. Rendered as an "Open … docs"
+    /// button next to the Client ID / Secret fields.
+    public let oauthSetupHelpURL: URL?
+    /// Optional fixed loopback port for the OAuth redirect URI. When non-nil,
+    /// `MCPOAuthService.signIn` binds the loopback server to this exact port
+    /// and the connect-known screen displays the URL the user must register
+    /// in the vendor's portal. Required for vendors that demand exact-match
+    /// redirect URIs (HubSpot's MCP Auth Apps).
+    public let oauthFixedLoopbackPort: UInt16?
 
     public init(
         id: String,
@@ -77,7 +101,10 @@ public struct MCPProviderTemplate: Identifiable, Sendable, Equatable {
         iconSystemName: String,
         tagline: String,
         apiKeyHelpURL: URL? = nil,
-        selfHostingHelpURL: URL? = nil
+        selfHostingHelpURL: URL? = nil,
+        requiresManualOAuthCredentials: Bool = false,
+        oauthSetupHelpURL: URL? = nil,
+        oauthFixedLoopbackPort: UInt16? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -87,6 +114,9 @@ public struct MCPProviderTemplate: Identifiable, Sendable, Equatable {
         self.tagline = tagline
         self.apiKeyHelpURL = apiKeyHelpURL
         self.selfHostingHelpURL = selfHostingHelpURL
+        self.requiresManualOAuthCredentials = requiresManualOAuthCredentials
+        self.oauthSetupHelpURL = oauthSetupHelpURL
+        self.oauthFixedLoopbackPort = oauthFixedLoopbackPort
     }
 
     /// Catalog of well-known providers, alphabetically sorted by `displayName`.
@@ -173,14 +203,26 @@ public struct MCPProviderTemplate: Identifiable, Sendable, Equatable {
             tagline: "Gmail, Calendar, Drive, Docs (requires self-hosting)",
             selfHostingHelpURL: URL(string: "https://github.com/taylorwilsdon/google_workspace_mcp")!
         ),
+        // HubSpot's remote MCP server requires confidential-client OAuth via an
+        // "MCP Auth App" the user creates in their developer portal. Their ASM
+        // does not publish a `registration_endpoint`, so RFC 7591 DCR can never
+        // bootstrap a client. Private App PATs (`pat-na1-…`) are explicitly NOT
+        // accepted by mcp.hubspot.com — they only work with the REST API and
+        // the self-hosted Developer MCP npm package. The fixed loopback port
+        // matches the redirect URI the user registers in their MCP Auth App.
         MCPProviderTemplate(
             id: "hubspot",
             displayName: "HubSpot",
-            url: "https://app.hubspot.com/mcp/v1/http",
-            authType: .bearerToken,
+            url: "https://mcp.hubspot.com",
+            authType: .oauth,
             iconSystemName: "person.crop.rectangle.stack.fill",
             tagline: "Query HubSpot contacts, deals, and pipelines",
-            apiKeyHelpURL: URL(string: "https://developers.hubspot.com/docs/api/private-apps")!
+            requiresManualOAuthCredentials: true,
+            oauthSetupHelpURL: URL(
+                string:
+                    "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server"
+            )!,
+            oauthFixedLoopbackPort: 33267
         ),
         MCPProviderTemplate(
             id: "huggingface",

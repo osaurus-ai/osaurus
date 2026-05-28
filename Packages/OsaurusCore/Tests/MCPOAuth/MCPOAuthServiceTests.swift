@@ -14,7 +14,12 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite("MCP OAuth service helpers")
+// `tokenRequestOverride` and `clientSecretAccessorOverride` are global test
+// seams; running tests in this suite in parallel would let one test's
+// captured form get clobbered by another's. `.serialized` keeps the
+// previously-passing fixture-based tests deterministic alongside the new
+// confidential-client tests added below.
+@Suite("MCP OAuth service helpers", .serialized)
 struct MCPOAuthServiceTests {
     @Test func authorizationURLContainsRequiredParameters() {
         let url = MCPOAuthService.authorizationURL(
@@ -190,6 +195,155 @@ struct MCPOAuthServiceTests {
         await #expect(throws: MCPOAuthError.self) {
             _ = try await MCPOAuthService.refresh(provider: provider, tokens: tokens, persist: false)
         }
+    }
+
+    // MARK: - Confidential-client (`client_secret_post`) support
+    //
+    // Vendors whose ASM advertises `client_secret_post` (HubSpot's MCP Auth
+    // Apps) need `client_secret` in every token-endpoint POST. Public-native
+    // clients (Linear, Notion, etc.) leave the slot empty and rely on PKCE
+    // alone. These tests pin both paths so a future refactor can't silently
+    // drop the secret.
+
+    @Test func exchangeAuthorizationCodeIncludesClientSecretWhenProvided() async throws {
+        var capturedForm: [String: String]?
+        MCPOAuthService.tokenRequestOverride = { _, form in
+            capturedForm = form
+            return MCPOAuthService.ParsedTokenResponse(
+                accessToken: "AT",
+                refreshToken: "RT",
+                expiresAt: Date().addingTimeInterval(3600),
+                scope: nil
+            )
+        }
+        defer { MCPOAuthService.tokenRequestOverride = nil }
+
+        _ = try await MCPOAuthService.exchangeAuthorizationCode(
+            tokenURL: URL(string: "https://auth.example.com/token")!,
+            clientId: "client_abc",
+            clientSecret: "secret-xyz",
+            code: "auth-code",
+            verifier: "verifier-abc",
+            redirectURI: "http://127.0.0.1:33267/callback",
+            resource: "https://mcp.example.com"
+        )
+
+        #expect(capturedForm?["grant_type"] == "authorization_code")
+        #expect(capturedForm?["client_id"] == "client_abc")
+        #expect(capturedForm?["client_secret"] == "secret-xyz")
+        #expect(capturedForm?["code_verifier"] == "verifier-abc")
+        #expect(capturedForm?["redirect_uri"] == "http://127.0.0.1:33267/callback")
+    }
+
+    @Test func exchangeAuthorizationCodeOmitsClientSecretWhenNil() async throws {
+        var capturedForm: [String: String]?
+        MCPOAuthService.tokenRequestOverride = { _, form in
+            capturedForm = form
+            return MCPOAuthService.ParsedTokenResponse(
+                accessToken: "AT",
+                refreshToken: nil,
+                expiresAt: Date().addingTimeInterval(3600),
+                scope: nil
+            )
+        }
+        defer { MCPOAuthService.tokenRequestOverride = nil }
+
+        _ = try await MCPOAuthService.exchangeAuthorizationCode(
+            tokenURL: URL(string: "https://auth.example.com/token")!,
+            clientId: "client_abc",
+            code: "auth-code",
+            verifier: "verifier-abc",
+            redirectURI: "http://127.0.0.1:1/callback",
+            resource: nil
+        )
+
+        #expect(capturedForm?["client_id"] == "client_abc")
+        #expect(capturedForm?["client_secret"] == nil)
+    }
+
+    @Test func refreshIncludesClientSecretFromKeychainAccessor() async throws {
+        let providerId = UUID()
+        var capturedForm: [String: String]?
+        MCPOAuthService.tokenRequestOverride = { _, form in
+            capturedForm = form
+            return MCPOAuthService.ParsedTokenResponse(
+                accessToken: "AT2",
+                refreshToken: "RT2",
+                expiresAt: Date().addingTimeInterval(3600),
+                scope: nil
+            )
+        }
+        MCPOAuthService.clientSecretAccessorOverride = { id in
+            id == providerId ? "secret-xyz" : nil
+        }
+        defer {
+            MCPOAuthService.tokenRequestOverride = nil
+            MCPOAuthService.clientSecretAccessorOverride = nil
+        }
+
+        let provider = MCPProvider(
+            id: providerId,
+            name: "p",
+            url: "https://mcp.example.com/mcp",
+            authType: .oauth,
+            oauth: MCPOAuthConfig(
+                clientId: "client_abc",
+                resource: "https://mcp.example.com",
+                tokenEndpoint: "https://auth.example.com/token"
+            )
+        )
+        let original = MCPOAuthTokens(
+            accessToken: "AT1",
+            refreshToken: "RT1",
+            expiresAt: Date().addingTimeInterval(-10),
+            scope: nil
+        )
+
+        _ = try await MCPOAuthService.refresh(provider: provider, tokens: original, persist: false)
+
+        #expect(capturedForm?["grant_type"] == "refresh_token")
+        #expect(capturedForm?["client_id"] == "client_abc")
+        #expect(capturedForm?["client_secret"] == "secret-xyz")
+    }
+
+    @Test func refreshOmitsClientSecretWhenAccessorReturnsNil() async throws {
+        var capturedForm: [String: String]?
+        MCPOAuthService.tokenRequestOverride = { _, form in
+            capturedForm = form
+            return MCPOAuthService.ParsedTokenResponse(
+                accessToken: "AT2",
+                refreshToken: "RT2",
+                expiresAt: Date().addingTimeInterval(3600),
+                scope: nil
+            )
+        }
+        // Force public-client behaviour: accessor returns nil for everyone.
+        MCPOAuthService.clientSecretAccessorOverride = { _ in nil }
+        defer {
+            MCPOAuthService.tokenRequestOverride = nil
+            MCPOAuthService.clientSecretAccessorOverride = nil
+        }
+
+        let provider = MCPProvider(
+            name: "p",
+            url: "https://mcp.example.com/mcp",
+            authType: .oauth,
+            oauth: MCPOAuthConfig(
+                clientId: "client_abc",
+                tokenEndpoint: "https://auth.example.com/token"
+            )
+        )
+        let original = MCPOAuthTokens(
+            accessToken: "AT1",
+            refreshToken: "RT1",
+            expiresAt: Date().addingTimeInterval(-10),
+            scope: nil
+        )
+
+        _ = try await MCPOAuthService.refresh(provider: provider, tokens: original, persist: false)
+
+        #expect(capturedForm?["client_id"] == "client_abc")
+        #expect(capturedForm?["client_secret"] == nil)
     }
 
     // MARK: - Helpers

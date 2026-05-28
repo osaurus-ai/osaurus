@@ -159,7 +159,12 @@ final class NativeChartView: NSView {
 
     // MARK: - Configure
 
-    func configure(spec: ChartSpec, theme: any ThemeProtocol) {
+    /// `animateInitialDraw` controls only the first paint on this NSView
+    /// instance. Cells get recycled across scroll, so the coordinator tracks
+    /// which block ids have already animated once and passes `false` on
+    /// re-attach to suppress the entry animation. Picker-driven redraws
+    /// always animate (see `chartTypeChanged`).
+    func configure(spec: ChartSpec, theme: any ThemeProtocol, animateInitialDraw: Bool = true) {
         let bgColor = NSColor(theme.cardBackground)
         let bgHex = bgColor.hexString
         let textColor = NSColor(theme.primaryText)
@@ -199,7 +204,7 @@ final class NativeChartView: NSView {
             typePicker.selectItem(at: idx)
         }
 
-        redraw(spec: spec, bgHex: bgHex, textHex: textColor.hexString, theme: theme)
+        redraw(spec: spec, bgHex: bgHex, textHex: textColor.hexString, theme: theme, animate: animateInitialDraw)
     }
 
     func measuredCardHeight() -> CGFloat {
@@ -236,9 +241,10 @@ final class NativeChartView: NSView {
         bgHex: String,
         textHex: String,
         theme: any ThemeProtocol,
-        forceFullRedraw: Bool = false
+        forceFullRedraw: Bool = false,
+        animate: Bool = true
     ) {
-        let (options, seriesElements) = buildChartModel(from: spec, bgHex: bgHex, textHex: textHex, theme: theme)
+        let (options, seriesElements) = buildChartModel(from: spec, bgHex: bgHex, textHex: textHex, theme: theme, animate: animate)
 
         if !hasDrawn || forceFullRedraw {
             hasDrawn = true
@@ -254,7 +260,8 @@ final class NativeChartView: NSView {
         from spec: ChartSpec,
         bgHex: String,
         textHex: String,
-        theme: any ThemeProtocol
+        theme: any ThemeProtocol,
+        animate: Bool = true
     ) -> (AAOptions, [AASeriesElement]) {
         let gridHex = NSColor(theme.primaryBorder).withAlphaComponent(0.2).hexString
 
@@ -278,7 +285,7 @@ final class NativeChartView: NSView {
             .chartType(AAChartType(rawValue: spec.chartType) ?? .column)
             .backgroundColor(bgHex)
             .animationType(.easeInOutQuart)
-            .animationDuration(600)
+            .animationDuration(animate ? 600 : 0)
             .dataLabelsEnabled(spec.dataLabelsEnabled ?? false)
             .dataLabelsStyle(AAStyle().color(textHex).fontSize(11))
             .tooltipValueSuffix(spec.tooltipSuffix ?? "")

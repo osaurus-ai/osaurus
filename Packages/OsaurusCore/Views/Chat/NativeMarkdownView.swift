@@ -53,6 +53,27 @@ final class NativeMarkdownView: NSView {
 
     private var coordinator = SelectableTextView.Coordinator()
     private let fader = TrailingTextFader()
+    /// Blinking interpunct shown at the trailing edge of streaming text
+    /// **only during quiet gaps** — when the SSE source has stopped
+    /// emitting tokens for a moment but the stream is still alive. While
+    /// text is actively being revealed, the cursor stays hidden so it
+    /// doesn't race the moving text. Cleared when streaming ends.
+    private var streamingCursor: StreamingCursorOverlay?
+    /// Timestamp of the last text-storage mutation made while streaming.
+    /// `nil` means we haven't received a streaming reveal yet.
+    private var lastTextRevealAt: Date?
+    /// Idle-check timer (~50ms) that flips the cursor on whenever
+    /// `now - lastTextRevealAt > pauseThreshold`. Lives only while
+    /// `isStreaming == true`.
+    private var idleTimer: Timer?
+    /// Captured at `enterStreamingMode` so `idleTick` doesn't need to
+    /// re-resolve the theme on every tick.
+    private var streamingCursorColor: NSColor?
+    /// How long the stream must be silent before the cursor blinks on.
+    /// 150ms is short enough that it appears during real network gaps
+    /// (200-500ms typical) but long enough that brief sync hiccups don't
+    /// flash it during a steady reveal.
+    private static let cursorPauseThreshold: TimeInterval = 0.15
     private var lastText: String = ""
     private var lastBlocks: [SelectableTextBlock] = []
     private var lastWidth: CGFloat = 0
@@ -122,6 +143,9 @@ final class NativeMarkdownView: NSView {
         // so row height and text wrapping match (avoids clipped last line + trailing edge mismatch).
         let w = bounds.width
         guard textView != nil, w > 0.5 else { return }
+        if streamingCursor != nil {
+            repositionStreamingCursor()
+        }
         guard abs(w - lastLayoutWidthForHeight) > 0.5 else { return }
         lastLayoutWidthForHeight = w
         let before = heightConstraint?.constant ?? 0
@@ -378,11 +402,19 @@ final class NativeMarkdownView: NSView {
                 tv.needsDisplay = true
             }
             applyRedactionHighlightsIfNeeded(theme: theme)
+            if isStreaming && textChanged {
+                notifyTextReveal()
+            }
         }
 
         // nested NativeMarkdownView (text segment inside mixed content) must update heightConstraint
         // or the default 100pt sticks and following segments overlap the text.
         _ = measuredHeight(for: width)
+        if isStreaming {
+            enterStreamingMode(theme: theme)
+        } else {
+            exitStreamingMode()
+        }
         onHeightChanged?()
     }
 
@@ -544,10 +576,18 @@ final class NativeMarkdownView: NSView {
                 tv.needsDisplay = true
             }
             applyRedactionHighlightsIfNeeded(theme: theme)
+            if isStreaming && textChanged {
+                notifyTextReveal()
+            }
         }
 
         // must update heightConstraint — init leaves 100pt; otherwise user bubbles stay artificially tall
         _ = measuredHeight(for: width)
+        if isStreaming {
+            enterStreamingMode(theme: theme)
+        } else {
+            exitStreamingMode()
+        }
         onHeightChanged?()
     }
 
@@ -606,6 +646,16 @@ final class NativeMarkdownView: NSView {
         var prevAnchor: NSLayoutYAxisAnchor = topAnchor
         var prevOffset: CGFloat = 4
 
+        // The streaming cursor lives on exactly one nested text segment —
+        // the last one in document order. Other text segments configure
+        // with `isStreaming: false` so they don't blink alongside it.
+        let lastTextSegmentId: String? = {
+            for seg in segments.reversed() {
+                if case .textGroup = seg.kind { return seg.id }
+            }
+            return nil
+        }()
+
         for seg in segments {
             let existingEntry = segmentViews.first(where: { $0.key == seg.id })
             let segView: NSView
@@ -624,7 +674,8 @@ final class NativeMarkdownView: NSView {
                 mv.onHeightChanged = { [weak self] in
                     self?.onHeightChanged?()
                 }
-                mv.configureWithBlocks(blocks, width: width, theme: theme, cacheKey: cacheKey, isStreaming: isStreaming)
+                let segIsStreaming = isStreaming && (seg.id == lastTextSegmentId)
+                mv.configureWithBlocks(blocks, width: width, theme: theme, cacheKey: cacheKey, isStreaming: segIsStreaming)
                 segView = mv
 
             case .codeBlock(let code, let language):
@@ -788,6 +839,10 @@ final class NativeMarkdownView: NSView {
         lastRedactionHighlightsHash = 0
         textView?.removeFromSuperview()
         textView = nil
+        // Tear down the streaming cursor + idle timer if they were
+        // attached to this textView. Re-arms cleanly if streaming resumes
+        // (mixed-segment ↔ pure-text transitions).
+        exitStreamingMode()
         lastBlocks = []
         lastLayoutWidthForHeight = -1
     }
@@ -864,5 +919,214 @@ final class NativeMarkdownView: NSView {
 
     private func makeThemeFingerprint(_ theme: any ThemeProtocol) -> String {
         "\(theme.primaryFontName)|\(theme.bodySize)|\(theme.codeSize)"
+    }
+
+    // MARK: - Streaming Cursor (interpunct)
+
+    /// Enter "streaming" lifecycle: start the idle-check timer that flips
+    /// the cursor on whenever tokens have been quiet for the threshold.
+    /// Does **not** show the cursor itself — that's gated on the idle
+    /// elapsed time, decided by `idleTick`.
+    fileprivate func enterStreamingMode(theme: any ThemeProtocol) {
+        streamingCursorColor = NSColor(theme.primaryText)
+        guard idleTimer == nil else { return }
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.idleTick()
+            }
+        }
+    }
+
+    /// Exit "streaming" lifecycle: stop the idle timer, remove the cursor,
+    /// and clear the reveal timestamp so a future stream starts fresh.
+    fileprivate func exitStreamingMode() {
+        idleTimer?.invalidate()
+        idleTimer = nil
+        lastTextRevealAt = nil
+        streamingCursor?.removeFromSuperview()
+        streamingCursor = nil
+    }
+
+    /// Called from the text-update paths when text storage actually
+    /// changed during streaming. Stamps the reveal time and *removes*
+    /// the cursor if it was visible — active reveal is the opposite of
+    /// "still waiting."
+    fileprivate func notifyTextReveal() {
+        lastTextRevealAt = Date()
+        if streamingCursor != nil {
+            streamingCursor?.removeFromSuperview()
+            streamingCursor = nil
+        }
+    }
+
+    /// Idle-check tick. If the stream has been quiet long enough, show
+    /// (or refresh) the cursor at the trailing edge. Otherwise ensure
+    /// it's hidden.
+    private func idleTick() {
+        guard idleTimer != nil else { return }
+        let elapsed: TimeInterval
+        if let last = lastTextRevealAt {
+            elapsed = Date().timeIntervalSince(last)
+        } else {
+            // Stream started, no token yet. Treat as paused so the user
+            // sees the cursor while waiting for TTFT to elapse.
+            elapsed = Self.cursorPauseThreshold + 1
+        }
+        if elapsed > Self.cursorPauseThreshold {
+            installCursorIfNeeded()
+            repositionStreamingCursor()
+        } else {
+            if streamingCursor != nil {
+                streamingCursor?.removeFromSuperview()
+                streamingCursor = nil
+            }
+        }
+    }
+
+    private func installCursorIfNeeded() {
+        guard textView != nil, let color = streamingCursorColor else { return }
+        if streamingCursor == nil {
+            let cv = StreamingCursorOverlay()
+            cv.updateColor(color)
+            addSubview(cv)
+            streamingCursor = cv
+        } else {
+            streamingCursor?.updateColor(color)
+        }
+    }
+
+    /// Position the cursor frame to vertically align with the line that
+    /// contains the last character of the text storage, with horizontal
+    /// padding past the trailing glyph. Uses the line fragment's used
+    /// rect (not `boundingRect(forGlyphRange:)`) so soft-wrapped
+    /// trailing whitespace doesn't pull the cursor back to the previous
+    /// line. Converts the top AND bottom of the line through
+    /// `tv.convert(_:to:)` so it works whether the NSTextView is flipped
+    /// or not — `frame.origin.y` in a non-flipped parent must be the
+    /// **lower** of the two converted y values.
+    fileprivate func repositionStreamingCursor() {
+        guard let cursor = streamingCursor, let tv = textView else { return }
+        guard let lm = tv.layoutManager, let tc = tv.textContainer else { return }
+        lm.ensureLayout(for: tc)
+
+        let storageLength = tv.textStorage?.length ?? 0
+        let origin = tv.textContainerOrigin
+        let font = tv.font ?? .systemFont(ofSize: 13)
+        let lineHeight = font.boundingRectForFont.height
+        let trailingPadding: CGFloat = 6
+        let slotWidth: CGFloat = StreamingCursorOverlay.dotDiameter + 4
+
+        let trailingX: CGFloat
+        let lineBottomInTV: CGFloat
+
+        if storageLength == 0 {
+            trailingX = origin.x + trailingPadding
+            lineBottomInTV = origin.y + lineHeight
+        } else {
+            let lastCharIdx = storageLength - 1
+            let lastGlyphIdx = lm.glyphIndexForCharacter(at: lastCharIdx)
+            let usedRect = lm.lineFragmentUsedRect(
+                forGlyphAt: lastGlyphIdx,
+                effectiveRange: nil
+            )
+            trailingX = usedRect.maxX + origin.x + trailingPadding
+            lineBottomInTV = usedRect.maxY + origin.y
+        }
+
+        // Anchor slot to the line BOTTOM in self coords + give it the
+        // font's natural line height. Computing the slot height from the
+        // rect difference (top vs. bottom) was picking up extra leading
+        // on some lines, which made the slot taller than the line and
+        // pushed the centered dot above the visible text.
+        let bottomInSelf = tv.convert(
+            NSPoint(x: trailingX, y: lineBottomInTV),
+            to: self
+        )
+        // Slot spans exactly the line, dot is centered inside, plus a
+        // small downward nudge so the dot's center axis lands on the
+        // text's visual middle (x-height middle / mid-strike line)
+        // rather than the geometric center of the full line height —
+        // body text's center-of-mass sits below the geometric middle
+        // because ascenders extend higher than descenders.
+        let baselineNudge: CGFloat = -3
+        cursor.frame = NSRect(
+            x: bottomInSelf.x,
+            y: bottomInSelf.y + baselineNudge,
+            width: slotWidth,
+            height: lineHeight
+        )
+    }
+}
+
+// MARK: - StreamingCursorOverlay
+
+/// Tiny overlay view that renders a blinking dot. Used by
+/// `NativeMarkdownView` to indicate "still streaming" during the SSE
+/// quiet gaps that no amount of pacing can fully smooth over.
+private final class StreamingCursorOverlay: NSView {
+
+    /// Diameter of the dot in points. Tuned to read as a deliberate
+    /// "still going" pulse without competing with the body text.
+    static let dotDiameter: CGFloat = 12
+
+    private let dotLayer = CAShapeLayer()
+    private static let suppressedActions: [String: CAAction] = [
+        "bounds": NSNull(),
+        "position": NSNull(),
+        "frame": NSNull(),
+        "path": NSNull(),
+        "fillColor": NSNull(),
+    ]
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // Frame-based positioning — caller sets the frame each time the
+        // trailing glyph rect changes. Auto Layout would otherwise pin the
+        // overlay to (0, 0) at its zero intrinsic size and ignore our
+        // frame writes.
+        translatesAutoresizingMaskIntoConstraints = true
+        wantsLayer = true
+        layer?.actions = Self.suppressedActions
+        dotLayer.actions = Self.suppressedActions
+        layer?.addSublayer(dotLayer)
+        startBlinking()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // Center the dot within the overlay view.
+        let d = Self.dotDiameter
+        let dotFrame = CGRect(
+            x: (bounds.width - d) / 2,
+            y: (bounds.height - d) / 2,
+            width: d,
+            height: d
+        )
+        dotLayer.frame = dotFrame
+        dotLayer.path = CGPath(ellipseIn: CGRect(origin: .zero, size: dotFrame.size), transform: nil)
+        CATransaction.commit()
+    }
+
+    func updateColor(_ color: NSColor) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dotLayer.fillColor = color.cgColor
+        CATransaction.commit()
+    }
+
+    private func startBlinking() {
+        let anim = CABasicAnimation(keyPath: "opacity")
+        anim.fromValue = 1.0
+        anim.toValue = 0.2
+        anim.duration = 0.65
+        anim.autoreverses = true
+        anim.repeatCount = .infinity
+        anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        anim.isRemovedOnCompletion = false
+        layer?.add(anim, forKey: "blink")
     }
 }

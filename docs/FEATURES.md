@@ -265,7 +265,8 @@ Research notes for the next local-runtime compatibility wave live in
 
 - Provider catalog with search/filter for quick discovery
 - One-tap OAuth 2.1 sign-in via PKCE + Dynamic Client Registration (no client ID/secret to configure)
-- API-key templates for vendors without DCR (GitHub, Atlassian, HubSpot, Zapier)
+- Manual-credentials OAuth 2.1 + PKCE for confidential-client vendors that don't publish DCR (HubSpot's MCP Auth Apps), with a fixed-port loopback redirect URI and Keychain-stored client secret
+- API-key templates for vendors without DCR (GitHub, Atlassian, Zapier)
 - Self-hosting templates (Google Workspace) that deeplink to setup docs
 - Custom Server fallback for any URL not in the catalog
 - HTTP/SSE transport for remote providers; no third-party stdio command launching
