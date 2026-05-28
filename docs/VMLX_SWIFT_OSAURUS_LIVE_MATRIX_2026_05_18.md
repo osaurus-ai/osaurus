@@ -105,7 +105,15 @@ row is production-clear.
   - Boundary: absolute `file_read` paths returned not found until the model switched to the relative `docs/runtime.md` path, so this row is not a file-tool fidelity promotion.
   - Boundary: the artifact summary flags `DSML` in the final visible answer, but that is fixture content (`DSV4 uses DSML tools`), not a DSV4 parser/protocol leak.
   - Cache boundary: `disk_l2_stores +6`, but `disk_l2_hits`, SSM companion hits, and SSM companion rederives stayed 0.
-- Verdict: the screenshot loop is not reproduced by the small two-tool, five-tool synthetic, or file-tool fixture rows. Keep Qwen 27B MXFP4 thinking+large-tool-history classified partial until a larger real file-tool context row reproduces or clears the `!!!!!!!!` failure with exact file-read semantics and cache-hit/SSM-companion evidence. Do not add hidden repetition penalties, max-token clamps, or parser repair for this.
+- Corrected named file-tool artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-filetool-named-repro-20260528-121522`.
+  - Request shape: Thinking enabled, named `tool_choice` sequence over `file_tree`, `file_read`, `file_read`, `line_count`, then final no-tool answer over the same tool history.
+  - Result: all four named tool turns returned exactly one structured tool call with the expected tool name, exact readable file paths, no raw tool envelope leak, and no `!!!!!!!!` loop.
+  - Boundary: the final no-tool answer with `max_tokens: 1024` consumed the entire completion budget in `reasoning_content`, returned `content: ""`, and ended with `finish_reason: "length"`.
+  - Cache boundary: Qwen topology was 64 layers / 16 KV / 48 Mamba, `companion=ssm`, disk-backed restore required, TurboQuant KV 0; cache counters were already warm from prior rows and the row did not prove a new disk L2 or SSM companion hit.
+- Final-answer budget artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-final-budget-check-20260528-121810`.
+  - Result: the same tool-result history with Thinking enabled and `max_tokens: 2048` returned visible content, no extra tool calls, and `finish_reason: "stop"`.
+  - Boundary: this clears the small-budget final-answer failure as an output-budget/thinking-budget interaction, not as a parser leak or tool-history corruption.
+- Verdict: the screenshot loop is not reproduced by the small two-tool, five-tool synthetic, or corrected named file-tool rows. Qwen 27B MXFP4 thinking+tools is green for structured named tool calls in this focused row, but remains partial for large real contexts, cache-hit/SSM-companion proof, and product handling of too-small thinking output budgets. Do not add hidden repetition penalties, synthetic max-token clamps, or parser repair for this.
 
 ## 2026-05-28 ZAYA-VL JANGTQ4 red image media/cache green row
 
