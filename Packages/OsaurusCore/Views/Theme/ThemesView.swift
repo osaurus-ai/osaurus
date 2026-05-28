@@ -40,6 +40,10 @@ struct ThemesView: View {
     @State private var sharingTheme: IdentifiableTheme?
     @State private var showingImportByIdSheet = false
     @State private var importByIdInitialHash: String?
+    /// When true, the next successful Import-by-ID completion should also
+    /// apply the imported theme. Set by the deeplink flow so users land on
+    /// the theme they just clicked to install.
+    @State private var applyAfterImportById = false
 
     /// Cached partitions of `themeManager.installedThemes`. Recomputed only
     /// when the publisher fires, not on every parent body redraw, so
@@ -151,12 +155,19 @@ struct ThemesView: View {
             ImportThemeByIdSheet(
                 initialInput: importByIdInitialHash,
                 onCompleted: { imported in
-                    showToast(L("Imported \"\(imported.metadata.name)\""))
+                    if applyAfterImportById {
+                        themeManager.applyCustomTheme(imported)
+                        showToast(L("Applied \"\(imported.metadata.name)\""))
+                    } else {
+                        showToast(L("Imported \"\(imported.metadata.name)\""))
+                    }
                     importByIdInitialHash = nil
+                    applyAfterImportById = false
                 },
                 onError: { message in
                     showToast(L("Import failed: \(message)"), type: .error)
                     importByIdInitialHash = nil
+                    applyAfterImportById = false
                 }
             )
         }
@@ -226,6 +237,7 @@ struct ThemesView: View {
             }
             Button {
                 importByIdInitialHash = nil
+                applyAfterImportById = false
                 showingImportByIdSheet = true
             } label: {
                 Label {
@@ -644,6 +656,7 @@ struct ThemesView: View {
     private func applyPendingThemeInstall() {
         guard let hash = managementState.pendingThemeInstallHash, !hash.isEmpty else { return }
         importByIdInitialHash = hash
+        applyAfterImportById = true
         showingImportByIdSheet = true
         managementState.pendingThemeInstallHash = nil
     }
