@@ -324,6 +324,12 @@ Kimi is intentionally excluded from this matrix for now per current scope.
   `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603`.
   Five turns passed with exact multiline args, no visible DSML leak, no
   reasoning leakage, and resident DSV4 cache topology showing disk L2 stores.
+  `/v1/responses` now has a focused non-streaming route proof at
+  `/tmp/osaurus-pr1268-5f358de5-dsv4-responses-required-20260528-091946`:
+  explicit `reasoning.effort: "instruct"`, explicit `max_output_tokens: 256`,
+  one `function_call` output item for `line_count`, exact multiline args, and no
+  visible DSML/tool-marker leak. Cache counters stayed zero in that row, so this
+  proves Responses tool-parser parity only, not DSV4 disk-hit reuse.
   Two broader rows are explicitly not green: omitted `max_tokens` timed out and
   left lingering inflight requests
   (`/tmp/osaurus-pr1268-695d5869-dsv4-required-repeat-20260528-084132`), and
