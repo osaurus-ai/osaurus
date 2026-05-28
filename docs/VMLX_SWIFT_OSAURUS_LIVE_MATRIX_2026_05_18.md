@@ -88,6 +88,15 @@ row is production-clear.
 - Topology: 43 layers, 41 hybrid-pool layers, 2 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: DSV4 JANGTQ-K is red under the generic required-tool harness. Do not infer readiness from the JANGTQ2 proof row.
 
+## 2026-05-28 DSV4 JANGTQ-K explicit-control required-tool green row
+
+- Osaurus head at check: `be665ebf425104bd52e5b02cbe823080f7bf64ed`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-be665ebf-dsv4-jangtq-k-explicit-instruct-tool-20260528-105634`.
+- Request: `/v1/chat/completions` with model `deepseek-v4-flash-jangtq-k`, `reasoning_effort: "instruct"`, `max_tokens: 256`, `tool_choice: "required"`, and the `line_count` schema.
+- Result: one structured `line_count` tool call with exact `red\ngreen\nblue` arguments, `finish_reason: "tool_calls"`, no visible content, and no DSML/protocol leak.
+- Verdict: DSV4 JANGTQ-K is green for a single explicit-control required-tool call. The generic harness remains red, and JANGTQ-K multi-turn/tool-result/cache-repeat proof remains incomplete.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:
@@ -338,7 +347,7 @@ These are explicit inverse rows, not nice-to-have manual notes:
 
 | Model path or family | Runtime class/topology | Current evidence | Required before production-clear |
 |---|---|---|---|
-| `/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K` | DSV4 Flash, SWA+CSA+HSA `DeepseekV4Cache`, DSML tools | vMLX main `76e55f59935f22c3bb2f28055ae8ecebd2e7a355` skips disk-backed path-dependent cache restore for active tool requests. Osaurus #1268 code-equivalent app build `695d5869` proof artifact `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603`: 5/5 required `line_count` repeats passed with explicit `reasoning_effort: "instruct"` and `max_tokens: 256`; each turn produced one structured tool call, exact `red\\ngreen\\nblue` args, no visible DSML leak, no reasoning leakage, no `_error`; topology showed 43 layers, 41 hybrid pool, 2 rotating, TurboQuant KV 0, disk L2 stores. Omitted max-token / omitted reasoning-control rows are documented as not green. | Final Osaurus UI renderer screenshot/log, `/v1/responses` and `/v1/messages` rows if mapped, DSV4 settings CLI preview, `reasoning_effort=max` app proof, and a decision/fix for omitted DSV4 reasoning controls. |
+| `/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K` | DSV4 Flash, SWA+CSA+HSA `DeepseekV4Cache`, DSML tools | vMLX main `76e55f59935f22c3bb2f28055ae8ecebd2e7a355` skips disk-backed path-dependent cache restore for active tool requests. Osaurus #1268 code-equivalent app build `695d5869` proof artifact `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603`: 5/5 DSV4 JANGTQ2 required `line_count` repeats passed with explicit `reasoning_effort: "instruct"` and `max_tokens: 256`; each turn produced one structured tool call, exact `red\\ngreen\\nblue` args, no visible DSML leak, no reasoning leakage, no `_error`; topology showed 43 layers, 41 hybrid pool, 2 rotating, TurboQuant KV 0, disk L2 stores. JANGTQ-K generic required-tool artifact `/tmp/osaurus-pr1268-50b38bc8-dsv4-jangtq-k-tool-cache-20260528-104417` is red with a length-stop reasoning loop and no DSML call. JANGTQ-K explicit-control artifact `/tmp/osaurus-pr1268-be665ebf-dsv4-jangtq-k-explicit-instruct-tool-20260528-105634` is green for one required `line_count` call with exact args and no DSML leak. Omitted max-token / omitted reasoning-control rows are documented as not green. | Final Osaurus UI renderer screenshot/log, `/v1/responses` and `/v1/messages` rows if mapped, DSV4 settings CLI preview, `reasoning_effort=max` app proof, JANGTQ-K multi-turn/cache repeat proof, and a decision/fix for omitted DSV4 reasoning controls. |
 | `/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-JANGTQ-CRACK` | Qwen3.6 MoE VL, Qwen3VLProcessor, path-dependent cache | vmlx live prod/cache/VL/media-salt artifacts exist. | Osaurus app chat + API rows for image/text/video, reasoning on/off, generation defaults, saved settings, and cache stats. |
 | `/Users/eric/models/JANGQ/Qwen3.6-27B-MXFP4-MTP` and MXFP8/35B variants | Qwen MTP/VL only when tensors plus `vmlx_mtp_tuning.json` are valid | vmlx source/tests require tuning and fail closed without it; fresh census proves 27B MXFP4 selects D2, 27B MXFP8/35B variants select D3, all from tensor/tuning evidence. | Osaurus status UI/API must show MTP off/on reason, use `vmlx_mtp_tuning.json`, and prove MTP on/off speed/coherence/cache rows. |
 | `/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK` | Gemma4 VLM/Harmony reasoning/tool parser | vmlx parser/source contracts exist. | Live Osaurus image/text/video rows, Harmony no-leak API rows, Gemma settings defaults, and cache stats. |
