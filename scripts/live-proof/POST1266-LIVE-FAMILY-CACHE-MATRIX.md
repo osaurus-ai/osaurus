@@ -511,3 +511,22 @@ Boundary:
 
 - Do not claim DSV4 warm disk-L2 cache-hit readiness from the current proof set.
 - Current-head DSV4 required-tool correctness is proven for the multi-turn fresh correctness row above, but repeated identical required-tool cache reuse still needs root-cause work. The third-repeat failure suggests DSV4 disk-backed hybrid-pool reuse/store timing or prompt/cache boundary interaction can still break required-tool routing.
+
+## 2026-05-28 06:28 PDT - Sidecar audit boundaries for Gemma3n and ZAYA CCA
+
+Current Osaurus head before this note: `72005cef9a292adab0709f3d23a02c17a3ba79c5`.
+Current vMLX main pin: `d3d76b4c11c1f3e83e787f0464120087167c1609`.
+
+Gemma3n required-tool boundary:
+
+- `gemma-3n-e2b-it-4bit` still has a live required/named tool-call failure in the ledger; it emits visible prose and no structured tool call.
+- Source audit shows Osaurus passes `tool_choice` and schema through `ModelRuntime.makeTokenizerTools(...)` and `MLXBatchAdapter.additionalContext(...)`.
+- Pinned vMLX maps Gemma3/Gemma3n model types to `ToolCallFormat.gemma`, whose parser expects `<start_function_call>call:name{...}<end_function_call>`.
+- The generic Gemma missing-template fallback is Gemma4/Zyphra-oriented. Therefore the next safe step is source-only render/parser verification for the exact Gemma3n E2B bundle path before any live fix.
+- Do not hide this with Osaurus-side prompt injection, output stripping, hidden sampler/repetition guards, or fake reasoning wrappers. If render and parser are correct but the model still emits prose, keep Gemma3n required-tool support partial/unsupported for this PR.
+
+ZAYA/ZAYA-VL CCA companion-hit boundary:
+
+- Current pinned vMLX intentionally does not store `ZayaCCACache` into the generic `SSMStateCache` hit path, and disk format-v2 ZAYA CCA payload reuse is rejected without a proven companion boundary.
+- Therefore `zaya_cca_companion_hits=0` is expected for the current proof set; disk L2 hits plus `zaya_cca_companion_misses` prove disk/media accounting, not CCA companion hit reuse.
+- The smallest safe future fix is a dedicated ZAYA CCA disk-restore hit/miss counter or an exact-boundary ZAYA CCA disk-restore proof path. Do not re-label generic SSM hits as CCA hits, and do not claim prefix/growing-history CCA reuse until separately designed and proven.

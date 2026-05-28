@@ -1792,7 +1792,7 @@ struct RuntimePolicySourceTests {
         #expect(
             !tokenizerLoader.contains("dsv4Messages[idx].task = \"action\"")
                 && tokenizerLoader.contains("toolChoiceRequired: toolChoiceRequired"),
-            "DSV4 required/named tool_choice must use the DSML required-template contract without injecting the native action task rail; live repeat rows showed that rail can leak as visible text after tool-result history."
+            "DSV4 required/named tool_choice must pass through the required-template contract; the Swift encoder must not mutate historical messages with task=action. The pinned vMLX fallback may still open the native DSV4 action token at the current assistant generation rail."
         )
         #expect(
             tokenizerLoader.contains("&& upstream.bosToken == Self.dsv4Bos")
