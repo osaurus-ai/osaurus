@@ -135,6 +135,15 @@ Each promoted row needs current-head evidence for:
 - This row failed before tool-result history could be tested, and disk L2 hits stayed 0.
 - Verdict: DSV4 JANGTQ-K is red under the generic required-tool harness. DSV4 JANGTQ2 remains the green production proof row under explicit `reasoning_effort: instruct` and `max_tokens: 256`; do not infer sibling readiness.
 
+### 2026-05-28 10:57 PDT DSV4 JANGTQ-K explicit instruct tool-call green row
+
+- Current Osaurus PR head checked before this row: `be665ebf425104bd52e5b02cbe823080f7bf64ed`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-be665ebf-dsv4-jangtq-k-explicit-instruct-tool-20260528-105634`.
+- Request used `reasoning_effort: "instruct"`, `max_tokens: 256`, `tool_choice: "required"`, and the `line_count` schema.
+- Result: one structured `line_count` tool call with exact `red\ngreen\nblue` arguments, `finish_reason: "tool_calls"`, no visible content, and no DSML/protocol leak.
+- Verdict: DSV4 JANGTQ-K is green for a single explicit-control required-tool call, while the generic required-tool harness remains red and multi-turn/cache repeat proof is still incomplete for this sibling.
+
 ### 2026-05-28 10:09 PDT current coordination boundary
 
 - Current Osaurus PR: `#1268`, head `80e8749144d50b9783c5cc37a84b1cb03b8fdfa4`, open, not draft, mergeable, not merged by agent.
