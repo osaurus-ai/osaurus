@@ -782,3 +782,26 @@ Result:
 - Topology: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layers 0.
 - Token/s: OpenAI-compatible tool turns emitted zero completion tokens; visible answer row emitted 10 completion tokens at 11.14 tok/s cold and 5 completion tokens at 7.43 tok/s warm.
 - Boundary: this clears the Ling JANGTQ2 cache-partial row. Ling MXFP4 remains a separate timeout/app-exit red row.
+
+## 2026-05-28 15:13 PDT - Qwen 27B MXFP4 Thinking file-tool final-answer cache proof
+
+Artifact:
+
+- `/tmp/osaurus-pr1268-380e7f96-qwen27-mxfp4-thinking-filetool-final-cache-2048-20260528-151216`.
+
+Build/runtime boundary:
+
+- Osaurus head: `380e7f9641518bb4b3a5d6baa398db63bfd76746`.
+- vMLX pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- No-sign Release app: `/Users/eric/osaurus-pr1268-live/build/DerivedData/Build/Products/Release/osaurus.app`.
+- Launch mode: keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
+- Model: `qwen3.6-27b-mxfp4-crack`.
+
+Result:
+
+- PASS: repeated the same file/tool-history final no-tool request twice with Thinking enabled, `enable_thinking=true`, `reasoning_effort=high`, `tool_choice: "none"`, and explicit `max_tokens: 2048`.
+- PASS: both turns returned visible final answers with `finish_reason: "stop"`, no tool calls, no protocol leakage, and no `!!!!!!!!` loop.
+- PASS: warm repeat proved hybrid cache reuse with `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`.
+- Topology: 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layers 0.
+- Token/s: first visible final answer emitted 537 completion tokens in 32.72s (`16.41 tok/s`); warm repeat emitted 327 completion tokens in 18.43s (`17.74 tok/s`).
+- Boundary: this clears the previous Qwen Thinking/file-tool 2048-budget final-answer cache-hit gap. It does not reproduce or close the original large UI context screenshot at roughly `54k / 262k` tokens, and it does not justify hidden repetition penalties, parser repair, or synthetic max-token clamps.
