@@ -92,6 +92,16 @@ Each promoted row needs current-head evidence for:
 - Cache topology showed 62 full-KV layers, no SSM/CCA companion requirement, disk L2 hit `+1`, disk L2 misses `+5`, disk L2 stores `+3`, and TurboQuant KV layer count 0.
 - Verdict: MiniMax M2.7 small JANGTQ is green for this parser/tool/history/cache row. Sibling JANG/JANGTQ-K and speed/RAM rows still need separate proof.
 
+### 2026-05-28 10:38 PDT Gemma4 JANG_4M live red row
+
+- Current Osaurus PR head checked before this row: `213d0ffd823a4c61181b308aa6b5c24a2fd4b194`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-213d0ffd-gemma4-jang4m-tool-cache-20260528-103834`.
+- `gemma-4-26b-a4b-it-jang_4m-crack` turn 1 failed required-tool behavior: `finish_reason` was `stop`, visible content was empty, and `reasoning_content` was `thought<tool_call|>` instead of a structured `tool_calls` response.
+- Cache topology was still detected correctly: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0.
+- This row failed before tool-result history could be tested, and disk L2 hits stayed 0.
+- Verdict: Gemma4 JANG_4M is red for required-tool parser/output behavior on this app/API row. Do not hide this with reasoning parser output repair or forced close-token biasing.
+
 ### 2026-05-28 10:09 PDT current coordination boundary
 
 - Current Osaurus PR: `#1268`, head `80e8749144d50b9783c5cc37a84b1cb03b8fdfa4`, open, not draft, mergeable, not merged by agent.

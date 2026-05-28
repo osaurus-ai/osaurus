@@ -51,6 +51,15 @@ row is production-clear.
 - Topology: 62 full-KV layers, no SSM/CCA companion requirement, disk L2 hit `+1`, TurboQuant KV layer count 0.
 - Verdict: MiniMax M2.7 small JANGTQ is green for this parser/tool/history/cache row. Sibling JANG/JANGTQ-K, speed, RAM, and MiMo-adjacent rows remain separate.
 
+## 2026-05-28 Gemma4 JANG_4M required-tool red row
+
+- Osaurus head at check: `213d0ffd823a4c61181b308aa6b5c24a2fd4b194`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-213d0ffd-gemma4-jang4m-tool-cache-20260528-103834`.
+- Result: turn 1 failed required-tool behavior with `finish_reason: "stop"`, empty visible content, and `reasoning_content: "thought<tool_call|>"` instead of a structured `tool_calls` response.
+- Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: Gemma4 JANG_4M is red for required-tool parser/output behavior on this row. This must not be hidden with reasoning parser output repair or forced close-token biasing.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:

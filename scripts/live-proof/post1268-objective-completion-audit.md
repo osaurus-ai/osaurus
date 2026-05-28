@@ -17,6 +17,7 @@ Current boundary:
 - Fresh ZAYA text JANGTQ4 row is red/partial, not production-clear: `/tmp/osaurus-pr1268-c9fdc4c3-zaya-text-jangtq4-tool-cache-20260528-103322` proves first structured `line_count`, visible tool-result answer, ZAYA CCA topology, disk-backed restore requirement, and no protocol leakage; however turn 3 emitted a structured `line_count` call with argument ` ... ` instead of exact `one\ntwo`, and disk L2 hits stayed 0. Treat ZAYA text required-tool argument fidelity and repeat-cache proof as red until root-caused without parser repair.
 - Fresh Ling JANGTQ2 row is parser/tool green but cache-partial: `/tmp/osaurus-pr1268-3a46be1f-ling-jangtq2-tool-cache-20260528-103538` proves exact structured required tool calls before and after tool-result history, visible follow-up answer, no protocol leakage, 32-layer topology with 28 arrays/SSM companion layers and 4 KV layers; however disk L2 hits stayed 0 while misses/stores moved, so repeat-cache proof remains partial.
 - Fresh MiniMax M2.7 small JANGTQ row is green for this row: `/tmp/osaurus-pr1268-0bba84c9-minimax-small-jangtq-tool-cache-20260528-103659` proves exact structured required tool calls before and after tool-result history, visible follow-up answer, no protocol leakage, 62 full-KV layers, and disk L2 hit `+1`.
+- Fresh Gemma4 JANG_4M row is red: `/tmp/osaurus-pr1268-213d0ffd-gemma4-jang4m-tool-cache-20260528-103834` failed on turn 1 because required tool choice returned `finish_reason: "stop"` with empty visible content and `reasoning_content: "thought<tool_call|>"` instead of a structured `tool_calls` response; topology was correctly detected as 30 layers with 25 rotating KV layers and disk-backed restore required.
 
 This file is a completion audit against the full runtime objective. It is not a
 marketing summary. A row marked partial means the PR documents or implements
@@ -53,7 +54,7 @@ or surface.
 |---|---|---|
 | DSV4 JANGTQ2/K | Partial | Explicit `reasoning_effort: "instruct"` plus `max_tokens: 256` tool row is green; omitted controls remain not green. |
 | Qwen 27B/35B MTP | Partial/green selected rows | Selected SSM/MTP tool/cache rows pass; not every Qwen sibling is production-clear. |
-| Gemma4 | Partial | Selected Gemma4 tool/topology rows pass; Gemma3n tool support remains blocked/unsupported and Gemma4 sibling coverage is not blanket. |
+| Gemma4 | Red/partial | Current JANG_4M row detects rotating/SWA topology correctly but fails required-tool output on turn 1 with `reasoning_content: "thought<tool_call|>"`; Gemma3n tool support remains blocked/unsupported and sibling coverage is not blanket. |
 | MiniMax | Partial/green selected rows | MiniMax M2.7 small JANGTQ row is green for parser/tool/history/cache with disk L2 hit `+1`; JANG/JANGTQ-K siblings, speed, and RAM rows still need separate proof. MiMo is excluded. |
 | MiMo | Red/excluded | No meaningful Osaurus live row because current local MiMo lane is not working/imported enough. |
 | Ling/Bailing | Partial/red | Ling JANGTQ2 parser/tool/history row is green with SSM topology, but disk L2 hit proof is still partial; Bailing availability and long-prompt/runtime rows remain incomplete. |
