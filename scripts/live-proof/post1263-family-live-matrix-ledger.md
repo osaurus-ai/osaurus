@@ -102,6 +102,17 @@ Each promoted row needs current-head evidence for:
 - This row failed before tool-result history could be tested, and disk L2 hits stayed 0.
 - Verdict: Gemma4 JANG_4M is red for required-tool parser/output behavior on this app/API row. Do not hide this with reasoning parser output repair or forced close-token biasing.
 
+### 2026-05-28 10:40 PDT Qwen 27B MXFP4 CRACK MTP live parser/tool green, cache partial row
+
+- Current Osaurus PR head checked before this row: `2ac8d31f87f4d82ab9de9f8e4188bdab8800bb71`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-2ac8d31f-qwen27-mxfp4-crack-mtp-tool-cache-20260528-103947`.
+- `qwen3.6-27b-mxfp4-crack-mtp` turn 1 returned one structured `line_count` call with exact `red\ngreen\nblue` arguments and no visible protocol leak.
+- Turn 2 returned visible answer `3 lines were counted.` with no extra tool call and no protocol leak.
+- Turn 3 returned one structured `line_count` call with exact `one\ntwo` arguments and no visible protocol leak.
+- Cache topology showed 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, and TurboQuant KV layer count 0.
+- This row is green for parser/tool/history behavior but cache-partial because disk L2 hits stayed 0 while misses/stores moved.
+
 ### 2026-05-28 10:09 PDT current coordination boundary
 
 - Current Osaurus PR: `#1268`, head `80e8749144d50b9783c5cc37a84b1cb03b8fdfa4`, open, not draft, mergeable, not merged by agent.

@@ -60,6 +60,15 @@ row is production-clear.
 - Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: Gemma4 JANG_4M is red for required-tool parser/output behavior on this row. This must not be hidden with reasoning parser output repair or forced close-token biasing.
 
+## 2026-05-28 Qwen 27B MXFP4 CRACK MTP required-tool parser green, cache partial row
+
+- Osaurus head at check: `2ac8d31f87f4d82ab9de9f8e4188bdab8800bb71`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-2ac8d31f-qwen27-mxfp4-crack-mtp-tool-cache-20260528-103947`.
+- Result: turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered `3 lines were counted.`; turn 3 produced exact structured `line_count` args `one\ntwo`; no protocol leakage appeared.
+- Topology: 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: Qwen 27B MXFP4 CRACK MTP is green for this parser/tool/history row, but cache proof remains partial because disk L2 hits stayed 0 while misses/stores moved.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:
