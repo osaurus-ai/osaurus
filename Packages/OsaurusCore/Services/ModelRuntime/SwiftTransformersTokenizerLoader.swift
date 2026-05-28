@@ -316,6 +316,20 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 addGenerationPrompt: addGenerationPrompt
             )
         }
+        if upstream.bosToken == "<bos>",
+            !(chatTemplateTools?.isEmpty ?? true),
+            Self.requiresToolChoice(adjustedContext),
+            (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
+            return try fallback(
+                label: "Gemma4RequiredTool",
+                template: MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools,
+                messages: Self.compactGemma4CompletedToolHistoryForRequiredChoice(messages),
+                tools: chatTemplateTools,
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
+            )
+        }
         if hasGemma3TurnSentinel,
             !(chatTemplateTools?.isEmpty ?? true),
             (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
