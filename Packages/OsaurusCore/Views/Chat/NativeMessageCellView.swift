@@ -47,6 +47,25 @@ struct CellRenderingContext {
     /// bubbles. Empty dict means no privacy redactions in this
     /// session yet (the highlight pass short-circuits).
     var sessionRedactions: [String: String] = [:]
+    /// Coordinator-scoped predicate: has the chart with this block id ever
+    /// been drawn (and thus already played its entry animation) in the
+    /// current chat? Used by `configureAsChart` to suppress the animation
+    /// when a recycled cell re-mounts a NativeChartView for a chart the
+    /// user has already seen.
+    var hasChartBeenDrawn: ((String) -> Bool)? = nil
+    /// Coordinator-scoped callback: record that the chart with this block
+    /// id has been drawn so subsequent re-mounts skip the entry animation.
+    var markChartDrawn: ((String) -> Void)? = nil
+    /// Coordinator-scoped chart view cache lookup. Returning a non-nil
+    /// view lets `configureAsChart` reparent an existing (already-rendered)
+    /// `NativeChartView` instead of allocating a fresh `AAChartView`/
+    /// WKWebView — eliminating the visible re-render when a chart row
+    /// scrolls back into view after cell recycling.
+    var cachedChartView: ((String) -> NativeChartView?)? = nil
+    /// Coordinator-scoped callback: stash a newly created chart view in
+    /// the coordinator's cache so subsequent re-mounts hit the lookup
+    /// above. Pruned to the current block ids on each `applyBlocks`.
+    var cacheChartView: ((String, NativeChartView) -> Void)? = nil
 }
 
 // MARK: - Cell-Isolated ExpandedBlocksStore Proxy
@@ -1966,7 +1985,19 @@ final class NativeMessageCellView: NSTableCellView {
     ) {
         if !sameKind || nativeChartView == nil {
             removeAllContentViews()
-            let cv = NativeChartView()
+            // Reuse a cached NativeChartView for this block id when one exists.
+            // The cached instance still holds its rendered WKWebView contents,
+            // so reparenting avoids a fresh chart load (no flash, no animation).
+            // Cache misses (first appearance, or after session-switch pruning)
+            // fall back to a new instance and seed the cache.
+            let cv: NativeChartView
+            if let cached = context.cachedChartView?(block.id) {
+                cached.removeFromSuperview()
+                cv = cached
+            } else {
+                cv = NativeChartView()
+                context.cacheChartView?(block.id, cv)
+            }
             cv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(cv)
             let bottomToCell = cv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
@@ -1990,7 +2021,9 @@ final class NativeMessageCellView: NSTableCellView {
         wantsLayer = true
         layer?.masksToBounds = true
         let blockId = block.id
-        nativeChartView?.configure(spec: spec, theme: context.theme)
+        let animateInitialDraw = !(context.hasChartBeenDrawn?(blockId) ?? false)
+        nativeChartView?.configure(spec: spec, theme: context.theme, animateInitialDraw: animateInitialDraw)
+        context.markChartDrawn?(blockId)
         DispatchQueue.main.async { [weak self] in
             guard let self, let cv = self.nativeChartView else { return }
             guard self.currentBlockId == blockId else { return }
