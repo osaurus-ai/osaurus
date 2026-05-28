@@ -675,7 +675,13 @@ final class NativeMarkdownView: NSView {
                     self?.onHeightChanged?()
                 }
                 let segIsStreaming = isStreaming && (seg.id == lastTextSegmentId)
-                mv.configureWithBlocks(blocks, width: width, theme: theme, cacheKey: cacheKey, isStreaming: segIsStreaming)
+                mv.configureWithBlocks(
+                    blocks,
+                    width: width,
+                    theme: theme,
+                    cacheKey: cacheKey,
+                    isStreaming: segIsStreaming
+                )
                 segView = mv
 
             case .codeBlock(let code, let language):

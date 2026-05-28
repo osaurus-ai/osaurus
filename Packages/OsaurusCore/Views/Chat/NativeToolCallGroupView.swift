@@ -946,7 +946,6 @@ final class NativeToolCallRowView: NSView {
         currentItemId = item.call.id
         currentItem = item
 
-
         // Node: category icon shape in the foreground. The icon/circle colors and
         // the running shimmer are applied in `applyStatusAndShimmer()` below.
         let category = ToolCategory.from(toolName: item.call.function.name)

@@ -8,7 +8,6 @@
 //
 
 import Foundation
-import Security
 
 /// Keychain wrapper for agent-scoped secret storage.
 /// Account format: `"{agentId}.{key}"` — no plugin scoping.
@@ -85,17 +84,7 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-
-        deleteSecret(id: id, agentId: agentId)
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: valueData,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        ]
-        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+        return KeychainDataProtection.write(service: service, account: account, data: valueData)
     }
 
     public static func getSecret(id: String, agentId: UUID) -> String? {
@@ -108,23 +97,8 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-        ]
-
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-            let data = result as? Data
-        else { return nil }
-
-        return String(data: data, encoding: .utf8)
+        return KeychainDataProtection.read(service: service, account: account)
+            .flatMap { String(data: $0, encoding: .utf8) }
     }
 
     @discardableResult
@@ -138,14 +112,7 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        return KeychainDataProtection.delete(service: service, account: account)
     }
 
     /// Enumerates accounts then fetches each value individually.
@@ -179,12 +146,7 @@ public enum AgentSecretsKeychain {
         if KeychainQueryHelpers.disablesKeychainForProcess { return }
         let prefix = "\(agentId.uuidString)."
         for account in allAccounts() where account.hasPrefix(prefix) {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
-            ]
-            SecItemDelete(query as CFDictionary)
+            KeychainDataProtection.delete(service: service, account: account)
         }
     }
 
@@ -223,21 +185,6 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-            kSecReturnAttributes as String: true,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-        ]
-
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-            let items = result as? [[String: Any]]
-        else { return [] }
-
-        return items.compactMap { $0[kSecAttrAccount as String] as? String }
+        return KeychainDataProtection.allAccounts(service: service)
     }
 }

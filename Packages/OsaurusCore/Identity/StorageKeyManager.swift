@@ -168,14 +168,17 @@ public final class StorageKeyManager: @unchecked Sendable {
         if Self.disablesKeychainForProcess {
             return hasCachedKey
         }
-        let query: [String: Any] = [
+        let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: Self.keyAccount,
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
-        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+        if SecItemCopyMatching(KeychainQueryHelpers.dataProtection(base) as CFDictionary, nil) == errSecSuccess {
+            return true
+        }
+        return SecItemCopyMatching(base as CFDictionary, nil) == errSecSuccess
     }
 
     /// Generate a new key, replacing the existing one. Caller is
@@ -283,6 +286,7 @@ public final class StorageKeyManager: @unchecked Sendable {
             ],
         ]
         for q in queries {
+            _ = SecItemDelete(KeychainQueryHelpers.dataProtection(q) as CFDictionary)
             _ = SecItemDelete(q as CFDictionary)
         }
         try? FileManager.default.removeItem(at: saltFile())
@@ -382,23 +386,77 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     private func persistKeychain(data: Data) throws {
         if Self.disablesKeychainForProcess { return }
+        try persistItem(account: Self.keyAccount, data: data, label: "Osaurus Storage Encryption Key")
+    }
+
+    private func readKeychainKey() throws -> Data? {
+        if Self.disablesKeychainForProcess { return nil }
+        return try readItem(account: Self.keyAccount, label: "Osaurus Storage Encryption Key")
+    }
+
+    // MARK: - Keychain (salt)
+
+    private func persistKeychainSalt(_ data: Data) throws {
+        if Self.disablesKeychainForProcess { return }
+        try persistItem(account: Self.saltAccount, data: data, label: "Osaurus Storage Key Derivation Salt")
+    }
+
+    private func readKeychainSalt() throws -> Data? {
+        if Self.disablesKeychainForProcess { return nil }
+        return try readItem(account: Self.saltAccount, label: "Osaurus Storage Key Derivation Salt")
+    }
+
+    // MARK: - Data-protection keychain (with legacy fallback)
+    //
+    // The DEK + salt are written to the data-protection keychain so launching a
+    // re-signed build never raises the legacy login-keychain ACL password
+    // prompt. Items written by older builds are read from the legacy keychain
+    // and migrated forward on first read. See `KeychainQueryHelpers.dataProtection`.
+
+    /// Write `attributes` for `account` to the data-protection keychain,
+    /// falling back to the legacy keychain when the entitlement is unavailable.
+    /// On a successful data-protection write the stale legacy copy is removed so
+    /// a later read can never return an outdated key.
+    private func persistItem(account: String, data: Data, label: String) throws {
         let baseQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.keyAccount,
+            kSecAttrAccount as String: account,
         ]
         let attributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            kSecAttrLabel as String: "Osaurus Storage Encryption Key",
+            kSecAttrLabel as String: label,
         ]
 
-        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess { return }
-        if updateStatus != errSecItemNotFound {
-            log.error("Storage key SecItemUpdate failed: \(updateStatus)")
+        // Data-protection keychain first.
+        let dpQuery = KeychainQueryHelpers.dataProtection(baseQuery)
+        let dpUpdate = SecItemUpdate(dpQuery as CFDictionary, attributes as CFDictionary)
+        if dpUpdate == errSecSuccess {
+            _ = SecItemDelete(baseQuery as CFDictionary)
+            return
+        }
+        if dpUpdate == errSecItemNotFound {
+            var add = dpQuery
+            add.merge(attributes) { _, new in new }
+            let dpAdd = SecItemAdd(add as CFDictionary, nil)
+            if dpAdd == errSecSuccess {
+                _ = SecItemDelete(baseQuery as CFDictionary)
+                return
+            }
+            if !KeychainQueryHelpers.isMissingEntitlement(dpAdd) {
+                throw StorageKeyError.keychainWriteFailed(dpAdd)
+            }
+        } else if !KeychainQueryHelpers.isMissingEntitlement(dpUpdate) {
+            log.error("Storage item SecItemUpdate(data-protection) failed: \(dpUpdate)")
         }
 
+        // Legacy fallback (data-protection keychain unavailable on this host).
+        let legacyUpdate = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+        if legacyUpdate == errSecSuccess { return }
+        if legacyUpdate != errSecItemNotFound {
+            log.error("Storage item SecItemUpdate(legacy) failed: \(legacyUpdate)")
+        }
         var addQuery = baseQuery
         addQuery.merge(attributes) { _, new in new }
         let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
@@ -407,68 +465,37 @@ public final class StorageKeyManager: @unchecked Sendable {
         }
     }
 
-    private func readKeychainKey() throws -> Data? {
-        if Self.disablesKeychainForProcess { return nil }
-        let query: [String: Any] = [
+    /// Read `account` from the data-protection keychain, falling back to the
+    /// legacy keychain (and migrating the value forward) when absent there.
+    private func readItem(account: String, label: String) throws -> Data? {
+        let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.keyAccount,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
+
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        if status != errSecSuccess {
+        let status = SecItemCopyMatching(KeychainQueryHelpers.dataProtection(base) as CFDictionary, &result)
+        if status == errSecSuccess { return result as? Data }
+        if status != errSecItemNotFound && !KeychainQueryHelpers.isMissingEntitlement(status) {
             cacheReadFailureIfNonInteractiveBlocked(status)
             throw StorageKeyError.keychainReadFailed(status)
         }
-        return result as? Data
-    }
 
-    // MARK: - Keychain (salt)
-
-    private func persistKeychainSalt(_ data: Data) throws {
-        if Self.disablesKeychainForProcess { return }
-        let baseQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.saltAccount,
-        ]
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            kSecAttrLabel as String: "Osaurus Storage Key Derivation Salt",
-        ]
-        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess { return }
-        var addQuery = baseQuery
-        addQuery.merge(attributes) { _, new in new }
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw StorageKeyError.keychainWriteFailed(status)
+        var legacyResult: AnyObject?
+        let legacyStatus = SecItemCopyMatching(base as CFDictionary, &legacyResult)
+        if legacyStatus == errSecItemNotFound { return nil }
+        if legacyStatus != errSecSuccess {
+            cacheReadFailureIfNonInteractiveBlocked(legacyStatus)
+            throw StorageKeyError.keychainReadFailed(legacyStatus)
         }
-    }
-
-    private func readKeychainSalt() throws -> Data? {
-        if Self.disablesKeychainForProcess { return nil }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.saltAccount,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        if status != errSecSuccess {
-            cacheReadFailureIfNonInteractiveBlocked(status)
-            throw StorageKeyError.keychainReadFailed(status)
-        }
-        return result as? Data
+        guard let data = legacyResult as? Data else { return nil }
+        // Migrate forward so subsequent reads use the data-protection keychain.
+        try? persistItem(account: account, data: data, label: label)
+        return data
     }
 }
 

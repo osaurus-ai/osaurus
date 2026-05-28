@@ -8,7 +8,6 @@
 //
 
 import Foundation
-import Security
 
 public final class WhitelistStore: @unchecked Sendable {
     public static let shared = WhitelistStore()
@@ -97,44 +96,21 @@ public final class WhitelistStore: @unchecked Sendable {
         var agents: [String: [String]]
     }
 
+    // The whitelist blob is read/written through `KeychainDataProtection`, which
+    // prefers the data-protection keychain (so a re-signed build never raises the
+    // legacy login-keychain ACL password prompt) and falls back to / migrates
+    // from the legacy keychain.
     private func save() {
         let model = StorageModel(
             master: Array(masterAddresses),
             agents: agentAddresses.mapValues { Array($0) }
         )
         guard let data = try? JSONEncoder().encode(model) else { return }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.keychainService,
-            kSecAttrAccount as String: Self.keychainAccount,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-        ]
-
-        let existing = SecItemCopyMatching(query as CFDictionary, nil)
-        if existing == errSecSuccess {
-            let update: [String: Any] = [kSecValueData as String: data]
-            SecItemUpdate(query as CFDictionary, update as CFDictionary)
-        } else {
-            var add = query
-            add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-            SecItemAdd(add as CFDictionary, nil)
-        }
+        KeychainDataProtection.write(service: Self.keychainService, account: Self.keychainAccount, data: data)
     }
 
     private func load() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.keychainService,
-            kSecAttrAccount as String: Self.keychainAccount,
-            kSecReturnData as String: true,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-        ]
-
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-            let data = result as? Data,
+        guard let data = KeychainDataProtection.read(service: Self.keychainService, account: Self.keychainAccount),
             let model = try? JSONDecoder().decode(StorageModel.self, from: data)
         else { return }
 

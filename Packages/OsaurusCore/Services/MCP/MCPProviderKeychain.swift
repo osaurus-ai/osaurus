@@ -16,7 +16,6 @@
 //
 
 import Foundation
-import Security
 
 /// OAuth 2.1 tokens for a remote MCP provider (per the MCP authorization spec).
 ///
@@ -158,25 +157,9 @@ public enum MCPProviderKeychain {
         deleteOAuthTokens(for: providerId)
         deleteOAuthClientSecret(for: providerId)
 
-        // Sweep any remaining `<uuid>.header.*` entries by enumerating accounts.
+        // Sweep any remaining `<uuid>.header.*` / `<uuid>.env.*` entries.
         let prefix = "\(providerId.uuidString)."
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-            kSecReturnAttributes as String: true,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-            let items = result as? [[String: Any]]
-        else { return }
-
-        for item in items {
-            guard let account = item[kSecAttrAccount as String] as? String,
-                account.hasPrefix(prefix)
-            else { continue }
+        for account in KeychainDataProtection.allAccounts(service: service) where account.hasPrefix(prefix) {
             deleteItem(account: account)
         }
     }
@@ -204,49 +187,26 @@ public enum MCPProviderKeychain {
     }
 
     // MARK: - Generic CRUD
+    //
+    // All items route through `KeychainDataProtection`, which prefers the
+    // data-protection keychain (so the legacy login-keychain ACL password
+    // prompt never fires) and transparently falls back to / migrates from the
+    // legacy keychain.
 
-    /// Upsert `data` for `account`. Always deletes any existing item first so callers
-    /// don't have to worry about the difference between `SecItemAdd` and `SecItemUpdate`.
     @discardableResult
     private static func setData(_ data: Data, account: String) -> Bool {
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-        deleteItem(account: account)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        ]
-        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+        return KeychainDataProtection.write(service: service, account: account, data: data)
     }
 
     private static func getData(account: String) -> Data? {
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else { return nil }
-        return result as? Data
+        return KeychainDataProtection.read(service: service, account: account)
     }
 
     @discardableResult
     private static func deleteItem(account: String) -> Bool {
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        return KeychainDataProtection.delete(service: service, account: account)
     }
 }

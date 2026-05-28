@@ -204,7 +204,8 @@ public actor MCPOAuthDiscovery {
         }
 
         var seen = Set<URL>()
-        return candidates
+        return
+            candidates
             .filter { seen.insert($0).inserted }
             .filter { MCPOAuthURLPolicy.allowsDiscoveredURL($0, from: serverURL) }
     }

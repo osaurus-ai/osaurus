@@ -1507,7 +1507,8 @@ final class NativeMessageCellView: NSTableCellView {
         // view stays orphaned. Remount whenever the currently mounted
         // gv isn't the one the cache says belongs to `block.id`.
         let cachedGV = context.cachedToolGroupView?(block.id)
-        let needsRemount = !sameKind
+        let needsRemount =
+            !sameKind
             || nativeToolCallGroupView == nil
             || nativeToolCallGroupView !== cachedGV && cachedGV != nil
         if needsRemount {
@@ -2024,7 +2025,8 @@ final class NativeMessageCellView: NSTableCellView {
         // explanation — chart cells suffer the identical bug if we trust
         // `sameKind` alone.
         let cachedCV = context.cachedChartView?(block.id)
-        let needsRemount = !sameKind
+        let needsRemount =
+            !sameKind
             || nativeChartView == nil
             || nativeChartView !== cachedCV && cachedCV != nil
         if needsRemount {

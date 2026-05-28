@@ -191,7 +191,8 @@ struct RuntimePolicySourceTests {
         #expect(!chatSessions.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
 
         let apiKeys = try Self.source("Identity/APIKeyManager.swift")
-        #expect(apiKeys.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
+        // The metadata blob now loads through the shared non-interactive store.
+        #expect(apiKeys.contains("KeychainDataProtection.read("))
         #expect(apiKeys.contains("private init() {}"))
         #expect(apiKeys.contains("private func ensureLoadedFromKeychain()"))
         #expect(!apiKeys.contains("private init() {\n        keys = Self.loadFromKeychain()"))
@@ -351,11 +352,82 @@ struct RuntimePolicySourceTests {
             #expect(contextCount >= queryCount)
         }
 
+        // The shared store performs the actual reads for those wrappers, so it
+        // must pair every UI-skip with a non-interactive authentication context.
+        let store = try Self.source("Services/Keychain/KeychainDataProtection.swift")
+        let storeQueryCount =
+            store.components(separatedBy: "kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip").count - 1
+        let storeContextCount =
+            store.components(
+                separatedBy: "kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext()"
+            ).count - 1
+        #expect(storeQueryCount >= 1)
+        #expect(storeContextCount >= storeQueryCount)
+
         let storageKey = try Self.source("Identity/StorageKeyManager.swift")
         #expect(storageKey.contains("kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip"))
         #expect(!storageKey.contains("KeychainQueryHelpers.nonInteractiveContext()"))
         #expect(storageKey.contains("if Self.disablesKeychainForProcess { return nil }"))
         #expect(storageKey.contains("if Self.disablesKeychainForProcess { return }"))
+    }
+
+    @Test("Keychain wrappers route through the data-protection keychain to avoid ACL password prompts")
+    func keychainWrappersUseDataProtectionKeychain() throws {
+        // The shared helper must opt every query into the data-protection
+        // keychain and expose the missing-entitlement fallback predicate.
+        let helper = try Self.source("Services/Keychain/KeychainQueryHelpers.swift")
+        #expect(helper.contains("kSecUseDataProtectionKeychain as String] = true"))
+        #expect(helper.contains("func dataProtection("))
+        #expect(helper.contains("func isMissingEntitlement("))
+        #expect(helper.contains("errSecMissingEntitlement"))
+
+        // The shared store centralizes the data-protection-first read/write/
+        // delete with a legacy fallback and forward migration. Asserting it here
+        // keeps the guarantee in one place rather than duplicated per wrapper.
+        let store = try Self.source("Services/Keychain/KeychainDataProtection.swift")
+        #expect(store.contains("KeychainQueryHelpers.dataProtection("))
+        #expect(store.contains("KeychainQueryHelpers.isMissingEntitlement("))
+
+        // The credential + blob wrappers that previously caused the recurring
+        // prompt route every secret through the shared store, so a re-signed
+        // build never raises the "wants to use your confidential information"
+        // login-keychain prompt.
+        for path in [
+            "Services/Provider/RemoteProviderKeychain.swift",
+            "Services/MCP/MCPProviderKeychain.swift",
+            "Services/Keychain/ToolSecretsKeychain.swift",
+            "Services/Keychain/AgentSecretsKeychain.swift",
+            "Identity/APIKeyManager.swift",
+            "Identity/WhitelistStore.swift",
+            "Identity/RevocationStore.swift",
+        ] {
+            let source = try Self.source(path)
+            #expect(
+                source.contains("KeychainDataProtection."),
+                "\(path) must route secrets through the shared KeychainDataProtection store"
+            )
+        }
+
+        // The synchronizable / specially-cached identity stores opt into the
+        // data-protection keychain directly because they can't use the generic
+        // store (iCloud sync, biometric gating, or bespoke error/caching).
+        for path in [
+            "Identity/StorageKeyManager.swift",
+            "Identity/MasterKey.swift",
+            "Identity/MasterMnemonicStore.swift",
+        ] {
+            let source = try Self.source(path)
+            #expect(
+                source.contains("KeychainQueryHelpers.dataProtection("),
+                "\(path) must route queries through KeychainQueryHelpers.dataProtection"
+            )
+        }
+
+        // Apple's keychain-access-groups entitlement is what authorizes the
+        // app's default access group for the data-protection keychain.
+        let entitlements = try Self.source("../../App/osaurus/osaurus.entitlements")
+        #expect(entitlements.contains("keychain-access-groups"))
+        #expect(entitlements.contains("$(AppIdentifierPrefix)com.dinoki.osaurus"))
     }
 
     @Test("ServerController relies on NIO bind instead of a startup port probe")

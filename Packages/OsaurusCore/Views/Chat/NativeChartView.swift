@@ -244,7 +244,13 @@ final class NativeChartView: NSView {
         forceFullRedraw: Bool = false,
         animate: Bool = true
     ) {
-        let (options, seriesElements) = buildChartModel(from: spec, bgHex: bgHex, textHex: textHex, theme: theme, animate: animate)
+        let (options, seriesElements) = buildChartModel(
+            from: spec,
+            bgHex: bgHex,
+            textHex: textHex,
+            theme: theme,
+            animate: animate
+        )
 
         if !hasDrawn || forceFullRedraw {
             hasDrawn = true
