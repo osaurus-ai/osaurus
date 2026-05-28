@@ -202,6 +202,49 @@ struct ChatEngineTests {
         #expect(object["_tool"] as? String == "line_count")
     }
 
+    @Test func singleToolRequiredChoiceDispatchesAsNamedFunction() throws {
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+
+        let resolved = ChatEngine.localToolChoiceForDispatch(.required, tools: [tool])
+
+        guard case .function(let target) = resolved else {
+            Issue.record("single required tool should dispatch as a named function selector")
+            return
+        }
+        #expect(target.function.name == "line_count")
+    }
+
+    @Test func multiToolRequiredChoiceStaysRequired() throws {
+        let first = Tool(
+            type: "function",
+            function: ToolFunction(name: "line_count", description: nil, parameters: nil)
+        )
+        let second = Tool(
+            type: "function",
+            function: ToolFunction(name: "file_read", description: nil, parameters: nil)
+        )
+
+        let resolved = ChatEngine.localToolChoiceForDispatch(.required, tools: [first, second])
+
+        guard case .required = resolved else {
+            Issue.record("multi-tool required choice must remain required")
+            return
+        }
+    }
+
     @Test func streamChat_yields_deltas_success() async throws {
         let svc = FakeModelService(deltas: ["a", "b", "c"])
         let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })

@@ -246,6 +246,24 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return true
     }
 
+    static func localToolChoiceForDispatch(
+        _ toolChoice: ToolChoiceOption?,
+        tools: [Tool]?
+    ) -> ToolChoiceOption? {
+        guard case .some(.required) = toolChoice,
+              let tools,
+              tools.count == 1
+        else {
+            return toolChoice
+        }
+        return .function(
+            ToolChoiceOption.FunctionName(
+                type: "function",
+                function: ToolChoiceOption.Name(name: tools[0].function.name)
+            )
+        )
+    }
+
     /// Build the response body to log for a streamed chat completion.
     /// Prefers a JSON envelope when the stream resolved to a tool call so
     /// the Insights Response tab still shows something meaningful (the
@@ -479,6 +497,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService
             {
                 let stopSequences = request.stop ?? []
+                let dispatchToolChoice = Self.localToolChoiceForDispatch(
+                    request.tool_choice,
+                    tools: tools
+                )
                 debugLog("[ChatEngine] streamChat: calling streamWithTools tools=\(tools.count)")
                 trace?.mark("chatengine_streamWithTools_start")
                 innerStream = try await toolSvc.streamWithTools(
@@ -486,7 +508,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     parameters: params,
                     stopSequences: stopSequences,
                     tools: tools,
-                    toolChoice: request.tool_choice,
+                    toolChoice: dispatchToolChoice,
                     requestedModel: request.model
                 )
                 trace?.mark("chatengine_streamWithTools_done")
@@ -819,13 +841,17 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService
             {
                 let stopSequences = request.stop ?? []
+                let dispatchToolChoice = Self.localToolChoiceForDispatch(
+                    request.tool_choice,
+                    tools: tools
+                )
                 do {
                     let stream = try await toolSvc.streamWithTools(
                         messages: messages,
                         parameters: params,
                         stopSequences: stopSequences,
                         tools: tools,
-                        toolChoice: request.tool_choice,
+                        toolChoice: dispatchToolChoice,
                         requestedModel: request.model
                     )
                     var text = ""

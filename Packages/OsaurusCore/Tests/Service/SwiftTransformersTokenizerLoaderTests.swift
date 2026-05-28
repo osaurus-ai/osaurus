@@ -261,6 +261,74 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("Create the probe file."), "Decoded: \(decoded)")
     }
 
+    @Test func gemma4FallbackCompactsClosedToolHistoryForLaterRequiredToolTurn() async throws {
+        let defaultPath = "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let finalUser = "Now use line_count on this exact text: one\ntwo"
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                ["role": "user", "content": "Use the line_count tool on this exact text: red\ngreen\nblue"],
+                [
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        [
+                            "id": "call_line_count_1",
+                            "type": "function",
+                            "function": [
+                                "name": "line_count",
+                                "arguments": ["text": "red\ngreen\nblue"],
+                            ] as [String: any Sendable],
+                        ] as [String: any Sendable],
+                    ],
+                ] as [String: any Sendable],
+                ["role": "tool", "content": "{\"lines\":3}", "tool_call_id": "call_line_count_1"],
+                ["role": "user", "content": "How many lines were counted?"],
+                ["role": "assistant", "content": "The text contains 3 lines."],
+                ["role": "user", "content": finalUser],
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains(finalUser), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
+        #expect(decoded.contains("<parameter=text>\none\ntwo\n</parameter>"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("red\ngreen\nblue"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("The text contains 3 lines."), "Decoded: \(decoded)")
+        #expect(!decoded.contains("call_line_count_1"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("Tool result: {\"lines\":3}"), "Decoded: \(decoded)")
+    }
+
     @Test func gemma3nLocalTokenizerRendersRequiredToolContractFromFallback() async throws {
         let defaultPath = "/Users/eric/models/mlx-community/gemma-3n-E2B-it-4bit"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA3N_TEST_MODEL"] ?? defaultPath
