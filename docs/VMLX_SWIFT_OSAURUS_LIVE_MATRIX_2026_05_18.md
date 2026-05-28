@@ -24,6 +24,18 @@ row is production-clear.
 - Repeat result: turn 3 failed because `tool_choice: "required"` produced visible text `Two lines were counted.` with `finish_reason: "stop"` instead of a structured tool call; all three repeat responses reported the same `prefix_hash`, and the after-snapshot no longer had Nemotron resident.
 - Verdict: Nemotron Omni MXFP4 remains red/partial for repeat required-tool/cache behavior. This must not be hidden with prompt coercion or parser repair.
 
+## 2026-05-28 Nemotron Omni MXFP4 repeat required-tool and warm cache proof
+
+- Osaurus head at check: `10df987c5d58518a3be4d589ae5d1d942d59a9ce`.
+- vMLX main / Osaurus pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- Initial selected-row artifact: `/tmp/osaurus-pr1268-10df987c-nemotron-mxfp4-required-tool-repeat-20260528-131627`.
+- Cold strict artifact: `/tmp/osaurus-pr1268-10df987c-nemotron-omni-mxfp4-required-cache-20260528-131529`.
+- Warm strict artifact: `/tmp/osaurus-pr1268-10df987c-nemotron-omni-mxfp4-required-cache-warm-20260528-131559`.
+- Model: `nemotron-omni-nano-mxfp4-crack`.
+- Result: turn 1 produced a structured `line_count` call with exact `red\ngreen\nblue`; turn 2 answered visibly with `The count is 3.`; turn 3 repeated `tool_choice: "required"` and produced a structured `line_count` call with exact `one\ntwo`; no protocol markers leaked into visible content.
+- Warm cache result: `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`; topology remains 29 layers with 6 KV and 23 Mamba/SSM layers, SSM companion state, disk-backed restore required, and TurboQuant KV 0.
+- Verdict: the vMLX `d83b22b3` repin clears the previous MXFP4 repeat-required-tool behavior and the warm strict row proves text-path disk/SSM companion cache reuse. Media/audio/video rows remain unproven.
+
 ## 2026-05-28 Nemotron Omni JANGTQ4 required-tool repeat green, cache partial row
 
 - Osaurus head at check: `7fa73661b1651a8ec26e49a529b386a9552bfb8d`.

@@ -662,3 +662,27 @@ Result:
 - Disk L2 hits were proven in this isolation: turn 2 `disk_l2_hits +1`, turn 3 `disk_l2_hits +1`; final counters reached `disk_l2_hits=2`, `disk_l2_misses=17`, `disk_l2_stores=9`.
 - Topology stayed DSV4 hybrid pool: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating layers, disk-backed restore required, TurboQuant KV 0.
 - Boundary: named tool-choice is a useful DSV4 isolation and proves disk-hit movement, but repeated required/named tool-call argument exactness is still not stable enough to claim DSV4 repeat-cache readiness.
+
+## 2026-05-28 13:16 PDT - Nemotron Omni MXFP4 exact-head required-tool/cache proof
+
+Artifacts:
+
+- Cold row: `/tmp/osaurus-pr1268-10df987c-nemotron-omni-mxfp4-required-cache-20260528-131529`.
+- Warm row: `/tmp/osaurus-pr1268-10df987c-nemotron-omni-mxfp4-required-cache-warm-20260528-131559`.
+
+Build/runtime boundary:
+
+- Osaurus head: `10df987c5d58518a3be4d589ae5d1d942d59a9ce`.
+- vMLX pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- No-sign Release app: `/Users/eric/osaurus-pr1268-live/build/DerivedData/Build/Products/Release/osaurus.app`.
+- Launch mode: keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
+
+Result:
+
+- PASS: cold row routed turn 1 required `line_count` to a structured tool call with exact args `red\ngreen\nblue`, no visible content, and no protocol leakage.
+- PASS: cold row routed turn 3 second required `line_count` after assistant/tool history to a structured tool call with exact args `one\ntwo`, no visible content, and no protocol leakage.
+- PASS: cold row tool-result follow-up returned visible answer `Three lines were counted.` with `finish_reason: "stop"`.
+- PASS: warm row repeated the same multi-turn behavior and proved cache reuse with `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`.
+- Topology: 29 layers, 6 KV layers, 23 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layers 0.
+- Token/s: OpenAI-compatible tool turns emitted zero completion tokens; visible answer row emitted 6 completion tokens at 16.39 tok/s cold and 18.82 tok/s warm.
+- Classification: pass for Nemotron Omni MXFP4 text required-tool/history/cache proof. This supersedes the earlier MXFP4 repeat-required red row; audio/video/resume behavior remains separate unproven coverage.
