@@ -454,18 +454,16 @@ Kimi is intentionally excluded from this matrix for now per current scope.
 
 ## Open Items
 
-- Current #1268 boundary: the checked proof/code boundary is Osaurus
-  code-equivalent app build `695d5869ea9821732649bffb3789469568e6db55`
-  plus documentation correction `8d3ce5d15156e5c6a5dc3f04601b02442dfd2c3a`,
-  pinned to vMLX main
-  `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`, is open, not draft,
+- Current #1268 boundary: the current documentation head is
+  `8e9bb2eb51c0679aa3d83c52c212e51c8a722f81`, pinned to vMLX main
+  `d83b22b3d0350aa45b5b853dd4838ea34af47497`, open, not draft,
   mergeable, and not merged by agent. The live GitHub PR head can advance by
   documentation-only commits; always verify the current PR head and CI before
-  merge instead of embedding a moving head SHA as proof. The code-equivalent
-  no-sign/keychain-free Release app from
-  `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`
-  returned `/health` healthy. This is a consolidation boundary, not a blanket
-  production-clear claim for every architecture row.
+  merge instead of embedding a moving head SHA as final proof. Current-head
+  proof artifacts are listed in the family rows above, including Nemotron
+  MXFP4, DSV4 JANGTQ2, Qwen 27B MXFP4 CRACK MTP, and ZAYA text JANGTQ4. This
+  is a consolidation boundary, not a blanket production-clear claim for every
+  architecture row.
 - The final Osaurus app has not yet run the full UI/API matrix for Qwen-VL,
   Gemma VLM, ZAYA-VL, Nemotron Omni, DSV4, MiniMax, Ling, Hy3, and the parser
   families listed above.
