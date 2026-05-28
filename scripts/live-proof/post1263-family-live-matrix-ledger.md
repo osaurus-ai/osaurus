@@ -41,6 +41,19 @@ Each promoted row needs current-head evidence for:
 
 ## Current #1268 merge boundary
 
+### 2026-05-28 06:16 PDT final current-head boundary
+
+- Current Osaurus PR: `#1268`, head `2a2a6d4b039e61fd9338c42287fa9b35798328cb`, open, not draft, mergeable, not merged by agent.
+- Current vMLX main and Osaurus pin: `d3d76b4c11c1f3e83e787f0464120087167c1609`; verified present on `osaurus-ai/vmlx-swift` main.
+- GitHub CI for head `2a2a6d4b`: `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
+- Only `#1268` remains open from the `#1247` through `#1268` runtime stack; older related PRs are consolidated/superseded rather than separate merge targets.
+- Current no-sign/keychain-free DSV4 app proof is recorded in `POST1266-LIVE-FAMILY-CACHE-MATRIX.md` for the `1503be2f` runtime commit that sits directly below this documentation-only `2a2a6d4b` commit.
+- Current source guards passed after the documentation-only head: PR hygiene, vMLX pin/checkout readiness, keychain-free proof path, no hidden sampler defaults, no forced behavior, OpenResponses/cache wiring, server-settings runtime wiring, reasoning routing, HTTP cancellation, required tool-choice routing, and model tool/capability surfaces.
+- Default cache policy is `engineSelected` with topology gating: proven full-KV rows may default to TurboQuant KV; DSV4, ZAYA/ZAYA-VL, Gemma rotating, and hybrid SSM/companion-cache rows stay native/fp16 unless explicitly overridden or separately proven safe.
+- No agent should merge Osaurus without explicit user approval. vMLX main is managed directly and contains the runtime fixes consumed by this PR.
+
+### Historical boundary notes
+
 - Current Osaurus PR: `#1268`, head `395cc49479101fc0a9e0fa01d4ce25095c55dfa6` before this ledger-only correction.
 - Current vMLX main and Osaurus pin: `de07006a2426f482d3c16adea5644c0803efb2cd`.
 - GitHub status at 2026-05-28 03:22 PDT for head `395cc494`: PR open, not draft, mergeable, not merged; `shellcheck`, `swiftlint`, `test-cli`, and `update_release_draft` passed; `test-core` was still running at the time of this ledger update.
@@ -50,7 +63,7 @@ Each promoted row needs current-head evidence for:
 - Focused vMLX proof for the open DSV4 action-rail fix passed before repin: `DeepseekV4ChatTemplateFallbackFocusedTests` ran 29 tests with 0 failures against vMLX `bd6c6808`.
 - Exact-head no-sign live model proof is intentionally not promoted as complete for every family on `86304f7e`. Nemo Omni, Ling, ZAYA, DSV4, Qwen, MiniMax, and HY3/Hunyuan need follow-on exact-head rows before claiming the broader post-merge runtime matrix is complete.
 - MiMo V2.5 is explicitly excluded from the current merge gate because the current local MiMo lane is not working/imported enough for a meaningful Osaurus live row.
-- TurboQuant/`engineSelected` remains explicit opt-in. Native/fp16 is the default and the legacy migration does not silently flip users into TurboQuant KV.
+- TurboQuant/`engineSelected` is the default live-KV policy, but it is resolved per loaded model topology rather than applied globally. Proven full-KV rows may default to TurboQuant KV; DSV4, ZAYA/ZAYA-VL, Gemma rotating, and hybrid SSM/companion-cache rows stay native/fp16 unless explicitly overridden or separately proven safe.
 - No agent should merge Osaurus without explicit user approval. vMLX main is managed directly and already contains the no-forced-thinking fix required by this PR.
 
 ## Row status ledger
