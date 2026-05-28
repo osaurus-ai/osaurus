@@ -87,6 +87,20 @@ row is production-clear.
 - Topology: 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: Qwen 27B MXFP4 CRACK MTP is green for this parser/tool/history row, but cache proof remains partial because disk L2 hits stayed 0 while misses/stores moved.
 
+## 2026-05-28 Qwen 27B MXFP4 thinking/tool screenshot repro boundary
+
+- User screenshot: Qwen3.6 27B MXFP4 with Thinking enabled, repeated file tools, large visible context (`~54k / 262k tokens`), and a later thinking-channel `!!!!!!!!` loop.
+- Two-tool artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-tool-repro-20260528-114825`.
+  - Model: `qwen3.6-27b-mxfp4-crack`.
+  - Request shape: OpenAI chat completions, `enable_thinking=true`, `reasoning_effort=high`, required `line_count`, then tool result history, then final answer.
+  - Result: two structured required tool calls, coherent final answer, no `!!!!!!!!` loop, no parser/tool marker leak.
+  - Topology: 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0; disk L2 stores moved but hits stayed 0.
+- Five-tool artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-5tool-repro-20260528-114944`.
+  - Result: five structured required tool calls and a coherent final answer; no `!!!!!!!!` loop and no parser/tool marker leak.
+  - Boundary: turn 1 argument became `red\n\ngreen\nblue` instead of exact `red\ngreen\nblue`, so this row is not an exact-argument promotion even though the line count stayed correct.
+  - Cache boundary: `disk_l2_stores +10`, but `disk_l2_hits`, SSM companion hits, and companion rederives stayed 0.
+- Verdict: the screenshot loop is not reproduced by the small two-tool or five-tool synthetic rows. Keep Qwen 27B MXFP4 thinking+large-tool-history classified partial until a larger file-tool context row reproduces or clears the `!!!!!!!!` failure. Do not add hidden repetition penalties, max-token clamps, or parser repair for this.
+
 ## 2026-05-28 ZAYA-VL JANGTQ4 red image media/cache green row
 
 - Osaurus head at check: `b780e33737cbf51d3045c97c694a8ee7104caebb`.
