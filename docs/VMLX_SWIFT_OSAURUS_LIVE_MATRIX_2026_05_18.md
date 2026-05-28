@@ -263,7 +263,7 @@ These are explicit inverse rows, not nice-to-have manual notes:
 
 | Model path or family | Runtime class/topology | Current evidence | Required before production-clear |
 |---|---|---|---|
-| `/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K` | DSV4 Flash, SWA+CSA+HSA `DeepseekV4Cache`, DSML tools | vMLX main `76e55f59935f22c3bb2f28055ae8ecebd2e7a355` skips disk-backed path-dependent cache restore for active tool requests. Osaurus #1268 head `964688f3` no-sign Release proof artifact `/tmp/osaurus-pr1268-964688f3-dsv4-required-repeat-20260528-082942`: 5/5 required `line_count` repeats produced one structured tool call, exact `red\\ngreen\\nblue` args, no DSML leak, no `_error`; topology showed 43 layers, 41 hybrid pool, 2 rotating, TurboQuant KV 0, disk L2 stores 5/hits 0. | Final Osaurus UI renderer screenshot/log, `/v1/responses` and `/v1/messages` rows if mapped, DSV4 settings CLI preview, and `reasoning_effort=max` app proof. |
+| `/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K` | DSV4 Flash, SWA+CSA+HSA `DeepseekV4Cache`, DSML tools | vMLX main `76e55f59935f22c3bb2f28055ae8ecebd2e7a355` skips disk-backed path-dependent cache restore for active tool requests. Osaurus #1268 code-equivalent app build `695d5869` proof artifact `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603`: 5/5 required `line_count` repeats passed with explicit `reasoning_effort: "instruct"` and `max_tokens: 256`; each turn produced one structured tool call, exact `red\\ngreen\\nblue` args, no visible DSML leak, no reasoning leakage, no `_error`; topology showed 43 layers, 41 hybrid pool, 2 rotating, TurboQuant KV 0, disk L2 stores. Omitted max-token / omitted reasoning-control rows are documented as not green. | Final Osaurus UI renderer screenshot/log, `/v1/responses` and `/v1/messages` rows if mapped, DSV4 settings CLI preview, `reasoning_effort=max` app proof, and a decision/fix for omitted DSV4 reasoning controls. |
 | `/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-JANGTQ-CRACK` | Qwen3.6 MoE VL, Qwen3VLProcessor, path-dependent cache | vmlx live prod/cache/VL/media-salt artifacts exist. | Osaurus app chat + API rows for image/text/video, reasoning on/off, generation defaults, saved settings, and cache stats. |
 | `/Users/eric/models/JANGQ/Qwen3.6-27B-MXFP4-MTP` and MXFP8/35B variants | Qwen MTP/VL only when tensors plus `vmlx_mtp_tuning.json` are valid | vmlx source/tests require tuning and fail closed without it; fresh census proves 27B MXFP4 selects D2, 27B MXFP8/35B variants select D3, all from tensor/tuning evidence. | Osaurus status UI/API must show MTP off/on reason, use `vmlx_mtp_tuning.json`, and prove MTP on/off speed/coherence/cache rows. |
 | `/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK` | Gemma4 VLM/Harmony reasoning/tool parser | vmlx parser/source contracts exist. | Live Osaurus image/text/video rows, Harmony no-leak API rows, Gemma settings defaults, and cache stats. |
@@ -299,16 +299,18 @@ Kimi is intentionally excluded from this matrix for now per current scope.
 
 ## Open Items
 
-- Current #1268 boundary: Osaurus head
-  `8d3ce5d15156e5c6a5dc3f04601b02442dfd2c3a`, pinned to vMLX main
+- Current #1268 boundary: the checked proof/code boundary is Osaurus
+  code-equivalent app build `695d5869ea9821732649bffb3789469568e6db55`
+  plus documentation correction `8d3ce5d15156e5c6a5dc3f04601b02442dfd2c3a`,
+  pinned to vMLX main
   `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`, is open, not draft,
-  mergeable, and not merged by agent. The code-equivalent no-sign/keychain-free
-  Release app from
+  mergeable, and not merged by agent. The live GitHub PR head can advance by
+  documentation-only commits; always verify the current PR head and CI before
+  merge instead of embedding a moving head SHA as proof. The code-equivalent
+  no-sign/keychain-free Release app from
   `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`
-  returned `/health` healthy. Current CI must be checked on the live PR head
-  before merge; do not reuse older green-status text after another commit lands.
-  This is a consolidation boundary, not a blanket production-clear claim for
-  every architecture row.
+  returned `/health` healthy. This is a consolidation boundary, not a blanket
+  production-clear claim for every architecture row.
 - The final Osaurus app has not yet run the full UI/API matrix for Qwen-VL,
   Gemma VLM, ZAYA-VL, Nemotron Omni, DSV4, MiniMax, Ling, Hy3, and the parser
   families listed above.
