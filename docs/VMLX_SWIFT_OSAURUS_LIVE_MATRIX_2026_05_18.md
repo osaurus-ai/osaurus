@@ -24,6 +24,15 @@ row is production-clear.
 - Repeat result: turn 3 failed because `tool_choice: "required"` produced visible text `Two lines were counted.` with `finish_reason: "stop"` instead of a structured tool call; all three repeat responses reported the same `prefix_hash`, and the after-snapshot no longer had Nemotron resident.
 - Verdict: Nemotron Omni MXFP4 remains red/partial for repeat required-tool/cache behavior. This must not be hidden with prompt coercion or parser repair.
 
+## 2026-05-28 Nemotron Omni JANGTQ4 required-tool repeat green, cache partial row
+
+- Osaurus head at check: `7fa73661b1651a8ec26e49a529b386a9552bfb8d`.
+- Artifact: `/tmp/osaurus-pr1268-nemotron-jangtq4-required-tool-repeat-20260528-123917`.
+- Model: `nemotron-omni-nano-jangtq4-crack`.
+- Result: turn 1 produced a structured `line_count` call with exact `red\ngreen\nblue`; turn 2 answered visibly with `The count is 3.`; turn 3 produced a structured `line_count` call with exact `one\ntwo`; no protocol markers leaked into visible content.
+- Cache boundary: `disk_l2_misses +2` and `disk_l2_stores +3`, but `disk_l2_hits`, SSM companion hits, and SSM companion rederives stayed 0.
+- Verdict: Nemotron Omni JANGTQ4 is green for this selected text/tool/history row, but cache reuse and media/audio/video behavior remain partial. This does not clear the separate MXFP4 repeat-required-tool red row.
+
 ## 2026-05-28 ZAYA text JANGTQ4 required-tool red row
 
 - Osaurus head at check: `c9fdc4c38ee53f748805d89c0312a9c61ecf1662`.
