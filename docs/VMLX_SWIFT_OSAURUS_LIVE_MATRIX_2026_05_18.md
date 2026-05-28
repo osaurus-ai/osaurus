@@ -344,6 +344,13 @@ Kimi is intentionally excluded from this matrix for now per current scope.
   visible DSML/tool-marker leak, and healthy resident DSV4 after the request.
   This proves Messages tool-parser parity only; disk L2 stores moved but this is
   not a repeat disk-hit proof.
+  `/v1/messages` tool-result follow-up is also green at
+  `/tmp/osaurus-pr1268-f7343290-dsv4-messages-tool-result-20260528-095315`:
+  prior assistant `tool_use` plus user `tool_result` rendered correctly, the
+  model answered `The line count is 3.`, `stop_reason: "end_turn"`, no extra
+  tool call, no DSML/tool-marker leak, and resident DSV4 stayed healthy with
+  the same 43-layer hybrid topology. This proves Messages tool-result follow-up
+  parity, not repeat disk-hit reuse.
   Two broader rows are explicitly not green: omitted `max_tokens` timed out and
   left lingering inflight requests
   (`/tmp/osaurus-pr1268-695d5869-dsv4-required-repeat-20260528-084132`), and
