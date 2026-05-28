@@ -53,7 +53,7 @@ per container at load time
 | `diskCacheDir` | `OsaurusPaths.diskKVCache()` | osaurus-managed sandbox path |
 | `enableDiskCache` | `true` when probe-write succeeds, else `false` | graceful fallback to memory-only when the dir is read-only / out-of-disk |
 | `usePagedCache` | `true` | content-addressed paged blocks for prefix reuse |
-| `defaultKVMode` | `engine_selected` by default, resolved per model/topology: proven full-KV rows get TurboQuant, while hybrid/rotating/CCA/DSV4 rows stay native/fp16 unless explicitly overridden | TurboQuant is enabled by default only where the cache topology is simple full KV; DSV4/ZAYA/SSM/rotating companion caches keep their typed serializers and are not replaced by generic KV compression |
+| `defaultKVMode` | Native/fp16 by default from migrated Osaurus settings. `engine_selected` and TurboQuant remain explicit Server Settings opt-ins. | Conservative default avoids applying TurboQuant to unproven model families. If a user opts into `engine_selected`, ModelRuntime still resolves it per topology so DSV4/ZAYA/SSM/rotating companion caches keep typed serializers unless explicitly overridden. |
 | `defaultMaxKVSize` | `65536` | prefill window; `longPromptMultiplier=2.0` covers the 131K case |
 | `longPromptMultiplier` | `2.0` | rotating-cache cap kicks in only past 131K |
 | `ssmMaxEntries` | `50` | SSM state cap for hybrid Mamba/CCA companion cache |

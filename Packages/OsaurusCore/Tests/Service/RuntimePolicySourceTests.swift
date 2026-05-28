@@ -692,16 +692,16 @@ struct RuntimePolicySourceTests {
             "ServerRuntimeSettingsStore.migratedFromLegacy must seed enableSSMReDerive=true for automatic hybrid cache reuse"
         )
         #expect(
-            store.contains("liveKVCodec: .engineSelected"),
-            "ServerRuntimeSettingsStore.migratedFromLegacy must use engine-selected live KV so proven full-KV rows default to TurboQuant"
+            store.contains("liveKVCodec: .native"),
+            "ServerRuntimeSettingsStore.migratedFromLegacy must keep TurboQuant opt-in by default"
         )
         #expect(
             !store.contains("normalized.cache.liveKVCodec = .engineSelected"),
             "Legacy cache migration must not overwrite explicit existing live-KV choices"
         )
         #expect(
-            store.contains("Engine-selected live KV is resolved by ModelRuntime per"),
-            "ServerRuntimeSettingsStore must document that engine-selected is topology-gated by ModelRuntime"
+            store.contains("TurboQuant remains explicit opt-in"),
+            "ServerRuntimeSettingsStore must document that legacy repair does not silently enable TurboQuant"
         )
         #expect(
             store.contains("shouldRepairLegacyCacheDefaults"),
@@ -710,7 +710,7 @@ struct RuntimePolicySourceTests {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         #expect(
             runtime.contains("shouldUseTurboQuantByDefault"),
-            "ModelRuntime must resolve engine-selected cache policy per family/topology instead of enabling TurboQuant globally"
+            "ModelRuntime must still topology-gate explicit engine-selected cache policy"
         )
         #expect(
             runtime.contains("ModelFamilyNames.isDSV4Family(modelName)")

@@ -755,9 +755,12 @@ public actor ModelRuntime {
     //                                        (multi-turn cache reuse path)
     //   - `defaultKVMode`                   — owned by vmlx
     //                                        `VMLXServerRuntimeSettings`.
-    //                                        `engine_selected` resolves to
-    //                                        automatic TurboQuant KV for
-    //                                        ordinary full-history KV layers;
+    //                                        defaults to native/fp16 in
+    //                                        Osaurus settings.
+    //                                        Explicit `engine_selected`
+    //                                        resolves to automatic TurboQuant
+    //                                        KV for ordinary full-history KV
+    //                                        layers;
     //                                        DSV4/ZAYA/SSM/rotating caches
     //                                        keep their typed companion-state
     //                                        serializers and are not replaced
@@ -778,9 +781,9 @@ public actor ModelRuntime {
     //                                        (largest layer count we ship);
     //                                        on TurboQuant KV steady state is
     //                                        much smaller. With
-    //                                        `engine_selected`, ordinary KV
-    //                                        layers use the vmlx automatic
-    //                                        codec; the rotating cap only
+    //                                        native mode, ordinary KV layers
+    //                                        use fp16 unless the user opts into
+    //                                        `engine_selected`; the rotating cap only
     //                                        kicks in for prompts past 131K
     //                                        (65536 × 2.0), so small chats
     //                                        are unaffected.

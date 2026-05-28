@@ -145,10 +145,9 @@ public enum ServerRuntimeSettingsStore {
         }
         if shouldRepairLegacyCacheDefaults(normalized.cache) {
             // Keep companion-cache repair independent from the live KV codec.
-            // Engine-selected is the default policy now, but ModelRuntime
-            // only resolves it to TurboQuant for proven full-KV rows and
-            // leaves hybrid/rotating/CCA/DSV4 rows on fp16 unless explicitly
-            // overridden.
+            // TurboQuant remains explicit opt-in. Legacy pristine defaults are
+            // repaired only for SSM companion rederive so hybrid rows do not
+            // silently fall back to KV-only reuse.
             normalized.cache.enableSSMReDerive = true
             writeCacheDefaultsMigrationMarker()
         }
@@ -246,12 +245,10 @@ public enum ServerRuntimeSettingsStore {
             smeltMode: .engineSelected
         )
 
-        // Cache: seed the engine-owned topology with automatic policy.
+        // Cache: seed the engine-owned topology with conservative native KV.
         // Prefix, paged KV, block-disk L2, and SSM rederive are on by
-        // default. Engine-selected live KV is resolved by ModelRuntime per
-        // model family/topology: proven full-KV rows get TurboQuant, while
-        // hybrid/rotating/CCA/DSV4 rows stay native/fp16 unless explicitly
-        // overridden.
+        // default. Engine-selected/TurboQuant remains an explicit Server
+        // Settings opt-in until each model family has live proof.
         settings.cache = VMLXServerCacheSettings(
             prefix: VMLXPrefixCacheSettings(
                 enabled: true,
@@ -265,7 +262,7 @@ public enum ServerRuntimeSettingsStore {
                 blockSize: nil,
                 maxBlocks: nil
             ),
-            liveKVCodec: .engineSelected,
+            liveKVCodec: .native,
             turboQuantKeyBits: nil,
             turboQuantValueBits: nil,
             defaultMaxKVSize: 65536,
