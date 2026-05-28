@@ -1,16 +1,17 @@
 # PR 1268 objective completion audit
 
-Checked at: 2026-05-28 09:54 PDT
+Checked at: 2026-05-28 10:09 PDT
 
 Current boundary:
 
 - Osaurus PR: `#1268`
-- Osaurus head at audit update start: `f7343290b01f68778209cf9f3e897d363ebb15f2`
+- Osaurus head at audit update start: `80e8749144d50b9783c5cc37a84b1cb03b8fdfa4`
 - vMLX main / Osaurus pin: `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`
 - Osaurus merge policy: do not merge by agent
 - vMLX merge policy: vMLX is agent-managed and is already on main
-- CI boundary: `f7343290b01f68778209cf9f3e897d363ebb15f2` was green for `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` before the `/v1/messages` tool-result documentation update
+- CI boundary: `80e8749144d50b9783c5cc37a84b1cb03b8fdfa4` is green for `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft`
 - No-sign app proof boundary: code-equivalent build `695d5869ea9821732649bffb3789469568e6db55`
+- Current app observation at this audit refresh: no-sign build `DerivedData-pr1268-release-nosign-695d5869` is healthy with `deepseek-v4-flash-jangtq2` resident and one active in-flight DSV4 request owned by the running app/proof lane. Do not launch overlapping heavy live rows until that in-flight request clears.
 
 This file is a completion audit against the full runtime objective. It is not a
 marketing summary. A row marked partial means the PR documents or implements

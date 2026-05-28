@@ -41,6 +41,16 @@ Each promoted row needs current-head evidence for:
 
 ## Current #1268 merge boundary
 
+### 2026-05-28 10:09 PDT current coordination boundary
+
+- Current Osaurus PR: `#1268`, head `80e8749144d50b9783c5cc37a84b1cb03b8fdfa4`, open, not draft, mergeable, not merged by agent.
+- Current vMLX main and Osaurus pin: `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`; verified local vMLX worktree and `osaurus-ai/vmlx-swift` main match.
+- GitHub checks on `80e87491`: `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
+- Only `#1268` remains open from the `#1247` through `#1268` runtime stack. Keep Osaurus fixes in this one PR until the user manually merges it.
+- Source cache policy remains `engineSelected` with topology gating: prefix cache, paged KV, block-disk L2, and SSM rederive default on; proven simple full-KV rows may use TurboQuant KV by default, while DSV4, ZAYA/ZAYA-VL, Gemma rotating, Qwen/Ling/Nemotron/HY3-style hybrid and CCA/SSM/path-dependent rows stay native/fp16 unless exact topology proof promotes them.
+- Current no-sign app observation: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app` is healthy with `deepseek-v4-flash-jangtq2` resident and one active in-flight DSV4 request. Do not launch overlapping heavy live rows until that request clears.
+- No agent should merge Osaurus without explicit user approval. vMLX main is managed directly and contains the runtime fixes consumed by this PR.
+
 ### 2026-05-28 09:03 PDT checked proof boundary
 
 - Current Osaurus PR: `#1268`, open, not draft, mergeable, not merged by agent. The checked code/proof boundary is Osaurus app build `695d5869ea9821732649bffb3789469568e6db55` plus documentation correction `8d3ce5d15156e5c6a5dc3f04601b02442dfd2c3a`; verify the live GitHub PR head and CI before merge because documentation-only commits can advance after this line.
