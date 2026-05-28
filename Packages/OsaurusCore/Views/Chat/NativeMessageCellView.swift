@@ -66,6 +66,14 @@ struct CellRenderingContext {
     /// the coordinator's cache so subsequent re-mounts hit the lookup
     /// above. Pruned to the current block ids on each `applyBlocks`.
     var cacheChartView: ((String, NativeChartView) -> Void)? = nil
+    /// Same pattern as `cachedChartView`, but for tool-call groups. When
+    /// the tool finishes and blocks reflow, NSTableView often redequeues
+    /// the row into a different cell — without this cache the old
+    /// `NativeToolCallGroupView` is torn down and a fresh one is mounted
+    /// from zero bounds, which reads as the appearance animation
+    /// replaying.
+    var cachedToolGroupView: ((String) -> NativeToolCallGroupView?)? = nil
+    var cacheToolGroupView: ((String, NativeToolCallGroupView) -> Void)? = nil
 }
 
 // MARK: - Cell-Isolated ExpandedBlocksStore Proxy
@@ -1492,7 +1500,19 @@ final class NativeMessageCellView: NSTableCellView {
     ) {
         if !sameKind || nativeToolCallGroupView == nil {
             removeAllContentViews()
-            let gv = NativeToolCallGroupView()
+            // Reuse a cached group view for this block id when one exists.
+            // The cached instance retains its rendered layers (ring stroke,
+            // icon, title), so reparenting after a cell recycle paints
+            // instantly with no re-animation. Cache misses (first
+            // appearance, or session-switch pruning) create fresh.
+            let gv: NativeToolCallGroupView
+            if let cached = context.cachedToolGroupView?(block.id) {
+                cached.removeFromSuperview()
+                gv = cached
+            } else {
+                gv = NativeToolCallGroupView()
+                context.cacheToolGroupView?(block.id, gv)
+            }
             gv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(gv)
             NSLayoutConstraint.activate([

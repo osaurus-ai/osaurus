@@ -230,6 +230,12 @@ struct MessageTableRepresentable: NSViewRepresentable {
             },
             cacheChartView: { [weak coordinator] id, view in
                 coordinator?.chartViewCache[id] = view
+            },
+            cachedToolGroupView: { [weak coordinator] id in
+                coordinator?.toolGroupViewCache[id]
+            },
+            cacheToolGroupView: { [weak coordinator] id, view in
+                coordinator?.toolGroupViewCache[id] = view
             }
         )
     }
@@ -422,6 +428,11 @@ extension MessageTableRepresentable {
         /// a chart out and back in reparents the same view instead of
         /// rebuilding it. Pruned to `newIds` on each `applyBlocks`.
         var chartViewCache: [String: NativeChartView] = [:]
+
+        /// Same pattern as `chartViewCache`, for tool-call group blocks.
+        /// Keeps the rendered ring/icon/title across cell recycles so the
+        /// appearance animation only ever plays once per call.
+        var toolGroupViewCache: [String: NativeToolCallGroupView] = [:]
 
         private var minimapUpdateWork: DispatchWorkItem?
         private let minimapUpdateInterval: TimeInterval = 0.05
@@ -661,11 +672,15 @@ extension MessageTableRepresentable {
                 if !drawnChartBlockIds.isEmpty {
                     drawnChartBlockIds.formIntersection(newIds)
                 }
-                if !chartViewCache.isEmpty {
+                if !chartViewCache.isEmpty || !toolGroupViewCache.isEmpty {
                     let newIdSet = Set(newIds)
                     for key in chartViewCache.keys where !newIdSet.contains(key) {
                         chartViewCache[key]?.removeFromSuperview()
                         chartViewCache.removeValue(forKey: key)
+                    }
+                    for key in toolGroupViewCache.keys where !newIdSet.contains(key) {
+                        toolGroupViewCache[key]?.removeFromSuperview()
+                        toolGroupViewCache.removeValue(forKey: key)
                     }
                 }
             }
