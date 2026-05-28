@@ -42,11 +42,11 @@ Each promoted row needs current-head evidence for:
 ## Current #1268 merge boundary
 
 - Current Osaurus PR: `#1268`, head `395cc49479101fc0a9e0fa01d4ce25095c55dfa6` before this ledger-only correction.
-- Current vMLX main and Osaurus pin: `bd6c68088f035ac0f5df5ffc0ffffc23923fc572`.
+- Current vMLX main and Osaurus pin: `de07006a2426f482d3c16adea5644c0803efb2cd`.
 - GitHub status at 2026-05-28 03:22 PDT for head `395cc494`: PR open, not draft, mergeable, not merged; `shellcheck`, `swiftlint`, `test-cli`, and `update_release_draft` passed; `test-core` was still running at the time of this ledger update.
 - Only `#1268` remains open from the `#1247` through `#1268` runtime stack; older related work has been consolidated rather than kept as separate merge targets.
-- Exact-head no-sign Release app proof is refreshed for `395cc494`: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-release-nosign-395cc494/Build/Products/Release/osaurus.app`, built with signing disabled and vMLX checkout `bd6c68088f035ac0f5df5ffc0ffffc23923fc572`.
-- Exact-head source guard is refreshed for `395cc494`: `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening` passed against the vMLX main pin `bd6c68088f035ac0f5df5ffc0ffffc23923fc572`.
+- Exact-head no-sign Release app proof is refreshed for `395cc494`: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-release-nosign-395cc494/Build/Products/Release/osaurus.app`, built with signing disabled and vMLX checkout `de07006a2426f482d3c16adea5644c0803efb2cd`.
+- Exact-head source guard is refreshed for `395cc494`: `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening` passed against the vMLX main pin `de07006a2426f482d3c16adea5644c0803efb2cd`.
 - Focused vMLX proof for the open DSV4 action-rail fix passed before repin: `DeepseekV4ChatTemplateFallbackFocusedTests` ran 29 tests with 0 failures against vMLX `bd6c6808`.
 - Exact-head no-sign live model proof is intentionally not promoted as complete for every family on `86304f7e`. Nemo Omni, Ling, ZAYA, DSV4, Qwen, MiniMax, and HY3/Hunyuan need follow-on exact-head rows before claiming the broader post-merge runtime matrix is complete.
 - MiMo V2.5 is explicitly excluded from the current merge gate because the current local MiMo lane is not working/imported enough for a meaningful Osaurus live row.
