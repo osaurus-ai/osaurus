@@ -41,6 +41,23 @@ Each promoted row needs current-head evidence for:
 
 ## Current #1268 merge boundary
 
+### 2026-05-28 10:28 PDT Nemotron Omni MXFP4 live red row
+
+- Current Osaurus PR head checked before this row: `a1d101d6f22dfff41052c1af33975c25663175cd`; CI was green for `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` before this documentation update.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`; app was healthy and cache counters were reset before the run.
+- Cold artifact: `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-20260528-102745`.
+  - `nemotron-omni-nano-mxfp4-crack` turn 1 returned one structured `line_count` call with exact `red\ngreen\nblue` arguments and no visible protocol leak.
+  - Turn 2 returned visible answer `Three lines were counted.` with no extra tool call and no protocol leak.
+  - Turn 3 returned one structured `line_count` call with exact `one\ntwo` arguments and no visible protocol leak.
+  - Cache topology showed 29 layers, 6 KV layers, 23 Mamba/SSM layers, `requires_ssm_companion_state: true`, `companion=ssm`, TurboQuant KV layer count 0, and disk-backed restore required.
+  - This cold row still failed strict cache promotion because disk L2 hits stayed 0 while misses/stores moved.
+- Immediate repeat artifact: `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-repeat-20260528-102806`.
+  - Turn 1 and turn 2 repeated the structured tool call and visible answer behavior.
+  - Turn 3 failed: `tool_choice: "required"` returned visible content `Two lines were counted.` with `finish_reason: "stop"` instead of a structured `tool_calls` finish.
+  - All three repeat responses reported the same `prefix_hash` even though prompt history changed.
+  - The after-snapshot had no Nemotron model cache entry and no requested model resident, so repeat topology/cache evidence is not green.
+- Verdict: Nemo/Nemotron Omni MXFP4 is red/partial for repeat required-tool/cache behavior. Do not fix this with prompt coercion or synthetic required-tool system text; root-cause the template/cache/tool-choice path.
+
 ### 2026-05-28 10:09 PDT current coordination boundary
 
 - Current Osaurus PR: `#1268`, head `80e8749144d50b9783c5cc37a84b1cb03b8fdfa4`, open, not draft, mergeable, not merged by agent.
@@ -50,6 +67,7 @@ Each promoted row needs current-head evidence for:
 - Source cache policy remains `engineSelected` with topology gating: prefix cache, paged KV, block-disk L2, and SSM rederive default on; proven simple full-KV rows may use TurboQuant KV by default, while DSV4, ZAYA/ZAYA-VL, Gemma rotating, Qwen/Ling/Nemotron/HY3-style hybrid and CCA/SSM/path-dependent rows stay native/fp16 unless exact topology proof promotes them.
 - Current no-sign app observation: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app` is healthy with `deepseek-v4-flash-jangtq2` resident, no in-flight requests, and DSV4 cache topology still 43 layers / 41 hybrid-pool / 2 rotating / TurboQuant KV 0.
 - Fresh DSV4 `/v1/messages` tool-result repeat-cache artifact: `/tmp/osaurus-pr1268-80e87491-dsv4-messages-tool-result-repeat-cache-20260528-100913`. Two repeated tool-result follow-up requests returned visible answer `The line count is 3.`, `stop_reason: "end_turn"`, no extra tool call, and disk L2 hits moved from 0 to 1 on the second turn. This proves Messages tool-result follow-up repeat L2 reuse for this surface only; Responses repeat-cache and active-tool DSV4 repeat-cache coverage remain partial.
+- Fresh DSV4 `/v1/responses` tool-result repeat-cache artifact: `/tmp/osaurus-pr1268-a1d101d6-dsv4-responses-tool-result-repeat-cache-clean-20260528-102858`. With DSV4 already resident, two repeated Responses tool-result follow-up requests returned visible line-count answers, no function/tool item, no DSML/tool-marker leak, and disk L2 hits moved `+1` on each repeat with no new misses. This proves Responses tool-result follow-up repeat L2 reuse for this surface only; active-tool DSV4 repeat-cache coverage and omitted-control rows remain partial.
 - No agent should merge Osaurus without explicit user approval. vMLX main is managed directly and contains the runtime fixes consumed by this PR.
 
 ### 2026-05-28 09:03 PDT checked proof boundary
@@ -63,6 +81,7 @@ Each promoted row needs current-head evidence for:
 - DSV4 required-tool proof that is green: `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603`, five turns, explicit `reasoning_effort: "instruct"`, explicit `max_tokens: 256`, exact multiline args, no visible DSML leak, no reasoning leakage, resident model, disk L2 stores.
 - DSV4 `/v1/responses` required-tool proof that is green: `/tmp/osaurus-pr1268-5f358de5-dsv4-responses-required-20260528-091946`, non-streaming Responses request, explicit `reasoning.effort: "instruct"`, explicit `max_output_tokens: 256`, exactly one `function_call` output item for `line_count`, exact multiline args, no visible DSML/tool-marker leak, and healthy resident DSV4 after the request. This row proves Responses route/tool-parser parity only; cache counters stayed at zero, so it is not a DSV4 disk-hit proof.
 - DSV4 `/v1/responses` streaming required-tool proof that is green: `/tmp/osaurus-pr1268-7a7d2273-dsv4-responses-stream-required-20260528-093541`, streaming Responses request, explicit `reasoning.effort: "instruct"`, explicit `max_output_tokens: 256`, reasoning summary events emitted before the final structured `function_call`, final `line_count` arguments exactly `red\ngreen\nblue`, no visible DSML/tool-marker leak, DSV4 topology stayed 43 layers / 41 hybrid-pool / 2 rotating / TurboQuant KV 0, and disk L2 stores moved `+1`. This proves streaming Responses tool-parser/event parity and store behavior, not repeat disk-hit reuse.
+- DSV4 `/v1/responses` tool-result follow-up repeat-cache proof that is green: `/tmp/osaurus-pr1268-a1d101d6-dsv4-responses-tool-result-repeat-cache-clean-20260528-102858`, two identical Responses tool-result follow-up requests, both HTTP 200 with visible line-count answers, no extra function/tool item, no visible DSML/tool-marker leak, DSV4 topology stayed 43 layers / 41 hybrid-pool / 2 rotating / TurboQuant KV 0, and each repeat produced `disk_l2_hits +1` with no new disk L2 misses. This is a repeat disk-hit proof for the Responses tool-result follow-up surface only.
 - DSV4 `/v1/messages` required-tool proof that is green: `/tmp/osaurus-pr1268-7a7d2273-dsv4-messages-required-20260528-093706`, Anthropic-compatible Messages request, explicit `max_tokens: 256`, required `line_count` tool choice, HTTP 200, exactly one `tool_use` content item, exact multiline args, `stop_reason: "tool_use"`, no visible DSML/tool-marker leak, and healthy resident DSV4 after the request. This row proves Messages route/tool-parser parity only; disk L2 stores moved but this is not a repeat disk-hit proof.
 - DSV4 `/v1/messages` tool-result follow-up proof that is green: `/tmp/osaurus-pr1268-f7343290-dsv4-messages-tool-result-20260528-095315`, prior assistant `tool_use` plus user `tool_result`, HTTP 200, visible answer `The line count is 3.`, `stop_reason: "end_turn"`, no extra tool call, no visible DSML/tool-marker leak, and healthy resident DSV4 after the request. This row proves Messages tool-result follow-up parity only; disk L2 stores/misses moved but this is not a repeat disk-hit proof.
 - DSV4 `/v1/messages` tool-result follow-up repeat-cache proof that is green: `/tmp/osaurus-pr1268-80e87491-dsv4-messages-tool-result-repeat-cache-20260528-100913`, two identical Messages tool-result follow-up requests, both HTTP 200 with visible answer `The line count is 3.`, `stop_reason: "end_turn"`, no extra tool call, no visible DSML/tool-marker leak, and turn 2 produced `disk_l2_hits +1` with no new disk L2 misses. This is a repeat disk-hit proof for the Messages tool-result follow-up surface only.

@@ -13,6 +13,17 @@ repo-local live-gate artifacts. The user's requested VL/cache/UI/API/parser/
 defaults/carryover proof still requires real Osaurus app/API evidence before a
 row is production-clear.
 
+## 2026-05-28 Nemotron Omni MXFP4 repeat required-tool red row
+
+- Osaurus head at check: `a1d101d6f22dfff41052c1af33975c25663175cd`.
+- vMLX main / Osaurus pin: `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Cold artifact: `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-20260528-102745`.
+- Repeat artifact: `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-repeat-20260528-102806`.
+- Cold result: first required `line_count` call, tool-result follow-up answer, and second required `line_count` call were structured and leak-free; topology showed 29 layers with 23 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, and TurboQuant KV layer count 0.
+- Repeat result: turn 3 failed because `tool_choice: "required"` produced visible text `Two lines were counted.` with `finish_reason: "stop"` instead of a structured tool call; all three repeat responses reported the same `prefix_hash`, and the after-snapshot no longer had Nemotron resident.
+- Verdict: Nemotron Omni MXFP4 remains red/partial for repeat required-tool/cache behavior. This must not be hidden with prompt coercion or parser repair.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:
@@ -337,6 +348,13 @@ Kimi is intentionally excluded from this matrix for now per current scope.
   visible, DSV4 topology stayed 43 layers / 41 hybrid-pool / 2 rotating /
   TurboQuant KV 0, and disk L2 stores moved `+1`. This proves streaming
   Responses event/tool parity and store behavior, not repeat disk-hit reuse.
+  Responses tool-result follow-up repeat-cache proof is green at
+  `/tmp/osaurus-pr1268-a1d101d6-dsv4-responses-tool-result-repeat-cache-clean-20260528-102858`:
+  with DSV4 already resident, two identical `/v1/responses` tool-result
+  follow-ups returned visible line-count answers, no extra function/tool item,
+  no DSML/tool-marker leak, and each repeat produced `disk_l2_hits +1` with no
+  new misses. This is a repeat disk-hit proof for the Responses tool-result
+  follow-up surface only.
   `/v1/messages` now has a focused Anthropic-compatible route proof at
   `/tmp/osaurus-pr1268-7a7d2273-dsv4-messages-required-20260528-093706`:
   explicit `max_tokens: 256`, required `line_count` tool choice, HTTP 200, one
