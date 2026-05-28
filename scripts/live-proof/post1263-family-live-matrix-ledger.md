@@ -124,6 +124,17 @@ Each promoted row needs current-head evidence for:
 - Cache topology showed 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layer count 0.
 - Repeat cache counters showed disk L2 hit `+1`; ZAYA CCA companion miss `+1` was recorded, so companion-hit depth remains partial even though media repeat L2 proof is green.
 
+### 2026-05-28 10:52 PDT DSV4 JANGTQ-K live red row
+
+- Current Osaurus PR head checked before this row: `50b38bc8b2b4b4ee8b639d16c798de19782cc75d`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-50b38bc8-dsv4-jangtq-k-tool-cache-20260528-104417`.
+- `deepseek-v4-flash-jangtq-k` turn 1 took 517.5 seconds and ended with `finish_reason: "length"` instead of a structured tool call.
+- Visible content was empty, but `reasoning_content` looped over line-count interpretation of `red\ngreen\nblue` and never emitted DSML.
+- Cache topology was still detected correctly: 43 layers, 41 hybrid-pool layers, 2 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0.
+- This row failed before tool-result history could be tested, and disk L2 hits stayed 0.
+- Verdict: DSV4 JANGTQ-K is red under the generic required-tool harness. DSV4 JANGTQ2 remains the green production proof row under explicit `reasoning_effort: instruct` and `max_tokens: 256`; do not infer sibling readiness.
+
 ### 2026-05-28 10:09 PDT current coordination boundary
 
 - Current Osaurus PR: `#1268`, head `80e8749144d50b9783c5cc37a84b1cb03b8fdfa4`, open, not draft, mergeable, not merged by agent.

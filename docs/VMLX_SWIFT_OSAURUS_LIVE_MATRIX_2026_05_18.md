@@ -79,6 +79,15 @@ row is production-clear.
 - Topology: 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: ZAYA-VL JANGTQ4 is green for this image/media repeat-cache row; CCA companion-hit depth, sibling variants, and video rows remain partial.
 
+## 2026-05-28 DSV4 JANGTQ-K required-tool red row
+
+- Osaurus head at check: `50b38bc8b2b4b4ee8b639d16c798de19782cc75d`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-50b38bc8-dsv4-jangtq-k-tool-cache-20260528-104417`.
+- Result: turn 1 took 517.5 seconds and ended with `finish_reason: "length"` instead of a structured tool call; visible content was empty and reasoning text looped over interpreting `red\ngreen\nblue`.
+- Topology: 43 layers, 41 hybrid-pool layers, 2 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: DSV4 JANGTQ-K is red under the generic required-tool harness. Do not infer readiness from the JANGTQ2 proof row.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:
