@@ -263,7 +263,7 @@ These are explicit inverse rows, not nice-to-have manual notes:
 
 | Model path or family | Runtime class/topology | Current evidence | Required before production-clear |
 |---|---|---|---|
-| `/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K` | DSV4 Flash, SWA+CSA+HSA `DeepseekV4Cache`, DSML tools | vMLX main `76e55f59935f22c3bb2f28055ae8ecebd2e7a355` skips disk-backed path-dependent cache restore for active tool requests. Osaurus #1268 head `2d461397` no-sign Release proof artifact `/tmp/osaurus-pr1268-2d461397-dsv4-required-repeat-20260528-080807`: 5/5 required `line_count` repeats produced one structured tool call, exact `red\\ngreen\\nblue` args, no DSML leak, no `_error`; topology showed 43 layers, 41 hybrid pool, 2 rotating, TurboQuant KV 0, disk L2 stores 5/hits 0. | Final Osaurus UI renderer screenshot/log, `/v1/responses` and `/v1/messages` rows if mapped, DSV4 settings CLI preview, and `reasoning_effort=max` app proof. |
+| `/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K` | DSV4 Flash, SWA+CSA+HSA `DeepseekV4Cache`, DSML tools | vMLX main `76e55f59935f22c3bb2f28055ae8ecebd2e7a355` skips disk-backed path-dependent cache restore for active tool requests. Osaurus #1268 head `964688f3` no-sign Release proof artifact `/tmp/osaurus-pr1268-964688f3-dsv4-required-repeat-20260528-082942`: 5/5 required `line_count` repeats produced one structured tool call, exact `red\\ngreen\\nblue` args, no DSML leak, no `_error`; topology showed 43 layers, 41 hybrid pool, 2 rotating, TurboQuant KV 0, disk L2 stores 5/hits 0. | Final Osaurus UI renderer screenshot/log, `/v1/responses` and `/v1/messages` rows if mapped, DSV4 settings CLI preview, and `reasoning_effort=max` app proof. |
 | `/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-JANGTQ-CRACK` | Qwen3.6 MoE VL, Qwen3VLProcessor, path-dependent cache | vmlx live prod/cache/VL/media-salt artifacts exist. | Osaurus app chat + API rows for image/text/video, reasoning on/off, generation defaults, saved settings, and cache stats. |
 | `/Users/eric/models/JANGQ/Qwen3.6-27B-MXFP4-MTP` and MXFP8/35B variants | Qwen MTP/VL only when tensors plus `vmlx_mtp_tuning.json` are valid | vmlx source/tests require tuning and fail closed without it; fresh census proves 27B MXFP4 selects D2, 27B MXFP8/35B variants select D3, all from tensor/tuning evidence. | Osaurus status UI/API must show MTP off/on reason, use `vmlx_mtp_tuning.json`, and prove MTP on/off speed/coherence/cache rows. |
 | `/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK` | Gemma4 VLM/Harmony reasoning/tool parser | vmlx parser/source contracts exist. | Live Osaurus image/text/video rows, Harmony no-leak API rows, Gemma settings defaults, and cache stats. |
@@ -307,7 +307,7 @@ Kimi is intentionally excluded from this matrix for now per current scope.
   text. Treat it as an open runtime/tokenizer/template investigation, not a
   sampler-default workaround.
 - DSV4 now has live Osaurus required-tool repeat proof from #1268 head
-  `2d461397` with exact multiline args and no visible DSML leak. The active
+  `964688f3` with exact multiline args and no visible DSML leak. The active
   tool path intentionally produced disk stores but no disk hits after vMLX
   `76e55f5`, because disk-backed path-dependent restore is skipped for active
   tool requests. The final settings renderer still needs visible UI/CLI
