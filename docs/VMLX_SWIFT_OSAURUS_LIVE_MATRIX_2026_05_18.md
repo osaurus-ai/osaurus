@@ -69,6 +69,16 @@ row is production-clear.
 - Topology: 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: Qwen 27B MXFP4 CRACK MTP is green for this parser/tool/history row, but cache proof remains partial because disk L2 hits stayed 0 while misses/stores moved.
 
+## 2026-05-28 ZAYA-VL JANGTQ4 red image media/cache green row
+
+- Osaurus head at check: `b780e33737cbf51d3045c97c694a8ee7104caebb`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-b780e337-zaya-vl-jangtq4-red-media-cache-20260528-104101`.
+- Payload: generated 64x64 red PNG sent as an OpenAI-compatible image content part.
+- Result: first response `Red`, repeat response `Red`, stable `prefix_hash`, no protocol leakage, repeat disk L2 hit `+1`.
+- Topology: 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: ZAYA-VL JANGTQ4 is green for this image/media repeat-cache row; CCA companion-hit depth, sibling variants, and video rows remain partial.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:

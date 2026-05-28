@@ -19,6 +19,7 @@ Current boundary:
 - Fresh MiniMax M2.7 small JANGTQ row is green for this row: `/tmp/osaurus-pr1268-0bba84c9-minimax-small-jangtq-tool-cache-20260528-103659` proves exact structured required tool calls before and after tool-result history, visible follow-up answer, no protocol leakage, 62 full-KV layers, and disk L2 hit `+1`.
 - Fresh Gemma4 JANG_4M row is red: `/tmp/osaurus-pr1268-213d0ffd-gemma4-jang4m-tool-cache-20260528-103834` failed on turn 1 because required tool choice returned `finish_reason: "stop"` with empty visible content and `reasoning_content: "thought<tool_call|>"` instead of a structured `tool_calls` response; topology was correctly detected as 30 layers with 25 rotating KV layers and disk-backed restore required.
 - Fresh Qwen 27B MXFP4 CRACK MTP row is parser/tool green but cache-partial: `/tmp/osaurus-pr1268-2ac8d31f-qwen27-mxfp4-crack-mtp-tool-cache-20260528-103947` proves exact structured required tool calls before and after tool-result history, visible follow-up answer, no protocol leakage, 64-layer topology with 48 Mamba/SSM layers and 16 KV layers; however disk L2 hits stayed 0 while misses/stores moved.
+- Fresh ZAYA-VL JANGTQ4 media row is green for image/cache repeat: `/tmp/osaurus-pr1268-b780e337-zaya-vl-jangtq4-red-media-cache-20260528-104101` proves a real generated red PNG payload, first/repeat visible `Red` answers, no protocol leakage, stable prefix hash, 40 ZAYA CCA layers, and disk L2 hit `+1`; ZAYA CCA companion-hit depth remains partial because the repeat row recorded companion miss rather than hit.
 
 This file is a completion audit against the full runtime objective. It is not a
 marketing summary. A row marked partial means the PR documents or implements
@@ -60,7 +61,7 @@ or surface.
 | MiMo | Red/excluded | No meaningful Osaurus live row because current local MiMo lane is not working/imported enough. |
 | Ling/Bailing | Partial/red | Ling JANGTQ2 parser/tool/history row is green with SSM topology, but disk L2 hit proof is still partial; Bailing availability and long-prompt/runtime rows remain incomplete. |
 | ZAYA text | Red/partial | Current JANGTQ4 row proves CCA topology and leak-free structured tool envelopes, but turn 3 argument fidelity failed with ` ... ` and disk L2 hits stayed 0; direct-mode and companion-hit depth are not production-clear. |
-| ZAYA VL | Partial | Real image/media rows pass for selected artifacts; CCA companion-hit depth and sibling coverage remain. |
+| ZAYA VL | Partial/green selected media row | JANGTQ4 red-image row is green for real media payload, visible answer, stable prefix hash, no protocol leak, and disk L2 hit `+1`; CCA companion-hit depth and sibling/video coverage remain. |
 | Nemotron Omni | Red/partial | MXFP4 cold row proves first structured tool turn, tool-result answer, second structured tool turn, no protocol leak, and SSM topology, but repeat row ignored required tool choice on turn 3 and did not produce disk L2 reuse proof; audio/video/resume rows also remain. |
 | HY3/Hunyuan | Red | No imported local model id/live Osaurus row at the current boundary. |
 

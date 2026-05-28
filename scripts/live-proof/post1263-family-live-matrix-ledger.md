@@ -113,6 +113,17 @@ Each promoted row needs current-head evidence for:
 - Cache topology showed 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, and TurboQuant KV layer count 0.
 - This row is green for parser/tool/history behavior but cache-partial because disk L2 hits stayed 0 while misses/stores moved.
 
+### 2026-05-28 10:41 PDT ZAYA-VL JANGTQ4 red image media/cache green row
+
+- Current Osaurus PR head checked before this row: `b780e33737cbf51d3045c97c694a8ee7104caebb`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-b780e337-zaya-vl-jangtq4-red-media-cache-20260528-104101`.
+- Harness generated a real 64x64 red PNG and sent it as an OpenAI image content part.
+- First response was `Red`, `finish_reason: "stop"`, no protocol leak, token rate about 0.155 tok/s.
+- Repeat response was `Red`, stable `prefix_hash`, no protocol leak, token rate about 2.30 tok/s.
+- Cache topology showed 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layer count 0.
+- Repeat cache counters showed disk L2 hit `+1`; ZAYA CCA companion miss `+1` was recorded, so companion-hit depth remains partial even though media repeat L2 proof is green.
+
 ### 2026-05-28 10:09 PDT current coordination boundary
 
 - Current Osaurus PR: `#1268`, head `80e8749144d50b9783c5cc37a84b1cb03b8fdfa4`, open, not draft, mergeable, not merged by agent.
