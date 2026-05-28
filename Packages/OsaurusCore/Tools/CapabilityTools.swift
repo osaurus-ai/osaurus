@@ -138,12 +138,23 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         // tokenises as a longer, less precise sentence the embedder
         // doesn't recognise. The whole point of accepting an array is
         // "OR these searches", not "concatenate them".
+        //
+        // Default agent takes the tools-only fast path: methods and
+        // skills are off-limits on that surface, so ranking them is
+        // pure wasted embedder work.
         let perQueryResults: [CapabilitySearchResults] = await withTaskGroup(
             of: CapabilitySearchResults.self
         ) { group in
             for q in queries {
                 group.addTask {
-                    await CapabilitySearch.search(
+                    if isDefaultAgent {
+                        return await CapabilitySearch.searchToolsOnly(
+                            query: q,
+                            topK: Self.perQueryTopK.tools,
+                            allowedToolNames: effectiveAllowedToolNames
+                        )
+                    }
+                    return await CapabilitySearch.search(
                         query: q,
                         topK: Self.perQueryTopK,
                         allowedToolNames: effectiveAllowedToolNames
@@ -156,19 +167,7 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             return collected
         }
 
-        var hits = Self.mergeHits(perQueryResults)
-        // The default agent doesn't ship methods or skills — strip both
-        // lanes so `capabilities_search` returns *only* configure
-        // write tools. Keeps the schema deterministic for small models
-        // that otherwise might try to `capabilities_load("method/...")`
-        // after a search hit and get confused by the load-side refusal.
-        if isDefaultAgent {
-            hits = CapabilitySearchResults(
-                methods: [],
-                tools: hits.tools,
-                skills: []
-            )
-        }
+        let hits = Self.mergeHits(perQueryResults)
 
         if hits.isEmpty {
             let queryList = queries.map { "'\($0)'" }.joined(separator: ", ")

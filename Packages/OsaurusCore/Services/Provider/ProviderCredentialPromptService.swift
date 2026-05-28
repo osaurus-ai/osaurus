@@ -65,6 +65,8 @@ public struct ProviderCredentialRequest: Sendable {
 public enum ProviderCredentialPromptService {
     private static var window: NSPanel?
     private static var closeObserver: NSObjectProtocol?
+    private static var localKeyMonitor: Any?
+    private static var globalKeyMonitor: Any?
     private static var pendingTask: Task<Void, Never>?
 
     /// Hook used by tests to short-circuit the sheet. When set,
@@ -113,17 +115,28 @@ public enum ProviderCredentialPromptService {
         }
 
         let themeManager = ThemeManager.shared
+        let theme = themeManager.currentTheme
+
+        // Sheet owns its own clip + glass edge + shadow. The host
+        // just needs breathing room around the card so the SwiftUI
+        // drop shadow (radius 12, y: 6) doesn't get clipped at the
+        // panel's content edge — any clipping there would otherwise
+        // make AppKit trace a rectangular alpha halo at the corners.
         let view = ProviderCredentialPromptSheet(
             request: request,
             onComplete: resolve
         )
-        .environment(\.theme, themeManager.currentTheme)
+        .padding(24)
+        .environment(\.theme, theme)
 
         let hosting = NSHostingController(rootView: view)
 
+        // Borderless modal — matches ToolPermissionView. Dropping
+        // `.titled` and `.closable` removes the macOS traffic-light
+        // chrome that doesn't belong on a small floating panel.
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 360),
-            styleMask: [.fullSizeContentView, .titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 420),
+            styleMask: [.fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -131,7 +144,11 @@ public enum ProviderCredentialPromptService {
         panel.titlebarAppearsTransparent = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // SwiftUI handles the drop shadow inside the sheet. Leaving the
+        // AppKit window shadow on would draw a second, rectangular halo
+        // around the rounded card (AppKit traces visible alpha, which
+        // becomes rectangular at the edge of the SwiftUI shadow blur).
+        panel.hasShadow = false
         panel.level = .modalPanel
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = true
@@ -142,8 +159,8 @@ public enum ProviderCredentialPromptService {
         hosting.view.layoutSubtreeIfNeeded()
         let fitting = hosting.view.fittingSize
         let size = NSSize(
-            width: max(fitting.width, 520),
-            height: max(fitting.height, 380)
+            width: max(fitting.width, 580),
+            height: fitting.height
         )
 
         let mouse = NSEvent.mouseLocation
@@ -170,14 +187,44 @@ public enum ProviderCredentialPromptService {
             onClose(.cancelled)
         }
 
+        // Local-only Esc monitor so the user can dismiss with the
+        // keyboard regardless of which control has focus. We
+        // intentionally do NOT intercept Return here — the primary
+        // button already exposes Cmd+Return via `.keyboardShortcut`,
+        // and capturing plain Return at this level would interfere
+        // with text-field commit semantics.
+        nonisolated(unsafe) let onEsc = resolve
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 {  // Escape
+                onEsc(.cancelled)
+                return nil
+            }
+            return event
+        }
+
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            panel.makeKey()
+            if let contentView = panel.contentView {
+                panel.makeFirstResponder(contentView)
+            }
+        }
     }
 
     private static func dismiss() {
         if let observer = closeObserver {
             NotificationCenter.default.removeObserver(observer)
             closeObserver = nil
+        }
+        if let monitor = localKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            localKeyMonitor = nil
+        }
+        if let monitor = globalKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalKeyMonitor = nil
         }
         window?.orderOut(nil)
         window = nil

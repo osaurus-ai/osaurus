@@ -516,6 +516,13 @@ public struct SystemPromptComposer: Sendable {
         cachedPreflight: PreflightResult?,
         trace: TTFTTrace?
     ) async -> PreflightResult {
+        // Default agent gets a fixed 8-tool baseline; any preflight
+        // picks would be stripped by `resolveTools` anyway, so the
+        // LLM selector call would burn tokens for no schema effect.
+        if agentId == Agent.defaultId {
+            trace?.set("preflightSource", "default_agent_skipped")
+            return .empty
+        }
         if let cachedPreflight {
             trace?.set("preflightSource", "cached")
             return cachedPreflight

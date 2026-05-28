@@ -653,7 +653,7 @@ final class ChatSession: ObservableObject {
 
     private func rebuildVisibleBlocksImpl() {
         let agent = AgentManager.shared.agent(for: agentId ?? Agent.defaultId)
-        let displayName = agent?.isBuiltIn == true ? "Assistant" : (agent?.name ?? "Assistant")
+        let displayName = agent?.isBuiltIn == true ? L("Osaurus") : (agent?.name ?? L("Osaurus"))
         let streamingTurnId = isStreaming ? turns.last?.id : nil
 
         if MockChatData.isEnabled {

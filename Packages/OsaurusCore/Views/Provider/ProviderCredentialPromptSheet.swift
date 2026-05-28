@@ -3,12 +3,13 @@
 //  osaurus
 //
 //  SwiftUI sheet driven by `ProviderCredentialPromptService`. Renders
-//  curated, provider-specific instructions, collects either an API key
+//  curated, provider-branded instructions, collects either an API key
 //  (with optional extra fields like Azure endpoint/deployment) or
 //  drives an OAuth sign-in, and surfaces an inline "Test connection"
-//  button so the model can ask the user to verify credentials before
-//  persisting. The secret is handed back through the `onComplete`
-//  closure — it never leaves this view or enters LLM context.
+//  state on the primary CTA so the model can ask the user to verify
+//  credentials before persisting. The secret is handed back through
+//  the `onComplete` closure — it never leaves this view or enters
+//  LLM context.
 //
 
 import AppKit
@@ -30,6 +31,16 @@ struct ProviderCredentialPromptSheet: View {
     @State private var signInError: String?
     @State private var oauthTokens: RemoteProviderOAuthTokens?
 
+    /// Stable preset for branding/help. Falls back to `.custom` when
+    /// the catalog entry didn't ship a `presetId` (Osaurus, etc.) —
+    /// `.custom` skips the gradient and the help-steps card.
+    private var preset: ProviderPreset {
+        ProviderPreset(rawValue: request.instructions.presetId) ?? .custom
+    }
+
+    /// 95%-opacity diagonal gradient over `cardBackground`. Same shape
+    /// `ToolPermissionView` uses so floating modal cards across the app
+    /// share one visual identity (gradient base + glass edge + shadow).
     private var cardGradient: LinearGradient {
         LinearGradient(
             colors: [theme.cardBackground, theme.cardBackground.opacity(0.95)],
@@ -38,20 +49,39 @@ struct ProviderCredentialPromptSheet: View {
         )
     }
 
+    private var hasBrandedPreset: Bool {
+        preset != .custom
+    }
+
     private var isOAuthFlow: Bool {
         request.instructions.authMethod == .oauth
     }
 
-    private var saveDisabled: Bool {
-        if isOAuthFlow {
-            return oauthTokens == nil || isSigningIn
-        }
-        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
-        for field in request.instructions.extraFields where field.isRequired {
-            let value = extraFieldValues[field.key] ?? ""
-            if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
-        }
-        return false
+    private var isCodexOAuth: Bool {
+        isOAuthFlow && request.providerType == .openAICodex
+    }
+
+    private var canSave: Bool {
+        if isOAuthFlow { return oauthTokens != nil }
+        guard !trimmed(apiKey).isEmpty else { return false }
+        return request.instructions.extraFields
+            .filter { $0.isRequired }
+            .allSatisfy { !trimmed(extraFieldValue(for: $0.key)).isEmpty }
+    }
+
+    /// True once we've either tested successfully or completed OAuth —
+    /// the primary CTA flips to "Save" in this state.
+    private var hasVerified: Bool {
+        if isOAuthFlow { return oauthTokens != nil }
+        return testSucceededModelCount != nil
+    }
+
+    private func extraFieldValue(for key: String) -> String {
+        extraFieldValues[key] ?? ""
+    }
+
+    private func trimmed(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var body: some View {
@@ -59,151 +89,223 @@ struct ProviderCredentialPromptSheet: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(cardGradient)
 
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(spacing: 0) {
                 header
-                instructionsBlock
-                Divider().background(theme.primaryBorder)
-                if isOAuthFlow {
-                    oauthBody
-                } else {
-                    apiKeyBody
+                bodyDivider
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if hasBrandedPreset {
+                            helpCard
+                        } else if let hint = request.instructions.keyFormatHint {
+                            unbrandedHint(hint)
+                        }
+                        if isOAuthFlow {
+                            oauthBody
+                        } else {
+                            apiKeyBody
+                        }
+                        if case .rotate = request.mode {
+                            rotateFooterNote
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Propagate the natural content height up through the
+                    // ScrollView so the outer panel hugs short forms (no
+                    // dead space) while Azure's longer layout still gets
+                    // to scroll inside `scrollMaxHeight`.
+                    .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 0)
-                actionButtons
+                .frame(maxHeight: scrollMaxHeight)
+                footer
             }
-            .padding(20)
         }
-        .frame(minWidth: 480, idealWidth: 520, minHeight: 360)
+        .frame(width: 540)
+        .fixedSize(horizontal: false, vertical: true)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(theme.primaryBorder, lineWidth: 0.5)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        )
+        // Subtle ambient shadow — just enough lift to separate the
+        // card from the window behind without the bloomy halo
+        // `ToolPermissionView` uses for its more dramatic floating
+        // permission prompt.
+        .shadow(
+            color: theme.shadowColor.opacity(theme.shadowOpacity),
+            radius: 12,
+            x: 0,
+            y: 6
         )
     }
+
+    /// Hairline divider under the header. Matches the rule
+    /// `ToolPermissionView` draws above its action band so every modal
+    /// card uses the same separator weight.
+    private var bodyDivider: some View {
+        Rectangle()
+            .fill(theme.primaryBorder.opacity(0.3))
+            .frame(height: 1)
+    }
+
+    /// Ceiling for the scroll area. Picked so the tallest realistic
+    /// form (Azure: endpoint + deployment + API key + test pill) fits
+    /// without scrolling, and anything longer scrolls cleanly without
+    /// pushing the footer off-screen.
+    private var scrollMaxHeight: CGFloat { 460 }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: isOAuthFlow ? "person.badge.key.fill" : "key.fill")
-                .font(.system(size: 24, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .frame(width: 36, height: 36)
-                .background(theme.accentColor.opacity(0.12), in: Circle())
+        HStack(alignment: .center, spacing: 14) {
+            brandedIcon
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(headerTitle)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Text(headerSubtitle)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
             }
 
-            Spacer()
-
-            Button {
-                onComplete(.cancelled)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 22, height: 22)
-                    .background(theme.primaryBorder.opacity(0.4), in: Circle())
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+    }
+
+    @ViewBuilder
+    private var brandedIcon: some View {
+        ZStack {
+            if hasBrandedPreset {
+                LinearGradient(
+                    colors: preset.gradient,
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                ProviderIcon(preset: preset, size: 20, color: .white)
+            } else {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.accentColor.opacity(0.12))
+                Image(systemName: isOAuthFlow ? "person.badge.key.fill" : "key.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+            }
+        }
+        .frame(width: 44, height: 44)
+    }
+
+    private var isRotateMode: Bool {
+        if case .rotate = request.mode { return true }
+        return false
     }
 
     private var headerTitle: String {
-        switch request.mode {
-        case .addNew:
-            return String(format: L("Connect %@"), request.instructions.displayName)
-        case .rotate:
-            return String(format: L("Update %@ credentials"), request.instructions.displayName)
-        }
+        let format = isRotateMode ? L("Update %@ credentials") : L("Connect %@")
+        return String(format: format, request.instructions.displayName)
     }
 
     private var headerSubtitle: String {
-        switch request.mode {
-        case .addNew:
-            return L("Required by the chat assistant to add this provider.")
-        case .rotate:
-            return L("Rotate or replace the credentials stored in Keychain.")
+        isRotateMode
+            ? L("Rotate or replace the credentials stored in Keychain.")
+            : L("Required by the chat assistant to add this provider.")
+    }
+
+    // MARK: - Help card
+
+    private var helpCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(L("Don't have a key?"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+
+            if let hint = request.instructions.keyFormatHint {
+                helpStep(number: 1, text: hint)
+            }
+
+            ProviderHelpLinks(
+                preset: preset,
+                accentColor: theme.accentColor,
+                secondaryTextColor: theme.secondaryText
+            )
+            .padding(.top, 2)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func helpStep(number: Int, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number).")
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 16, alignment: .trailing)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    // MARK: - Instructions
-
-    @ViewBuilder
-    private var instructionsBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let hint = request.instructions.keyFormatHint {
-                Text(hint)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-            }
-            if let url = request.instructions.getKeyURL {
-                Button {
-                    NSWorkspace.shared.open(url)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "safari")
-                            .font(.system(size: 11, weight: .medium))
-                        Text(L("Open provider page"))
-                            .font(.system(size: 12, weight: .medium))
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .foregroundColor(theme.accentColor)
-                }
-                .buttonStyle(.plain)
-            }
+    /// Plain info-icon label. No card background — the inputs below already
+    /// use `inputBackground`, and wrapping this in another rounded rect made
+    /// the hint read like an empty input field.
+    private func unbrandedHint(_ hint: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .padding(.top, 1)
+            Text(hint)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     // MARK: - API key body
 
-    @ViewBuilder
     private var apiKeyBody: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             ForEach(request.instructions.extraFields, id: \.key) { field in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(field.label + (field.isRequired ? " *" : ""))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                    TextField(
-                        field.placeholder,
-                        text: Binding(
-                            get: { extraFieldValues[field.key] ?? "" },
-                            set: { extraFieldValues[field.key] = $0 }
-                        )
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13))
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(L("API key *"))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                SecureField(L("sk-…"), text: $apiKey)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13, design: .monospaced))
-            }
-
-            if let error = testError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.errorColor)
-            } else if let count = testSucceededModelCount {
-                Label(
-                    String(format: L("Connected. Found %d model(s)."), count),
-                    systemImage: "checkmark.seal.fill"
+                ProviderTextField(
+                    label: field.label + (field.isRequired ? " *" : ""),
+                    placeholder: field.placeholder,
+                    text: Binding(
+                        get: { extraFieldValue(for: field.key) },
+                        set: { extraFieldValues[field.key] = $0 }
+                    ),
+                    isMonospaced: field.key == "host"
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.successColor)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L("API KEY *"))
+                    .textCase(.uppercase)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                    .tracking(0.5)
+
+                ProviderSecureField(placeholder: "sk-…", text: $apiKey)
             }
         }
     }
@@ -214,102 +316,243 @@ struct ProviderCredentialPromptSheet: View {
     private var oauthBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             if oauthTokens != nil {
-                Label(L("Signed in. Ready to save."), systemImage: "checkmark.seal.fill")
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.successColor)
+                signedInPill
             } else {
                 Text(L("Click the button below to sign in. A browser window will open."))
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
 
-                Button {
-                    startOAuthSignIn()
-                } label: {
-                    HStack(spacing: 8) {
-                        if isSigningIn {
-                            ProgressView()
-                                .scaleEffect(0.6)
-                                .frame(width: 14, height: 14)
-                        } else {
-                            Image(systemName: "person.badge.shield.checkmark.fill")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        Text(String(format: L("Sign in with %@"), request.instructions.displayName))
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 14)
-                    .background(theme.accentColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .foregroundColor(theme.cardBackground)
-                }
-                .buttonStyle(.plain)
-                .disabled(isSigningIn)
+                oauthSignInButton
             }
 
             if let error = signInError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.errorColor)
+                inlineError(error)
             }
         }
     }
 
-    // MARK: - Action buttons
+    private var oauthSignInButton: some View {
+        Button(action: startOAuthSignIn) {
+            HStack(spacing: 8) {
+                if isSigningIn {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .frame(width: 14, height: 14)
+                } else {
+                    Image(systemName: "person.badge.shield.checkmark.fill")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                Text(String(format: L("Sign in with %@"), request.instructions.displayName))
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .foregroundColor(.white)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(oauthButtonBackground)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isSigningIn)
+    }
 
-    @ViewBuilder
-    private var actionButtons: some View {
-        HStack(spacing: 10) {
-            if !isOAuthFlow {
+    /// OAuth button background: use the ChatGPT/OpenAI brand gradient
+    /// for the Codex path so the sign-in card visually matches what
+    /// the user will see in the browser. Other OAuth providers fall
+    /// back to the active accent.
+    private var oauthButtonBackground: AnyShapeStyle {
+        if isCodexOAuth {
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: ProviderPreset.openai.gradient,
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        }
+        return AnyShapeStyle(theme.accentColor)
+    }
+
+    private var signedInPill: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13))
+                .foregroundColor(theme.successColor)
+            Text(L("Signed in. Ready to save."))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.successColor)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.successColor.opacity(0.12))
+        )
+    }
+
+    private func inlineError(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundColor(theme.errorColor)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(theme.errorColor)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var rotateFooterNote: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            Text(String(format: L("Replacing key for %@. Cancel keeps the existing key."), request.providerName))
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(2)
+        }
+    }
+
+    // MARK: - Footer
+
+    private var footer: some View {
+        VStack(spacing: 0) {
+            // Single hairline rule above the action band — same weight
+            // as `bodyDivider` so the modal card reads as one surface
+            // with section dividers rather than stacked panels.
+            Rectangle()
+                .fill(theme.primaryBorder.opacity(0.3))
+                .frame(height: 1)
+
+            HStack(spacing: 12) {
+                testResultBadge
+
+                Spacer(minLength: 0)
+
                 Button {
-                    runTestConnection()
+                    onComplete(.cancelled)
                 } label: {
-                    HStack(spacing: 6) {
-                        if isTesting {
-                            ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
-                        } else {
-                            Image(systemName: "antenna.radiowaves.left.and.right")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        Text(L("Test"))
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 12)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .strokeBorder(theme.accentColor.opacity(0.4), lineWidth: 1)
-                    )
+                    Text(L("Cancel"))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.tertiaryBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
                 }
                 .buttonStyle(.plain)
-                .disabled(saveDisabled || isTesting)
+                .keyboardShortcut(.cancelAction)
+
+                primaryButton
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+        }
+    }
 
-            Spacer()
-
-            Button(L("Cancel")) {
-                onComplete(.cancelled)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
-            .font(.system(size: 13))
-            .foregroundColor(theme.secondaryText)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 12)
-
-            Button {
-                save()
-            } label: {
-                Text(L("Save"))
+    private var primaryButton: some View {
+        Button(action: primaryAction) {
+            HStack(spacing: 6) {
+                if isTesting || isSigningIn {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 14, height: 14)
+                }
+                Text(primaryButtonTitle)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.cardBackground)
-                    .padding(.vertical, 7)
-                    .padding(.horizontal, 16)
-                    .background(theme.accentColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.defaultAction)
-            .disabled(saveDisabled)
+            .foregroundColor(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(primaryButtonColor)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!primaryButtonEnabled)
+        .keyboardShortcut(.return, modifiers: .command)
+    }
+
+    @ViewBuilder
+    private var testResultBadge: some View {
+        if let count = testSucceededModelCount {
+            badgePill(
+                icon: "checkmark.circle.fill",
+                text: String(format: L("%d model(s) found"), count),
+                tint: theme.successColor
+            )
+        } else if let error = testError {
+            badgePill(
+                icon: "xmark.circle.fill",
+                text: error,
+                tint: theme.errorColor
+            )
+        }
+    }
+
+    private func badgePill(icon: String, text: String, tint: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundColor(tint)
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(tint)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(tint.opacity(0.12))
+        )
+    }
+
+    private var primaryButtonTitle: String {
+        if isOAuthFlow {
+            if isSigningIn { return L("Signing in…") }
+            if oauthTokens != nil { return L("Save") }
+            return String(format: L("Sign in with %@"), request.instructions.displayName)
+        }
+        if isTesting { return L("Testing…") }
+        if hasVerified { return L("Save") }
+        if testError != nil { return L("Retry") }
+        return L("Test Connection")
+    }
+
+    /// Mirror the edit sheet's color story: green when verified,
+    /// red after a failure to draw attention to the retry, accent
+    /// while neutral.
+    private var primaryButtonColor: Color {
+        if hasVerified { return theme.successColor }
+        if testError != nil { return theme.errorColor }
+        return theme.accentColor
+    }
+
+    private var primaryButtonEnabled: Bool {
+        guard !isTesting, !isSigningIn else { return false }
+        // OAuth flow always exposes a click target (sign in or save);
+        // API-key flow needs the required fields filled.
+        return isOAuthFlow || canSave
+    }
+
+    private func primaryAction() {
+        if isOAuthFlow {
+            if oauthTokens != nil { save() } else { startOAuthSignIn() }
+        } else if hasVerified {
+            save()
+        } else {
+            runTestConnection()
         }
     }
 
@@ -320,87 +563,81 @@ struct ProviderCredentialPromptSheet: View {
             onComplete(.oauthTokens(tokens))
             return
         }
-        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        let key = trimmed(apiKey)
+        guard !key.isEmpty else { return }
+        onComplete(.apiKey(key: key, headers: collectedExtraHeaders()))
+    }
 
-        var headers: [String: String]? = nil
-        if !request.instructions.extraFields.isEmpty {
-            var collected: [String: String] = [:]
-            for field in request.instructions.extraFields {
-                let value = (extraFieldValues[field.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if !value.isEmpty {
-                    collected[field.key] = value
-                }
-            }
-            headers = collected.isEmpty ? nil : collected
+    /// Snapshot of the non-secret extra fields (Azure endpoint, host, etc.)
+    /// keyed by their catalog id. Returns nil when nothing was filled in so
+    /// callers can persist a "no extra headers" record cleanly.
+    private func collectedExtraHeaders() -> [String: String]? {
+        let pairs = request.instructions.extraFields.compactMap { field -> (String, String)? in
+            let value = trimmed(extraFieldValue(for: field.key))
+            return value.isEmpty ? nil : (field.key, value)
         }
-        onComplete(.apiKey(key: trimmed, headers: headers))
+        return pairs.isEmpty ? nil : Dictionary(uniqueKeysWithValues: pairs)
     }
 
     private func startOAuthSignIn() {
         isSigningIn = true
         signInError = nil
         Task { @MainActor in
+            defer { isSigningIn = false }
             do {
                 let outcome = try await OAuthSignInCoordinator.signIn(
                     providerType: request.providerType
                 )
-                isSigningIn = false
                 switch outcome {
-                case .tokens(let tokens):
-                    self.oauthTokens = tokens
-                case .apiKey(let key):
-                    onComplete(.apiKey(key: key))
+                case .tokens(let tokens): oauthTokens = tokens
+                case .apiKey(let key): onComplete(.apiKey(key: key))
                 }
             } catch {
-                isSigningIn = false
-                signInError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                signInError = readableMessage(for: error)
             }
         }
     }
 
+    private func readableMessage(for error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
     private func runTestConnection() {
-        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        let key = trimmed(apiKey)
+        guard !key.isEmpty else { return }
 
         // Build the same temp provider shape `RemoteProviderEditSheet` does
         // so the inline test result accurately reflects what we'll persist.
         let providerType = request.providerType
-        let storageAuth = request.instructions.storageAuthType
-        let host = (extraFieldValues["host"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let deployment = (extraFieldValues["deployment"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let (defaultHost, defaultProtocol, defaultPort, defaultBasePath) = providerTypeDefaults(providerType)
-        let effectiveHost = host.isEmpty ? defaultHost : host
-        let basePath: String
-        switch providerType {
-        case .azureOpenAI:
-            basePath = deployment.isEmpty ? defaultBasePath : "/openai/deployments/\(deployment)/v1"
-        default:
-            basePath = defaultBasePath
-        }
+        let defaults = providerTypeDefaults(providerType)
+        let host = trimmed(extraFieldValue(for: "host"))
+        let deployment = trimmed(extraFieldValue(for: "deployment"))
+        let effectiveHost = host.isEmpty ? defaults.host : host
+        let basePath: String = {
+            guard providerType == .azureOpenAI, !deployment.isEmpty else { return defaults.basePath }
+            return "/openai/deployments/\(deployment)/v1"
+        }()
 
         isTesting = true
         testError = nil
         testSucceededModelCount = nil
 
         Task { @MainActor in
+            defer { isTesting = false }
             do {
                 let models = try await RemoteProviderManager.shared.testConnection(
                     host: effectiveHost,
-                    providerProtocol: defaultProtocol,
-                    port: defaultPort,
+                    providerProtocol: defaults.providerProtocol,
+                    port: defaults.port,
                     basePath: basePath,
-                    authType: storageAuth,
+                    authType: request.instructions.storageAuthType,
                     providerType: providerType,
-                    apiKey: trimmed,
+                    apiKey: key,
                     headers: [:]
                 )
-                isTesting = false
                 testSucceededModelCount = models.count
             } catch {
-                isTesting = false
-                testError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                testError = readableMessage(for: error)
             }
         }
     }

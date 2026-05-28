@@ -263,6 +263,27 @@ enum CapabilitySearch {
     /// recall repro.
     private static let debugTraceEnvVar = "OSAURUS_DEBUG_CAPABILITY_SEARCH"
 
+    /// Tools-only fast path. Skips the methods + skills lanes entirely
+    /// for callers that have already restricted themselves to the tools
+    /// universe (default-agent configure surface today). Avoids burning
+    /// embedder / BM25 work on hits we'd discard anyway.
+    static func searchToolsOnly(
+        query: String,
+        topK: Int,
+        allowedToolNames: Set<String>? = nil
+    ) async -> CapabilitySearchResults {
+        await CapabilitySearchDiagnostics.logSnapshotOnce(
+            reason: "CapabilitySearch.searchToolsOnly"
+        )
+        let tools = await ToolSearchService.shared.searchHybrid(
+            query: query,
+            topK: topK,
+            minFusedScore: minimumFusedScore,
+            allowedNames: allowedToolNames
+        )
+        return CapabilitySearchResults(methods: [], tools: tools, skills: [])
+    }
+
     static func search(
         query: String,
         topK: (methods: Int, tools: Int, skills: Int),

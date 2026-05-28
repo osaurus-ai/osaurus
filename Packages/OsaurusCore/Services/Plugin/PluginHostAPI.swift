@@ -1015,6 +1015,12 @@ final class PluginHostContext: @unchecked Sendable {
         executionMode: ExecutionMode = .none,
         agentId: UUID = Agent.defaultId
     ) async -> EnrichedInference {
+        // Built-in default agent is in-app chat only and gets a fixed
+        // 8-tool baseline; preflight picks would be stripped downstream.
+        // Defense-in-depth on top of `BuiltInAgentGuard`.
+        if agentId == Agent.defaultId {
+            return inference
+        }
         let toolMode = await MainActor.run {
             AgentManager.shared.effectiveToolSelectionMode(for: agentId)
         }

@@ -56,6 +56,11 @@ public struct ProviderCredentialInstructions: Sendable, Equatable {
     /// because the manager-side enum has historical case names that
     /// don't map 1:1 to UI labels.
     public let storageAuthType: RemoteProviderAuthType
+    /// Stable `ProviderPreset.rawValue` used by UI to resolve branding
+    /// (gradient, icon asset, help steps). Lives here as a string so this
+    /// module can stay free of UI imports. Empty means "no preset" — the
+    /// sheet falls back to a generic key glyph.
+    public let presetId: String
 
     public init(
         providerType: RemoteProviderType,
@@ -64,7 +69,8 @@ public struct ProviderCredentialInstructions: Sendable, Equatable {
         getKeyURL: URL? = nil,
         keyFormatHint: String? = nil,
         extraFields: [ProviderCredentialField] = [],
-        storageAuthType: RemoteProviderAuthType
+        storageAuthType: RemoteProviderAuthType,
+        presetId: String = ""
     ) {
         self.providerType = providerType
         self.displayName = displayName
@@ -73,6 +79,7 @@ public struct ProviderCredentialInstructions: Sendable, Equatable {
         self.keyFormatHint = keyFormatHint
         self.extraFields = extraFields
         self.storageAuthType = storageAuthType
+        self.presetId = presetId
     }
 }
 
@@ -93,7 +100,8 @@ public enum ProviderCredentialInstructionsCatalog {
                 authMethod: .apiKey,
                 getKeyURL: URL(string: "https://console.anthropic.com/settings/keys"),
                 keyFormatHint: L("Keys start with sk-ant-."),
-                storageAuthType: .apiKey
+                storageAuthType: .apiKey,
+                presetId: "anthropic"
             )
         case .openResponses:
             return ProviderCredentialInstructions(
@@ -102,7 +110,8 @@ public enum ProviderCredentialInstructionsCatalog {
                 authMethod: .apiKey,
                 getKeyURL: URL(string: "https://platform.openai.com/api-keys"),
                 keyFormatHint: L("Keys start with sk-."),
-                storageAuthType: .apiKey
+                storageAuthType: .apiKey,
+                presetId: "openai"
             )
         case .openaiLegacy:
             return ProviderCredentialInstructions(
@@ -119,7 +128,8 @@ public enum ProviderCredentialInstructionsCatalog {
                         isRequired: true
                     )
                 ],
-                storageAuthType: .apiKey
+                storageAuthType: .apiKey,
+                presetId: "custom"
             )
         case .azureOpenAI:
             return ProviderCredentialInstructions(
@@ -142,7 +152,8 @@ public enum ProviderCredentialInstructionsCatalog {
                         isRequired: true
                     ),
                 ],
-                storageAuthType: .apiKey
+                storageAuthType: .apiKey,
+                presetId: "azureOpenAI"
             )
         case .gemini:
             return ProviderCredentialInstructions(
@@ -151,7 +162,8 @@ public enum ProviderCredentialInstructionsCatalog {
                 authMethod: .apiKey,
                 getKeyURL: URL(string: "https://aistudio.google.com/apikey"),
                 keyFormatHint: L("Get a free key from Google AI Studio."),
-                storageAuthType: .apiKey
+                storageAuthType: .apiKey,
+                presetId: "google"
             )
         case .openAICodex:
             return ProviderCredentialInstructions(
@@ -160,7 +172,8 @@ public enum ProviderCredentialInstructionsCatalog {
                 authMethod: .oauth,
                 getKeyURL: URL(string: "https://chatgpt.com/codex"),
                 keyFormatHint: L("Sign in with your ChatGPT account."),
-                storageAuthType: .openAICodexOAuth
+                storageAuthType: .openAICodexOAuth,
+                presetId: "openai"
             )
         case .osaurus:
             return ProviderCredentialInstructions(
@@ -169,7 +182,8 @@ public enum ProviderCredentialInstructionsCatalog {
                 authMethod: .apiKey,
                 getKeyURL: nil,
                 keyFormatHint: L("Paste the pairing API key from the remote Osaurus."),
-                storageAuthType: .apiKey
+                storageAuthType: .apiKey,
+                presetId: ""
             )
         }
     }
