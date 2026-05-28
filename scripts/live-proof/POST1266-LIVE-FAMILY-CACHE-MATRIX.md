@@ -382,7 +382,7 @@ Focused DSV4 app row:
 ## 2026-05-28 04:24 PDT - Current-head ZAYA-VL media required-tool proof after vMLX main repin
 
 Current Osaurus head: `2b4f576dbe1159054677eaee3e9d2467ff396da1`.
-Current vMLX pin: `c300e496505dd4aa027fcb0f0c69d0fa6aca270a`.
+Current vMLX pin: `d3d76b4c11c1f3e83e787f0464120087167c1609`.
 No-sign Release app: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-release-nosign-2b4f576d/Build/Products/Release/osaurus.app`.
 Launch mode: `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, `OSAURUS_TEST_ROOT=/tmp/osaurus-pr1268-2b4f576d-keychain-free-open-20260528-042237`.
 
@@ -405,7 +405,7 @@ Invalid payload boundary:
 ## 2026-05-28 04:34 PDT - ZAYA-VL repeated media required-tool cache-hit proof
 
 Current Osaurus head: `b681ea663c511cdeb45a97a20a2b050ea51cd40f`.
-Current vMLX pin: `c300e496505dd4aa027fcb0f0c69d0fa6aca270a`.
+Current vMLX pin: `d3d76b4c11c1f3e83e787f0464120087167c1609`.
 Live app: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-release-nosign-2b4f576d/Build/Products/Release/osaurus.app`.
 
 Artifact:
