@@ -60,6 +60,15 @@ row is production-clear.
 - Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: Gemma4 JANG_4M is red for required-tool parser/output behavior on this row. This must not be hidden with reasoning parser output repair or forced close-token biasing.
 
+## 2026-05-28 Gemma4 JANG_4M no-thinking default required-tool green row
+
+- Osaurus worktree state: dirty follow-up patch on top of `270300f70e9eacc95aa4204ea8cfeead53ca3a46`, adding Gemma-family `enable_thinking=false` default for ordinary local API requests while preserving explicit thinking opt-in.
+- No-sign app path: `build/DerivedData-pr1268-gemma-default-nosign/Build/Products/Release/osaurus.app`.
+- Primary artifacts: `/tmp/osaurus-pr1268-gemma-default-gemma4-jang4m-tool-cache-20260528-112756`, `/tmp/osaurus-pr1268-gemma-default-gemma4-jang4m-tool-cache-repeat-20260528-112822`, and focused check `/tmp/osaurus-pr1268-dirty-gemma-default-gemma4-tool-cache-20260528-112946`.
+- Result: required `line_count` calls before and after tool-result history were structured with exact multiline args; the tool-result follow-up answered visibly with no extra tool call; no Harmony/Gemma/tool markers leaked.
+- Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0; warm proof records `disk_l2_hits +1`, and the focused check stayed healthy with no in-flight request after the proof.
+- Verdict: Gemma4 JANG_4M is green for this required-tool/history row when ordinary local API requests default to the closed/no-thinking rail. This is model-option/template wiring, not parser output repair; explicit thinking mode, media/video, Gemma3n, and unrelated Gemma siblings remain separate.
+
 ## 2026-05-28 Qwen 27B MXFP4 CRACK MTP required-tool parser green, cache partial row
 
 - Osaurus head at check: `2ac8d31f87f4d82ab9de9f8e4188bdab8800bb71`.
@@ -461,6 +470,12 @@ Kimi is intentionally excluded from this matrix for now per current scope.
 - ZAYA text direct mode remains a real red row. Do not call ZAYA production
   clear until the prompt/runtime issue is root-caused or the product explicitly
   defaults to a proven coherent mode without a hidden sampler/parser fix.
+- Gemma4 JANG_4M has a follow-up green required-tool/history row via the
+  Gemma-family `enable_thinking=false` local API default:
+  `/tmp/osaurus-pr1268-gemma-default-gemma4-jang4m-tool-cache-repeat-20260528-112822`.
+  This fixes the prior `thought<tool_call|>` row without parser output repair,
+  but explicit thinking mode, media/video, Gemma3n, and sibling coverage remain
+  separate.
 - Nemotron Omni video/audio cache behavior has focused and live vmlx evidence,
   but Osaurus app/API rows still need to prove the same path through ChatView,
   HTTP adapters, saved settings, and cache stats.
