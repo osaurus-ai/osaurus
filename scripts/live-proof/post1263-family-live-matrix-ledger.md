@@ -41,14 +41,14 @@ Each promoted row needs current-head evidence for:
 
 ## Current #1268 merge boundary
 
-### 2026-05-28 06:16 PDT final current-head boundary
+### 2026-05-28 06:16 PDT runtime-proof boundary
 
-- Current Osaurus PR: `#1268`, head `2a2a6d4b039e61fd9338c42287fa9b35798328cb`, open, not draft, mergeable, not merged by agent.
+- Current Osaurus PR: `#1268`, open, not draft, mergeable, not merged by agent.
 - Current vMLX main and Osaurus pin: `d3d76b4c11c1f3e83e787f0464120087167c1609`; verified present on `osaurus-ai/vmlx-swift` main.
-- GitHub CI for head `2a2a6d4b`: `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
+- Runtime-proof head `2a2a6d4b039e61fd9338c42287fa9b35798328cb`: `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
 - Only `#1268` remains open from the `#1247` through `#1268` runtime stack; older related PRs are consolidated/superseded rather than separate merge targets.
-- Current no-sign/keychain-free DSV4 app proof is recorded in `POST1266-LIVE-FAMILY-CACHE-MATRIX.md` for the `1503be2f` runtime commit that sits directly below this documentation-only `2a2a6d4b` commit.
-- Current source guards passed after the documentation-only head: PR hygiene, vMLX pin/checkout readiness, keychain-free proof path, no hidden sampler defaults, no forced behavior, OpenResponses/cache wiring, server-settings runtime wiring, reasoning routing, HTTP cancellation, required tool-choice routing, and model tool/capability surfaces.
+- No-sign/keychain-free DSV4 app proof is recorded in `POST1266-LIVE-FAMILY-CACHE-MATRIX.md` for the `1503be2f` runtime commit that sits directly below the documentation-only proof boundary.
+- Source guards passed after the documentation-only proof boundary: PR hygiene, vMLX pin/checkout readiness, keychain-free proof path, no hidden sampler defaults, no forced behavior, OpenResponses/cache wiring, server-settings runtime wiring, reasoning routing, HTTP cancellation, required tool-choice routing, and model tool/capability surfaces.
 - Default cache policy is `engineSelected` with topology gating: proven full-KV rows may default to TurboQuant KV; DSV4, ZAYA/ZAYA-VL, Gemma rotating, and hybrid SSM/companion-cache rows stay native/fp16 unless explicitly overridden or separately proven safe.
 - No agent should merge Osaurus without explicit user approval. vMLX main is managed directly and contains the runtime fixes consumed by this PR.
 
