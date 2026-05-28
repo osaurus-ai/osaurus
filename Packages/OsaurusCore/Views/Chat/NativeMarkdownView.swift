@@ -1011,17 +1011,16 @@ final class NativeMarkdownView: NSView {
 
         let storageLength = tv.textStorage?.length ?? 0
         let origin = tv.textContainerOrigin
-        let lineHeight = (tv.font ?? .systemFont(ofSize: 13)).boundingRectForFont.height
+        let font = tv.font ?? .systemFont(ofSize: 13)
+        let lineHeight = font.boundingRectForFont.height
         let trailingPadding: CGFloat = 6
         let slotWidth: CGFloat = StreamingCursorOverlay.dotDiameter + 4
 
         let trailingX: CGFloat
-        let lineTopInTV: CGFloat
         let lineBottomInTV: CGFloat
 
         if storageLength == 0 {
             trailingX = origin.x + trailingPadding
-            lineTopInTV = origin.y
             lineBottomInTV = origin.y + lineHeight
         } else {
             let lastCharIdx = storageLength - 1
@@ -1031,21 +1030,30 @@ final class NativeMarkdownView: NSView {
                 effectiveRange: nil
             )
             trailingX = usedRect.maxX + origin.x + trailingPadding
-            lineTopInTV = usedRect.minY + origin.y
             lineBottomInTV = usedRect.maxY + origin.y
         }
 
-        let topInSelf = tv.convert(NSPoint(x: trailingX, y: lineTopInTV), to: self)
-        let bottomInSelf = tv.convert(NSPoint(x: trailingX, y: lineBottomInTV), to: self)
-
-        let frameMinY = min(topInSelf.y, bottomInSelf.y)
-        let frameHeight = max(abs(topInSelf.y - bottomInSelf.y), lineHeight)
-
+        // Anchor slot to the line BOTTOM in self coords + give it the
+        // font's natural line height. Computing the slot height from the
+        // rect difference (top vs. bottom) was picking up extra leading
+        // on some lines, which made the slot taller than the line and
+        // pushed the centered dot above the visible text.
+        let bottomInSelf = tv.convert(
+            NSPoint(x: trailingX, y: lineBottomInTV),
+            to: self
+        )
+        // Slot spans exactly the line, dot is centered inside, plus a
+        // small downward nudge so the dot's center axis lands on the
+        // text's visual middle (x-height middle / mid-strike line)
+        // rather than the geometric center of the full line height —
+        // body text's center-of-mass sits below the geometric middle
+        // because ascenders extend higher than descenders.
+        let baselineNudge: CGFloat = -3
         cursor.frame = NSRect(
-            x: topInSelf.x,
-            y: frameMinY,
+            x: bottomInSelf.x,
+            y: bottomInSelf.y + baselineNudge,
             width: slotWidth,
-            height: frameHeight
+            height: lineHeight
         )
     }
 }

@@ -79,6 +79,14 @@ final class StreamingDeltaProcessor {
     private var lastFlushTime = Date()
     private var syncCount = 0
 
+    /// Continuation resumed by `pacingTick` the first time it observes
+    /// an empty `deltaBuffer` after `finalize()` started awaiting. Lets
+    /// the caller's `await processor.finalize()` block until the smooth
+    /// streaming tail has fully typed out — without this, the processor
+    /// deallocates the moment `send()` returns and the residual buffer
+    /// is silently dropped.
+    private var pacingDoneContinuation: CheckedContinuation<Void, Never>?
+
     /// Paced-reveal state. When `smoothStreamingEnabled` is on, incoming
     /// deltas accumulate in `deltaBuffer` but are revealed to the UI at a
     /// fixed rate via `pacingTimer` instead of flushing immediately. This
@@ -189,30 +197,28 @@ final class StreamingDeltaProcessor {
 
     /// Finalize streaming: drain any remaining buffer and sync to UI.
     ///
-    /// In smooth-streaming mode we deliberately keep the pacing timer
-    /// running so the buffered tail continues to type out at the same
-    /// cadence as it did during streaming — otherwise small responses
-    /// (which arrive entirely in one network burst, finalize ~60ms
-    /// later) would show no animation at all, and long responses with
-    /// big tail buffers would dump the last several hundred chars at
-    /// once after a smooth start.
-    func finalize() {
+    /// In smooth-streaming mode the residual `deltaBuffer` continues to
+    /// type out via the pacing timer. We `await` here until that buffer
+    /// is fully drained — without the await, this processor instance
+    /// deallocates the moment `send()` returns, the pacing timer's
+    /// `[weak self]` closure goes nil on the next tick, and the rest of
+    /// the response is silently dropped (the visible text ends
+    /// mid-sentence even though the model produced the full content).
+    func finalize() async {
         PacingLog.log("finalize() called bufferSize=\(deltaBuffer.count) smooth=\(smoothStreamingEnabled) pacingTimerActive=\(pacingTimer != nil)")
         invalidateTimer()
 
-        if smoothStreamingEnabled {
-            // Sync whatever's already been appended (pre-pacing). Leave
-            // the deltaBuffer alone — pacingTick will continue draining
-            // it and stop the timer when empty.
-            syncToTurn()
-            if !deltaBuffer.isEmpty {
-                startPacingTimerIfNeeded()
+        if smoothStreamingEnabled && !deltaBuffer.isEmpty {
+            startPacingTimerIfNeeded()
+            // Block here until `pacingTick` empties the buffer and
+            // resumes us. The processor stays alive for the duration
+            // because the surrounding `send(...)` is awaiting.
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                self.pacingDoneContinuation = continuation
             }
-            return
-        }
-
-        stopPacingTimer()
-        if !deltaBuffer.isEmpty {
+        } else if !deltaBuffer.isEmpty {
+            // Non-smooth path: drain immediately.
+            stopPacingTimer()
             let remaining = deltaBuffer
             deltaBuffer = ""
             PacingLog.log("finalize() DRAINED \(remaining.count) chars immediately")
@@ -277,6 +283,11 @@ final class StreamingDeltaProcessor {
         if pending == 0 {
             PacingLog.log("pacingTick EMPTY → stop timer")
             stopPacingTimer()
+            // Wake up `finalize()` if it's waiting for the tail to drain.
+            if let cont = pacingDoneContinuation {
+                pacingDoneContinuation = nil
+                cont.resume()
+            }
             return
         }
         let scaled = pending / Self.pacingDrainTicks
