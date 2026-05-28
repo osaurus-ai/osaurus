@@ -598,3 +598,23 @@ ZAYA result:
 - PASS: disk L2 reuse moved on repeat turns (`disk_hits +1` on turn 2 and `+1` on turn 3).
 - Topology: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV 0.
 - Boundary: ZAYA CCA companion hits stayed `0` while CCA companion misses increased. Do not claim CCA companion-hit reuse from this PR; claim behavior correctness plus disk-L2 reuse only.
+
+## 2026-05-28 07:33 PDT - Latest-head MiniMax Small JANGTQ proof
+
+Artifact:
+
+- MiniMax Small JANGTQ: `/tmp/osaurus-pr1268-23f0c39-minimax-small-jangtq-20260528-073239`.
+
+Result:
+
+- PASS: `minimax-m2.7-small-jangtq` routed turn 1 required `line_count` to a structured tool call.
+- PASS: tool-result follow-up returned visible answer `Three lines were counted.` with no protocol/reasoning leak.
+- PASS: turn 3 second required `line_count` after assistant/tool history routed to a structured tool call.
+- Cache delta: `disk_l2_hits +1`, `disk_l2_misses +7`, `disk_l2_stores +5`.
+- Topology: 62 full-KV layers, no SSM/Mamba, no CCA companion, no rotating layers, TurboQuant KV 0.
+- Classification: pass. This supersedes the earlier MiniMax Small JANGTQ partial/disconnect boundary for this current app path.
+
+Missing-family inventory:
+
+- Artifact: `/tmp/osaurus-pr1268-23f0c39-missing-family-inventory-20260528-073227`.
+- `bailing`, `hy3`, and `hunyuan` selected zero rows from the current `/v1/models` inventory. These remain import/model-availability blocked, not runtime-proven.
