@@ -136,6 +136,90 @@ struct PPTXAdapterTests {
         )
     }
 
+    @Test func parse_reportsMacroEmbeddedObjectExternalAndHiddenSlideSignals() async throws {
+        let fixture = try makePresentationFixture(
+            fileExtension: "pptx",
+            slides: [
+                1: ["Visible plan"],
+                2: ["Hidden acquisition appendix"],
+            ],
+            slideOrder: [1, 2],
+            hiddenSlides: [2],
+            externalRelationships: [
+                RelationshipFixture(
+                    id: "linkedDeck",
+                    type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    target: "https://example.com/source-deck",
+                    targetMode: "External"
+                )
+            ],
+            extraSlideRelationships: [
+                1: [
+                    RelationshipFixture(
+                        id: "oleObject",
+                        type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject",
+                        target: "../embeddings/oleObject1.bin"
+                    ),
+                    RelationshipFixture(
+                        id: "embeddedPackage",
+                        type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package",
+                        target: "../embeddings/package1.bin"
+                    ),
+                    RelationshipFixture(
+                        id: "activeXControl",
+                        type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/control",
+                        target: "../activeX/activeX1.bin"
+                    ),
+                    RelationshipFixture(
+                        id: "vbaProject",
+                        type: "http://schemas.microsoft.com/office/2006/relationships/vbaProject",
+                        target: "../vbaProject.bin"
+                    ),
+                ]
+            ],
+            extraEntries: [
+                ("ppt/vbaProject.bin", Data([0x56, 0x42, 0x41])),
+                ("ppt/embeddings/oleObject1.bin", Data([0x4F, 0x4C, 0x45])),
+                ("ppt/embeddings/package1.bin", Data([0x50, 0x4B, 0x03, 0x04])),
+                ("ppt/activeX/activeX1.bin", Data([0x41, 0x58])),
+            ],
+            compression: .stored
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let document = try await PPTXAdapter().parse(url: fixture.url, sizeLimit: 100_000)
+        let presentation = try #require(document.representation.underlying as? PresentationDocument)
+        let hiddenSlide = try #require(presentation.slides.first { $0.number == 2 })
+
+        #expect(hiddenSlide.isHidden)
+        #expect(document.structure.elements(kind: .slide)[1].anchor.metadata["isHidden"] == "true")
+        #expect(document.security.activeContentTypes.contains(.macro))
+        #expect(document.security.activeContentTypes.contains(.embeddedFile))
+        #expect(document.security.activeContentTypes.contains(.externalReference))
+        #expect(
+            document.security.externalReferences.contains {
+                $0.relationshipId == "linkedDeck" && $0.kind == .hyperlink
+            }
+        )
+        #expect(
+            document.security.findings.contains {
+                $0.kind == .macro && $0.severity == .high && $0.metadata["partCount"] == "1"
+            }
+        )
+        #expect(
+            document.security.findings.contains {
+                $0.kind == .embeddedFile && $0.severity == .medium && $0.metadata["partCount"] == "3"
+            }
+        )
+        #expect(
+            document.security.findings.contains {
+                $0.metadata["feature"] == "hiddenSlides"
+                    && $0.metadata["count"] == "1"
+                    && $0.metadata["slideNumbers"] == "2"
+            }
+        )
+    }
+
     @Test func parse_refusesFilesAboveSizeLimit() async throws {
         let root = try makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -186,8 +270,11 @@ struct PPTXAdapterTests {
         slides: [Int: [String]],
         slideOrder: [Int],
         notes: [Int: [String]] = [:],
+        hiddenSlides: Set<Int> = [],
         externalTargets: [String] = [],
         externalRelationships: [RelationshipFixture] = [],
+        extraSlideRelationships: [Int: [RelationshipFixture]] = [:],
+        extraEntries: [(String, Data)] = [],
         compression: FixtureCompression
     ) throws -> (root: URL, url: URL) {
         let root = try makeTempDirectory()
@@ -199,12 +286,18 @@ struct PPTXAdapterTests {
         ]
 
         for (number, paragraphs) in slides {
-            entries.append(("ppt/slides/slide\(number).xml", Data(slideXML(paragraphs).utf8)))
+            entries.append(
+                (
+                    "ppt/slides/slide\(number).xml",
+                    Data(slideXML(paragraphs, isHidden: hiddenSlides.contains(number)).utf8)
+                )
+            )
             let slideRelationships = slideRelationshipsXML(
                 slideNumber: number,
                 hasNotes: notes[number] != nil,
                 externalTargets: number == slideOrder.first ? externalTargets : [],
-                externalRelationships: number == slideOrder.first ? externalRelationships : []
+                externalRelationships: number == slideOrder.first ? externalRelationships : [],
+                extraRelationships: extraSlideRelationships[number] ?? []
             )
             if !slideRelationships.isEmpty {
                 entries.append(("ppt/slides/_rels/slide\(number).xml.rels", Data(slideRelationships.utf8)))
@@ -215,6 +308,7 @@ struct PPTXAdapterTests {
             entries.append(("ppt/notesSlides/notesSlide\(number).xml", Data(notesXML(paragraphs).utf8)))
         }
 
+        entries.append(contentsOf: extraEntries)
         try writeZip(entries: entries, to: url, compression: compression)
         return (root, url)
     }
@@ -256,7 +350,8 @@ struct PPTXAdapterTests {
         slideNumber: Int,
         hasNotes: Bool,
         externalTargets: [String],
-        externalRelationships: [RelationshipFixture]
+        externalRelationships: [RelationshipFixture],
+        extraRelationships: [RelationshipFixture]
     ) -> String {
         var relationships: [RelationshipFixture] = []
         if hasNotes {
@@ -279,6 +374,7 @@ struct PPTXAdapterTests {
             }
         )
         relationships.append(contentsOf: externalRelationships)
+        relationships.append(contentsOf: extraRelationships)
         guard !relationships.isEmpty else { return "" }
         return relationshipsXML(relationships)
     }
@@ -292,17 +388,18 @@ struct PPTXAdapterTests {
         """
     }
 
-    private func slideXML(_ paragraphs: [String]) -> String {
-        """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
-          <p:cSld>
-            <p:spTree>
-              \(paragraphs.map(textShapeXML).joined(separator: "\n"))
-            </p:spTree>
-          </p:cSld>
-        </p:sld>
-        """
+    private func slideXML(_ paragraphs: [String], isHidden: Bool = false) -> String {
+        let showAttribute = isHidden ? #" show="0""# : ""
+        return """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"\(showAttribute)>
+              <p:cSld>
+                <p:spTree>
+                  \(paragraphs.map(textShapeXML).joined(separator: "\n"))
+                </p:spTree>
+              </p:cSld>
+            </p:sld>
+            """
     }
 
     private func notesXML(_ paragraphs: [String]) -> String {

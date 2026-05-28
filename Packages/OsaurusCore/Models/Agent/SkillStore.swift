@@ -8,6 +8,20 @@
 
 import Foundation
 
+/// Errors from skill file path validation before a caller-controlled path can
+/// reach the filesystem.
+public enum SkillStoreFileError: Error, LocalizedError, Sendable, Equatable {
+    case invalidRelativePath
+    case pathEscapesDirectory
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidRelativePath: return "Skill file path must be a non-empty relative path"
+        case .pathEscapesDirectory: return "Skill file path escapes its containing directory"
+        }
+    }
+}
+
 public enum SkillStore {
 
     // MARK: - Public API
@@ -219,26 +233,28 @@ public enum SkillStore {
     /// Add a reference file to a skill
     public static func addReference(to skill: Skill, name: String, content: Data) async throws {
         let refsDir = skillDirectory(for: skill).appendingPathComponent("references")
-        try FileManager.default.createDirectory(at: refsDir, withIntermediateDirectories: true)
-        try content.write(to: refsDir.appendingPathComponent(name))
+        try writeSkillFile(content, named: name, in: refsDir)
     }
 
     /// Add an asset file to a skill
     public static func addAsset(to skill: Skill, name: String, content: Data) async throws {
         let assetsDir = skillDirectory(for: skill).appendingPathComponent("assets")
-        try FileManager.default.createDirectory(at: assetsDir, withIntermediateDirectories: true)
-        try content.write(to: assetsDir.appendingPathComponent(name))
+        try writeSkillFile(content, named: name, in: assetsDir)
     }
 
     /// Remove a file from a skill
     public static func removeFile(from skill: Skill, relativePath: String) async throws {
-        let fileURL = skillDirectory(for: skill).appendingPathComponent(relativePath)
+        let skillDir = skillDirectory(for: skill)
+        let fileURL = try containedFileURL(for: relativePath, in: skillDir)
+        try ensureResolvedContainment(of: fileURL, in: skillDir)
         try FileManager.default.removeItem(at: fileURL)
     }
 
     /// Read content of a skill file
     public static func readFile(from skill: Skill, relativePath: String) async throws -> Data {
-        let fileURL = skillDirectory(for: skill).appendingPathComponent(relativePath)
+        let skillDir = skillDirectory(for: skill)
+        let fileURL = try containedFileURL(for: relativePath, in: skillDir)
+        try ensureResolvedContainment(of: fileURL, in: skillDir)
         return try Data(contentsOf: fileURL)
     }
 
@@ -246,6 +262,99 @@ public enum SkillStore {
 
     private static func skillsDirectory() -> URL {
         OsaurusPaths.skills()
+    }
+
+    private static func writeSkillFile(_ content: Data, named name: String, in baseDirectory: URL) throws {
+        let fileURL = try containedFileURL(for: name, in: baseDirectory)
+        try createContainedParentDirectories(for: fileURL, in: baseDirectory)
+        try ensureResolvedContainment(of: fileURL, in: baseDirectory)
+        try content.write(to: fileURL)
+    }
+
+    private static func containedFileURL(for relativePath: String, in baseDirectory: URL) throws -> URL {
+        let normalizedPath = try normalizedRelativeSkillFilePath(relativePath)
+        let baseURL = baseDirectory.standardizedFileURL
+        let fileURL = baseURL.appendingPathComponent(normalizedPath).standardizedFileURL
+
+        guard isContained(fileURL, in: baseURL) else {
+            throw SkillStoreFileError.pathEscapesDirectory
+        }
+        return fileURL
+    }
+
+    private static func normalizedRelativeSkillFilePath(_ relativePath: String) throws -> String {
+        guard !relativePath.isEmpty,
+            !(relativePath as NSString).isAbsolutePath
+        else {
+            throw SkillStoreFileError.invalidRelativePath
+        }
+
+        let rawComponents = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+        guard !rawComponents.contains("..") else {
+            throw SkillStoreFileError.invalidRelativePath
+        }
+
+        let normalizedComponents =
+            rawComponents
+            .map(String.init)
+            .filter { !$0.isEmpty && $0 != "." }
+        guard !normalizedComponents.isEmpty else {
+            throw SkillStoreFileError.invalidRelativePath
+        }
+        return normalizedComponents.joined(separator: "/")
+    }
+
+    private static func createContainedParentDirectories(for fileURL: URL, in baseDirectory: URL) throws {
+        let fileManager = FileManager.default
+        let baseURL = baseDirectory.standardizedFileURL
+        let fileComponents = fileURL.standardizedFileURL.pathComponents
+        let baseComponents = baseURL.pathComponents
+        let parentComponents = Array(fileComponents.dropFirst(baseComponents.count).dropLast())
+
+        try fileManager.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        guard !isSymbolicLink(baseURL) else {
+            throw SkillStoreFileError.pathEscapesDirectory
+        }
+
+        var current = baseURL
+        for component in parentComponents {
+            current = current.appendingPathComponent(component, isDirectory: true)
+            guard isContained(current, in: baseURL),
+                !isSymbolicLink(current)
+            else {
+                throw SkillStoreFileError.pathEscapesDirectory
+            }
+
+            if !fileManager.fileExists(atPath: current.path) {
+                try fileManager.createDirectory(at: current, withIntermediateDirectories: false)
+            }
+
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: current.path, isDirectory: &isDirectory),
+                isDirectory.boolValue
+            else {
+                throw SkillStoreFileError.invalidRelativePath
+            }
+        }
+    }
+
+    private static func ensureResolvedContainment(of fileURL: URL, in baseDirectory: URL) throws {
+        let resolvedBase = baseDirectory.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedFile = fileURL.resolvingSymlinksInPath().standardizedFileURL
+        guard isContained(resolvedFile, in: resolvedBase) else {
+            throw SkillStoreFileError.pathEscapesDirectory
+        }
+    }
+
+    private static func isContained(_ fileURL: URL, in baseDirectory: URL) -> Bool {
+        let fileComponents = fileURL.standardizedFileURL.pathComponents
+        let baseComponents = baseDirectory.standardizedFileURL.pathComponents
+        return fileComponents.count >= baseComponents.count
+            && Array(fileComponents.prefix(baseComponents.count)) == baseComponents
+    }
+
+    private static func isSymbolicLink(_ url: URL) -> Bool {
+        (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
     }
 
     private static func loadFromDirectory(_ directoryURL: URL) -> Skill? {
@@ -281,24 +390,62 @@ public enum SkillStore {
 
     private static func loadFilesFromSubdirectory(_ skillDir: URL, subdirectory: String) -> [SkillFile] {
         let subDir = skillDir.appendingPathComponent(subdirectory)
+        return loadFiles(in: subDir, relativeTo: skillDir)
+    }
+
+    private static func loadFiles(in directory: URL, relativeTo skillDir: URL) -> [SkillFile] {
         guard
-            let files = try? FileManager.default.contentsOfDirectory(
-                at: subDir,
-                includingPropertiesForKeys: [.fileSizeKey],
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
                 options: [.skipsHiddenFiles]
             )
         else {
             return []
         }
 
-        return files.compactMap { fileURL -> SkillFile? in
-            guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey]) else { return nil }
-            return SkillFile(
-                name: fileURL.lastPathComponent,
-                relativePath: "\(subdirectory)/\(fileURL.lastPathComponent)",
-                size: Int64(values.fileSize ?? 0)
+        var files: [SkillFile] = []
+        for entry in entries.sorted(by: { $0.path < $1.path }) {
+            guard
+                let values = try? entry.resourceValues(
+                    forKeys: [.fileSizeKey, .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
+                ),
+                values.isSymbolicLink != true
+            else {
+                continue
+            }
+
+            if values.isDirectory == true {
+                files.append(contentsOf: loadFiles(in: entry, relativeTo: skillDir))
+                continue
+            }
+
+            guard values.isRegularFile == true,
+                let relativePath = relativePath(for: entry, in: skillDir)
+            else {
+                continue
+            }
+
+            files.append(
+                SkillFile(
+                    name: entry.lastPathComponent,
+                    relativePath: relativePath,
+                    size: Int64(values.fileSize ?? 0)
+                )
             )
         }
+        return files
+    }
+
+    private static func relativePath(for fileURL: URL, in baseDirectory: URL) -> String? {
+        let fileComponents = fileURL.standardizedFileURL.pathComponents
+        let baseComponents = baseDirectory.standardizedFileURL.pathComponents
+        guard fileComponents.count > baseComponents.count,
+            Array(fileComponents.prefix(baseComponents.count)) == baseComponents
+        else {
+            return nil
+        }
+        return fileComponents.dropFirst(baseComponents.count).joined(separator: "/")
     }
 
     private static func saveBuiltInState(_ skill: Skill) {

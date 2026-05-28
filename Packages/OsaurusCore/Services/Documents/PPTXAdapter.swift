@@ -58,6 +58,7 @@ public struct PPTXAdapter: DocumentFormatAdapter {
 
             let security = try Self.securityMetadata(
                 for: url,
+                presentation: presentation,
                 archive: archive,
                 extractedText: built.text,
                 textFallback: textFallback
@@ -103,7 +104,7 @@ public struct PPTXAdapter: DocumentFormatAdapter {
         for (index, slidePart) in slideParts.enumerated() {
             try Task.checkCancellation()
 
-            let slideRuns = try textRuns(
+            let slideExtraction = try textRunExtraction(
                 in: slidePart.path,
                 from: archive,
                 slideIndex: index,
@@ -129,7 +130,8 @@ public struct PPTXAdapter: DocumentFormatAdapter {
                     number: slidePart.number,
                     sourcePart: slidePart.path,
                     label: "Slide \(index + 1)",
-                    textRuns: slideRuns,
+                    isHidden: slideExtraction.isHiddenSlide,
+                    textRuns: slideExtraction.textRuns,
                     speakerNotes: speakerNotes?.text.isEmpty == false ? speakerNotes : nil
                 )
             )
@@ -229,6 +231,20 @@ public struct PPTXAdapter: DocumentFormatAdapter {
         slideIndex: Int,
         region: PresentationTextRegion
     ) throws -> [PresentationTextRun] {
+        try textRunExtraction(
+            in: part,
+            from: archive,
+            slideIndex: slideIndex,
+            region: region
+        ).textRuns
+    }
+
+    private static func textRunExtraction(
+        in part: String,
+        from archive: BoundedZipReader,
+        slideIndex: Int,
+        region: PresentationTextRegion
+    ) throws -> PresentationPartTextExtraction {
         let data = try archive.entryData(part, maxUncompressedBytes: Constants.maxXMLPartBytes)
         let collector = OpenXMLTextRunCollector(maxUTF16Length: Constants.maxTextPartUTF16)
         let parser = XMLParser(data: data)
@@ -250,20 +266,23 @@ public struct PPTXAdapter: DocumentFormatAdapter {
             throw DocumentAdapterError.readFailed(underlying: message)
         }
 
-        return collector.runs.map { run in
-            PresentationTextRun(
-                text: run.text,
-                paragraphIndex: run.paragraphIndex,
-                runIndex: run.runIndex,
-                sourcePart: part,
-                anchorId: textRunAnchorId(
-                    slideIndex: slideIndex,
-                    region: region,
+        return PresentationPartTextExtraction(
+            textRuns: collector.runs.map { run in
+                PresentationTextRun(
+                    text: run.text,
                     paragraphIndex: run.paragraphIndex,
-                    runIndex: run.runIndex
+                    runIndex: run.runIndex,
+                    sourcePart: part,
+                    anchorId: textRunAnchorId(
+                        slideIndex: slideIndex,
+                        region: region,
+                        paragraphIndex: run.paragraphIndex,
+                        runIndex: run.runIndex
+                    )
                 )
-            )
-        }
+            },
+            isHiddenSlide: collector.isHiddenSlide
+        )
     }
 
     private static func slideRelationshipIds(
@@ -364,6 +383,7 @@ public struct PPTXAdapter: DocumentFormatAdapter {
                 )
             }
 
+            let slideMetadata = slideMetadata(slide)
             let slideAnchor = DocumentAnchor(
                 id: slideAnchorId(slideIndex: slide.index),
                 kind: .slide,
@@ -377,17 +397,14 @@ public struct PPTXAdapter: DocumentFormatAdapter {
                 ),
                 sourceRange: .init(start: .slide(slide.index)),
                 label: slide.label,
-                metadata: [
-                    "sourcePart": slide.sourcePart,
-                    "slideNumber": "\(slide.number)",
-                ]
+                metadata: slideMetadata
             )
             slideElements.append(
                 DocumentElement(
                     kind: .slide,
                     anchor: slideAnchor,
                     text: slide.text,
-                    attributes: .init(metadata: ["slideNumber": "\(slide.number)"]),
+                    attributes: .init(metadata: slideMetadata),
                     children: children
                 )
             )
@@ -519,10 +536,22 @@ public struct PPTXAdapter: DocumentFormatAdapter {
         }
     }
 
+    private static func slideMetadata(_ slide: PresentationSlide) -> [String: String] {
+        var metadata = [
+            "sourcePart": slide.sourcePart,
+            "slideNumber": "\(slide.number)",
+        ]
+        if slide.isHidden {
+            metadata["isHidden"] = "true"
+        }
+        return metadata
+    }
+
     // MARK: - Security
 
     private static func securityMetadata(
         for url: URL,
+        presentation: PresentationDocument,
         archive: BoundedZipReader,
         extractedText: String,
         textFallback: String
@@ -538,46 +567,70 @@ public struct PPTXAdapter: DocumentFormatAdapter {
         var activeContentTypes: Set<DocumentActiveContentType> = []
         var externalReferences: [DocumentExternalReference] = []
 
-        if archive.entryNames.contains(where: { $0.lowercased().hasSuffix("vbaproject.bin") }) {
+        let macroParts = archive.entryNames.filter { $0.lowercased().hasSuffix("vbaproject.bin") }
+        let embeddedObjectParts = archive.entryNames.filter { path in
+            let lowercased = path.lowercased()
+            return !lowercased.hasSuffix("/")
+                && (lowercased.hasPrefix("ppt/embeddings/")
+                    || lowercased.hasPrefix("ppt/activex/")
+                    || lowercased.hasPrefix("ppt/ctrlprops/"))
+        }
+        let relationshipParts = archive.entryNames.filter { $0.hasSuffix(".rels") }
+        let inspectedRelationshipParts = Array(relationshipParts.prefix(Constants.maxRelationshipFiles))
+        var macroRelationshipCount = 0
+        var embeddedObjectRelationshipCount = 0
+
+        for relationshipsPart in inspectedRelationshipParts {
+            for relationship in try relationships(in: relationshipsPart, from: archive) {
+                if relationship.isMacroProject {
+                    macroRelationshipCount += 1
+                }
+                if relationship.isEmbeddedObject {
+                    embeddedObjectRelationshipCount += 1
+                }
+                if relationship.targetMode == .external {
+                    activeContentTypes.insert(.externalReference)
+                    externalReferences.append(
+                        DocumentExternalReference(
+                            kind: relationship.referenceKind,
+                            urlString: relationship.target,
+                            relationshipId: relationship.id
+                        )
+                    )
+                }
+            }
+        }
+
+        if !macroParts.isEmpty || macroRelationshipCount > 0 {
             activeContentTypes.insert(.macro)
             findings.append(
                 DocumentSecurityFinding(
                     kind: .macro,
                     severity: .high,
-                    message: "Presentation package contains a VBA project part."
+                    message: "Presentation package contains a VBA project part or relationship.",
+                    metadata: [
+                        "partCount": "\(macroParts.count)",
+                        "relationshipCount": "\(macroRelationshipCount)",
+                    ]
                 )
             )
         }
 
-        let embeddedCount = archive.entryNames.filter {
-            $0.hasPrefix("ppt/embeddings/") || $0.hasPrefix("ppt/activeX/")
-        }.count
+        let embeddedCount = embeddedObjectParts.count + embeddedObjectRelationshipCount
         if embeddedCount > 0 {
             activeContentTypes.insert(.embeddedFile)
             findings.append(
                 DocumentSecurityFinding(
                     kind: .embeddedFile,
                     severity: .medium,
-                    message: "Presentation package contains embedded or ActiveX parts.",
-                    metadata: ["count": "\(embeddedCount)"]
+                    message: "Presentation package contains embedded OLE/object or ActiveX parts/relationships.",
+                    metadata: [
+                        "count": "\(embeddedCount)",
+                        "partCount": "\(embeddedObjectParts.count)",
+                        "relationshipCount": "\(embeddedObjectRelationshipCount)",
+                    ]
                 )
             )
-        }
-
-        for relationshipsPart in archive.entryNames.filter({ $0.hasSuffix(".rels") }).prefix(
-            Constants.maxRelationshipFiles
-        ) {
-            for relationship in try relationships(in: relationshipsPart, from: archive)
-            where relationship.targetMode == .external {
-                activeContentTypes.insert(.externalReference)
-                externalReferences.append(
-                    DocumentExternalReference(
-                        kind: relationship.referenceKind,
-                        urlString: relationship.target,
-                        relationshipId: relationship.id
-                    )
-                )
-            }
         }
 
         if !externalReferences.isEmpty {
@@ -587,6 +640,36 @@ public struct PPTXAdapter: DocumentFormatAdapter {
                     severity: .low,
                     message: "Presentation package contains external relationship targets.",
                     metadata: ["count": "\(externalReferences.count)"]
+                )
+            )
+        }
+
+        if relationshipParts.count > inspectedRelationshipParts.count {
+            findings.append(
+                DocumentSecurityFinding(
+                    kind: .truncatedContent,
+                    severity: .low,
+                    message: "Presentation relationship inspection was capped before all relationship parts were read.",
+                    metadata: [
+                        "inspectedRelationshipFiles": "\(inspectedRelationshipParts.count)",
+                        "relationshipFiles": "\(relationshipParts.count)",
+                    ]
+                )
+            )
+        }
+
+        let hiddenSlides = presentation.slides.filter(\.isHidden)
+        if !hiddenSlides.isEmpty {
+            findings.append(
+                DocumentSecurityFinding(
+                    kind: .unsupportedFeature,
+                    severity: .low,
+                    message: "Presentation contains hidden slides; their text was extracted and marked in metadata.",
+                    metadata: [
+                        "feature": "hiddenSlides",
+                        "count": "\(hiddenSlides.count)",
+                        "slideNumbers": hiddenSlides.map(\.number).sorted().map(String.init).joined(separator: ","),
+                    ]
                 )
             )
         }
@@ -724,6 +807,11 @@ private struct SlidePart: Sendable {
     let path: String
 }
 
+private struct PresentationPartTextExtraction {
+    let textRuns: [PresentationTextRun]
+    let isHiddenSlide: Bool
+}
+
 private struct PresentationParagraphRuns {
     let index: Int
     let runs: [PresentationTextRun]
@@ -795,6 +883,18 @@ private struct OpenXMLRelationship: Sendable {
     let target: String
     let targetMode: TargetMode
 
+    var isMacroProject: Bool {
+        relationshipTypeName == "vbaproject" || target.lowercased().hasSuffix("vbaproject.bin")
+    }
+
+    var isEmbeddedObject: Bool {
+        let lowercasedTarget = target.lowercased()
+        return ["oleobject", "package", "control", "activexcontrol"].contains(relationshipTypeName)
+            || lowercasedTarget.contains("/embeddings/")
+            || lowercasedTarget.contains("/activex/")
+            || lowercasedTarget.contains("/ctrlprops/")
+    }
+
     var referenceKind: DocumentExternalReference.Kind {
         let lowercased = type.lowercased()
         if lowercased.contains("hyperlink") {
@@ -817,6 +917,10 @@ private struct OpenXMLRelationship: Sendable {
         }
         return .packageRelationship
     }
+
+    private var relationshipTypeName: String {
+        type.split(separator: "/").last.map { String($0).lowercased() } ?? ""
+    }
 }
 
 private final class OpenXMLTextRunCollector: NSObject, XMLParserDelegate {
@@ -831,6 +935,7 @@ private final class OpenXMLTextRunCollector: NSObject, XMLParserDelegate {
     private(set) var runs: [CollectedRun] = []
     private(set) var didOverflow = false
     private(set) var didExceedDepth = false
+    private(set) var isHiddenSlide = false
 
     init(maxUTF16Length: Int) {
         self.maxUTF16Length = maxUTF16Length
@@ -850,7 +955,12 @@ private final class OpenXMLTextRunCollector: NSObject, XMLParserDelegate {
             return
         }
 
-        switch OpenXMLName.localName(elementName, qualifiedName: qName) {
+        let localName = OpenXMLName.localName(elementName, qualifiedName: qName)
+        if depth == 1, localName == "sld" {
+            isHiddenSlide = OpenXMLBoolean.isFalse(OpenXMLName.attribute("show", in: attributeDict))
+        }
+
+        switch localName {
         case "p":
             inParagraph = true
             currentParagraphRuns = []
@@ -1018,6 +1128,18 @@ private enum OpenXMLName {
         return attributes.first { key, _ in
             key.split(separator: ":").last.map { $0.lowercased() } == lowercasedName
         }?.value
+    }
+}
+
+private enum OpenXMLBoolean {
+    static func isFalse(_ value: String?) -> Bool {
+        guard let value else { return false }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "0", "false":
+            return true
+        default:
+            return false
+        }
     }
 }
 

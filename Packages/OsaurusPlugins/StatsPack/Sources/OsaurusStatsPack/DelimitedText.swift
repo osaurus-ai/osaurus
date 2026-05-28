@@ -23,11 +23,12 @@ public struct CSVWithSchemaAdapter: FormatAdapter {
                 pathExtension: url.pathExtension.lowercased()
             )
         }
-        let schema = try CSVSchema.load(for: url)
+        let schema = try DelimitedTextSchema.load(for: url, sidecarExtension: "csvschema")
         let reference = try documentReference(
             url: url,
             formatIdentifier: Self.formatIdentifier,
-            metadata: schema?.referenceMetadata ?? ["schemaSidecar": "false"]
+            metadata: schema?.referenceMetadata(delimiter: "comma")
+                ?? ["delimiter": "comma", "schemaSidecar": "false"]
         )
         state.update(url: url, reference: reference)
         return reference
@@ -38,12 +39,14 @@ public struct CSVWithSchemaAdapter: FormatAdapter {
         guard let opened = state.openedDocument() else {
             throw FormatAdapterError.documentNotOpened(formatIdentifier: Self.formatIdentifier)
         }
-        let schema = try CSVSchema.load(for: opened.url)
+        let schema = try DelimitedTextSchema.load(for: opened.url, sidecarExtension: "csvschema")
         try streamDelimitedRecords(
             at: opened.url,
             delimiter: ",",
             reference: opened.reference,
-            extraMetadata: schema?.recordMetadata ?? ["schemaSidecar": "false"],
+            schema: schema,
+            extraMetadata: schema?.streamMetadata(delimiter: "comma")
+                ?? ["delimiter": "comma", "schemaSidecar": "false"],
             into: continuation
         )
     }
@@ -66,10 +69,12 @@ public struct TSVStatsAdapter: FormatAdapter {
                 pathExtension: url.pathExtension.lowercased()
             )
         }
+        let schema = try DelimitedTextSchema.load(for: url, sidecarExtension: "tsvschema")
         let reference = try documentReference(
             url: url,
             formatIdentifier: Self.formatIdentifier,
-            metadata: ["delimiter": "tab"]
+            metadata: schema?.referenceMetadata(delimiter: "tab")
+                ?? ["delimiter": "tab", "schemaSidecar": "false"]
         )
         state.update(url: url, reference: reference)
         return reference
@@ -80,17 +85,20 @@ public struct TSVStatsAdapter: FormatAdapter {
         guard let opened = state.openedDocument() else {
             throw FormatAdapterError.documentNotOpened(formatIdentifier: Self.formatIdentifier)
         }
+        let schema = try DelimitedTextSchema.load(for: opened.url, sidecarExtension: "tsvschema")
         try streamDelimitedRecords(
             at: opened.url,
             delimiter: "\t",
             reference: opened.reference,
-            extraMetadata: ["delimiter": "tab"],
+            schema: schema,
+            extraMetadata: schema?.streamMetadata(delimiter: "tab")
+                ?? ["delimiter": "tab", "schemaSidecar": "false"],
             into: continuation
         )
     }
 }
 
-private struct CSVSchema {
+private struct DelimitedTextSchema {
     struct Column {
         let name: String
         let type: String?
@@ -98,8 +106,15 @@ private struct CSVSchema {
 
     let columns: [Column]
 
-    var referenceMetadata: [String: String] {
+    func referenceMetadata(delimiter: String) -> [String: String] {
+        var metadata = streamMetadata(delimiter: delimiter)
+        metadata["schemaSidecar"] = "true"
+        return metadata
+    }
+
+    func streamMetadata(delimiter: String) -> [String: String] {
         var metadata = recordMetadata
+        metadata["delimiter"] = delimiter
         metadata["schemaSidecar"] = "true"
         return metadata
     }
@@ -108,15 +123,17 @@ private struct CSVSchema {
         var metadata = [
             "schemaColumnNames": columns.map(\.name).joined(separator: "\t")
         ]
-        let types = columns.compactMap(\.type)
-        if !types.isEmpty {
+        if columns.contains(where: { $0.type != nil }) {
+            let types = columns.map { $0.type ?? "" }
             metadata["schemaColumnTypes"] = types.joined(separator: "\t")
         }
         return metadata
     }
 
-    static func load(for url: URL) throws -> CSVSchema? {
-        guard let sidecar = schemaSidecarURL(for: url) else { return nil }
+    static func load(for url: URL, sidecarExtension: String) throws -> DelimitedTextSchema? {
+        guard let sidecar = schemaSidecarURL(for: url, sidecarExtension: sidecarExtension) else {
+            return nil
+        }
         let data = try Data(contentsOf: sidecar)
         let root = try JSONSerialization.jsonObject(with: data)
         guard let object = root as? [String: Any], let rawColumns = object["columns"] as? [Any] else {
@@ -138,13 +155,13 @@ private struct CSVSchema {
         guard !columns.isEmpty else {
             throw StatsPackError.invalidSchemaSidecar("columns must not be empty")
         }
-        return CSVSchema(columns: columns)
+        return DelimitedTextSchema(columns: columns)
     }
 
-    private static func schemaSidecarURL(for url: URL) -> URL? {
+    private static func schemaSidecarURL(for url: URL, sidecarExtension: String) -> URL? {
         let candidates = [
-            url.deletingPathExtension().appendingPathExtension("csvschema"),
-            url.appendingPathExtension("csvschema"),
+            url.deletingPathExtension().appendingPathExtension(sidecarExtension),
+            url.appendingPathExtension(sidecarExtension),
         ]
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
     }
@@ -154,23 +171,39 @@ private func streamDelimitedRecords(
     at url: URL,
     delimiter: Character,
     reference: DocumentReference,
+    schema: DelimitedTextSchema?,
     extraMetadata: [String: String],
     into continuation: AsyncStream<Record>.Continuation
 ) throws {
+    let schemaColumns = schema?.columns.map(\.name)
+    var headerColumns: [String]?
+    var rowIndex = 0
     try TextLineReader.forEachLine(at: url) { line, lineNumber in
         let fields = try DelimitedLineParser.parse(line, delimiter: delimiter, lineNumber: lineNumber)
         var metadata = extraMetadata
         metadata["documentId"] = reference.id.uuidString
         metadata["formatIdentifier"] = reference.formatIdentifier
         metadata["lineNumber"] = "\(lineNumber)"
+        metadata["columnCount"] = "\(fields.count)"
+
+        if rowIndex == 0, schemaColumns == nil || schemaColumns == fields {
+            headerColumns = fields
+            metadata["rowKind"] = "header"
+        } else {
+            metadata["rowKind"] = "data"
+        }
+        if let headerColumns {
+            metadata["headerColumnNames"] = headerColumns.joined(separator: "\t")
+        }
         continuation.yield(
             Record(
-                index: lineNumber - 1,
+                index: rowIndex,
                 fields: fields,
                 anchorIdentifier: "line/\(lineNumber)",
                 metadata: metadata
             )
         )
+        rowIndex += 1
     }
 }
 

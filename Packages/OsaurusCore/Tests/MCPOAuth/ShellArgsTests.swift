@@ -10,89 +10,89 @@
 //
 
 import Foundation
-import Testing
+import XCTest
 
 @testable import OsaurusCore
 
-struct ShellArgsTests {
+final class ShellArgsTests: XCTestCase {
 
     // MARK: - Split
 
-    @Test func splitsOnWhitespace() throws {
-        #expect(ShellArgs.split("a b c") == ["a", "b", "c"])
+    func testSplitsOnWhitespace() throws {
+        XCTAssertEqual(ShellArgs.split("a b c"), ["a", "b", "c"])
     }
 
-    @Test func collapsesRepeatedWhitespace() throws {
-        #expect(ShellArgs.split("  a   b  ") == ["a", "b"])
+    func testCollapsesRepeatedWhitespace() throws {
+        XCTAssertEqual(ShellArgs.split("  a   b  "), ["a", "b"])
     }
 
-    @Test func returnsEmptyForBlankInput() throws {
-        #expect(ShellArgs.split("") == [])
-        #expect(ShellArgs.split("   ") == [])
+    func testReturnsEmptyForBlankInput() throws {
+        XCTAssertEqual(ShellArgs.split(""), [])
+        XCTAssertEqual(ShellArgs.split("   "), [])
     }
 
-    @Test func preservesSingleQuotedSpaces() throws {
-        #expect(
-            ShellArgs.split("--root '/Users/me/long path'")
-                == ["--root", "/Users/me/long path"]
+    func testPreservesSingleQuotedSpaces() throws {
+        XCTAssertEqual(
+            ShellArgs.split("--root '/Users/me/long path'"),
+            ["--root", "/Users/me/long path"]
         )
     }
 
-    @Test func preservesDoubleQuotedSpaces() throws {
-        #expect(
-            ShellArgs.split("--root \"/Users/me/long path\"")
-                == ["--root", "/Users/me/long path"]
+    func testPreservesDoubleQuotedSpaces() throws {
+        XCTAssertEqual(
+            ShellArgs.split("--root \"/Users/me/long path\""),
+            ["--root", "/Users/me/long path"]
         )
     }
 
-    @Test func honorsBackslashEscapeOutsideQuotes() throws {
-        #expect(ShellArgs.split("a\\ b c") == ["a b", "c"])
+    func testHonorsBackslashEscapeOutsideQuotes() throws {
+        XCTAssertEqual(ShellArgs.split("a\\ b c"), ["a b", "c"])
     }
 
-    @Test func adjacentQuotedAndUnquotedConcatenate() throws {
-        #expect(ShellArgs.split("foo'bar baz'") == ["foobar baz"])
+    func testAdjacentQuotedAndUnquotedConcatenate() throws {
+        XCTAssertEqual(ShellArgs.split("foo'bar baz'"), ["foobar baz"])
     }
 
-    @Test func emptyQuotedStringYieldsEmptyArg() throws {
-        #expect(ShellArgs.split("a '' b") == ["a", "", "b"])
+    func testEmptyQuotedStringYieldsEmptyArg() throws {
+        XCTAssertEqual(ShellArgs.split("a '' b"), ["a", "", "b"])
     }
 
     /// POSIX double-quote rule: `\` is only an escape before `"`, `\`,
     /// `$`, backtick, or newline. Anything else keeps the backslash
     /// literal — important so `--regex "\d+"` round-trips cleanly.
-    @Test func doubleQuoteKeepsLiteralBackslashForNonEscapeChars() throws {
-        #expect(ShellArgs.split("--regex \"\\d+\"") == ["--regex", "\\d+"])
+    func testDoubleQuoteKeepsLiteralBackslashForNonEscapeChars() throws {
+        XCTAssertEqual(ShellArgs.split("--regex \"\\d+\""), ["--regex", "\\d+"])
     }
 
-    @Test func doubleQuoteEscapesDoubleQuoteAndBackslash() throws {
-        #expect(ShellArgs.split("\"a\\\"b\\\\c\"") == ["a\"b\\c"])
+    func testDoubleQuoteEscapesDoubleQuoteAndBackslash() throws {
+        XCTAssertEqual(ShellArgs.split("\"a\\\"b\\\\c\""), ["a\"b\\c"])
     }
 
-    @Test func trailingBackslashIsLiteral() throws {
-        #expect(ShellArgs.split("foo \\") == ["foo", "\\"])
+    func testTrailingBackslashIsLiteral() throws {
+        XCTAssertEqual(ShellArgs.split("foo \\"), ["foo", "\\"])
     }
 
     // MARK: - Join / quote
 
-    @Test func quoteLeavesBareSafeTokensAlone() throws {
-        #expect(ShellArgs.quote("npx") == "npx")
-        #expect(ShellArgs.quote("--root") == "--root")
-        #expect(ShellArgs.quote("/usr/local/bin/uvx") == "/usr/local/bin/uvx")
+    func testQuoteLeavesBareSafeTokensAlone() throws {
+        XCTAssertEqual(ShellArgs.quote("npx"), "npx")
+        XCTAssertEqual(ShellArgs.quote("--root"), "--root")
+        XCTAssertEqual(ShellArgs.quote("/usr/local/bin/uvx"), "/usr/local/bin/uvx")
     }
 
-    @Test func quoteWrapsSpacesInSingleQuotes() throws {
-        #expect(ShellArgs.quote("/path with spaces") == "'/path with spaces'")
+    func testQuoteWrapsSpacesInSingleQuotes() throws {
+        XCTAssertEqual(ShellArgs.quote("/path with spaces"), "'/path with spaces'")
     }
 
-    @Test func quoteEscapesEmbeddedSingleQuotes() throws {
-        #expect(ShellArgs.quote("it's fine") == "'it'\\''s fine'")
+    func testQuoteEscapesEmbeddedSingleQuotes() throws {
+        XCTAssertEqual(ShellArgs.quote("it's fine"), "'it'\\''s fine'")
     }
 
-    @Test func quoteHandlesEmptyString() throws {
-        #expect(ShellArgs.quote("") == "''")
+    func testQuoteHandlesEmptyString() throws {
+        XCTAssertEqual(ShellArgs.quote(""), "''")
     }
 
-    @Test func joinRoundTripsThroughSplit() throws {
+    func testJoinRoundTripsThroughSplit() throws {
         let original = [
             "npx",
             "-y",
@@ -102,33 +102,33 @@ struct ShellArgsTests {
             "--flag=value with spaces",
         ]
         let joined = ShellArgs.join(original)
-        #expect(ShellArgs.split(joined) == original)
+        XCTAssertEqual(ShellArgs.split(joined), original)
     }
 
-    @Test func joinRoundTripsThroughSplitWithSingleQuotes() throws {
+    func testJoinRoundTripsThroughSplitWithSingleQuotes() throws {
         let original = ["echo", "it's working"]
         let joined = ShellArgs.join(original)
-        #expect(ShellArgs.split(joined) == original)
+        XCTAssertEqual(ShellArgs.split(joined), original)
     }
 }
 
-struct MCPStdioTransportErrorTests {
+final class MCPStdioTransportErrorTests: XCTestCase {
 
     /// The marker constant must appear verbatim in the localized
     /// description; ProviderCard's "Edit" hint relies on this round-trip.
-    @Test func commandNotFoundDescriptionContainsMarker() throws {
+    func testCommandNotFoundDescriptionContainsMarker() throws {
         let err = MCPStdioTransportError.commandNotFound(
             command: "npx",
             searchedPath: "/usr/bin"
         )
         let description = err.errorDescription ?? ""
-        #expect(description.contains(MCPStdioTransportError.commandNotFoundMarker))
-        #expect(MCPStdioTransportError.isCommandNotFoundMessage(description))
+        XCTAssertTrue(description.contains(MCPStdioTransportError.commandNotFoundMarker))
+        XCTAssertTrue(MCPStdioTransportError.isCommandNotFoundMessage(description))
     }
 
-    @Test func otherErrorsDoNotMatchCommandNotFound() throws {
+    func testOtherErrorsDoNotMatchCommandNotFound() throws {
         let err = MCPStdioTransportError.processSpawnFailed("boom")
         let description = err.errorDescription ?? ""
-        #expect(!MCPStdioTransportError.isCommandNotFoundMessage(description))
+        XCTAssertFalse(MCPStdioTransportError.isCommandNotFoundMessage(description))
     }
 }

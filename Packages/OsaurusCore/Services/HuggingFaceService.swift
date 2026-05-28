@@ -102,13 +102,14 @@ actor HuggingFaceService {
             let matchers = patterns.compactMap { Glob($0) }
             let files = nodes.compactMap { node -> MatchedFile? in
                 if node.type == "directory" { return nil }
-                let filename = (node.path as NSString).lastPathComponent
+                guard let safePath = Self.normalizedRemoteFilePath(node.path) else { return nil }
+                let filename = (safePath as NSString).lastPathComponent
                 if excludedFiles.contains(filename) { return nil }
                 let matched = matchers.contains { $0.matches(filename) }
                 guard matched else { return nil }
                 let sz = node.size ?? node.lfs?.size ?? 0
                 guard sz > 0 else { return nil }
-                return MatchedFile(path: node.path, size: sz)
+                return MatchedFile(path: safePath, size: sz)
             }
             return files.isEmpty ? nil : files
         } catch {
@@ -253,6 +254,89 @@ actor HuggingFaceService {
     }
 
     // MARK: - Private helpers
+    /// Hugging Face tree paths are network input but later become local
+    /// destination paths, so keep only simple slash-separated relative paths.
+    static func normalizedRemoteFilePath(_ path: String) -> String? {
+        guard !path.isEmpty,
+            !path.contains("\\"),
+            !path.contains("\0"),
+            !(path as NSString).isAbsolutePath
+        else {
+            return nil
+        }
+
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.isEmpty else { return nil }
+        var normalized: [String] = []
+        for component in components {
+            guard !component.isEmpty,
+                component != ".",
+                component != ".."
+            else {
+                return nil
+            }
+            normalized.append(String(component))
+        }
+        return normalized.joined(separator: "/")
+    }
+
+    static func destinationURL(forRemotePath path: String, under directory: URL) -> URL? {
+        guard let safePath = normalizedRemoteFilePath(path) else { return nil }
+        let base = directory.standardizedFileURL
+        let destination =
+            safePath
+            .split(separator: "/")
+            .reduce(base) { partial, component in
+                partial.appendingPathComponent(String(component))
+            }
+            .standardizedFileURL
+
+        guard isContained(destination, in: base),
+            existingParentChainIsContained(for: destination, under: base)
+        else {
+            return nil
+        }
+        return destination
+    }
+
+    private static func existingParentChainIsContained(for destination: URL, under base: URL) -> Bool {
+        let fileManager = FileManager.default
+        let resolvedBase = base.resolvingSymlinksInPath().standardizedFileURL
+        let parent = destination.deletingLastPathComponent().standardizedFileURL
+        let baseComponents = base.pathComponents
+        let parentComponents = parent.pathComponents
+        guard parentComponents.count >= baseComponents.count,
+            Array(parentComponents.prefix(baseComponents.count)) == baseComponents
+        else {
+            return false
+        }
+
+        var current = base
+        for component in parentComponents.dropFirst(baseComponents.count) {
+            current = current.appendingPathComponent(component, isDirectory: true)
+            guard isContained(current.standardizedFileURL, in: base) else { return false }
+            guard fileManager.fileExists(atPath: current.path) else { break }
+            guard (try? fileManager.destinationOfSymbolicLink(atPath: current.path)) == nil else {
+                return false
+            }
+
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: current.path, isDirectory: &isDirectory),
+                isDirectory.boolValue,
+                isContained(current.resolvingSymlinksInPath().standardizedFileURL, in: resolvedBase)
+            else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func isContained(_ url: URL, in directory: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        let directoryPath = directory.standardizedFileURL.path
+        return path == directoryPath || path.hasPrefix(directoryPath + "/")
+    }
+
     private func fetchModelMeta(repoId: String) async -> ModelMeta? {
         var comps = URLComponents()
         comps.scheme = "https"

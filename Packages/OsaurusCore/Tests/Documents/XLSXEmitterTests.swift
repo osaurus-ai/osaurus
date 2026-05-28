@@ -86,6 +86,37 @@ struct XLSXEmitterTests {
         }
     }
 
+    @Test func emit_keepsFormulaLookingTextInert() async throws {
+        let url = Self.temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try await XLSXEmitter().emit(
+            Self.document(
+                workbook: Self.singleCellWorkbook(value: .string("=HYPERLINK(\"https://example.com\")"))
+            ),
+            to: url
+        )
+
+        let parsed = try await XLSXAdapter().parse(url: url, sizeLimit: 0)
+        let workbook = try #require(parsed.representation.underlying as? Workbook)
+        let sheet = try #require(workbook.sheets.first)
+        #expect(sheet.cell("A1")?.value == .string("=HYPERLINK(\"https://example.com\")"))
+        #expect(sheet.cell("A1")?.formula == nil)
+    }
+
+    @Test func emit_rejectsStringsBeyondExcelCellLimit() async throws {
+        let url = Self.temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let overlong = String(repeating: "a", count: 32_768)
+
+        await #expect(throws: DocumentAdapterError.self) {
+            try await XLSXEmitter().emit(
+                Self.document(workbook: Self.singleCellWorkbook(value: .string(overlong))),
+                to: url
+            )
+        }
+    }
+
     @Test func bootstrap_registersXLSXEmitter() {
         let registry = DocumentFormatRegistry()
 
@@ -220,6 +251,35 @@ struct XLSXEmitterTests {
                     index: 0,
                     rows: rows,
                     anchor: sheetAnchor(name: "Empty", index: 0)
+                )
+            ]
+        )
+    }
+
+    private static func singleCellWorkbook(value: Workbook.CellValue) -> Workbook {
+        Workbook(
+            sheets: [
+                Workbook.Sheet(
+                    name: "Sheet1",
+                    index: 0,
+                    rows: [
+                        row(
+                            number: 1,
+                            sheetName: "Sheet1",
+                            sheetIndex: 0,
+                            cells: [
+                                cell(
+                                    "A1",
+                                    row: 1,
+                                    column: 1,
+                                    value: value,
+                                    sheetName: "Sheet1",
+                                    sheetIndex: 0
+                                )
+                            ]
+                        )
+                    ],
+                    anchor: sheetAnchor(name: "Sheet1", index: 0)
                 )
             ]
         )

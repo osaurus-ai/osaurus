@@ -7,47 +7,94 @@
 //
 
 import Foundation
-import Testing
+import XCTest
 
 @testable import OsaurusCore
 
-@Suite("MCP OAuth discovery")
-struct MCPOAuthDiscoveryTests {
-    @Test func prmHintTakesPrecedenceOverWellKnown() {
+final class MCPOAuthDiscoveryTests: XCTestCase {
+    func testPRMHintTakesPrecedenceOverWellKnown() {
         let server = URL(string: "https://mcp.notion.com/mcp")!
         let hint = URL(string: "https://meta.notion.com/.well-known/oauth-protected-resource")!
         let resolved = MCPOAuthDiscovery.prmURL(forServer: server, hint: hint)
-        #expect(resolved == hint)
+        XCTAssertEqual(resolved, hint)
     }
 
-    @Test func prmFallsBackToWellKnown() {
+    func testPRMHintRejectsLocalTargetForPublicServer() {
+        let server = URL(string: "https://mcp.example.com/mcp")!
+        let hint = URL(string: "http://127.0.0.1:9090/.well-known/oauth-protected-resource")!
+
+        let resolved = MCPOAuthDiscovery.prmURL(forServer: server, hint: hint)
+
+        XCTAssertNil(resolved)
+    }
+
+    func testPRMHintAllowsLocalTargetForLocalServer() {
+        let server = URL(string: "http://localhost:7331/mcp")!
+        let hint = URL(string: "http://127.0.0.1:7331/.well-known/oauth-protected-resource")!
+
+        let resolved = MCPOAuthDiscovery.prmURL(forServer: server, hint: hint)
+
+        XCTAssertEqual(resolved, hint)
+    }
+
+    func testPRMHintAllowsHTTPSLocalTargetForHTTPSLocalServer() {
+        let server = URL(string: "https://localhost:7331/mcp")!
+        let hint = URL(string: "http://127.0.0.1:7331/.well-known/oauth-protected-resource")!
+
+        let resolved = MCPOAuthDiscovery.prmURL(forServer: server, hint: hint)
+
+        XCTAssertEqual(resolved, hint)
+    }
+
+    func testPRMHintRejectsPublicCleartextTargetForLocalServer() {
+        let server = URL(string: "http://localhost:7331/mcp")!
+        let hint = URL(string: "http://auth.example.com/.well-known/oauth-protected-resource")!
+
+        let resolved = MCPOAuthDiscovery.prmURL(forServer: server, hint: hint)
+
+        XCTAssertNil(resolved)
+    }
+
+    func testPRMHintRejectsUserInfoAndFragments() {
+        let server = URL(string: "https://mcp.example.com/mcp")!
+        let withUserInfo = URL(string: "https://user:pass@meta.example.com/.well-known/oauth-protected-resource")!
+        let withFragment = URL(string: "https://meta.example.com/.well-known/oauth-protected-resource#token")!
+
+        XCTAssertNil(MCPOAuthDiscovery.prmURL(forServer: server, hint: withUserInfo))
+        XCTAssertNil(MCPOAuthDiscovery.prmURL(forServer: server, hint: withFragment))
+    }
+
+    func testPRMFallsBackToWellKnown() {
         let server = URL(string: "https://mcp.example.com/mcp")!
         let resolved = MCPOAuthDiscovery.prmURL(forServer: server, hint: nil)
         // RFC 9728 § the resource metadata is at /.well-known/oauth-protected-resource.
-        #expect(resolved?.path == "/.well-known/oauth-protected-resource")
-        #expect(resolved?.host == "mcp.example.com")
+        XCTAssertEqual(resolved?.path, "/.well-known/oauth-protected-resource")
+        XCTAssertEqual(resolved?.host, "mcp.example.com")
     }
 
-    @Test func asmCandidatesIncludeRFC8414AndOIDC() {
+    func testASMCandidatesIncludeRFC8414AndOIDC() {
         let asURL = URL(string: "https://auth.example.com/realms/mcp")!
-        let candidates = MCPOAuthDiscovery.asmCandidateURLs(authServerURL: asURL).map { $0.absoluteString }
+        let candidates = MCPOAuthDiscovery.asmCandidateURLs(authServerURL: asURL).map(\.absoluteString)
 
         // First candidate must be RFC 8414 prefixed at the host.
-        #expect(candidates.first == "https://auth.example.com/.well-known/oauth-authorization-server/realms/mcp")
+        XCTAssertEqual(
+            candidates.first,
+            "https://auth.example.com/.well-known/oauth-authorization-server/realms/mcp"
+        )
         // Path-suffixed RFC 8414 variant should also be present.
-        #expect(candidates.contains("https://auth.example.com/realms/mcp/.well-known/oauth-authorization-server"))
+        XCTAssertTrue(candidates.contains("https://auth.example.com/realms/mcp/.well-known/oauth-authorization-server"))
         // OIDC discovery (path-suffixed) is the documented fallback.
-        #expect(candidates.contains("https://auth.example.com/realms/mcp/.well-known/openid-configuration"))
+        XCTAssertTrue(candidates.contains("https://auth.example.com/realms/mcp/.well-known/openid-configuration"))
     }
 
-    @Test func asmCandidatesForRootIssuerAreSensible() {
+    func testASMCandidatesForRootIssuerAreSensible() {
         let asURL = URL(string: "https://auth.example.com")!
-        let candidates = MCPOAuthDiscovery.asmCandidateURLs(authServerURL: asURL).map { $0.absoluteString }
-        #expect(candidates.contains("https://auth.example.com/.well-known/oauth-authorization-server"))
-        #expect(candidates.contains("https://auth.example.com/.well-known/openid-configuration"))
+        let candidates = MCPOAuthDiscovery.asmCandidateURLs(authServerURL: asURL).map(\.absoluteString)
+        XCTAssertTrue(candidates.contains("https://auth.example.com/.well-known/oauth-authorization-server"))
+        XCTAssertTrue(candidates.contains("https://auth.example.com/.well-known/openid-configuration"))
     }
 
-    @Test func decodesPRM() throws {
+    func testDecodesPRM() throws {
         let json = """
             {
               "resource": "https://mcp.example.com/mcp",
@@ -57,12 +104,12 @@ struct MCPOAuthDiscoveryTests {
             }
             """
         let prm = try JSONDecoder().decode(MCPProtectedResourceMetadata.self, from: Data(json.utf8))
-        #expect(prm.authorizationServers == ["https://auth.example.com"])
-        #expect(prm.scopesSupported == ["read", "write"])
-        #expect(prm.bearerMethodsSupported == ["header"])
+        XCTAssertEqual(prm.authorizationServers, ["https://auth.example.com"])
+        XCTAssertEqual(prm.scopesSupported, ["read", "write"])
+        XCTAssertEqual(prm.bearerMethodsSupported, ["header"])
     }
 
-    @Test func decodesASM() throws {
+    func testDecodesASM() throws {
         let json = """
             {
               "issuer": "https://auth.example.com",
@@ -76,14 +123,14 @@ struct MCPOAuthDiscoveryTests {
             }
             """
         let asm = try JSONDecoder().decode(MCPAuthorizationServerMetadata.self, from: Data(json.utf8))
-        #expect(asm.issuer == "https://auth.example.com")
-        #expect(asm.authorizationEndpoint == "https://auth.example.com/authorize")
-        #expect(asm.tokenEndpoint == "https://auth.example.com/token")
-        #expect(asm.registrationEndpoint == "https://auth.example.com/register")
-        #expect(asm.codeChallengeMethodsSupported == ["S256"])
+        XCTAssertEqual(asm.issuer, "https://auth.example.com")
+        XCTAssertEqual(asm.authorizationEndpoint, "https://auth.example.com/authorize")
+        XCTAssertEqual(asm.tokenEndpoint, "https://auth.example.com/token")
+        XCTAssertEqual(asm.registrationEndpoint, "https://auth.example.com/register")
+        XCTAssertEqual(asm.codeChallengeMethodsSupported, ["S256"])
     }
 
-    @Test func discoverUsesInjectedFetcher() async throws {
+    func testDiscoverUsesInjectedFetcher() async throws {
         let discovery = MCPOAuthDiscovery()
         let prmJSON = #"{"authorization_servers":["https://auth.example.com"]}"#
         let asmJSON = """
@@ -116,7 +163,89 @@ struct MCPOAuthDiscoveryTests {
             serverURL: URL(string: "https://mcp.example.com/mcp")!,
             hint: nil
         )
-        #expect(prm.authorizationServers == ["https://auth.example.com"])
-        #expect(asm.tokenEndpoint == "https://auth.example.com/token")
+        XCTAssertEqual(prm.authorizationServers, ["https://auth.example.com"])
+        XCTAssertEqual(asm.tokenEndpoint, "https://auth.example.com/token")
+    }
+
+    func testDiscoverDoesNotFetchLocalAuthorizationServerForPublicResource() async throws {
+        let discovery = MCPOAuthDiscovery()
+        let prmJSON = #"{"authorization_servers":["http://127.0.0.1:9090"]}"#
+        let recorder = OAuthDiscoveryURLRecorder()
+        await discovery._setFetcher { url in
+            await recorder.append(url)
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (Data(prmJSON.utf8), response)
+        }
+
+        do {
+            _ = try await discovery.discover(
+                serverURL: URL(string: "https://mcp.example.com/mcp")!,
+                hint: nil
+            )
+            XCTFail("Expected unsafe local authorization server to throw")
+        } catch is MCPOAuthDiscoveryError {
+            // Expected: public resources must not be allowed to redirect discovery to localhost.
+        }
+
+        let fetchedURLs = await recorder.snapshot()
+        XCTAssertEqual(fetchedURLs.count, 1)
+        XCTAssertEqual(fetchedURLs.first?.host, "mcp.example.com")
+    }
+
+    func testValidateAuthorizationServerMetadataRejectsUnsafeTokenEndpoint() {
+        let asm = MCPAuthorizationServerMetadata(
+            issuer: "https://auth.example.com",
+            authorizationEndpoint: "https://auth.example.com/authorize",
+            tokenEndpoint: "http://169.254.169.254/latest/api/token",
+            registrationEndpoint: "https://auth.example.com/register",
+            scopesSupported: nil,
+            codeChallengeMethodsSupported: nil,
+            grantTypesSupported: nil,
+            tokenEndpointAuthMethodsSupported: nil
+        )
+
+        XCTAssertThrowsError(
+            try MCPOAuthDiscovery.validateAuthorizationServerMetadata(
+                asm,
+                origin: URL(string: "https://mcp.example.com/mcp")!
+            )
+        ) { error in
+            XCTAssertTrue(error is MCPOAuthDiscoveryError)
+        }
+    }
+
+    func testValidateAuthorizationServerMetadataAllowsLocalDevEndpointsForLocalResource() throws {
+        let asm = MCPAuthorizationServerMetadata(
+            issuer: "http://127.0.0.1:9090",
+            authorizationEndpoint: "http://127.0.0.1:9090/authorize",
+            tokenEndpoint: "http://127.0.0.1:9090/token",
+            registrationEndpoint: "http://127.0.0.1:9090/register",
+            scopesSupported: nil,
+            codeChallengeMethodsSupported: nil,
+            grantTypesSupported: nil,
+            tokenEndpointAuthMethodsSupported: nil
+        )
+
+        try MCPOAuthDiscovery.validateAuthorizationServerMetadata(
+            asm,
+            origin: URL(string: "http://localhost:7331/mcp")!
+        )
+    }
+}
+
+private actor OAuthDiscoveryURLRecorder {
+    private var urls: [URL] = []
+
+    func append(_ url: URL) {
+        urls.append(url)
+    }
+
+    func snapshot() -> [URL] {
+        urls
     }
 }

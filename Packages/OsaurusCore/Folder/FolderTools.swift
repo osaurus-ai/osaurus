@@ -315,9 +315,10 @@ struct FileTreeTool: OsaurusTool {
 struct FileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
-        "Read the contents of a text file. **Use this instead of `cat` / `head` / `tail` in "
-        + "`shell_run`.** Cannot read binary files (PDFs, images, etc.). Optionally specify start_line "
-        + "and end_line for partial reads. Line numbers are 1-indexed."
+        "Read the contents of a text file or a bounded preview of an XLSX workbook. **Use this instead "
+        + "of `cat` / `head` / `tail` in `shell_run`.** Cannot read most binary files (PDFs, images, etc.). "
+        + "Optionally specify start_line and end_line for partial text reads; for workbooks they select "
+        + "worksheet row numbers. Line numbers are 1-indexed."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -326,22 +327,36 @@ struct FileReadTool: OsaurusTool {
                 "type": .string("string"),
                 "description": .string("Relative path to the file from the working directory"),
             ]),
+            "sheet_name": .object([
+                "type": .string("string"),
+                "description": .string("Optional XLSX worksheet name to preview"),
+            ]),
             "start_line": .object([
                 "type": .string("integer"),
-                "description": .string("Optional start line number (1-indexed, inclusive)"),
+                "description": .string("Optional start line number or XLSX row number (1-indexed, inclusive)"),
             ]),
             "end_line": .object([
                 "type": .string("integer"),
-                "description": .string("Optional end line number (1-indexed, inclusive)"),
+                "description": .string("Optional end line number or XLSX row number (1-indexed, inclusive)"),
+            ]),
+            "max_rows": .object([
+                "type": .string("integer"),
+                "description": .string("Optional XLSX preview row cap per sheet (default 8, max 50)"),
+            ]),
+            "max_columns": .object([
+                "type": .string("integer"),
+                "description": .string("Optional XLSX preview column cap per row (default 8, max 30)"),
             ]),
         ]),
         "required": .array([.string("path")]),
     ])
 
     private let rootPath: URL
+    private let documentRegistry: DocumentFormatRegistry
 
-    init(rootPath: URL) {
+    init(rootPath: URL, documentRegistry: DocumentFormatRegistry = .shared) {
         self.rootPath = rootPath
+        self.documentRegistry = documentRegistry
     }
 
     /// Maximum characters for file_read output to prevent context window exhaustion.
@@ -380,6 +395,31 @@ struct FileReadTool: OsaurusTool {
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw FolderToolError.fileNotFound(relativePath)
+        }
+
+        let sheetName: String?
+        if args.keys.contains("sheet_name") {
+            let sheetReq = requireString(
+                args,
+                "sheet_name",
+                expected: "worksheet name in the XLSX workbook",
+                tool: name
+            )
+            guard case .value(let parsedSheetName) = sheetReq else {
+                return sheetReq.failureEnvelope ?? ""
+            }
+            sheetName = parsedSheetName
+        } else {
+            sheetName = nil
+        }
+
+        if let workbookPreview = try await workbookPreviewIfAvailable(
+            fileURL: fileURL,
+            relativePath: relativePath,
+            sheetName: sheetName,
+            args: args
+        ) {
+            return ToolEnvelope.success(tool: name, text: workbookPreview)
         }
 
         let ext = fileURL.pathExtension.lowercased()
@@ -519,6 +559,209 @@ struct FileReadTool: OsaurusTool {
             ext: ext.isEmpty ? nil : ext,
             detail: detail
         )
+    }
+
+    private func workbookPreviewIfAvailable(
+        fileURL: URL,
+        relativePath: String,
+        sheetName: String?,
+        args: [String: Any]
+    ) async throws -> String? {
+        guard let adapter = workbookAdapter(for: fileURL) else { return nil }
+        let document = try await adapter.parse(
+            url: fileURL,
+            sizeLimit: DocumentLimits.limit(forFormatId: adapter.formatId)
+        )
+        guard let workbook = document.representation.underlying as? Workbook else {
+            throw FolderToolError.operationFailed(
+                "Registered adapter '\(adapter.formatId)' did not produce a workbook representation."
+            )
+        }
+        if let sheetName, !workbook.sheets.contains(where: { $0.name == sheetName }) {
+            throw FolderToolError.operationFailed("Workbook has no sheet named '\(sheetName)'.")
+        }
+
+        let maxRows = Self.clamped(coerceInt(args["max_rows"]), fallback: 8, lower: 1, upper: 50)
+        let maxColumns = Self.clamped(coerceInt(args["max_columns"]), fallback: 8, lower: 1, upper: 30)
+        let startRow = max(1, coerceInt(args["start_line"]) ?? 1)
+        let endRow = max(startRow, coerceInt(args["end_line"]) ?? Int.max)
+
+        return Self.renderWorkbookPreview(
+            document: document,
+            workbook: workbook,
+            relativePath: relativePath,
+            sheetName: sheetName,
+            startRow: startRow,
+            endRow: endRow,
+            maxRows: maxRows,
+            maxColumns: maxColumns
+        )
+    }
+
+    private func workbookAdapter(for fileURL: URL) -> (any DocumentFormatAdapter)? {
+        var adapter = documentRegistry.adapter(for: fileURL)
+        if adapter == nil, documentRegistry === DocumentFormatRegistry.shared {
+            DocumentAdaptersBootstrap.registerBuiltIns(registry: documentRegistry)
+            adapter = documentRegistry.adapter(for: fileURL)
+        }
+
+        guard adapter?.formatId.lowercased() == "xlsx" else { return nil }
+        return adapter
+    }
+
+    private static func renderWorkbookPreview(
+        document: StructuredDocument,
+        workbook: Workbook,
+        relativePath: String,
+        sheetName: String?,
+        startRow: Int,
+        endRow: Int,
+        maxRows: Int,
+        maxColumns: Int
+    ) -> String {
+        let sheets = selectedSheets(in: workbook, sheetName: sheetName)
+        let sheetNames = workbook.sheets.map(\.name)
+        let formulaCount = workbook.sheets.reduce(0) { total, sheet in
+            total
+                + sheet.rows.reduce(0) { rowTotal, row in
+                    rowTotal + row.cells.filter { $0.formula != nil }.count
+                }
+        }
+
+        var lines: [String] = [
+            "Workbook: \(relativePath)",
+            "Format: \(document.formatId) (\(document.fileSize) bytes)",
+            "Sheets: \(workbook.sheets.count) — \(boundedList(sheetNames, limit: 20))",
+            "Formula cells: \(formulaCount)",
+            securityLine(for: document.security),
+            "",
+        ]
+
+        let previewSheets = sheetName == nil ? Array(sheets.prefix(3)) : sheets
+        for sheet in previewSheets {
+            appendPreview(
+                for: sheet,
+                startRow: startRow,
+                endRow: endRow,
+                maxRows: maxRows,
+                maxColumns: maxColumns,
+                lines: &lines
+            )
+        }
+
+        if sheetName == nil, sheets.count > previewSheets.count {
+            lines.append("")
+            lines.append(
+                "... \(sheets.count - previewSheets.count) more sheet(s); pass sheet_name to focus the preview."
+            )
+        }
+
+        return truncatePreview(lines.joined(separator: "\n"))
+    }
+
+    private static func appendPreview(
+        for sheet: Workbook.Sheet,
+        startRow: Int,
+        endRow: Int,
+        maxRows: Int,
+        maxColumns: Int,
+        lines: inout [String]
+    ) {
+        let rowsInRange = sheet.rows.filter { $0.number >= startRow && $0.number <= endRow }
+        let visibleRows = Array(rowsInRange.prefix(maxRows))
+        let cellCount = sheet.rows.reduce(0) { $0 + $1.cells.count }
+        let formulaCount = sheet.rows.reduce(0) { rowTotal, row in
+            rowTotal + row.cells.filter { $0.formula != nil }.count
+        }
+        let maxColumn = sheet.rows.flatMap(\.cells).map(\.columnNumber).max() ?? 0
+
+        lines.append("Sheet \(sheet.index + 1): \(sheet.name)")
+        lines.append(
+            "Rows: \(sheet.rows.count), columns: \(maxColumn), cells: \(cellCount), formulas: \(formulaCount)"
+        )
+        if !sheet.mergedRanges.isEmpty {
+            lines.append("Merged ranges: \(boundedList(sheet.mergedRanges.map(\.reference), limit: 12))")
+        }
+
+        guard !visibleRows.isEmpty else {
+            lines.append("Preview: no rows in requested range \(startRow)-\(endRow).")
+            lines.append("")
+            return
+        }
+
+        lines.append("Preview rows \(visibleRows.first?.number ?? startRow)-\(visibleRows.last?.number ?? startRow):")
+        for row in visibleRows {
+            let cells = row.cells.sorted { $0.columnNumber < $1.columnNumber }
+            let visibleCells = cells.prefix(maxColumns).map(formatCell)
+            var line = "  row \(row.number): " + visibleCells.joined(separator: " | ")
+            if cells.count > maxColumns {
+                line += " | ... \(cells.count - maxColumns) more cell(s)"
+            }
+            lines.append(line)
+        }
+        if rowsInRange.count > visibleRows.count {
+            lines.append("... \(rowsInRange.count - visibleRows.count) more row(s) in this range.")
+        }
+        lines.append("")
+    }
+
+    private static func selectedSheets(in workbook: Workbook, sheetName: String?) -> [Workbook.Sheet] {
+        guard let sheetName else { return workbook.sheets }
+        return workbook.sheets.filter { $0.name == sheetName }
+    }
+
+    private static func formatCell(_ cell: Workbook.Cell) -> String {
+        var value = cell.value.fallbackText
+        value = value.replacingOccurrences(of: "\n", with: "\\n")
+        value = value.replacingOccurrences(of: "\t", with: " ")
+        if value.isEmpty { value = "<empty>" }
+        if let formula = cell.formula {
+            return "\(cell.reference)=\(value) [=\(formula)]"
+        }
+        return "\(cell.reference)=\(value)"
+    }
+
+    private static func securityLine(for security: DocumentSecurityMetadata) -> String {
+        var parts = ["inspection=\(security.inspectionStatus.rawValue)"]
+        if !security.activeContentTypes.isEmpty {
+            let active = security.activeContentTypes.map(\.rawValue).sorted().joined(separator: ",")
+            parts.append("active=\(active)")
+        }
+        if let maximumSeverity = security.maximumSeverity {
+            parts.append("max_severity=\(maximumSeverity.rawValue)")
+        }
+
+        let notableFindings = security.findings
+            .filter { $0.kind != .unsupportedFeature || $0.severity > .informational }
+            .prefix(3)
+            .map { finding in
+                if let count = finding.metadata["count"] {
+                    return "\(finding.kind.rawValue)(\(count))"
+                }
+                return finding.kind.rawValue
+            }
+        if !notableFindings.isEmpty {
+            parts.append("findings=\(notableFindings.joined(separator: ","))")
+        }
+        return "Security: " + parts.joined(separator: "; ")
+    }
+
+    private static func boundedList(_ values: [String], limit: Int) -> String {
+        guard !values.isEmpty else { return "(none)" }
+        let prefix = values.prefix(limit).joined(separator: ", ")
+        if values.count > limit {
+            return prefix + ", ... \(values.count - limit) more"
+        }
+        return prefix
+    }
+
+    private static func truncatePreview(_ text: String) -> String {
+        guard text.count > maxOutputChars else { return text }
+        return String(text.prefix(maxOutputChars)) + "\n... (truncated workbook preview)"
+    }
+
+    private static func clamped(_ value: Int?, fallback: Int, lower: Int, upper: Int) -> Int {
+        min(max(value ?? fallback, lower), upper)
     }
 }
 

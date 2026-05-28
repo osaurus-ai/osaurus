@@ -632,7 +632,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 | Tool              | Category | Description                                                       |
 | ----------------- | -------- | ----------------------------------------------------------------- |
 | `file_tree`       | Core     | Directory structure with project-aware ignore patterns            |
-| `file_read`       | Core     | Read with line ranges or tail mode                                |
+| `file_read`       | Core     | Read text ranges or bounded XLSX sheet previews                   |
 | `file_write`      | Core     | Create or overwrite                                               |
 | `file_edit`       | Core     | Surgical exact-string replacement                                 |
 | `file_search`     | Core     | ripgrep-style search                                              |
