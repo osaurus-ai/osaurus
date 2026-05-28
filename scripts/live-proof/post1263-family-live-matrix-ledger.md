@@ -41,15 +41,17 @@ Each promoted row needs current-head evidence for:
 
 ## Current #1268 merge boundary
 
-### 2026-05-28 08:47 PDT final checked merge boundary
+### 2026-05-28 08:59 PDT checked boundary correction
 
-- Current Osaurus PR: `#1268`, head `695d5869ea9821732649bffb3789469568e6db55`, open, not draft, mergeable, not merged by agent.
+- Current Osaurus PR: `#1268`, head `ad233f700ab2784f8def49bab65277996d8369ed`, open, not draft, mergeable, not merged by agent.
 - Current vMLX main and Osaurus pin: `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`; verified present on `osaurus-ai/vmlx-swift` main.
-- GitHub checks on `695d5869`: `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
-- Final no-sign/keychain-free app from `695d5869` launched at `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app` and `/health` returned healthy.
+- Current CI must be checked on `ad233f70`; do not reuse the older green-status line after the documentation-only head commit.
+- Code-equivalent no-sign/keychain-free app from `695d5869` launched at `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app` and `/health` returned healthy with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
 - Final source guard on `695d5869` passed: migrated cache defaults use `liveKVCodec: .engineSelected`, `ModelRuntime.shouldUseTurboQuantByDefault` remains the topology gate, and DSV4/ZAYA/ZAYA-VL/hybrid topologies are not defaulted into generic TurboQuant KV.
 - Final source policy keeps the no-forced-behavior contract: no DSV4 hidden repetition-penalty doc, no forced sampler defaults, no parser output repair, no forced reasoning tags, and required/named local tool choice still flows through the template context.
-- This is the safe #1268 merge boundary, not a claim that every future architecture row is production-clear. Nemo Omni audio/video, HY3/Hunyuan import/live rows, Ling long-prompt/runtime crash work, ZAYA CCA companion-hit depth, `/v1/responses`/`/v1/messages` parity, UI screenshots, and full saved-settings carryover remain follow-on matrix work.
+- DSV4 required-tool proof that is green: `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603`, five turns, explicit `reasoning_effort: "instruct"`, explicit `max_tokens: 256`, exact multiline args, no visible DSML leak, no reasoning leakage, resident model, disk L2 stores.
+- DSV4 rows that are not green: `/tmp/osaurus-pr1268-695d5869-dsv4-required-repeat-20260528-084132` timed out on turns 4-5 without `max_tokens` and left lingering inflight requests; `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-max256-20260528-085227` had one whitespace-drift tool argument and one `finish_reason: length` reasoning turn when DSV4 reasoning controls were omitted.
+- This is a checked consolidation boundary, not a blanket production-clear claim for every architecture row. Nemo Omni audio/video, HY3/Hunyuan import/live rows, Ling long-prompt/runtime crash work, ZAYA CCA companion-hit depth, `/v1/responses`/`/v1/messages` parity, UI screenshots, full saved-settings carryover, and omitted-reasoning DSV4 behavior remain follow-on matrix work unless fixed in this PR.
 - No agent should merge Osaurus without explicit user approval. vMLX main is managed directly and contains the runtime fixes consumed by this PR.
 
 ### 2026-05-28 07:20 PDT final PR merge boundary

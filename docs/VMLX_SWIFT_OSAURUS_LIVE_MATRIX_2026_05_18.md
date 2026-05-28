@@ -299,14 +299,16 @@ Kimi is intentionally excluded from this matrix for now per current scope.
 
 ## Open Items
 
-- Current #1268 merge boundary: Osaurus head
-  `695d5869ea9821732649bffb3789469568e6db55`, pinned to vMLX main
+- Current #1268 boundary: Osaurus head
+  `ad233f700ab2784f8def49bab65277996d8369ed`, pinned to vMLX main
   `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`, is open, not draft,
-  mergeable, and green for `shellcheck`, `swiftlint`, `test-cli`,
-  `test-core`, and `update_release_draft`. A no-sign/keychain-free Release app
-  from `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`
-  returned `/health` healthy. This is a merge boundary for the consolidated PR,
-  not a blanket production-clear claim for every architecture row.
+  mergeable, and not merged by agent. The code-equivalent no-sign/keychain-free
+  Release app from
+  `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`
+  returned `/health` healthy. Current CI must be checked on the live PR head
+  before merge; do not reuse older green-status text after another commit lands.
+  This is a consolidation boundary, not a blanket production-clear claim for
+  every architecture row.
 - The final Osaurus app has not yet run the full UI/API matrix for Qwen-VL,
   Gemma VLM, ZAYA-VL, Nemotron Omni, DSV4, MiniMax, Ling, Hy3, and the parser
   families listed above.
@@ -315,10 +317,20 @@ Kimi is intentionally excluded from this matrix for now per current scope.
   text. Treat it as an open runtime/tokenizer/template investigation, not a
   sampler-default workaround.
 - DSV4 now has live Osaurus required-tool repeat proof from #1268 head
-  `964688f3` with exact multiline args and no visible DSML leak. The active
-  tool path intentionally produced disk stores but no disk hits after vMLX
-  `76e55f5`, because disk-backed path-dependent restore is skipped for active
-  tool requests. The final settings renderer still needs visible UI/CLI
+  `ad233f70` / code-equivalent app build `695d5869` with explicit
+  `reasoning_effort: "instruct"` and `max_tokens: 256`:
+  `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603`.
+  Five turns passed with exact multiline args, no visible DSML leak, no
+  reasoning leakage, and resident DSV4 cache topology showing disk L2 stores.
+  Two broader rows are explicitly not green: omitted `max_tokens` timed out and
+  left lingering inflight requests
+  (`/tmp/osaurus-pr1268-695d5869-dsv4-required-repeat-20260528-084132`), and
+  omitted DSV4 reasoning controls produced one whitespace-drift tool argument
+  plus one reasoning-to-length turn
+  (`/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-max256-20260528-085227`).
+  The active tool path intentionally produced disk stores but no disk hits after
+  vMLX `76e55f5`, because disk-backed path-dependent restore is skipped for
+  active tool requests. The final settings renderer still needs visible UI/CLI
   evidence and `reasoning_effort=max` app proof.
 - ZAYA text direct mode remains a real red row. Do not call ZAYA production
   clear until the prompt/runtime issue is root-caused or the product explicitly
