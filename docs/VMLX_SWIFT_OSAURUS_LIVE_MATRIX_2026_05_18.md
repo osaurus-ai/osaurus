@@ -454,8 +454,7 @@ Kimi is intentionally excluded from this matrix for now per current scope.
 
 ## Open Items
 
-- Current #1268 boundary: the current documentation head is
-  `8e9bb2eb51c0679aa3d83c52c212e51c8a722f81`, pinned to vMLX main
+- Current #1268 boundary: the branch is pinned to vMLX main
   `d83b22b3d0350aa45b5b853dd4838ea34af47497`, open, not draft,
   mergeable, and not merged by agent. The live GitHub PR head can advance by
   documentation-only commits; always verify the current PR head and CI before
