@@ -20889,6 +20889,9 @@
         }
       }
     },
+    "Smooth streaming" : {
+
+    },
     "Soft-Delete %lld Rows" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",

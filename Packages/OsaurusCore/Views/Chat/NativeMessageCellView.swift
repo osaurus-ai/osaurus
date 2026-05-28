@@ -1761,7 +1761,12 @@ final class NativeMessageCellView: NSTableCellView {
                 width: bubbleWidth - 24,
                 theme: theme,
                 cacheKey: block.id,
-                isStreaming: context.isStreaming
+                // User messages are never themselves streaming — the
+                // global `context.isStreaming` flag is true whenever the
+                // assistant is generating, but propagating that here
+                // would light up the streaming cursor / trailing fade on
+                // the user bubble. Always false for user bubbles.
+                isStreaming: false
             )
             // User bubble: the verbatim string in `ChatTurn.content`
             // is what the user TYPED, but the wire saw the

@@ -31,6 +31,11 @@ struct ConfigurationView: View {
     @State private var tempCoreModelName: String = ""
     @State private var coreModelPickerItems: [ModelPickerItem] = []
     @State private var tempEnableClipboardMonitoring: Bool = false
+    /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
+    /// of how fast / bursty the network delivers tokens. Default on.
+    /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
+    /// `StreamingDeltaProcessor` reads per delta.
+    @AppStorage("chatSmoothStreamingEnabled") private var smoothStreamingEnabled: Bool = true
     /// Master switch for AI-generated empty-state greetings. Defaults to
     /// OFF; users opt in here. Per-agent overrides on
     /// `AgentSettings.generativeGreetingsEnabled` still win when set.
@@ -302,6 +307,17 @@ struct ConfigurationView: View {
                                                 defaultValue: 15
                                             )
                                         }
+                                    }
+
+                                    SettingsDivider()
+
+                                    SettingsSubsection(label: "Display") {
+                                        SettingsToggle(
+                                            title: L("Smooth streaming"),
+                                            description:
+                                                "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly.",
+                                            isOn: $smoothStreamingEnabled
+                                        )
                                     }
 
                                     SettingsDivider()
