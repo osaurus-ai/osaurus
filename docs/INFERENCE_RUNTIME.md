@@ -71,11 +71,6 @@ DSV4 disk-prefix reuse is additionally namespaced with
 `layers=deepseekV4|prefix=hybrid-pool-disk|decode=max-rp110` so records
 created before the current native pool serializer and max-reasoning decode
 policy cannot be reused after an app/library update.
-For `reasoningEffort=max`, Osaurus applies a DSV4-specific default
-`repetitionPenalty=1.10` only when the request did not specify one and the
-bundle default is no-op. This is a decode stability policy for the observed
-raw max-reasoning repeated-token loop; explicit request penalties still win.
-
 The final DSV4 server settings renderer must also prove the visible settings
 match that topology: native DSV4 cache copy present, paged block size
 fixed/disabled for DSV4 with the expected 256 display row when active metadata
