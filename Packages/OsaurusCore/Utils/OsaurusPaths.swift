@@ -163,24 +163,42 @@ public enum OsaurusPaths {
 
     /// Returns the free-for-important-usage byte count on the volume that
     /// hosts `path`. Falls back to the legacy
-    /// `attributesOfFileSystem(.systemFreeSize)` only when the modern
-    /// query is unavailable. Returns `nil` if both queries fail —
+    /// `attributesOfFileSystem(.systemFreeSize)` when the modern
+    /// query is unavailable or reports zero. Returns `nil` if both queries fail —
     /// callers should treat `nil` as "unknown, render 'unknown'" rather
     /// than coercing to zero.
     public static func volumeFreeBytes(forPath path: String) -> Int64? {
         let url = URL(fileURLWithPath: path)
+        var importantCapacity: Int64?
         let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
         if let values = try? url.resourceValues(forKeys: keys),
             let capacity = values.volumeAvailableCapacityForImportantUsage
         {
-            return capacity
+            importantCapacity = capacity
         }
+        var legacyFree: Int64?
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
             let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value
         {
-            return free
+            legacyFree = free
         }
-        return nil
+        return resolvedVolumeFreeBytes(
+            importantCapacity: importantCapacity,
+            legacyFree: legacyFree
+        )
+    }
+
+    static func resolvedVolumeFreeBytes(
+        importantCapacity: Int64?,
+        legacyFree: Int64?
+    ) -> Int64? {
+        if let importantCapacity, importantCapacity > 0 {
+            return importantCapacity
+        }
+        if let legacyFree, legacyFree > 0 {
+            return legacyFree
+        }
+        return importantCapacity ?? legacyFree
     }
 
     /// Returns total volume capacity in bytes for the volume that hosts
