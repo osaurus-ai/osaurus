@@ -44,7 +44,7 @@ Each promoted row needs current-head evidence for:
 ### 2026-05-28 06:16 PDT runtime-proof boundary
 
 - Current Osaurus PR: `#1268`, open, not draft, mergeable, not merged by agent.
-- Current vMLX main and Osaurus pin: `d3d76b4c11c1f3e83e787f0464120087167c1609`; verified present on `osaurus-ai/vmlx-swift` main.
+- Current vMLX main and Osaurus pin: `cc3f5f4dc1317ffa09c46050ba0847f495887747`; verified present on `osaurus-ai/vmlx-swift` main.
 - Runtime-proof head `2a2a6d4b039e61fd9338c42287fa9b35798328cb`: `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` all passed.
 - Only `#1268` remains open from the `#1247` through `#1268` runtime stack; older related PRs are consolidated/superseded rather than separate merge targets.
 - No-sign/keychain-free DSV4 app proof is recorded in `POST1266-LIVE-FAMILY-CACHE-MATRIX.md` for the `1503be2f` runtime commit that sits directly below the documentation-only proof boundary.

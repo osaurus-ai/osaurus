@@ -530,3 +530,15 @@ ZAYA/ZAYA-VL CCA companion-hit boundary:
 - Current pinned vMLX intentionally does not store `ZayaCCACache` into the generic `SSMStateCache` hit path, and disk format-v2 ZAYA CCA payload reuse is rejected without a proven companion boundary.
 - Therefore `zaya_cca_companion_hits=0` is expected for the current proof set; disk L2 hits plus `zaya_cca_companion_misses` prove disk/media accounting, not CCA companion hit reuse.
 - The smallest safe future fix is a dedicated ZAYA CCA disk-restore hit/miss counter or an exact-boundary ZAYA CCA disk-restore proof path. Do not re-label generic SSM hits as CCA hits, and do not claim prefix/growing-history CCA reuse until separately designed and proven.
+
+## 2026-05-28 06:39 PDT - Gemma3n tool-support heuristic corrected in vMLX main
+
+Current vMLX main pin: `cc3f5f4dc1317ffa09c46050ba0847f495887747`.
+
+Gemma3n required-tool boundary correction:
+
+- Local bundle inspected: `/Users/eric/models/mlx-community/gemma-3n-E2B-it-4bit`.
+- `config.json`, `tokenizer_config.json`, `generation_config.json`, and `chat_template.jinja` contain no tool, tool_choice, function-call, `<start_function_call>`, or tool-call markers.
+- vMLX main commit `cc3f5f4` stops inferring Gemma3n tool support from `model_type` alone. Plain `gemma3n`, `gemma3n_text`, and `gemma-3n-e2b-it` now resolve to no tool parser unless an explicit bundle/JANG tool-parser stamp opts in.
+- Focused vMLX validation: `swift test --scratch-path /tmp/vmlx-gemma3n-tool-heuristic-build --filter gemma3nModelTypeDoesNotInventToolSupport --jobs 1 --no-parallel` passed with 1 test.
+- This does not make Gemma3n required-tool calling work; it prevents a false-positive support claim. Keep the live Gemma3n required-tool row partial/unsupported until a native/stamped Gemma3n tool contract exists and passes live multi-turn proof.
