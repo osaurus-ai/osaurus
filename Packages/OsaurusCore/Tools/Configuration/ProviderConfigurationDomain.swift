@@ -9,10 +9,11 @@
 //   - osaurus_provider_set_credentials (key rotation)
 //
 //  Security principle: no secret ever appears in tool arguments or
-//  tool results. The model sends only `name` + `provider_type`; the
-//  user pastes / signs in via `ProviderCredentialPromptService`, and
-//  the manager writes directly to Keychain. The success envelope
-//  carries only `provider_id` + status — never the secret.
+//  tool results. The model sends only `name` + `provider` (the preset
+//  id — `openrouter`, `deepseek`, `openai`, …). The user pastes /
+//  signs in via `ProviderCredentialPromptService`, and the manager
+//  writes directly to Keychain. The success envelope carries only
+//  `provider_id` + status — never the secret.
 //
 //  Add and set_credentials set `bypassRegistryTimeout = true` so the
 //  user has uncapped time to interact with the sheet. The 120-second
@@ -26,13 +27,17 @@ enum ProviderConfigurationDomain {
     static let domain = ConfigurationDomain(
         id: "providers",
         displayName: "Providers",
-        summary: "Cloud LLM providers (Anthropic, OpenAI, Gemini, Codex OAuth, Azure, custom).",
+        summary:
+            "Cloud LLM providers (Anthropic, OpenAI, Gemini, Codex OAuth, Azure, "
+            + "OpenRouter, DeepSeek, xAI, Venice, Ollama, custom).",
         menuHint:
-            "add / update / remove cloud providers — Anthropic, OpenAI, Codex OAuth, Gemini, Azure, custom",
+            "add / update / remove cloud providers — Anthropic, OpenAI, Codex OAuth, "
+            + "Gemini, Azure, OpenRouter (OAuth), DeepSeek, xAI, Venice, Ollama, custom",
         searchKeywords: [
             "provider", "providers", "cloud", "api key", "key", "credentials",
             "anthropic", "claude", "openai", "gpt", "chatgpt", "codex",
-            "gemini", "google", "openrouter", "azure",
+            "gemini", "google", "openrouter", "azure", "deepseek", "xai", "grok",
+            "venice", "ollama",
             "add provider", "connect provider", "sign in",
             "update provider", "edit provider",
             "remove provider", "delete provider", "disconnect",
@@ -43,6 +48,9 @@ enum ProviderConfigurationDomain {
             "connect anthropic",
             "sign in to Codex",
             "add OpenAI",
+            "sign in to OpenRouter",
+            "connect DeepSeek",
+            "set up Ollama",
             "my Anthropic key stopped working",
             "remove the OpenAI provider",
             "update the host for my custom provider",
@@ -64,46 +72,64 @@ enum ProviderConfigurationDomain {
 
 // MARK: - Shared helpers
 
-private enum ProviderToolShared {
-    /// The eight provider types the model can pass via `provider_type`,
-    /// keyed by the chat-friendly name (`"openai"` not
-    /// `"openResponses"`). Maps to `RemoteProviderType.rawValue`s
-    /// when those exist; the rest are aliases the model expects.
-    static let providerTypeAliases: [String: RemoteProviderType] = [
-        "anthropic": .anthropic,
-        "openai": .openResponses,
-        "openai_compatible": .openaiLegacy,
-        "gemini": .gemini,
-        "codex_oauth": .openAICodex,
-        "openrouter": .openaiLegacy,
-        "azure_openai": .azureOpenAI,
-        "osaurus_agent": .osaurus,
+/// Resolution outcome for the `provider` / legacy `provider_type` argument.
+/// `.preset` is the canonical chat-tool path; the other two cases carry
+/// the special storage paths that have no `ProviderPreset` case
+/// (`.codexOAuth` uses the OpenAI brand but a distinct OAuth flow, and
+/// `.osaurusAgent` is a peer agent rather than a third-party vendor).
+internal enum ProviderToolResolution {
+    case preset(ProviderPreset)
+    case codexOAuth
+    case osaurusAgent
+
+    /// `RemoteProviderType` the manager should persist with.
+    var providerType: RemoteProviderType {
+        switch self {
+        case .preset(let preset): return preset.configuration.providerType
+        case .codexOAuth: return .openAICodex
+        case .osaurusAgent: return .osaurus
+        }
+    }
+}
+
+internal enum ProviderToolShared {
+    /// Chat-friendly provider ids the model can pass via the canonical
+    /// `provider` argument (and the deprecated `provider_type` alias).
+    /// New ids should be added here first.
+    static let providerAliases: [String: ProviderToolResolution] = [
+        "anthropic": .preset(.anthropic),
+        "openai": .preset(.openai),
+        "azure_openai": .preset(.azureOpenAI),
+        "google": .preset(.google),
+        "gemini": .preset(.google),
+        "xai": .preset(.xai),
+        "deepseek": .preset(.deepseek),
+        "venice": .preset(.venice),
+        "openrouter": .preset(.openrouter),
+        "ollama": .preset(.ollama),
+        "custom": .preset(.custom),
+        "openai_compatible": .preset(.custom),
+        "codex_oauth": .codexOAuth,
+        "osaurus_agent": .osaurusAgent,
     ]
 
-    static func resolveProviderType(_ value: String?) -> RemoteProviderType? {
+    /// Canonical list of chat-friendly ids surfaced in the tool schema
+    /// description and error messages. Kept in display order rather
+    /// than alphabetical so the most common vendors appear first.
+    static let canonicalIds: [String] = [
+        "anthropic", "openai", "codex_oauth", "azure_openai", "google",
+        "xai", "deepseek", "venice", "openrouter", "ollama",
+        "custom", "osaurus_agent",
+    ]
+
+    static func resolve(_ value: String?) -> ProviderToolResolution? {
         guard let value else { return nil }
-        if let mapped = providerTypeAliases[value.lowercased()] { return mapped }
-        return RemoteProviderType(rawValue: value)
+        return providerAliases[value.lowercased()]
     }
 
-    /// Default host/protocol/basePath for a given type. Used when the
-    /// model doesn't pass an explicit host (the common case for
-    /// vendor-managed APIs like Anthropic / OpenAI / Gemini).
-    static func defaults(for type: RemoteProviderType) -> (
-        host: String,
-        providerProtocol: RemoteProviderProtocol,
-        port: Int?,
-        basePath: String
-    ) {
-        switch type {
-        case .anthropic: return ("api.anthropic.com", .https, nil, "/v1")
-        case .openResponses: return ("api.openai.com", .https, nil, "/v1")
-        case .openaiLegacy: return ("api.openai.com", .https, nil, "/v1")
-        case .azureOpenAI: return ("example.openai.azure.com", .https, nil, "/openai/v1")
-        case .gemini: return ("generativelanguage.googleapis.com", .https, nil, "/v1beta")
-        case .openAICodex: return ("chatgpt.com", .https, nil, "/backend-api")
-        case .osaurus: return ("localhost", .http, 8080, "/v1")
-        }
+    /// Human-readable enumeration of `canonicalIds` for error messages.
+    static var canonicalIdsList: String {
+        canonicalIds.joined(separator: ", ")
     }
 }
 
@@ -112,8 +138,9 @@ private enum ProviderToolShared {
 public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     public let name = "osaurus_provider_add"
     public let description =
-        "Add a cloud LLM provider. Pass `name` and `provider_type` "
-        + "(anthropic, openai, openai_compatible, gemini, codex_oauth, azure_openai, osaurus_agent). "
+        "Add a cloud LLM provider. Pass `name` and `provider` "
+        + "(anthropic, openai, codex_oauth, azure_openai, google, xai, deepseek, "
+        + "venice, openrouter, ollama, custom, osaurus_agent). "
         + "DO NOT pass API keys here — a secure sheet opens so the user can paste / sign in. "
         + "The tool waits for the user (the sheet can take several minutes)."
     public let parameters: JSONValue? = .object([
@@ -121,10 +148,18 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
         "additionalProperties": .bool(false),
         "properties": .object([
             "name": .object(["type": .string("string")]),
+            "provider": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "One of: anthropic, openai, codex_oauth, azure_openai, google, xai, "
+                        + "deepseek, venice, openrouter, ollama, custom, osaurus_agent. "
+                        + "`openrouter` opens a browser-based OAuth flow that mints an API key."
+                ),
+            ]),
             "provider_type": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "One of: anthropic, openai, openai_compatible, gemini, codex_oauth, azure_openai, osaurus_agent."
+                    "Deprecated alias for `provider`. Older callers may still send this."
                 ),
             ]),
             "host": .object([
@@ -132,7 +167,7 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
                 "description": .string("Override host. Optional for managed vendors."),
             ]),
         ]),
-        "required": .array([.string("name"), .string("provider_type")]),
+        "required": .array([.string("name")]),
     ])
 
     /// The credential sheet is user-paced — letting the registry's
@@ -155,27 +190,33 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
 
         let nameReq = requireString(args, "name", expected: "display name", tool: name)
         guard case .value(let displayName) = nameReq else { return nameReq.failureEnvelope ?? "" }
-        let typeReq = requireString(args, "provider_type", expected: "provider type id", tool: name)
-        guard case .value(let typeRaw) = typeReq else { return typeReq.failureEnvelope ?? "" }
-        guard let providerType = ProviderToolShared.resolveProviderType(typeRaw) else {
+
+        // Accept canonical `provider` and back-compat `provider_type`. The
+        // model picks the field; we just need *one* of them to resolve.
+        let rawProvider = (args["provider"] as? String) ?? (args["provider_type"] as? String)
+        guard let raw = rawProvider, !raw.isEmpty else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
-                    "`provider_type` must be one of: anthropic, openai, openai_compatible, "
-                    + "gemini, codex_oauth, azure_openai, osaurus_agent.",
-                field: "provider_type",
+                    "`provider` is required. One of: "
+                    + ProviderToolShared.canonicalIdsList + ".",
+                field: "provider",
+                tool: name
+            )
+        }
+        guard let resolution = ProviderToolShared.resolve(raw) else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`provider` must be one of: "
+                    + ProviderToolShared.canonicalIdsList + ".",
+                field: "provider",
                 tool: name
             )
         }
 
         let hostOverride = args["host"] as? String
-        let instructions = ProviderCredentialInstructionsCatalog.entry(for: providerType)
-
-        let request = ProviderCredentialRequest(
-            providerType: providerType,
-            providerName: displayName,
-            mode: .addNew
-        )
+        let request = makeRequest(resolution: resolution, displayName: displayName)
         let outcome = await ProviderCredentialPromptService.requestCredentials(request)
 
         if Task.isCancelled {
@@ -199,8 +240,8 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
             let providerId = await MainActor.run {
                 buildAndAdd(
                     displayName: displayName,
-                    providerType: providerType,
-                    storageAuthType: instructions.storageAuthType,
+                    resolution: resolution,
+                    storageAuthType: request.instructions.storageAuthType,
                     hostOverride: hostOverride,
                     extraHeaders: headers,
                     apiKey: key,
@@ -223,7 +264,7 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
             let providerId = await MainActor.run {
                 buildAndAdd(
                     displayName: displayName,
-                    providerType: providerType,
+                    resolution: resolution,
                     storageAuthType: .openAICodexOAuth,
                     hostOverride: hostOverride,
                     extraHeaders: nil,
@@ -243,24 +284,49 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
         }
     }
 
+    private func makeRequest(
+        resolution: ProviderToolResolution,
+        displayName: String
+    ) -> ProviderCredentialRequest {
+        switch resolution {
+        case .preset(let preset):
+            return ProviderCredentialRequest(
+                preset: preset,
+                providerName: displayName,
+                mode: .addNew
+            )
+        case .codexOAuth:
+            return ProviderCredentialRequest(
+                providerType: .openAICodex,
+                providerName: displayName,
+                mode: .addNew
+            )
+        case .osaurusAgent:
+            return ProviderCredentialRequest(
+                providerType: .osaurus,
+                providerName: displayName,
+                mode: .addNew
+            )
+        }
+    }
+
     @MainActor
     private func buildAndAdd(
         displayName: String,
-        providerType: RemoteProviderType,
+        resolution: ProviderToolResolution,
         storageAuthType: RemoteProviderAuthType,
         hostOverride: String?,
         extraHeaders: [String: String]?,
         apiKey: String?,
         oauthTokens: RemoteProviderOAuthTokens?
     ) -> UUID {
-        if providerType == .openAICodex {
+        if case .codexOAuth = resolution {
             let provider = OpenAICodexOAuthService.makeProvider()
             RemoteProviderManager.shared.addProvider(
                 provider,
                 apiKey: apiKey,
                 oauthTokens: oauthTokens
             )
-            // Rename to user-friendly label
             if provider.name != displayName {
                 var renamed = provider
                 renamed.name = displayName
@@ -269,8 +335,9 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
             return provider.id
         }
 
-        let defaults = ProviderToolShared.defaults(for: providerType)
+        let defaults = endpointDefaults(for: resolution)
         let host = (hostOverride?.isEmpty == false) ? hostOverride! : defaults.host
+        let providerType = resolution.providerType
         var headers: [String: String] = [:]
         if let extra = extraHeaders, providerType == .openaiLegacy {
             for (k, v) in extra where k != "host" && k != "deployment" {
@@ -296,6 +363,30 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
             oauthTokens: oauthTokens
         )
         return provider.id
+    }
+
+    /// Vendor host/protocol/basePath sourced from `preset.configuration`,
+    /// with explicit fall-backs for the two non-preset resolutions
+    /// (`codexOAuth` flows through `OpenAICodexOAuthService.makeProvider()`
+    /// and never reaches this helper; `osaurusAgent` defaults match the
+    /// pairing port).
+    private func endpointDefaults(
+        for resolution: ProviderToolResolution
+    ) -> (
+        host: String,
+        providerProtocol: RemoteProviderProtocol,
+        port: Int?,
+        basePath: String
+    ) {
+        switch resolution {
+        case .preset(let preset):
+            let cfg = preset.configuration
+            return (cfg.host, cfg.providerProtocol, cfg.port, cfg.basePath)
+        case .codexOAuth:
+            return ("chatgpt.com", .https, nil, "/backend-api")
+        case .osaurusAgent:
+            return ("localhost", .http, 8080, "/v1")
+        }
     }
 }
 

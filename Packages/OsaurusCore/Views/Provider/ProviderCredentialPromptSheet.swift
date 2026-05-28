@@ -32,10 +32,10 @@ struct ProviderCredentialPromptSheet: View {
     @State private var oauthTokens: RemoteProviderOAuthTokens?
 
     /// Stable preset for branding/help. Falls back to `.custom` when
-    /// the catalog entry didn't ship a `presetId` (Osaurus, etc.) —
+    /// the request didn't carry a preset (Osaurus peer agent path) —
     /// `.custom` skips the gradient and the help-steps card.
     private var preset: ProviderPreset {
-        ProviderPreset(rawValue: request.instructions.presetId) ?? .custom
+        request.preset ?? .custom
     }
 
     /// 95%-opacity diagonal gradient over `cardBackground`. Same shape
@@ -585,9 +585,7 @@ struct ProviderCredentialPromptSheet: View {
         Task { @MainActor in
             defer { isSigningIn = false }
             do {
-                let outcome = try await OAuthSignInCoordinator.signIn(
-                    providerType: request.providerType
-                )
+                let outcome = try await runOAuthFlow()
                 switch outcome {
                 case .tokens(let tokens): oauthTokens = tokens
                 case .apiKey(let key): onComplete(.apiKey(key: key))
@@ -596,6 +594,25 @@ struct ProviderCredentialPromptSheet: View {
                 signInError = readableMessage(for: error)
             }
         }
+    }
+
+    /// Dispatch the OAuth flow on the right axis. Codex uses the legacy
+    /// provider-type entry (the `.openai` preset is API-key only), while
+    /// OpenRouter (and any future preset-keyed OAuth provider) goes
+    /// through the preset coordinator.
+    @MainActor
+    private func runOAuthFlow() async throws -> OAuthSignInOutcome {
+        if request.providerType == .openAICodex {
+            return try await OAuthSignInCoordinator.signIn(
+                providerType: .openAICodex
+            )
+        }
+        if let preset = request.preset {
+            return try await OAuthSignInCoordinator.signIn(preset: preset)
+        }
+        throw OAuthSignInCoordinatorError.unsupportedProvider(
+            providerType: request.providerType
+        )
     }
 
     private func readableMessage(for error: Error) -> String {
@@ -609,7 +626,7 @@ struct ProviderCredentialPromptSheet: View {
         // Build the same temp provider shape `RemoteProviderEditSheet` does
         // so the inline test result accurately reflects what we'll persist.
         let providerType = request.providerType
-        let defaults = providerTypeDefaults(providerType)
+        let defaults = testConnectionDefaults()
         let host = trimmed(extraFieldValue(for: "host"))
         let deployment = trimmed(extraFieldValue(for: "deployment"))
         let effectiveHost = host.isEmpty ? defaults.host : host
@@ -643,27 +660,25 @@ struct ProviderCredentialPromptSheet: View {
     }
 
     /// Minimal per-provider default endpoint config used solely by the
-    /// inline test button. Full provider creation goes through
-    /// `RemoteProviderManager.addProvider(...)` which has its own
-    /// defaulting; this duplicates only what we need to ping `/models`.
-    private func providerTypeDefaults(
-        _ type: RemoteProviderType
-    ) -> (host: String, providerProtocol: RemoteProviderProtocol, port: Int?, basePath: String) {
-        switch type {
-        case .anthropic:
-            return ("api.anthropic.com", .https, nil, "/v1")
-        case .openResponses:
-            return ("api.openai.com", .https, nil, "/v1")
-        case .openaiLegacy:
-            return ("api.openai.com", .https, nil, "/v1")
-        case .azureOpenAI:
-            return ("example.openai.azure.com", .https, nil, "/openai/v1")
-        case .gemini:
-            return ("generativelanguage.googleapis.com", .https, nil, "/v1beta")
+    /// inline test button. Sources from `preset.configuration` so the
+    /// five legacy-shaped vendors (OpenRouter, DeepSeek, xAI, Venice,
+    /// Ollama) each ping their own host. Falls back to the legacy
+    /// provider-type defaults when no preset is attached (Osaurus peer
+    /// agent) or when Codex bypasses the preset path.
+    private func testConnectionDefaults() -> (
+        host: String, providerProtocol: RemoteProviderProtocol, port: Int?, basePath: String
+    ) {
+        if let preset = request.preset, preset != .custom {
+            let cfg = preset.configuration
+            return (cfg.host, cfg.providerProtocol, cfg.port, cfg.basePath)
+        }
+        switch request.providerType {
         case .openAICodex:
             return ("chatgpt.com", .https, nil, "/backend-api")
         case .osaurus:
             return ("localhost", .http, 8080, "/v1")
+        default:
+            return ("api.openai.com", .https, nil, "/v1")
         }
     }
 }

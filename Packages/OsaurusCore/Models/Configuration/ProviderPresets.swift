@@ -10,7 +10,7 @@ import SwiftUI
 // MARK: - Provider Preset
 
 /// Unified provider presets shared across onboarding and provider management.
-enum ProviderPreset: String, CaseIterable, Identifiable {
+public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     case anthropic
     case azureOpenAI
     case openai
@@ -22,7 +22,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     case ollama
     case custom
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
     /// Display name
     var name: String {
@@ -299,6 +299,22 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     }
 
     // MARK: - Matching
+
+    /// Best-effort lookup keyed by the legacy `RemoteProviderType`. Used only
+    /// by the deprecated `provider_type` argument on `osaurus_provider_add`
+    /// — picks the unambiguous preset for distinctive types and `nil` for
+    /// `.openaiLegacy` (shared by xAI, DeepSeek, Venice, OpenRouter, Ollama,
+    /// and custom) so the caller can fall back to `.custom`.
+    static func preferred(for providerType: RemoteProviderType) -> ProviderPreset? {
+        switch providerType {
+        case .anthropic: return .anthropic
+        case .openResponses: return .openai
+        case .gemini: return .google
+        case .azureOpenAI: return .azureOpenAI
+        case .openAICodex: return .openai
+        case .openaiLegacy, .osaurus: return nil
+        }
+    }
 
     /// Attempts to match an existing RemoteProvider to a known preset by host.
     static func matching(provider: RemoteProvider) -> ProviderPreset? {

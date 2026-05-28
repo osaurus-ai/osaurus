@@ -43,21 +43,66 @@ public enum ProviderCredentialPromptMode: Sendable, Equatable {
 
 /// Inputs the sheet needs to render and the service uses to drive
 /// the inline test-connection call.
+///
+/// `preset` is the canonical key everywhere downstream — it disambiguates
+/// the five vendor presets (OpenRouter, DeepSeek, xAI, Venice, Ollama) that
+/// share `RemoteProviderType.openaiLegacy` and selects the right OAuth
+/// dispatch. `nil` means "no preset" (the special Osaurus-Agent peer path).
 public struct ProviderCredentialRequest: Sendable {
+    public let preset: ProviderPreset?
     public let providerType: RemoteProviderType
     public let providerName: String
     public let mode: ProviderCredentialPromptMode
     public let instructions: ProviderCredentialInstructions
 
+    /// Preset-keyed primary path. Derives `providerType` and `instructions`
+    /// from the preset. Pass this from new callers.
+    public init(
+        preset: ProviderPreset,
+        providerName: String,
+        mode: ProviderCredentialPromptMode
+    ) {
+        self.preset = preset
+        self.providerType = preset.configuration.providerType
+        self.providerName = providerName
+        self.mode = mode
+        self.instructions = ProviderCredentialInstructionsCatalog.entry(for: preset)
+    }
+
+    /// Legacy entry for callers that only have a `RemoteProviderType` (the
+    /// rotate-credentials path on existing providers, plus older tests). We
+    /// infer a preset when the type is distinctive; otherwise drop down to
+    /// `.custom` so the sheet still renders fields. `.osaurus` keeps `preset = nil`
+    /// because there is no `ProviderPreset` case for the peer agent, and
+    /// `.openAICodex` uses the dedicated Codex OAuth entry (the `.openai`
+    /// preset is API-key only).
     public init(
         providerType: RemoteProviderType,
         providerName: String,
         mode: ProviderCredentialPromptMode
     ) {
+        if providerType == .osaurus {
+            self.preset = nil
+            self.providerType = .osaurus
+            self.providerName = providerName
+            self.mode = mode
+            self.instructions = ProviderCredentialInstructionsCatalog.osaurusAgentEntry()
+            return
+        }
+        if providerType == .openAICodex {
+            self.preset = .openai
+            self.providerType = .openAICodex
+            self.providerName = providerName
+            self.mode = mode
+            self.instructions = ProviderCredentialInstructionsCatalog.openAICodexEntry()
+            return
+        }
+        let resolved = ProviderPreset.preferred(for: providerType) ?? .custom
+        self.preset = resolved
         self.providerType = providerType
         self.providerName = providerName
         self.mode = mode
-        self.instructions = ProviderCredentialInstructionsCatalog.entry(for: providerType)
+        self.instructions = ProviderCredentialInstructionsCatalog.entry(for: resolved)
     }
 }
 

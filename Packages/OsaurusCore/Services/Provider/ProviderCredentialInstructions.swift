@@ -83,57 +83,42 @@ public struct ProviderCredentialInstructions: Sendable, Equatable {
     }
 }
 
-/// Static catalog of credential instructions keyed by `RemoteProviderType`.
-/// Tools like `osaurus_provider_add` resolve their per-provider guidance
-/// through `ProviderCredentialInstructionsCatalog.entry(for:)` so a new
-/// provider only needs one entry added here.
+/// Static catalog of credential instructions keyed by `ProviderPreset`.
+/// `ProviderPreset` is the single source of truth across the chat
+/// credential prompt and the Settings sheet, so vendors that share a
+/// `RemoteProviderType` (OpenRouter, DeepSeek, xAI, Venice, Ollama all
+/// use `.openaiLegacy`) each get their own entry with vendor-specific
+/// branding, OAuth path, and key-format hints.
 public enum ProviderCredentialInstructionsCatalog {
-    /// Returns curated instructions for `type`, or a permissive fallback
-    /// (API-key-only) when the type has no curated entry. Callers should
-    /// always get *some* envelope so the sheet has fields to render.
-    public static func entry(for type: RemoteProviderType) -> ProviderCredentialInstructions {
-        switch type {
+    /// Returns curated instructions for `preset`. Every preset has an
+    /// entry, so the sheet always has fields to render.
+    public static func entry(for preset: ProviderPreset) -> ProviderCredentialInstructions {
+        let providerType = preset.configuration.providerType
+        let getKeyURL = preset.consoleURL.isEmpty ? nil : URL(string: preset.consoleURL)
+        switch preset {
         case .anthropic:
             return ProviderCredentialInstructions(
-                providerType: .anthropic,
+                providerType: providerType,
                 displayName: L("Anthropic"),
                 authMethod: .apiKey,
-                getKeyURL: URL(string: "https://console.anthropic.com/settings/keys"),
+                getKeyURL: getKeyURL,
                 keyFormatHint: L("Keys start with sk-ant-."),
                 storageAuthType: .apiKey,
-                presetId: "anthropic"
+                presetId: preset.rawValue
             )
-        case .openResponses:
+        case .openai:
             return ProviderCredentialInstructions(
-                providerType: .openResponses,
+                providerType: providerType,
                 displayName: L("OpenAI"),
                 authMethod: .apiKey,
-                getKeyURL: URL(string: "https://platform.openai.com/api-keys"),
+                getKeyURL: getKeyURL,
                 keyFormatHint: L("Keys start with sk-."),
                 storageAuthType: .apiKey,
-                presetId: "openai"
-            )
-        case .openaiLegacy:
-            return ProviderCredentialInstructions(
-                providerType: .openaiLegacy,
-                displayName: L("OpenAI-Compatible Server"),
-                authMethod: .apiKey,
-                getKeyURL: nil,
-                keyFormatHint: L("Any key your server accepts. Set the host below."),
-                extraFields: [
-                    ProviderCredentialField(
-                        key: "host",
-                        label: L("Host"),
-                        placeholder: L("api.example.com"),
-                        isRequired: true
-                    )
-                ],
-                storageAuthType: .apiKey,
-                presetId: "custom"
+                presetId: preset.rawValue
             )
         case .azureOpenAI:
             return ProviderCredentialInstructions(
-                providerType: .azureOpenAI,
+                providerType: providerType,
                 displayName: L("Azure OpenAI"),
                 authMethod: .apiKey,
                 getKeyURL: URL(string: "https://portal.azure.com/"),
@@ -153,38 +138,117 @@ public enum ProviderCredentialInstructionsCatalog {
                     ),
                 ],
                 storageAuthType: .apiKey,
-                presetId: "azureOpenAI"
+                presetId: preset.rawValue
             )
-        case .gemini:
+        case .google:
             return ProviderCredentialInstructions(
-                providerType: .gemini,
+                providerType: providerType,
                 displayName: L("Google Gemini"),
                 authMethod: .apiKey,
-                getKeyURL: URL(string: "https://aistudio.google.com/apikey"),
+                getKeyURL: getKeyURL,
                 keyFormatHint: L("Get a free key from Google AI Studio."),
                 storageAuthType: .apiKey,
-                presetId: "google"
+                presetId: preset.rawValue
             )
-        case .openAICodex:
+        case .openrouter:
             return ProviderCredentialInstructions(
-                providerType: .openAICodex,
-                displayName: L("OpenAI Codex"),
+                providerType: providerType,
+                displayName: L("OpenRouter"),
                 authMethod: .oauth,
-                getKeyURL: URL(string: "https://chatgpt.com/codex"),
-                keyFormatHint: L("Sign in with your ChatGPT account."),
-                storageAuthType: .openAICodexOAuth,
-                presetId: "openai"
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Sign in with OpenRouter or paste a key from openrouter.ai/keys."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
             )
-        case .osaurus:
+        case .deepseek:
             return ProviderCredentialInstructions(
-                providerType: .osaurus,
-                displayName: L("Osaurus Agent"),
+                providerType: providerType,
+                displayName: L("DeepSeek"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Get a key from platform.deepseek.com."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
+        case .xai:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("xAI"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Get a key from console.x.ai."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
+        case .venice:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("Venice AI"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Generate a key from venice.ai/settings/api."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
+        case .ollama:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("Ollama"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Leave the key blank if your local Ollama doesn't require one."),
+                storageAuthType: .none,
+                presetId: preset.rawValue
+            )
+        case .custom:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("OpenAI-Compatible Server"),
                 authMethod: .apiKey,
                 getKeyURL: nil,
-                keyFormatHint: L("Paste the pairing API key from the remote Osaurus."),
+                keyFormatHint: L("Any key your server accepts. Set the host below."),
+                extraFields: [
+                    ProviderCredentialField(
+                        key: "host",
+                        label: L("Host"),
+                        placeholder: L("api.example.com"),
+                        isRequired: true
+                    )
+                ],
                 storageAuthType: .apiKey,
-                presetId: ""
+                presetId: preset.rawValue
             )
         }
+    }
+
+    /// Special entry for the Osaurus-Agent peer path. `.osaurus` has no
+    /// `ProviderPreset` because it isn't a third-party vendor — it's
+    /// another Osaurus instance reachable over the local network. The
+    /// sheet still needs an entry so the user can paste a pairing key.
+    public static func osaurusAgentEntry() -> ProviderCredentialInstructions {
+        ProviderCredentialInstructions(
+            providerType: .osaurus,
+            displayName: L("Osaurus Agent"),
+            authMethod: .apiKey,
+            getKeyURL: nil,
+            keyFormatHint: L("Paste the pairing API key from the remote Osaurus."),
+            storageAuthType: .apiKey,
+            presetId: ""
+        )
+    }
+
+    /// Codex OAuth uses the same brand as the OpenAI preset but is a
+    /// distinct `RemoteProviderType`. Kept as a separate entry the
+    /// chat tool can request explicitly via `provider: "codex_oauth"`.
+    public static func openAICodexEntry() -> ProviderCredentialInstructions {
+        ProviderCredentialInstructions(
+            providerType: .openAICodex,
+            displayName: L("OpenAI Codex"),
+            authMethod: .oauth,
+            getKeyURL: URL(string: "https://chatgpt.com/codex"),
+            keyFormatHint: L("Sign in with your ChatGPT account."),
+            storageAuthType: .openAICodexOAuth,
+            presetId: ProviderPreset.openai.rawValue
+        )
     }
 }
