@@ -33,6 +33,15 @@ row is production-clear.
 - Topology: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: ZAYA text JANGTQ4 remains red/partial for multi-turn required-tool argument fidelity and repeat L2 reuse. This must not be hidden with parser repair.
 
+## 2026-05-28 Ling JANGTQ2 required-tool parser green, cache partial row
+
+- Osaurus head at check: `3a46be1f783a504aac284c489ed81f34d34d0809`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-3a46be1f-ling-jangtq2-tool-cache-20260528-103538`.
+- Result: turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered `The tool counted 3 lines.`; turn 3 produced exact structured `line_count` args `one\ntwo`; no protocol leakage appeared.
+- Topology: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: Ling JANGTQ2 is green for this parser/tool/history row, but cache proof remains partial because disk L2 hits stayed 0 while misses/stores moved.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:
