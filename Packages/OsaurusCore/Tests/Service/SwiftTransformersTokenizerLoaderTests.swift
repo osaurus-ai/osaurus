@@ -325,6 +325,7 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("<|tool_call>call:line_count{text:<|\"|>one\ntwo<|\"|>}<tool_call|>"), "Decoded: \(decoded)")
         #expect(!decoded.contains("<zyphra_tool_call>"), "Decoded: \(decoded)")
         #expect(!decoded.contains("red\ngreen\nblue"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("The text contains 3 lines."), "Decoded: \(decoded)")
         #expect(!decoded.contains("call_line_count_1"), "Decoded: \(decoded)")
         #expect(!decoded.contains("Tool result: {\"lines\":3}"), "Decoded: \(decoded)")
     }

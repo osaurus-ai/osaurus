@@ -524,19 +524,8 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             return messages
         }
 
-        let hasLaterAssistantAnswerBeforeLatestUser: (Int) -> Bool = { index in
-            guard index + 1 < latestUserIndex else { return false }
-            return messages[(index + 1)..<latestUserIndex].contains { message in
-                guard message["role"] as? String == "assistant" else { return false }
-                return !Self.messageContentString(message["content"])
-                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-        }
-
         var compacted: [[String: any Sendable]] = []
         compacted.reserveCapacity(messages.count)
-        var droppedToolNamesById: [String: String] = [:]
-        var summarizeDroppedToolResults = false
 
         for (index, message) in messages.enumerated() {
             if index >= latestUserIndex {
@@ -544,63 +533,13 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 continue
             }
 
-            if message["role"] as? String == "user" {
-                continue
+            let role = message["role"] as? String
+            if role == "system" || role == "developer" {
+                compacted.append(message)
             }
-
-            if message["role"] as? String == "assistant",
-                let toolCalls = message["tool_calls"] as? [[String: any Sendable]],
-                !toolCalls.isEmpty
-            {
-                droppedToolNamesById = Self.toolNamesById(from: toolCalls)
-                summarizeDroppedToolResults = !hasLaterAssistantAnswerBeforeLatestUser(index)
-
-                let content = Self.messageContentString(message["content"])
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !content.isEmpty {
-                    var copy = message
-                    copy["tool_calls"] = nil
-                    compacted.append(copy)
-                }
-                continue
-            }
-
-            if message["role"] as? String == "tool",
-                let id = message["tool_call_id"] as? String,
-                let name = droppedToolNamesById[id]
-            {
-                if summarizeDroppedToolResults {
-                    compacted.append([
-                        "role": "assistant",
-                        "content": "Tool \(name) returned \(Self.messageContentString(message["content"])).",
-                    ])
-                }
-                continue
-            }
-
-            if message["role"] as? String != "tool" {
-                droppedToolNamesById.removeAll()
-                summarizeDroppedToolResults = false
-            }
-            compacted.append(message)
         }
 
         return compacted
-    }
-
-    private static func toolNamesById(from toolCalls: [[String: any Sendable]]) -> [String: String] {
-        var namesById: [String: String] = [:]
-        for call in toolCalls {
-            guard let id = call["id"] as? String else { continue }
-            if let name = call["name"] as? String {
-                namesById[id] = name
-            } else if let function = call["function"] as? [String: any Sendable],
-                let name = function["name"] as? String
-            {
-                namesById[id] = name
-            }
-        }
-        return namesById
     }
 
     private static func messageContentString(_ content: Any?) -> String {
