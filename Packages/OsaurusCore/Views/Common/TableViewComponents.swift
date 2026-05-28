@@ -66,8 +66,8 @@ final class HoverTrackingTableView: NSTableView {
     /// self-mutation).
     ///
     /// Our chat scroll position is managed exclusively by
-    /// `ScrollAnchorManager` (gestures + `scrollToBottom` / `scrollToY` /
-    /// `scrollToRow`). Any other call to `scrollRectToVisible` originating
+    /// `ScrollAnchorManager` (gestures + `scrollToBottom` / `scrollToRow`).
+    /// Any other call to `scrollRectToVisible` originating
     /// from a subview is, by definition, unwanted, so we drop it.
     /// Programmatic callers gate the call with
     /// `allowProgrammaticScroll = true`.

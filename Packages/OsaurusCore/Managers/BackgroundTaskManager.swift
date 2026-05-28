@@ -302,6 +302,18 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch a chat task for background execution.
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
+        // Background dispatch is an external surface (HTTP / plugins /
+        // schedules). Built-in agents (the Default agent) are only
+        // reachable from the in-app Chat — refuse to route any non-Chat
+        // traffic to them, and refuse to silently default to the built-in
+        // agent when an anonymous request comes in.
+        if Agent.rejectBuiltInForExternalSurface(
+            request.agentId,
+            source: "background/dispatchChat"
+        ) != nil {
+            return nil
+        }
+
         guard canDispatchNewTask(source: request.source, agentId: request.agentId) else { return nil }
 
         // Opt-in conversation grouping: when `external_session_key` is set
@@ -560,9 +572,20 @@ public final class BackgroundTaskManager: ObservableObject {
     #endif
 
     private func createContext(for request: DispatchRequest) -> ExecutionContext {
-        ExecutionContext(
+        // `dispatchChat` rejects requests with `agentId == nil || ==
+        // Agent.defaultId` before reaching here (see the
+        // `rejectBuiltInForExternalSurface` guard at the top of
+        // `dispatchChat`). The historical `?? Agent.defaultId` fallback
+        // would silently route anonymous traffic to the built-in Default
+        // agent — we keep the precondition explicit instead of restoring
+        // the fallback.
+        precondition(
+            request.agentId != nil && request.agentId != Agent.defaultId,
+            "BackgroundTaskManager.createContext invoked with nil or default agentId; dispatchChat should have rejected the request."
+        )
+        return ExecutionContext(
             id: request.id,
-            agentId: request.agentId ?? Agent.defaultId,
+            agentId: request.agentId!,
             title: request.title,
             folderBookmark: request.folderBookmark,
             source: request.source,

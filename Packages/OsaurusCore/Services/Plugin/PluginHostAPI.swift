@@ -182,13 +182,29 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: - Per-Request Agent Context
 
-    /// Resolved agent ID for the current thread. Checks thread-local storage
-    /// first (set per-dispatch in ExternalPlugin wrappers), then falls back to
-    /// `Agent.defaultId`. This is the primary concurrent-safe mechanism --
-    /// each invokeQueue / eventQueue thread gets its own value.
-    var resolvedAgentId: UUID {
-        Self.activeAgentId() ?? Agent.defaultId
+    /// Resolved agent ID for the current thread, or `nil` when no chat agent
+    /// is bound to this invocation. Checks thread-local storage (set per-
+    /// dispatch in `ExternalPlugin` wrappers); each invokeQueue / eventQueue
+    /// thread gets its own value.
+    ///
+    /// The Default (built-in) agent is intentionally treated as "no agent
+    /// context" for plugin operations: plugins MUST NOT silently inherit
+    /// the Default agent's secret namespace, tool grants, or rate-limit
+    /// quota when invoked without an explicit chat binding. That historical
+    /// `?? Agent.defaultId` fallback leaked the Default agent's data and
+    /// permissions to anonymous plugin paths.
+    var resolvedAgentIdOrNil: UUID? {
+        guard let id = Self.activeAgentId() else { return nil }
+        return id == Agent.defaultId ? nil : id
     }
+
+    /// Deterministic synthetic UUID used as the bucket key for per-agent rate
+    /// limiting when the current invocation has no chat-bound agent context.
+    /// Distinct from `Agent.defaultId` so anonymous plugin traffic doesn't
+    /// share a bucket with — or accrue quota against — the Default agent.
+    static let anonymousPluginRateBucketId = UUID(
+        uuidString: "ffffffff-ffff-ffff-ffff-fffffffffff0"
+    )!
 
     init(pluginId: String) throws {
         self.pluginId = pluginId
@@ -243,10 +259,14 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: - Config Callbacks
 
     func configGet(key: String) -> String? {
-        if Self.activeAgentId() == nil {
+        // Anonymous reads (no chat-bound agent) must not silently fall back
+        // to the Default agent's secret namespace. Warn-once and return nil
+        // so the plugin reads no value rather than the Default agent's.
+        guard let agentId = resolvedAgentIdOrNil else {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_get")
+            return nil
         }
-        return ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: resolvedAgentId)
+        return ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: agentId)
     }
 
     /// Maximum config value byte size accepted by `config_set`. The
@@ -270,18 +290,22 @@ final class PluginHostContext: @unchecked Sendable {
             )
             return
         }
-        if Self.activeAgentId() == nil {
+        // Anonymous writes (no chat-bound agent) must not silently land in
+        // the Default agent's secret namespace. No-op + warn-once instead.
+        guard let agentId = resolvedAgentIdOrNil else {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_set")
+            return
         }
-        ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: resolvedAgentId)
+        ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
         postConfigChange(key: key, value: value)
     }
 
     func configDelete(key: String) {
-        if Self.activeAgentId() == nil {
+        guard let agentId = resolvedAgentIdOrNil else {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_delete")
+            return
         }
-        ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: resolvedAgentId)
+        ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: agentId)
         postConfigChange(key: key, value: nil)
     }
 
@@ -366,11 +390,34 @@ final class PluginHostContext: @unchecked Sendable {
         }
 
         // Agent scope is host-enforced — caller-supplied `agent_address`
-        // / `agent_id` is ignored, and missing TLS falls back to default.
-        // Both branches warn-once per (plugin, op) so the misuse stays
-        // visible without flooding the log.
+        // / `agent_id` is ignored. Plugin dispatch with no active chat
+        // agent (or with the built-in Default agent) is refused outright:
+        // the previous `?? Agent.defaultId` fallback let plugins
+        // anonymously route work onto the Default agent, which is
+        // unreachable by design from external surfaces.
         auditAgentScope(json: json, pluginId: pluginId, op: "dispatch", activeAgent: activeAgent)
-        let resolvedAgent = activeAgent ?? Agent.defaultId
+        if let rejection = Agent.rejectBuiltInForExternalSurface(
+            activeAgent,
+            source: "plugin/planDispatch"
+        ) {
+            return .error(
+                envelope: jsonString([
+                    "error": rejection.code,
+                    "message": rejection.message,
+                ])
+            )
+        }
+        guard let resolvedAgent = activeAgent else {
+            // Unreachable: `rejectBuiltInForExternalSurface(nil, ...)`
+            // already returned an error above. Belt-and-suspenders for
+            // future refactors of the guard.
+            return .error(
+                envelope: jsonString([
+                    "error": "missing_agent_context",
+                    "message": "Plugin dispatch requires an active chat agent context.",
+                ])
+            )
+        }
 
         let title = json["title"] as? String
 
@@ -490,8 +537,12 @@ final class PluginHostContext: @unchecked Sendable {
                 request = r
             }
 
+            // `planDispatch` guarantees `request.agentId` is non-nil and not
+            // `Agent.defaultId` by the time we reach here. Force-unwrap to
+            // avoid resurrecting the old `?? Agent.defaultId` fallback in
+            // the rate-limiter key.
             guard let ctx = PluginHostContext.getContext(for: pluginId),
-                ctx.checkDispatchRateLimit(agentId: request.agentId ?? Agent.defaultId)
+                ctx.checkDispatchRateLimit(agentId: request.agentId!)
             else {
                 return (
                     Self.jsonString([
@@ -733,21 +784,31 @@ final class PluginHostContext: @unchecked Sendable {
                 SystemPromptComposer.appendSystemContent(instructions, into: &enriched.request.messages)
             }
         }
-        let resolvedAgentId = agentCtx?.agentId ?? Agent.defaultId
-        let agentToolsOff = await MainActor.run {
-            AgentManager.shared.effectiveToolsDisabled(for: resolvedAgentId)
+        // No silent Default-agent fallback: when the plugin has no chat-bound
+        // agent context, preflight + skill injection are skipped (treated as
+        // "tools off"). Otherwise we'd be running preflight + skills against
+        // the Default agent's grants, which leaks the built-in agent's
+        // configuration to anonymous plugin inferences.
+        let resolvedAgentId = agentCtx?.agentId
+        let agentToolsOff: Bool
+        if let id = resolvedAgentId {
+            agentToolsOff = await MainActor.run {
+                AgentManager.shared.effectiveToolsDisabled(for: id)
+            }
+        } else {
+            agentToolsOff = true
         }
-        if options.wantsPreflight && !agentToolsOff {
+        if let id = resolvedAgentId, options.wantsPreflight && !agentToolsOff {
             enriched = await applyPreflightSearch(
                 to: enriched,
                 executionMode: execMode,
-                agentId: resolvedAgentId
+                agentId: id
             )
         }
         // Skills inject in BOTH modes — see the matching block in
         // `SystemPromptComposer.compose` for the full rationale.
-        if !agentToolsOff,
-            let section = await SkillManager.shared.enabledSkillPromptSection(for: resolvedAgentId)
+        if let id = resolvedAgentId, !agentToolsOff,
+            let section = await SkillManager.shared.enabledSkillPromptSection(for: id)
         {
             SystemPromptComposer.appendSystemContent(section, into: &enriched.request.messages)
         }
@@ -954,6 +1015,12 @@ final class PluginHostContext: @unchecked Sendable {
         executionMode: ExecutionMode = .none,
         agentId: UUID = Agent.defaultId
     ) async -> EnrichedInference {
+        // Built-in default agent is in-app chat only and gets a fixed
+        // 8-tool baseline; preflight picks would be stripped downstream.
+        // Defense-in-depth on top of `BuiltInAgentGuard`.
+        if agentId == Agent.defaultId {
+            return inference
+        }
         let toolMode = await MainActor.run {
             AgentManager.shared.effectiveToolSelectionMode(for: agentId)
         }
@@ -2098,7 +2165,13 @@ final class PluginHostContext: @unchecked Sendable {
         // dispatch limiter's shape. Plugins that need higher
         // throughput should batch upstream or backoff on
         // `rate_limit_exceeded` like any other API client.
-        guard checkHttpRateLimit(agentId: resolvedAgentId) else {
+        //
+        // Anonymous plugin traffic (no chat-bound agent) buckets against a
+        // synthetic sentinel UUID — not `Agent.defaultId` — so its quota
+        // is distinct from the Default agent's and the built-in agent's
+        // identity isn't reused as a fairness key.
+        let rateLimitAgentId = resolvedAgentIdOrNil ?? Self.anonymousPluginRateBucketId
+        guard checkHttpRateLimit(agentId: rateLimitAgentId) else {
             return Self.jsonString([
                 "error": "rate_limit_exceeded",
                 "message":

@@ -557,7 +557,7 @@ extension AgentManager {
         }
 
         if agent.id == Agent.defaultId {
-            return ChatConfigurationStore.load().defaultAutonomousExec
+            return DefaultAgentConfigurationStore.load().autonomousExec
         }
 
         return agent.autonomousExec
@@ -581,9 +581,9 @@ extension AgentManager {
         // Save config first so the UI reflects the new state immediately
         // (enables loading indicator while provisioning runs).
         if agentId == Agent.defaultId {
-            var chatConfig = ChatConfigurationStore.load()
-            chatConfig.defaultAutonomousExec = config
-            ChatConfigurationStore.save(chatConfig)
+            var defaultConfig = DefaultAgentConfigurationStore.load()
+            defaultConfig.autonomousExec = config
+            DefaultAgentConfigurationStore.save(defaultConfig)
             NotificationCenter.default.post(name: .agentUpdated, object: agentId)
         } else {
             guard var agent = agent(for: agentId) else { return }
@@ -602,12 +602,15 @@ extension AgentManager {
     /// Get the effective system prompt for an agent (combining with global if needed)
     public func effectiveSystemPrompt(for agentId: UUID) -> String {
         guard let agent = agent(for: agentId) else {
-            return ChatConfigurationStore.load().systemPrompt
+            return DefaultAgentConfigurationStore.load().systemPrompt
         }
 
-        // Default agent uses global settings
+        // Default agent reads from its own dedicated configuration store
+        // (`default-agent.json`); these fields used to live on
+        // `ChatConfiguration` but were split out so the Settings UI
+        // can honestly separate "Global Chat" from "Default Agent".
         if agent.id == Agent.defaultId {
-            return ChatConfigurationStore.load().systemPrompt
+            return DefaultAgentConfigurationStore.load().systemPrompt
         }
 
         // Custom agents use their own system prompt
@@ -615,30 +618,34 @@ extension AgentManager {
     }
 
     /// Get the effective model for an agent
-    /// For custom agents without a model set, falls back to Default agent's model
+    /// For custom agents without a model set, falls back to global "new agent" default
     public func effectiveModel(for agentId: UUID) -> String? {
+        let defaultAgentModel = DefaultAgentConfigurationStore.load().defaultModel
         guard let agent = agent(for: agentId) else {
-            return ChatConfigurationStore.load().defaultModel
+            return defaultAgentModel ?? ChatConfigurationStore.load().defaultModel
         }
 
-        // Default agent uses global settings
         if agent.id == Agent.defaultId {
-            return ChatConfigurationStore.load().defaultModel
+            return defaultAgentModel
         }
 
-        // Custom agent: use agent's model if set, otherwise fall back to Default agent's model
-        return agent.defaultModel ?? ChatConfigurationStore.load().defaultModel
+        // Custom agent: prefer agent's own model. When unset, fall back to
+        // the global "default model for new agents" (still on
+        // `ChatConfiguration` since it's the seed value for newly created
+        // custom agents), and then to the Default agent's own model.
+        return agent.defaultModel
+            ?? ChatConfigurationStore.load().defaultModel
+            ?? defaultAgentModel
     }
 
     /// Get the effective temperature for an agent
     public func effectiveTemperature(for agentId: UUID) -> Float? {
         guard let agent = agent(for: agentId) else {
-            return ChatConfigurationStore.load().temperature
+            return DefaultAgentConfigurationStore.load().temperature
         }
 
-        // Default agent uses global settings
         if agent.id == Agent.defaultId {
-            return ChatConfigurationStore.load().temperature
+            return DefaultAgentConfigurationStore.load().temperature
         }
 
         return agent.temperature
@@ -647,25 +654,27 @@ extension AgentManager {
     /// Get the effective max tokens for an agent
     public func effectiveMaxTokens(for agentId: UUID) -> Int? {
         guard let agent = agent(for: agentId) else {
-            return ChatConfigurationStore.load().maxTokens
+            return DefaultAgentConfigurationStore.load().maxTokens
         }
 
-        // Default agent uses global settings
         if agent.id == Agent.defaultId {
-            return ChatConfigurationStore.load().maxTokens
+            return DefaultAgentConfigurationStore.load().maxTokens
         }
 
         return agent.maxTokens
     }
 
     /// Whether tools are disabled for an agent.
-    /// Default agent defers to global `ChatConfiguration.disableTools`.
-    /// Custom agents use their own flag (defaulting to false), OR-ed with the global flag.
+    /// Default agent reads its own `DefaultAgentConfiguration.disableTools`.
+    /// Custom agents use their per-agent flag (defaulting to false).
     public func effectiveToolsDisabled(for agentId: UUID) -> Bool {
-        let globalDisabled = ChatConfigurationStore.load().disableTools
-        guard let agent = agent(for: agentId) else { return globalDisabled }
-        if agent.id == Agent.defaultId { return globalDisabled }
-        return (agent.disableTools ?? false) || globalDisabled
+        guard let agent = agent(for: agentId) else {
+            return DefaultAgentConfigurationStore.load().disableTools
+        }
+        if agent.id == Agent.defaultId {
+            return DefaultAgentConfigurationStore.load().disableTools
+        }
+        return agent.disableTools ?? false
     }
 
     /// Whether the Agent DB feature is enabled for an agent (spec §5.5).
@@ -689,11 +698,11 @@ extension AgentManager {
     }
 
     /// Get the effective tool selection mode for an agent.
-    /// Default agent reads from `ChatConfiguration.defaultToolSelectionMode` (defaulting to .auto).
+    /// Default agent reads from `DefaultAgentConfiguration.toolSelectionMode` (defaulting to .auto).
     public func effectiveToolSelectionMode(for agentId: UUID) -> ToolSelectionMode {
         guard let agent = agent(for: agentId) else { return .auto }
         if agent.id == Agent.defaultId {
-            return ChatConfigurationStore.load().defaultToolSelectionMode ?? .auto
+            return DefaultAgentConfigurationStore.load().toolSelectionMode ?? .auto
         }
         return agent.toolSelectionMode ?? .auto
     }
@@ -702,9 +711,9 @@ extension AgentManager {
     public func effectiveManualToolNames(for agentId: UUID) -> [String]? {
         guard let agent = agent(for: agentId) else { return nil }
         if agent.id == Agent.defaultId {
-            let config = ChatConfigurationStore.load()
-            guard config.defaultToolSelectionMode == .manual else { return nil }
-            return config.defaultManualToolNames
+            let config = DefaultAgentConfigurationStore.load()
+            guard config.toolSelectionMode == .manual else { return nil }
+            return config.manualToolNames
         }
         guard agent.toolSelectionMode == .manual else { return nil }
         return agent.manualToolNames
@@ -714,9 +723,9 @@ extension AgentManager {
     public func effectiveManualSkillNames(for agentId: UUID) -> [String]? {
         guard let agent = agent(for: agentId) else { return nil }
         if agent.id == Agent.defaultId {
-            let config = ChatConfigurationStore.load()
-            guard config.defaultToolSelectionMode == .manual else { return nil }
-            return config.defaultManualSkillNames
+            let config = DefaultAgentConfigurationStore.load()
+            guard config.toolSelectionMode == .manual else { return nil }
+            return config.manualSkillNames
         }
         guard agent.toolSelectionMode == .manual else { return nil }
         return agent.manualSkillNames
@@ -729,7 +738,7 @@ extension AgentManager {
     public func effectiveEnabledToolNames(for agentId: UUID) -> [String]? {
         guard let agent = agent(for: agentId) else { return nil }
         if agent.id == Agent.defaultId {
-            return ChatConfigurationStore.load().defaultManualToolNames
+            return DefaultAgentConfigurationStore.load().manualToolNames
         }
         return agent.manualToolNames
     }
@@ -739,7 +748,7 @@ extension AgentManager {
     public func effectiveEnabledSkillNames(for agentId: UUID) -> [String]? {
         guard let agent = agent(for: agentId) else { return nil }
         if agent.id == Agent.defaultId {
-            return ChatConfigurationStore.load().defaultManualSkillNames
+            return DefaultAgentConfigurationStore.load().manualSkillNames
         }
         return agent.manualSkillNames
     }
@@ -770,18 +779,18 @@ extension AgentManager {
     ) {
         guard let agent = agent(for: agentId) else { return }
         if agent.id == Agent.defaultId {
-            var config = ChatConfigurationStore.load()
+            var config = DefaultAgentConfigurationStore.load()
             var changed = false
-            if config.defaultManualToolNames == nil {
-                config.defaultManualToolNames = defaultToolNames
+            if config.manualToolNames == nil {
+                config.manualToolNames = defaultToolNames
                 changed = true
             }
-            if config.defaultManualSkillNames == nil {
-                config.defaultManualSkillNames = defaultSkillNames
+            if config.manualSkillNames == nil {
+                config.manualSkillNames = defaultSkillNames
                 changed = true
             }
             if changed {
-                ChatConfigurationStore.save(config)
+                DefaultAgentConfigurationStore.save(config)
                 NotificationCenter.default.post(name: .agentUpdated, object: Agent.defaultId)
             }
             return
@@ -804,9 +813,9 @@ extension AgentManager {
     /// Update the agent's enabled tool allowlist (used by the capability picker).
     public func updateEnabledToolNames(_ names: [String], for agentId: UUID) {
         if agentId == Agent.defaultId {
-            var config = ChatConfigurationStore.load()
-            config.defaultManualToolNames = names
-            ChatConfigurationStore.save(config)
+            var config = DefaultAgentConfigurationStore.load()
+            config.manualToolNames = names
+            DefaultAgentConfigurationStore.save(config)
             NotificationCenter.default.post(name: .agentUpdated, object: agentId)
             return
         }
@@ -818,9 +827,9 @@ extension AgentManager {
     /// Update the agent's enabled skill allowlist (used by the capability picker).
     public func updateEnabledSkillNames(_ names: [String], for agentId: UUID) {
         if agentId == Agent.defaultId {
-            var config = ChatConfigurationStore.load()
-            config.defaultManualSkillNames = names
-            ChatConfigurationStore.save(config)
+            var config = DefaultAgentConfigurationStore.load()
+            config.manualSkillNames = names
+            DefaultAgentConfigurationStore.save(config)
             NotificationCenter.default.post(name: .agentUpdated, object: agentId)
             return
         }
@@ -833,9 +842,9 @@ extension AgentManager {
     /// enabled set. Used by the new picker's "Auto-discover" toggle.
     public func updateToolSelectionMode(_ mode: ToolSelectionMode, for agentId: UUID) {
         if agentId == Agent.defaultId {
-            var config = ChatConfigurationStore.load()
-            config.defaultToolSelectionMode = mode
-            ChatConfigurationStore.save(config)
+            var config = DefaultAgentConfigurationStore.load()
+            config.toolSelectionMode = mode
+            DefaultAgentConfigurationStore.save(config)
             NotificationCenter.default.post(name: .agentUpdated, object: agentId)
             return
         }
@@ -850,17 +859,17 @@ extension AgentManager {
     /// at the runtime layer, so they pick up new tools automatically without any write.
     public func growEnabledToolNames(_ liveNames: Set<String>) {
         var configChanged = false
-        var config = ChatConfigurationStore.load()
-        if var current = config.defaultManualToolNames {
+        var config = DefaultAgentConfigurationStore.load()
+        if var current = config.manualToolNames {
             let before = current.count
             for name in liveNames where !current.contains(name) { current.append(name) }
             if current.count != before {
-                config.defaultManualToolNames = current
+                config.manualToolNames = current
                 configChanged = true
             }
         }
         if configChanged {
-            ChatConfigurationStore.save(config)
+            DefaultAgentConfigurationStore.save(config)
             NotificationCenter.default.post(name: .agentUpdated, object: Agent.defaultId)
         }
 
@@ -885,17 +894,17 @@ extension AgentManager {
     /// `growEnabledToolNames` for skills. Called when a plugin registers skills.
     public func growEnabledSkillNames(_ liveNames: Set<String>) {
         var configChanged = false
-        var config = ChatConfigurationStore.load()
-        if var current = config.defaultManualSkillNames {
+        var config = DefaultAgentConfigurationStore.load()
+        if var current = config.manualSkillNames {
             let before = current.count
             for name in liveNames where !current.contains(name) { current.append(name) }
             if current.count != before {
-                config.defaultManualSkillNames = current
+                config.manualSkillNames = current
                 configChanged = true
             }
         }
         if configChanged {
-            ChatConfigurationStore.save(config)
+            DefaultAgentConfigurationStore.save(config)
             NotificationCenter.default.post(name: .agentUpdated, object: Agent.defaultId)
         }
 
@@ -951,11 +960,13 @@ extension AgentManager {
     ///   - agentId: The agent to update
     ///   - model: The model ID to set as default (nil to clear/use global)
     public func updateDefaultModel(for agentId: UUID, model: String?) {
-        // Handle Default agent by saving to ChatConfiguration
+        // The Default agent's model lives on its own configuration store.
+        // The legacy `ChatConfiguration.defaultModel` is now repurposed as
+        // the seed model for newly-created custom agents.
         if agentId == Agent.defaultId {
-            var config = ChatConfigurationStore.load()
+            var config = DefaultAgentConfigurationStore.load()
             config.defaultModel = model
-            ChatConfigurationStore.save(config)
+            DefaultAgentConfigurationStore.save(config)
             return
         }
 

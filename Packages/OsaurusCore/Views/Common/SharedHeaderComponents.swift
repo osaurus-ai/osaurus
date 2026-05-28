@@ -145,7 +145,7 @@ struct AgentPill: View {
 
     private var displayName: String {
         if let relay = activeRelayAgent { return relay.name }
-        guard let discovered = activeDiscoveredAgent else { return activeAgent.name }
+        guard let discovered = activeDiscoveredAgent else { return activeAgent.displayName }
         if let host = discovered.host {
             return "\(discovered.name) (\(shortHost(host)))"
         }
@@ -159,14 +159,26 @@ struct AgentPill: View {
     @ViewBuilder
     private func monogramAvatar(for agent: Agent, size: CGFloat) -> some View {
         if agent.isBuiltIn {
-            ZStack {
-                Circle()
-                    .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
-                Image(systemName: "person.fill")
-                    .font(.system(size: size * 0.42, weight: .medium))
-                    .foregroundColor(theme.secondaryText.opacity(0.85))
+            // Mirror `NativeMessageCellView`'s mascot resolution so the
+            // built-in default agent gets its branded image (e.g. the
+            // green dinosaur). Falls back to the generic person glyph
+            // when the agent has no `avatar` id or the asset is missing.
+            if let mascot = builtInMascotImage(for: agent) {
+                Image(nsImage: mascot)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+            } else {
+                ZStack {
+                    Circle()
+                        .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
+                    Image(systemName: "person.fill")
+                        .font(.system(size: size * 0.42, weight: .medium))
+                        .foregroundColor(theme.secondaryText.opacity(0.85))
+                }
+                .frame(width: size, height: size)
             }
-            .frame(width: size, height: size)
         } else {
             AgentAvatarView(
                 mascotId: agent.avatar,
@@ -178,6 +190,11 @@ struct AgentPill: View {
                 borderWidth: 0
             )
         }
+    }
+
+    private func builtInMascotImage(for agent: Agent) -> NSImage? {
+        guard let avatar = agent.avatar, !avatar.isEmpty else { return nil }
+        return Bundle.module.image(forResource: "osaurus-avatar-\(avatar)")
     }
 
     @ViewBuilder
@@ -404,12 +421,13 @@ struct AgentPill: View {
         ) {
             monogramAvatar(for: agent, size: 26)
             VStack(alignment: .leading, spacing: 1) {
-                Text(agent.name.isEmpty ? L("Untitled Agent") : agent.name)
+                Text(agent.displayName.isEmpty ? L("Untitled Agent") : agent.displayName)
                     .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
-                if !agent.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(agent.description)
+                let desc = agent.displayDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !desc.isEmpty {
+                    Text(desc)
                         .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(1)

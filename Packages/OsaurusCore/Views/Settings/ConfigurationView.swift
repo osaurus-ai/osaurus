@@ -770,14 +770,19 @@ struct ConfigurationView: View {
 
         let chat = snapshot.chat
         tempChatHotkey = chat.hotkey
-        tempSystemPrompt = chat.systemPrompt
-        tempChatTemperature = chat.temperature.map { String($0) } ?? ""
-        tempChatMaxTokens = chat.maxTokens.map(String.init) ?? ""
+        // The Default agent's persona and tool-off flag now live on
+        // `DefaultAgentConfiguration` (split off from `ChatConfiguration`
+        // in Phase B). Settings UI reads/writes go through the new store
+        // so user edits land where `AgentManager.effective*` reads them.
+        let defaultAgent = DefaultAgentConfigurationStore.load()
+        tempSystemPrompt = defaultAgent.systemPrompt
+        tempChatTemperature = defaultAgent.temperature.map { String($0) } ?? ""
+        tempChatMaxTokens = defaultAgent.maxTokens.map(String.init) ?? ""
         tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempPreflightSearchMode = chat.preflightSearchMode ?? .balanced
-        tempDisableTools = chat.disableTools
+        tempDisableTools = defaultAgent.disableTools
         tempMemoryEnabled = snapshot.memory.enabled
         tempCoreModelProvider = chat.coreModelProvider ?? ""
         tempCoreModelName = chat.coreModelName ?? ""
@@ -948,9 +953,14 @@ struct ConfigurationView: View {
         let existingDefaultModel = previousChatCfg.defaultModel
         let chatCfg = ChatConfiguration(
             hotkey: tempChatHotkey,
-            systemPrompt: tempSystemPrompt,
-            temperature: parsedTemp,
-            maxTokens: parsedMax,
+            // `systemPrompt` is owned by `DefaultAgentConfiguration` now;
+            // we write it to that store below. Persisting it as "" here
+            // keeps the JSON shape valid (the field is non-optional in
+            // the struct) without re-introducing the split-source-of-
+            // truth bug Phase B set out to fix.
+            systemPrompt: "",
+            temperature: nil,
+            maxTokens: nil,
             contextLength: parsedContext,
             topPOverride: parsedTopP,
             maxToolAttempts: parsedMaxToolAttempts,
@@ -962,7 +972,7 @@ struct ConfigurationView: View {
             workTopPOverride: parsedAgentTopP,
             workMaxIterations: parsedAgentMaxIterations,
             preflightSearchMode: tempPreflightSearchMode,
-            disableTools: tempDisableTools,
+            disableTools: false,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             generativeGreetingsEnabled: tempGenerativeGreetingsEnabled,
             greetingPersona: {
@@ -977,6 +987,14 @@ struct ConfigurationView: View {
             }()
         )
         ChatConfigurationStore.save(chatCfg)
+
+        // Persist default-agent specific fields to their own store.
+        var defaultAgentCfg = DefaultAgentConfigurationStore.load()
+        defaultAgentCfg.systemPrompt = tempSystemPrompt
+        defaultAgentCfg.temperature = parsedTemp
+        defaultAgentCfg.maxTokens = parsedMax
+        defaultAgentCfg.disableTools = tempDisableTools
+        DefaultAgentConfigurationStore.save(defaultAgentCfg)
 
         // Persist memory enable toggle. Budgets are not user-adjustable in
         // this UI — users can edit MemoryConfiguration.json directly for

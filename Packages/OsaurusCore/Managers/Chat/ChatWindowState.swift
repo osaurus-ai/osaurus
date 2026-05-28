@@ -412,11 +412,12 @@ final class ChatWindowState: ObservableObject {
         return ThemeManager.shared.currentTheme
     }
 
-    /// Built-in (Default) agent always renders as the localized "Assistant"
-    /// label so the chat header doesn't expose the internal `"Default"` name;
-    /// custom agents render their stored name verbatim.
+    /// Built-in default agent renders as the localized "Osaurus" brand
+    /// label so the chat header carries the product name instead of the
+    /// internal `"Default"` id; custom agents render their stored name
+    /// verbatim.
     private static func displayName(for agent: Agent) -> String {
-        agent.isBuiltIn ? L("Assistant") : agent.name
+        agent.isBuiltIn ? L("Osaurus") : agent.name
     }
 
     private func decodeBackgroundImageAsync(themeConfig: CustomTheme?) {

@@ -414,28 +414,35 @@ struct PlanDispatchTests {
         #expect(req.agentId == agentX)
     }
 
-    @Test func nilTlsFallsBackToDefaultAgent() throws {
-        // Plugin-spawned background work has no TLS agent. The host
-        // routes it to the built-in default agent (and warns once).
+    @Test func nilTlsRejectsBuiltInAgentFallback() throws {
+        // Plugin-spawned background work with no TLS agent used to fall
+        // back to the built-in Default agent. The trust boundary added
+        // in `Agent.rejectBuiltInForExternalSurface` now blocks that —
+        // plugins must run under an agent they were explicitly invoked
+        // from, never the in-app Default.
         let plan = PluginHostContext.planDispatch(
             requestJSON: #"{"prompt":"hi"}"#,
             pluginId: pluginId,
             activeAgent: nil
         )
-        let req = try #require(extractRequest(plan))
-        #expect(req.agentId == Agent.defaultId)
+        let env = try #require(extractError(plan))
+        #expect(env.contains("built_in_agent_not_exposable"))
+        #expect(env.contains(Agent.defaultId.uuidString))
+        #expect(env.contains("plugin/planDispatch"))
     }
 
-    @Test func nilTlsAndJsonOverrideStillFallsBackToDefault() throws {
-        // The fallback ignores the JSON override too — plugins can
-        // never dispatch into a chosen agent context.
+    @Test func nilTlsRejectsEvenWithJsonAgentOverride() throws {
+        // The rejection ignores the JSON override too — a plugin cannot
+        // unlock the Default agent by stuffing `agent_address` (or
+        // `agent_id`) into its dispatch payload.
         let plan = PluginHostContext.planDispatch(
             requestJSON: #"{"prompt":"hi","agent_address":"0xattacker"}"#,
             pluginId: pluginId,
             activeAgent: nil
         )
-        let req = try #require(extractRequest(plan))
-        #expect(req.agentId == Agent.defaultId)
+        let env = try #require(extractError(plan))
+        #expect(env.contains("built_in_agent_not_exposable"))
+        #expect(env.contains(Agent.defaultId.uuidString))
     }
 
     // MARK: Error envelopes
