@@ -17,7 +17,7 @@ import SwiftUI
 
 @MainActor
 final class CreateAgentState: ObservableObject {
-    @Published var selectedTemplate: AgentStarterTemplate = .writer
+    @Published var selectedTemplate: AgentStarterTemplate = .osaurusGuide
     @Published var name: String = ""
     @Published var systemPrompt: String = ""
     /// Flips to `true` once the user types into the name field, so switching
@@ -37,7 +37,7 @@ final class CreateAgentState: ObservableObject {
     @Published private(set) var createdAgentId: UUID?
 
     init() {
-        applyTemplate(.writer)
+        applyTemplate(.osaurusGuide)
     }
 
     var trimmedName: String {
