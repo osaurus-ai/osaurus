@@ -105,6 +105,10 @@ row is production-clear.
   - Boundary: absolute `file_read` paths returned not found until the model switched to the relative `docs/runtime.md` path, so this row is not a file-tool fidelity promotion.
   - Boundary: the artifact summary flags `DSML` in the final visible answer, but that is fixture content (`DSV4 uses DSML tools`), not a DSV4 parser/protocol leak.
   - Cache boundary: `disk_l2_stores +6`, but `disk_l2_hits`, SSM companion hits, and SSM companion rederives stayed 0.
+- Warm repeat artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-filetool-repeat-cache-20260528-122054`.
+  - Request shape: exact repeat of the file-tool fixture final request against the resident warm Qwen model.
+  - Result: no `!!!!!!!!` loop and no protocol marker leak, but the response stopped with `finish_reason: "length"`, empty visible content, and reasoning-only text instead of the coherent final answer from the cold row.
+  - Cache boundary: repeat still produced `disk_l2_stores +1` with `disk_l2_hits 0`, SSM companion hits `0`, and SSM companion rederives `0`.
 - Corrected named file-tool artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-filetool-named-repro-20260528-121522`.
   - Request shape: Thinking enabled, named `tool_choice` sequence over `file_tree`, `file_read`, `file_read`, `line_count`, then final no-tool answer over the same tool history.
   - Result: all four named tool turns returned exactly one structured tool call with the expected tool name, exact readable file paths, no raw tool envelope leak, and no `!!!!!!!!` loop.
