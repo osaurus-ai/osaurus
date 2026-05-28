@@ -330,6 +330,13 @@ Kimi is intentionally excluded from this matrix for now per current scope.
   one `function_call` output item for `line_count`, exact multiline args, and no
   visible DSML/tool-marker leak. Cache counters stayed zero in that row, so this
   proves Responses tool-parser parity only, not DSV4 disk-hit reuse.
+  Streaming `/v1/responses` also has a focused route proof at
+  `/tmp/osaurus-pr1268-7a7d2273-dsv4-responses-stream-required-20260528-093541`:
+  reasoning summary events arrived before the final structured `function_call`,
+  the final `line_count` arguments were exact, no DSML/tool-marker leak was
+  visible, DSV4 topology stayed 43 layers / 41 hybrid-pool / 2 rotating /
+  TurboQuant KV 0, and disk L2 stores moved `+1`. This proves streaming
+  Responses event/tool parity and store behavior, not repeat disk-hit reuse.
   Two broader rows are explicitly not green: omitted `max_tokens` timed out and
   left lingering inflight requests
   (`/tmp/osaurus-pr1268-695d5869-dsv4-required-repeat-20260528-084132`), and
