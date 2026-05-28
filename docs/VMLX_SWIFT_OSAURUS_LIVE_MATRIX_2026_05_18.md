@@ -300,7 +300,7 @@ Kimi is intentionally excluded from this matrix for now per current scope.
 ## Open Items
 
 - Current #1268 boundary: Osaurus head
-  `ad233f700ab2784f8def49bab65277996d8369ed`, pinned to vMLX main
+  `8d3ce5d15156e5c6a5dc3f04601b02442dfd2c3a`, pinned to vMLX main
   `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`, is open, not draft,
   mergeable, and not merged by agent. The code-equivalent no-sign/keychain-free
   Release app from

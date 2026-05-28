@@ -41,11 +41,11 @@ Each promoted row needs current-head evidence for:
 
 ## Current #1268 merge boundary
 
-### 2026-05-28 08:59 PDT checked boundary correction
+### 2026-05-28 09:01 PDT checked boundary correction
 
-- Current Osaurus PR: `#1268`, head `ad233f700ab2784f8def49bab65277996d8369ed`, open, not draft, mergeable, not merged by agent.
+- Current Osaurus PR: `#1268`, head `8d3ce5d15156e5c6a5dc3f04601b02442dfd2c3a`, open, not draft, mergeable, not merged by agent.
 - Current vMLX main and Osaurus pin: `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`; verified present on `osaurus-ai/vmlx-swift` main.
-- Current CI must be checked on `ad233f70`; do not reuse the older green-status line after the documentation-only head commit.
+- Current CI must be checked on `8d3ce5d`; do not reuse the older green-status line after another documentation-only head commit.
 - Code-equivalent no-sign/keychain-free app from `695d5869` launched at `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app` and `/health` returned healthy with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
 - Final source guard on `695d5869` passed: migrated cache defaults use `liveKVCodec: .engineSelected`, `ModelRuntime.shouldUseTurboQuantByDefault` remains the topology gate, and DSV4/ZAYA/ZAYA-VL/hybrid topologies are not defaulted into generic TurboQuant KV.
 - Final source policy keeps the no-forced-behavior contract: no DSV4 hidden repetition-penalty doc, no forced sampler defaults, no parser output repair, no forced reasoning tags, and required/named local tool choice still flows through the template context.
