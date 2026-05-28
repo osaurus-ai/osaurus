@@ -36,11 +36,9 @@ BailingHybrid runtime path.
   - Adds ANE acceleration contract scaffolding (`AccelerationMode`,
     `AccelerationRuntime.resolveTextDecode`). Fail-closed for text decode.
   - Unsupported JANGTQ3 route still removed.
-  - `enableSSMReDerive` default remains `true`; osaurus opts out per chat
-    workload — not for the old `.info`-ordering reason (b9 fixed that)
-    but because osaurus's chat path mutates the system prefix every turn
-    so the SSM cache rarely lands a boundary-matching hit (see
-    `INFERENCE_RUNTIME.md` "Upstream runtime boundaries").
+  - `enableSSMReDerive` default remains `true`; osaurus now preserves that
+    automatic hybrid-cache default so SSM/linear-attention companion state can
+    rederive/store after generation and participate in prefix/L2 restores.
 - `swift-jinja`: unchanged at the existing Osaurus fork pin. No new parser
   behavior is needed for Ling in this PR.
 - `mlx-swift` / `mlx`: unchanged. No MLX kernel or ABI change is required by

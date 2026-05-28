@@ -38,6 +38,41 @@ protocol ResponseWriter {
     func writeEnd(_ context: ChannelHandlerContext)
 }
 
+extension ResponseWriter {
+    /// Write a structured error payload, inferring `type` / `code`
+    /// from a thrown `Error`. Privacy Filter errors are surfaced
+    /// with `type = "privacy_filter"` and a stable `code` (e.g.
+    /// `privacy_filter_scrub_leaked`) so API clients can route them
+    /// to a privacy-specific UI; everything else falls back to the
+    /// legacy `writeError(message:context:)` behaviour with
+    /// `type = "internal_error"`.
+    func writeErrorFromThrown(_ error: Error, context: ChannelHandlerContext) {
+        if let pfError = error as? PrivacyFilterPipelineError {
+            writeStructuredError(
+                message: pfError.localizedDescription,
+                type: "privacy_filter",
+                code: pfError.httpErrorCode,
+                context: context
+            )
+            return
+        }
+        writeError(error.localizedDescription, context: context)
+    }
+
+    /// Backstop encoder that any concrete writer can reuse. Falls
+    /// back to the existing `writeError` implementation by default
+    /// so writers without a structured channel (e.g. raw JSON) still
+    /// surface the message.
+    func writeStructuredError(
+        message: String,
+        type: String,
+        code: String?,
+        context: ChannelHandlerContext
+    ) {
+        writeError(message, context: context)
+    }
+}
+
 final class SSEResponseWriter: ResponseWriter {
 
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
@@ -265,6 +300,15 @@ final class SSEResponseWriter: ResponseWriter {
     }
 
     func writeError(_ message: String, context: ChannelHandlerContext) {
+        writeStructuredError(message: message, type: "internal_error", code: nil, context: context)
+    }
+
+    func writeStructuredError(
+        message: String,
+        type: String,
+        code: String?,
+        context: ChannelHandlerContext
+    ) {
         let encoder = IkigaJSONEncoder()
         var buffer = context.channel.allocator.buffer(capacity: 256)
         buffer.writeString("data: ")
@@ -272,9 +316,9 @@ final class SSEResponseWriter: ResponseWriter {
             let err = OpenAIError(
                 error: OpenAIError.ErrorDetail(
                     message: message,
-                    type: "internal_error",
+                    type: type,
                     param: nil,
-                    code: nil
+                    code: code
                 )
             )
             try encoder.encodeAndWrite(err, into: &buffer)
@@ -286,10 +330,25 @@ final class SSEResponseWriter: ResponseWriter {
             buffer.clear()
             buffer.writeString("data: {\"error\":{\"message\":\"")
             buffer.writeString(message)
-            buffer.writeString("\",\"type\":\"internal_error\"}}\n\n")
+            buffer.writeString("\",\"type\":\"")
+            buffer.writeString(type)
+            buffer.writeString("\"}}\n\n")
             context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
             context.flush()
         }
+    }
+
+    /// Emit a pre-encoded JSON object as one SSE `data:` line. Used by the
+    /// legacy `/v1/completions` stream, whose `text_completion` chunk shape
+    /// (`choices[].text`) differs from the chat `delta` chunks the typed
+    /// helpers above emit.
+    func writeRawJSONData(_ json: String, context: ChannelHandlerContext) {
+        var buffer = context.channel.allocator.buffer(capacity: json.utf8.count + 8)
+        buffer.writeString("data: ")
+        buffer.writeString(json)
+        buffer.writeString("\n\n")
+        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+        context.flush()
     }
 
     func writeEnd(_ context: ChannelHandlerContext) {
@@ -519,14 +578,38 @@ final class OllamaGenerateNDJSONResponseWriter {
     }
 
     func writeError(_ message: String, context: ChannelHandlerContext) {
+        writeStructuredError(message: message, type: "internal_error", code: nil, context: context)
+    }
+
+    func writeStructuredError(
+        message: String,
+        type: String,
+        code: String?,
+        context: ChannelHandlerContext
+    ) {
+        var error: [String: Any] = [
+            "message": message,
+            "type": type,
+        ]
+        if let code { error["code"] = code }
         let response: [String: Any] = [
-            "error": [
-                "message": message,
-                "type": "internal_error",
-            ],
+            "error": error,
             "done": true,
         ]
         writeJSONObject(response, context: context)
+    }
+
+    func writeErrorFromThrown(_ error: Error, context: ChannelHandlerContext) {
+        if let pfError = error as? PrivacyFilterPipelineError {
+            writeStructuredError(
+                message: pfError.localizedDescription,
+                type: "privacy_filter",
+                code: pfError.httpErrorCode,
+                context: context
+            )
+            return
+        }
+        writeError(error.localizedDescription, context: context)
     }
 
     func writeEnd(_ context: ChannelHandlerContext) {
@@ -727,7 +810,30 @@ final class AnthropicSSEResponseWriter {
 
     /// Write error event
     func writeError(_ message: String, context: ChannelHandlerContext) {
-        let error = AnthropicError(message: message, errorType: "api_error")
+        writeAnthropicError(message: message, errorType: "api_error", context: context)
+    }
+
+    func writeErrorFromThrown(_ error: Error, context: ChannelHandlerContext) {
+        if let pfError = error as? PrivacyFilterPipelineError {
+            // Anthropic's error envelope only has type + message, no
+            // explicit `code`. Fold the privacy code into the type so
+            // API clients reading the type string can still detect it.
+            writeAnthropicError(
+                message: pfError.localizedDescription,
+                errorType: "privacy_filter:\(pfError.httpErrorCode)",
+                context: context
+            )
+            return
+        }
+        writeError(error.localizedDescription, context: context)
+    }
+
+    private func writeAnthropicError(
+        message: String,
+        errorType: String,
+        context: ChannelHandlerContext
+    ) {
+        let error = AnthropicError(message: message, errorType: errorType)
         let encoder = IkigaJSONEncoder()
         var buffer = context.channel.allocator.buffer(capacity: 256)
         buffer.writeString("event: error\ndata: ")
@@ -739,8 +845,10 @@ final class AnthropicSSEResponseWriter {
         } catch {
             buffer.clear()
             buffer.writeString(
-                "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\""
+                "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\""
             )
+            buffer.writeString(errorType)
+            buffer.writeString("\",\"message\":\"")
             buffer.writeString(message)
             buffer.writeString("\"}}\n\n")
             context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
@@ -1146,6 +1254,26 @@ final class OpenResponsesSSEWriter {
 
     /// Write error event
     func writeError(_ message: String, context: ChannelHandlerContext) {
+        writeStructuredOpenResponsesError(message: message, code: "internal_error", context: context)
+    }
+
+    func writeErrorFromThrown(_ error: Error, context: ChannelHandlerContext) {
+        if let pfError = error as? PrivacyFilterPipelineError {
+            writeStructuredOpenResponsesError(
+                message: pfError.localizedDescription,
+                code: pfError.httpErrorCode,
+                context: context
+            )
+            return
+        }
+        writeError(error.localizedDescription, context: context)
+    }
+
+    private func writeStructuredOpenResponsesError(
+        message: String,
+        code: String,
+        context: ChannelHandlerContext
+    ) {
         let response = OpenResponsesResponse(
             id: responseId,
             createdAt: Int(Date().timeIntervalSince1970),
@@ -1154,7 +1282,7 @@ final class OpenResponsesSSEWriter {
             output: [],
             usage: nil
         )
-        let error = OpenResponsesError(code: "internal_error", message: message)
+        let error = OpenResponsesError(code: code, message: message)
         let event = ResponseFailedEvent(sequenceNumber: nextSequenceNumber(), response: response, error: error)
         writeSSEEvent("response.failed", payload: event, context: context)
     }

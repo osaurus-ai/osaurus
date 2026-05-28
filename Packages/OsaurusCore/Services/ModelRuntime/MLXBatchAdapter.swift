@@ -79,8 +79,7 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
-        nativeMTPExplicitSamplingFallback: Bool = false,
-        nativeMTPGreedyFallback: Bool = false
+        nativeMTPExplicitSamplingFallback: Bool = false
     ) -> EffectiveGenerationSettings {
         let defaultTemperature: Float? = {
             if modelDefaults.doSample == false {
@@ -88,46 +87,37 @@ struct MLXBatchAdapter {
             }
             return modelDefaults.temperature
         }()
-        let useNativeMTPGreedyDefaults = shouldApplyNativeMTPGreedyDefaults(
-            generation: generation,
-            draftStrategy: draftStrategy
-        )
+        let engineDefaults = MLXLMCommon.GenerateParameters()
 
         // Merge order (per-request always wins): per-request →
-        // model-shipped defaults → server runtime defaults → static
-        // engine fallback.
+        // model-shipped defaults → server runtime defaults → vmlx engine
+        // defaults. Osaurus must not invent sampler defaults.
         let runtimeTopP: Float? = runtimeDefaults.topP.map { Float($0) }
         let runtimeMinP: Float? = runtimeDefaults.minP.map { Float($0) }
         let runtimeTopK: Int? = runtimeDefaults.topK
         let runtimeTemperature: Float? = runtimeDefaults.temperature.map { Float($0) }
         let runtimeMaxTokens: Int? = runtimeDefaults.maxTokens
         let runtimeRepetitionPenalty: Float? = runtimeDefaults.repetitionPenalty.map { Float($0) }
+        let repetitionPenalty = Self.effectiveRepetitionPenalty(
+            modelName: modelName,
+            generation: generation,
+            modelDefault: modelDefaults.repetitionPenalty,
+            runtimeDefault: runtimeRepetitionPenalty
+        )
 
         return EffectiveGenerationSettings(
-            temperature: useNativeMTPGreedyDefaults || nativeMTPGreedyFallback
-                ? 0
-                : (generation.temperature ?? defaultTemperature ?? runtimeTemperature ?? 0.7),
+            temperature: generation.temperature
+                ?? defaultTemperature
+                ?? runtimeTemperature
+                ?? engineDefaults.temperature,
             maxTokens: generation.maxTokensExplicit
                 ? generation.maxTokens
                 : (modelDefaults.maxTokens ?? runtimeMaxTokens ?? generation.maxTokens),
-            topP: useNativeMTPGreedyDefaults || nativeMTPGreedyFallback
-                ? (generation.topPOverride ?? 1)
-                : (generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? 1.0),
-            topK: useNativeMTPGreedyDefaults || nativeMTPExplicitSamplingFallback || nativeMTPGreedyFallback
-                ? 0
-                : (modelDefaults.topK ?? runtimeTopK ?? 0),
-            minP: useNativeMTPGreedyDefaults || nativeMTPGreedyFallback
-                ? (generation.minPOverride ?? 0)
-                : (generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? 0),
-            repetitionPenalty: {
-                if nativeMTPExplicitSamplingFallback || nativeMTPGreedyFallback {
-                    return nil
-                }
-                return useNativeMTPGreedyDefaults
-                    ? generation.repetitionPenalty
-                    : (generation.repetitionPenalty ?? modelDefaults.repetitionPenalty ?? runtimeRepetitionPenalty)
-            }(),
-            compiledBatchDecode: nativeMTPExplicitSamplingFallback || nativeMTPGreedyFallback
+            topP: generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? engineDefaults.topP,
+            topK: modelDefaults.topK ?? runtimeTopK ?? engineDefaults.topK,
+            minP: generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? engineDefaults.minP,
+            repetitionPenalty: repetitionPenalty,
+            compiledBatchDecode: nativeMTPExplicitSamplingFallback
                 ? false
                 : shouldEnableCompiledBatchDecode(
                     modelName: modelName,
@@ -149,7 +139,7 @@ struct MLXBatchAdapter {
             return nil
         }
         guard
-            shouldApplyNativeMTPGreedyDefaults(
+            requestSamplingIsExplicitGreedy(
                 generation: generation,
                 draftStrategy: draftStrategy
             )
@@ -172,7 +162,7 @@ struct MLXBatchAdapter {
     ) -> String? {
         guard draftStrategy?.usesNativeMTP == true else { return nil }
         if coldWarmup { return "cold_warmup" }
-        if !shouldApplyNativeMTPGreedyDefaults(
+        if !requestSamplingIsExplicitGreedy(
             generation: generation,
             draftStrategy: draftStrategy
         ) {
@@ -184,15 +174,15 @@ struct MLXBatchAdapter {
         return nil
     }
 
-    private static func shouldApplyNativeMTPGreedyDefaults(
+    private static func requestSamplingIsExplicitGreedy(
         generation: GenerationParameters,
         draftStrategy: MLXLMCommon.DraftStrategy?
     ) -> Bool {
         guard draftStrategy?.usesNativeMTP == true else { return false }
         if generation.samplingParametersAreImplicit {
-            return true
+            return false
         }
-        if let temperature = generation.temperature, temperature != 0 { return false }
+        guard generation.temperature == 0 else { return false }
         if let topP = generation.topPOverride, topP < 1 { return false }
         if let minP = generation.minPOverride, minP != 0 { return false }
         if let repetitionPenalty = generation.repetitionPenalty,
@@ -202,6 +192,20 @@ struct MLXBatchAdapter {
             return false
         }
         return true
+    }
+
+    private static func effectiveRepetitionPenalty(
+        modelName: String,
+        generation: GenerationParameters,
+        modelDefault: Float?,
+        runtimeDefault: Float?
+    ) -> Float? {
+        if let explicit = generation.repetitionPenalty {
+            return explicit
+        }
+
+        let resolved = modelDefault ?? runtimeDefault
+        return resolved
     }
 
     /// Same-model gate for the single-slot runtime path. With
@@ -412,8 +416,6 @@ struct MLXBatchAdapter {
                     prefixMisses += pagedStats.cacheMisses
                 }
                 if let diskStats = stats.diskStats {
-                    prefixHits += diskStats.hits
-                    prefixMisses += diskStats.misses
                     diskL2Hits += diskStats.hits
                     diskL2Misses += diskStats.misses
                     diskL2Stores += diskStats.stores
@@ -664,9 +666,13 @@ struct MLXBatchAdapter {
 
     static func additionalContext(
         for generation: GenerationParameters,
-        modelName: String
+        modelName: String,
+        toolChoice: ToolChoiceOption? = nil
     ) -> [String: any Sendable] {
         var context: [String: any Sendable] = [:]
+        if toolChoiceRequiresLocalCall(toolChoice) {
+            context["tool_choice"] = "required"
+        }
         let normalizedReasoningEffort: String? = {
             guard let effort = generation.modelOptions["reasoningEffort"]?.stringValue else {
                 return nil
@@ -680,13 +686,16 @@ struct MLXBatchAdapter {
             normalizedReasoningEffort != nil && !directRailReasoningEffort
 
         if DSV4ReasoningProfile.matches(modelId: modelName) {
+            guard normalizedReasoningEffort != nil || disableThinking != nil else {
+                return context
+            }
             let effort: String
             if let normalizedReasoningEffort {
                 effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
             } else if let disableThinking {
                 effort = disableThinking ? "instruct" : "high"
             } else {
-                effort = "instruct"
+                return context
             }
 
             switch effort {
@@ -716,7 +725,7 @@ struct MLXBatchAdapter {
         if ModelFamilyNames.isLingFamily(modelName) {
             if let disableThinking {
                 context["enable_thinking"] = !disableThinking
-            } else {
+            } else if normalizedReasoningEffort != nil {
                 context["enable_thinking"] = hasPositiveReasoningEffort
             }
             return context
@@ -734,15 +743,23 @@ struct MLXBatchAdapter {
             return context
         }
         if ModelFamilyNames.isNemotronOmniFamily(modelName) {
-            context["enable_thinking"] = hasPositiveReasoningEffort
+            if directRailReasoningEffort {
+                context["enable_thinking"] = false
+                return context
+            }
             if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["enable_thinking"] = true
                 context["reasoning_effort"] = normalizedReasoningEffort
             }
             return context
         }
         if ModelFamilyNames.isZayaFamily(modelName) {
-            context["enable_thinking"] = hasPositiveReasoningEffort
+            if directRailReasoningEffort {
+                context["enable_thinking"] = false
+                return context
+            }
             if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["enable_thinking"] = true
                 context["reasoning_effort"] = normalizedReasoningEffort
             }
             return context
@@ -750,13 +767,23 @@ struct MLXBatchAdapter {
 
         if let normalizedReasoningEffort, !directRailReasoningEffort {
             context["reasoning_effort"] = normalizedReasoningEffort
+            context["enable_thinking"] = true
         }
         if directRailReasoningEffort {
             context["enable_thinking"] = false
             return context
         }
-        context["enable_thinking"] = true
         return context
+    }
+
+    private static func toolChoiceRequiresLocalCall(_ toolChoice: ToolChoiceOption?) -> Bool {
+        guard let toolChoice else { return false }
+        switch toolChoice {
+        case .required, .function(_):
+            return true
+        case .auto, .none:
+            return false
+        }
     }
 
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
@@ -785,7 +812,9 @@ struct MLXBatchAdapter {
         container: ModelContainer,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
+        buildRawPrompt: (@Sendable () -> String)? = nil,
         generation: GenerationParameters,
+        toolChoice: ToolChoiceOption?,
         stopSequences: [String],
         draftStrategy: MLXLMCommon.DraftStrategy?,
         runtime: RuntimeConfig,
@@ -809,7 +838,9 @@ struct MLXBatchAdapter {
                 container: container,
                 buildChat: buildChat,
                 buildToolsSpec: buildToolsSpec,
+                buildRawPrompt: buildRawPrompt,
                 generation: generation,
+                toolChoice: toolChoice,
                 trace: trace
             )
         } catch {
@@ -853,8 +884,7 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
-            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
-            nativeMTPGreedyFallback: nativeMTPColdWarmup
+            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback
         )
         let mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,
@@ -865,7 +895,8 @@ struct MLXBatchAdapter {
             repetitionPenalty: effective.repetitionPenalty,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
-            enableCompiledBatchDecode: effective.compiledBatchDecode
+            enableCompiledBatchDecode: effective.compiledBatchDecode,
+            prefillStepSize: runtime.concurrency.prefillStepSize
         )
 
         // Best-effort per-request determinism: seed the MLX global random
@@ -949,7 +980,9 @@ struct MLXBatchAdapter {
         container: ModelContainer,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
+        buildRawPrompt: (@Sendable () -> String)? = nil,
         generation: GenerationParameters,
+        toolChoice: ToolChoiceOption?,
         trace: TTFTTrace?
     ) async throws -> PreparedInput {
         // Heap-allocated outbox so the throwing closure can hand a value back
@@ -977,54 +1010,75 @@ struct MLXBatchAdapter {
         try await container.perform { (context: MLXLMCommon.ModelContext) in
             box.performEnteredAt = CFAbsoluteTimeGetCurrent()
             trace?.mark("batch_container_perform_entered")
-            var chat = preprocessImages(in: buildChat())
-            chat = try preencodeNemotronOmniAudioIfPossible(
-                in: chat,
-                modelName: modelName,
-                model: context.model,
-                trace: trace
-            )
-            box.chatBuiltAt = CFAbsoluteTimeGetCurrent()
-            box.chatCount = chat.count
-            box.imageCount = chat.reduce(0) { $0 + $1.images.count }
-            box.videoCount = chat.reduce(0) { $0 + $1.videos.count }
-            box.audioCount = chat.reduce(0) { $0 + $1.audios.count }
-            let toolsSpec = buildToolsSpec()
-            box.toolsBuiltAt = CFAbsoluteTimeGetCurrent()
-            box.toolCount = toolsSpec?.count ?? 0
-
-            // Reasoning template context. Hy3 uses `reasoning_effort`
-            // instead of the generic boolean; Ling is force-off; ZAYA is
-            // reasoning-capable but defaults off unless explicitly opted in.
-            // Other thinking-capable families default to a truthy
-            // `enable_thinking` kwarg.
-            let additionalContext = additionalContext(for: generation, modelName: modelName)
-            box.contextBuiltAt = CFAbsoluteTimeGetCurrent()
-            box.contextKeys = additionalContext.keys.sorted()
-            box.contextSummary = Self.safeContextSummary(additionalContext)
-            let userInput = MLXLMCommon.UserInput(
-                chat: chat,
-                processing: .init(),
-                tools: toolsSpec,
-                additionalContext: additionalContext
-            )
-
-            trace?.mark("batch_tokenization_start")
             let lmInput: LMInput
-            do {
-                lmInput = try await context.processor.prepare(input: userInput)
-            } catch {
-                let detail =
-                    (error as? LocalizedError)?.errorDescription
-                    ?? String(describing: error)
-                throw NSError(
-                    domain: "MLXBatchAdapter",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
+            if let buildRawPrompt {
+                // Raw completion path (OpenAI-legacy `/v1/completions`, e.g.
+                // FIM autocomplete): tokenize the prompt verbatim and bypass
+                // the chat template, so tokens like `<|fim_prefix|>` reach the
+                // model exactly as the client sent them. The chat / media /
+                // tools building is skipped entirely.
+                let raw = buildRawPrompt()
+                let now = CFAbsoluteTimeGetCurrent()
+                box.chatBuiltAt = now
+                box.toolsBuiltAt = now
+                box.contextBuiltAt = now
+                trace?.mark("batch_tokenization_start")
+                let promptTokens = context.tokenizer.encode(text: raw)
+                lmInput = LMInput(tokens: MLXArray(promptTokens))
+                box.processorDoneAt = CFAbsoluteTimeGetCurrent()
+                trace?.mark("batch_tokenization_done")
+            } else {
+                var chat = preprocessImages(in: buildChat())
+                chat = try preencodeNemotronOmniAudioIfPossible(
+                    in: chat,
+                    modelName: modelName,
+                    model: context.model,
+                    trace: trace
                 )
+                box.chatBuiltAt = CFAbsoluteTimeGetCurrent()
+                box.chatCount = chat.count
+                box.imageCount = chat.reduce(0) { $0 + $1.images.count }
+                box.videoCount = chat.reduce(0) { $0 + $1.videos.count }
+                box.audioCount = chat.reduce(0) { $0 + $1.audios.count }
+                let toolsSpec = buildToolsSpec()
+                box.toolsBuiltAt = CFAbsoluteTimeGetCurrent()
+                box.toolCount = toolsSpec?.count ?? 0
+
+                // Reasoning template context. Only explicit request controls are
+                // translated into model-specific template kwargs; omitted controls
+                // leave the model template/default contract untouched.
+                let additionalContext = additionalContext(
+                    for: generation,
+                    modelName: modelName,
+                    toolChoice: toolChoice
+                )
+                box.contextBuiltAt = CFAbsoluteTimeGetCurrent()
+                box.contextKeys = additionalContext.keys.sorted()
+                box.contextSummary = Self.safeContextSummary(additionalContext)
+                let userInput = MLXLMCommon.UserInput(
+                    chat: chat,
+                    processing: .init(),
+                    tools: toolsSpec,
+                    additionalContext: additionalContext
+                )
+
+                trace?.mark("batch_tokenization_start")
+                do {
+                    let prepared = try await context.processor.prepare(input: userInput)
+                    lmInput = prepared.withToolSchemas(toolsSpec)
+                } catch {
+                    let detail =
+                        (error as? LocalizedError)?.errorDescription
+                        ?? String(describing: error)
+                    throw NSError(
+                        domain: "MLXBatchAdapter",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
+                    )
+                }
+                box.processorDoneAt = CFAbsoluteTimeGetCurrent()
+                trace?.mark("batch_tokenization_done")
             }
-            box.processorDoneAt = CFAbsoluteTimeGetCurrent()
-            trace?.mark("batch_tokenization_done")
 
             let tokens = lmInput.text.tokens.asArray(Int.self)
             box.tokenArrayDoneAt = CFAbsoluteTimeGetCurrent()
@@ -1070,7 +1124,7 @@ struct MLXBatchAdapter {
 
     private static func safeContextSummary(_ context: [String: any Sendable]) -> String {
         context.keys.sorted().compactMap { key in
-            guard key == "enable_thinking" || key == "reasoning_effort" else {
+            guard key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice" else {
                 return nil
             }
             let value = context[key]

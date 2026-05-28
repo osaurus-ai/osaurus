@@ -46,4 +46,15 @@ struct ModelManagerResolveTests {
         let denied = await mgr.resolveModelIfMLXCompatible(byRepoId: "unknown/NotMLX")
         #expect(denied == nil)
     }
+
+    @Test func mlxCompatibilityNameHints_includeJANGMXFPAndTurboQuantFamilies() throws {
+        #expect(ModelManager.nameLooksLikeMLX("dealignai/Qwen3.6-35B-A3B-MXFP4-CRACK-MTP"))
+        #expect(ModelManager.nameLooksLikeMLX("dealignai/Qwen3.6-35B-A3B-JANGTQ4-CRACK"))
+        #expect(ModelManager.nameLooksLikeMLX("dealignai/Gemma-4-31B-JANG_4M-Uncensored"))
+        #expect(ModelManager.nameLooksLikeMLX("majentik/Qwen3.6-35B-A3B-TurboQuant-4bit"))
+        #expect(ModelManager.nameLooksLikeMLX("someuser/Foo-MLX-4bit"))
+
+        #expect(!ModelManager.nameLooksLikeMLX("unknown/Plain-Transformers-Checkpoint"))
+        #expect(!ModelManager.nameLooksLikeMLX("unknown/NotMLX"))
+    }
 }

@@ -95,7 +95,7 @@ struct CacheSection: View {
             SettingsToggle(
                 title: L("Re-derive SSM State After Generation"),
                 description:
-                    "Hybrid Mamba models only. Off by default since chat workloads rarely re-hit the same boundary on the next turn.",
+                    "Hybrid Mamba models only. On by default so SSM companion state can be restored with prefix/L2 cache hits.",
                 isOn: $draft.cache.enableSSMReDerive
             )
 
@@ -126,6 +126,12 @@ struct CacheSection: View {
                     value: $draft.cache.blockDisk.maxSizeGB,
                     format: "%.1f"
                 )
+                OptionalStringField(
+                    label: "Disk Cache Directory",
+                    placeholder: "Blank = Osaurus default cache directory",
+                    help: "Absolute path or ~/... path for persisted block-cache entries.",
+                    value: $draft.cache.blockDisk.directory
+                )
             } else {
                 SettingsToggle(
                     title: L("Legacy Disk Cache"),
@@ -138,6 +144,12 @@ struct CacheSection: View {
                     help: "Soft cap before older entries are evicted.",
                     value: $draft.cache.legacyDisk.maxSizeGB,
                     format: "%.1f"
+                )
+                OptionalStringField(
+                    label: "Legacy Disk Cache Directory",
+                    placeholder: "Blank = Osaurus default cache directory",
+                    help: "Absolute path or ~/... path for legacy disk-cache entries.",
+                    value: $draft.cache.legacyDisk.directory
                 )
             }
         }

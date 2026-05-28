@@ -16,6 +16,7 @@ import SwiftUI
 /// should render.
 enum ServerSettingsSection: String, CaseIterable, Hashable, Identifiable {
     case connection
+    case globalProxy
     case authentication
     case sampling
     case concurrency
@@ -34,6 +35,7 @@ enum ServerSettingsSection: String, CaseIterable, Hashable, Identifiable {
     var title: String {
         switch self {
         case .connection: return "Connection"
+        case .globalProxy: return "Global Proxy"
         case .authentication: return "Authentication"
         case .sampling: return "Sampling Defaults"
         case .concurrency: return "Concurrency & Batching"
@@ -52,6 +54,7 @@ enum ServerSettingsSection: String, CaseIterable, Hashable, Identifiable {
     var icon: String {
         switch self {
         case .connection: return "network"
+        case .globalProxy: return "shield.lefthalf.filled"
         case .authentication: return "key.horizontal"
         case .sampling: return "slider.horizontal.3"
         case .concurrency: return "gauge.with.dots.needle.bottom.0percent"
@@ -68,7 +71,7 @@ enum ServerSettingsSection: String, CaseIterable, Hashable, Identifiable {
 
     var group: ServerSettingsSectionGroup {
         switch self {
-        case .connection, .authentication:
+        case .connection, .globalProxy, .authentication:
             return .server
         case .sampling:
             return .generation

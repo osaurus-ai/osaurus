@@ -422,7 +422,7 @@ public enum MCPOAuthService {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await MCPOAuthHTTPTransport.noRedirectSession.data(for: request)
         } catch {
             throw MCPOAuthError.transport(error.localizedDescription)
         }

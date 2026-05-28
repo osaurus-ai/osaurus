@@ -59,6 +59,37 @@ final class NativeMarkdownView: NSView {
     private var lastThemeFingerprint: String = ""
     private var lastIsStreaming: Bool = false
     private var parseTask: Task<Void, Never>?
+    /// Cell-supplied original -> redaction map. Re-applied via
+    /// `RedactionHighlighter` after every textStorage edit on the
+    /// pure-text path, the mixed-segment text path, and any nested
+    /// `NativeMarkdownView` (math/image segments don't carry text).
+    /// Empty dict short-circuits the highlighter, so the property
+    /// has no perf cost in chats that never trigger the filter.
+    private var redactionHighlights: [String: RedactionHighlight] = [:]
+    /// Last set of applied highlight ranges, in textStorage
+    /// coordinates. The hover controller reads this list (instead of
+    /// re-scanning the storage) when picking the popover target.
+    private(set) var appliedHighlightRanges: [AppliedRedactionRange] = []
+    /// Highest text-storage location the highlighter has finished
+    /// painting in the current text. Streaming deltas reuse this as
+    /// the start of an incremental scan window so chunk N+1 only
+    /// scans the appended tail (plus a small lookback to catch
+    /// originals that straddle the boundary).
+    /// Reset to 0 when:
+    ///   * `redactionHighlights` changes (different key set ⇒ full
+    ///     re-scan from the top),
+    ///   * the storage is mutated NOT by append (configureWithBlocks
+    ///     swaps the attributed string wholesale),
+    ///   * the text view is rebuilt.
+    private var redactionHighlightAppliedThrough: Int = 0
+    /// Fingerprint of the last `redactionHighlights` dict so we can
+    /// distinguish "same map, more text" (incremental safe) from
+    /// "different map, must redo" (full apply).
+    private var lastRedactionHighlightsHash: Int = 0
+    /// Hover controller attached to `textView`. Created lazily the
+    /// first time `redactionHighlights` becomes non-empty; reused
+    /// across updates so the NSTrackingArea stays installed.
+    private var hoverController: RedactionHoverController?
     /// cancels stale loads when segment id is reused with a new URL or view is removed
     private var imageLoadTasks: [String: (UUID, Task<Void, Never>)] = [:]
     /// invalid until first layout pass with positive width — drives remeasure in `layout()`
@@ -107,6 +138,139 @@ final class NativeMarkdownView: NSView {
     }
 
     // MARK: Configure (text-based entry point)
+
+    /// Set the cell's current original -> placeholder map. Stored
+    /// on the view so streaming updates re-apply the highlighter
+    /// pass on every textStorage edit. Cell layer also forwards
+    /// this into nested `NativeMarkdownView`s via the mixed-segment
+    /// path. Idempotent — re-setting the same dict triggers a
+    /// re-paint, which is harmless because the highlighter is
+    /// keyed on character ranges.
+    func setRedactionHighlights(
+        _ highlights: [String: RedactionHighlight],
+        theme: any ThemeProtocol
+    ) {
+        let changed = highlights != redactionHighlights
+        redactionHighlights = highlights
+        if changed || !highlights.isEmpty {
+            applyRedactionHighlightsIfNeeded(theme: theme)
+        }
+        // Propagate to mixed-segment children so a code/text/image
+        // assistant turn highlights uniformly across all segments.
+        for entry in segmentViews {
+            if let child = entry.view as? NativeMarkdownView {
+                child.setRedactionHighlights(highlights, theme: theme)
+            }
+        }
+    }
+
+    /// Re-paint highlights on the current textStorage. Called from
+    /// `setRedactionHighlights` and from every place we mutate
+    /// `textStorage` (pure text + configureWithBlocks paths).
+    ///
+    /// Uses the incremental highlighter path when the set of
+    /// `redactionHighlights` is unchanged from the previous call
+    /// AND the storage has only grown (typical streaming delta
+    /// shape — `setAttributedString` calls in the wholesale path
+    /// reset the cursor via `resetIncrementalHighlightCursor`).
+    /// Cross-painted state is detected by reading the existing
+    /// `.redactionPlaceholder` attribute runs, so a partial scan
+    /// can't double-paint a range.
+    private func applyRedactionHighlightsIfNeeded(theme: any ThemeProtocol) {
+        guard let tv = textView, let storage = tv.textStorage else {
+            appliedHighlightRanges = []
+            redactionHighlightAppliedThrough = 0
+            return
+        }
+        if redactionHighlights.isEmpty {
+            appliedHighlightRanges = []
+            redactionHighlightAppliedThrough = 0
+            lastRedactionHighlightsHash = 0
+            hoverController?.detach()
+            hoverController = nil
+            return
+        }
+        let accent = NSColor(theme.accentColor)
+        let dictHash = highlightsFingerprint(redactionHighlights)
+        let canIncrement =
+            dictHash == lastRedactionHighlightsHash
+            && redactionHighlightAppliedThrough > 0
+            && redactionHighlightAppliedThrough <= storage.length
+
+        let applied: [AppliedRedactionRange]
+        if canIncrement {
+            let delta = RedactionHighlighter.applyIncremental(
+                on: storage,
+                appliedThrough: redactionHighlightAppliedThrough,
+                highlights: redactionHighlights,
+                accentColor: accent,
+                a11yLabelBuilder: { highlight in
+                    Self.accessibilityLabel(for: highlight)
+                }
+            )
+            applied = appliedHighlightRanges + delta
+        } else {
+            applied = RedactionHighlighter.apply(
+                on: storage,
+                highlights: redactionHighlights,
+                accentColor: accent,
+                a11yLabelBuilder: { highlight in
+                    Self.accessibilityLabel(for: highlight)
+                }
+            )
+        }
+        appliedHighlightRanges = applied
+        redactionHighlightAppliedThrough = storage.length
+        lastRedactionHighlightsHash = dictHash
+
+        if hoverController == nil {
+            hoverController = RedactionHoverController()
+        }
+        hoverController?.attach(to: tv, theme: theme, ranges: applied)
+    }
+
+    /// Cheap hash so we can detect a change in the highlight dict
+    /// across two calls. We can't use `Dictionary.hashValue` because
+    /// it isn't stable across launches (Foundation seeds it), but
+    /// any process-stable hash is fine here — we only compare two
+    /// values inside one view's lifetime.
+    private func highlightsFingerprint(_ dict: [String: RedactionHighlight]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(dict.count)
+        for key in dict.keys.sorted() {
+            hasher.combine(key)
+            if let value = dict[key] {
+                hasher.combine(value.placeholderToken)
+                hasher.combine(value.direction.rawValue)
+            }
+        }
+        return hasher.finalize()
+    }
+
+    /// Drop the incremental cursor so the next
+    /// `applyRedactionHighlightsIfNeeded` re-scans the whole
+    /// storage. Call this whenever the storage is mutated NOT by
+    /// append (block re-layout, full replace).
+    private func resetIncrementalHighlightCursor() {
+        redactionHighlightAppliedThrough = 0
+        appliedHighlightRanges = []
+    }
+
+    /// Localized a11y label for VoiceOver. Outbound: "Redacted before
+    /// sending. Sent to cloud as [TOKEN]". Inbound: "Restored from
+    /// [TOKEN]". Falls back to the placeholder token when the
+    /// xcstrings catalog is missing.
+    private static func accessibilityLabel(for highlight: RedactionHighlight) -> String {
+        let key: String
+        switch highlight.direction {
+        case .outbound: key = "privacy.highlight.a11y.outbound"
+        case .inbound: key = "privacy.highlight.a11y.inbound"
+        case .preview: key = "privacy.highlight.a11y.preview"
+        }
+        let format = String(localized: String.LocalizationValue(key), bundle: .module)
+        if format == key { return highlight.placeholderToken }
+        return String(format: format, highlight.placeholderToken)
+    }
 
     func configure(
         text: String,
@@ -204,6 +368,7 @@ final class NativeMarkdownView: NSView {
                 )
             } else {
                 tv.textStorage?.setAttributedString(stv.buildAttributedString(coordinator: coordinator))
+                resetIncrementalHighlightCursor()
             }
             lastBlocks = blocks
             updateFader(textView: tv, isStreaming: isStreaming, incrementalPath: incrementalPath)
@@ -212,6 +377,7 @@ final class NativeMarkdownView: NSView {
             if !incrementalPath {
                 tv.needsDisplay = true
             }
+            applyRedactionHighlightsIfNeeded(theme: theme)
         }
 
         // nested NativeMarkdownView (text segment inside mixed content) must update heightConstraint
@@ -370,12 +536,14 @@ final class NativeMarkdownView: NSView {
                 )
             } else {
                 tv.textStorage?.setAttributedString(stv.buildAttributedString(coordinator: coordinator))
+                resetIncrementalHighlightCursor()
             }
             lastBlocks = blocks
             updateFader(textView: tv, isStreaming: isStreaming, incrementalPath: incrementalPath)
             if !incrementalPath {
                 tv.needsDisplay = true
             }
+            applyRedactionHighlightsIfNeeded(theme: theme)
         }
 
         // must update heightConstraint — init leaves 100pt; otherwise user bubbles stay artificially tall
@@ -613,6 +781,11 @@ final class NativeMarkdownView: NSView {
 
     private func removeTextView() {
         fader.reset()
+        hoverController?.detach()
+        hoverController = nil
+        appliedHighlightRanges = []
+        redactionHighlightAppliedThrough = 0
+        lastRedactionHighlightsHash = 0
         textView?.removeFromSuperview()
         textView = nil
         lastBlocks = []

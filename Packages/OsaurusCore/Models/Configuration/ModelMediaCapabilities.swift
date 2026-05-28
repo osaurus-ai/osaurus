@@ -228,6 +228,7 @@ public enum ModelMediaCapabilities {
         let videoCapableModelTypes: Set<String> = [
             "qwen2_vl", "qwen2_5_vl", "qwen3_vl",
             "qwen3_5", "qwen3_5_moe",
+            "qwen3_6", "qwen3_6_moe",
             "smolvlm",
             "nemotron_h_omni",
             "NemotronH_Nano_Omni_Reasoning_V3".lowercased(),

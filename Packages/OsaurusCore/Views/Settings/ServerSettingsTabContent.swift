@@ -51,8 +51,6 @@ struct ServerSettingsTabContent: View {
         draft.network.port != server.runtimeSettings.network.port
             || draft.network.host != server.runtimeSettings.network.host
             || draft.network.corsOrigins != server.runtimeSettings.network.corsOrigins
-            || draft.concurrency.maxConcurrentSequences
-                != server.runtimeSettings.concurrency.maxConcurrentSequences
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
             || draftLegacy.maxRequestBodyBytes != server.configuration.maxRequestBodyBytes
             || draftLegacy.maxPairingBodyBytes != server.configuration.maxPairingBodyBytes
@@ -61,6 +59,7 @@ struct ServerSettingsTabContent: View {
     private var hasUnsavedChanges: Bool {
         draft != server.runtimeSettings
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
+            || draftLegacy.globalProxyURL != server.configuration.globalProxyURL
             || draftLegacy.modelIdleResidencyPolicy != server.configuration.modelIdleResidencyPolicy
             || draftLegacy.maxRequestBodyBytes != server.configuration.maxRequestBodyBytes
             || draftLegacy.maxPairingBodyBytes != server.configuration.maxPairingBodyBytes
@@ -143,6 +142,8 @@ struct ServerSettingsTabContent: View {
                 LazyVStack(alignment: .leading, spacing: 24) {
                     ConnectionSection(draft: $draft)
                         .id(ServerSettingsSection.connection)
+                    GlobalProxySection(draft: $draftLegacy)
+                        .id(ServerSettingsSection.globalProxy)
                     AuthenticationSection(draft: $draft)
                         .id(ServerSettingsSection.authentication)
                     GenerationDefaultsSection(draft: $draft)
@@ -197,6 +198,7 @@ struct ServerSettingsTabContent: View {
         var reset = draftLegacy
         reset.modelEvictionPolicy = defaults.modelEvictionPolicy
         reset.modelIdleResidencyPolicy = defaults.modelIdleResidencyPolicy
+        reset.globalProxyURL = defaults.globalProxyURL
         reset.maxRequestBodyBytes = defaults.maxRequestBodyBytes
         reset.maxPairingBodyBytes = defaults.maxPairingBodyBytes
         draftLegacy = reset
@@ -211,6 +213,7 @@ struct ServerSettingsTabContent: View {
         var updatedConfig = server.configuration
         updatedConfig.modelEvictionPolicy = draftLegacy.modelEvictionPolicy
         updatedConfig.modelIdleResidencyPolicy = draftLegacy.modelIdleResidencyPolicy
+        updatedConfig.globalProxyURL = draftLegacy.globalProxyURL
         updatedConfig.maxRequestBodyBytes = draftLegacy.maxRequestBodyBytes
         updatedConfig.maxPairingBodyBytes = draftLegacy.maxPairingBodyBytes
         if updatedConfig != server.configuration {

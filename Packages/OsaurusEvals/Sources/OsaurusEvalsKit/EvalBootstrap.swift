@@ -119,22 +119,22 @@ public enum EvalBootstrap {
     ) -> URL? {
         guard plan.usesIsolatedSearchStorage else { return nil }
 
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-evals-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        OsaurusPaths.overrideRoot = root
+
         #if DEBUG
-            let root = FileManager.default.temporaryDirectory
-                .appendingPathComponent("osaurus-evals-\(UUID().uuidString)", isDirectory: true)
-            try? FileManager.default.createDirectory(
-                at: root,
-                withIntermediateDirectories: true
-            )
-            OsaurusPaths.overrideRoot = root
             StorageMigrationCoordinator.shared._setReadyForTesting()
             StorageKeyManager.shared._setKeyForTesting(
                 SymmetricKey(data: Data(repeating: 0xA5, count: 32))
             )
-            return root
-        #else
-            return nil
         #endif
+
+        return root
     }
 
     public static func run(_ plan: EvalBootstrapPlan) async {

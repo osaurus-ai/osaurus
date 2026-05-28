@@ -105,6 +105,7 @@ enum ChatHistoryWriter {
             if hit.title == "New Chat" {
                 hit.title = ChatSessionData.generateTitle(from: turns)
             }
+            hit.capabilities = SessionCapability.derive(from: turns)
             session = hit
         } else {
             let storedPluginId: String?
@@ -124,7 +125,8 @@ enum ChatHistoryWriter {
                 source: source,
                 sourcePluginId: storedPluginId,
                 externalSessionKey: externalKey,
-                dispatchTaskId: nil
+                dispatchTaskId: nil,
+                capabilities: SessionCapability.derive(from: turns)
             )
         }
 

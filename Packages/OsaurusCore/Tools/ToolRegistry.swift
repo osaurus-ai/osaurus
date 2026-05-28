@@ -207,6 +207,14 @@ final class ToolRegistry: ObservableObject {
             ScheduleNextRunTool(),
             CancelNextRunTool(),
             NotifyTool(),
+            // Default-agent generic reads (Phase C). Always loaded; the
+            // composer further restricts visibility to the default
+            // agent only. The matching writes live under
+            // `ConfigurationDomainRegistry` and load on demand via
+            // `capabilities_search` / `capabilities_load`.
+            OsaurusStatusTool(),
+            OsaurusListTool(),
+            OsaurusDescribeTool(),
         ]
         var configChanged = false
         for tool in builtIns {
@@ -252,6 +260,28 @@ final class ToolRegistry: ObservableObject {
             pluginToolNames.remove(sanitized)
         }
         toolsByName[sanitized] = tool
+    }
+
+    /// Mark a previously-registered tool as a built-in so it's
+    /// always loaded (independent of user toggle). Used by
+    /// `ConfigurationDomainRegistry` to flag every tool a domain
+    /// registers, since those need to be available for the default
+    /// agent's discovery path. The receiving name must already
+    /// exist in `toolsByName`; we sanitise here for symmetry with
+    /// `register(_:)`.
+    func markBuiltIn(toolName: String) {
+        let sanitized = Self.sanitizeToolName(toolName)
+        guard toolsByName[sanitized] != nil else {
+            NSLog(
+                "[ToolRegistry] markBuiltIn('\(sanitized)') called for unknown tool; ignoring."
+            )
+            return
+        }
+        builtInToolNames.insert(sanitized)
+        if !configuration.enabled.keys.contains(sanitized) {
+            configuration.setEnabled(true, for: sanitized)
+            ToolConfigurationStore.save(configuration)
+        }
     }
 
     /// Sanitize a candidate tool name so it satisfies `^[a-zA-Z0-9_-]{1,64}$`.
@@ -311,6 +341,12 @@ final class ToolRegistry: ObservableObject {
                 reason: "Tool '\(name)' is not available in this session.",
                 toolName: name
             ).toJSONString()
+        }
+        if let invalidArguments = Self.invalidToolArgumentsEnvelope(
+            argumentsJSON,
+            toolName: name
+        ) {
+            return invalidArguments
         }
         // Permission gating
         if let permissioned = tool as? PermissionedTool {
@@ -423,6 +459,28 @@ final class ToolRegistry: ObservableObject {
                 timeoutSeconds: Self.defaultToolTimeoutSeconds
             )
         }
+    }
+
+    private static func invalidToolArgumentsEnvelope(
+        _ argumentsJSON: String,
+        toolName: String
+    ) -> String? {
+        guard let data = argumentsJSON.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["_error"] as? String == "invalid_tool_arguments"
+        else { return nil }
+
+        let message = object["_message"] as? String ?? "invalid tool arguments"
+        let field = object["_field"] as? String
+        let expected = object["_expected"] as? String
+        return ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: message,
+            field: field,
+            expected: expected,
+            tool: toolName,
+            retryable: true
+        )
     }
 
     /// Bypass-path for streaming-aware tools. Runs the body straight
@@ -1034,4 +1092,62 @@ final class ToolRegistry: ObservableObject {
             .sorted { $0.name < $1.name }
             .map { $0.asOpenAITool() }
     }
+}
+
+// MARK: - Configure tool name sets (default-agent surface)
+//
+// Single source of truth for which tools the default agent sees in
+// its turn-1 schema and which `osaurus_*_<verb>` writes are loaded on
+// demand via `capabilities_load`. The write set is derived from
+// `ConfigurationDomainRegistry.shared.domains` (computed property —
+// stays in sync as new domains register without touching this file).
+//
+// These sets are read by:
+//  - `SystemPromptComposer.resolveTools` to allowlist for the default
+//    agent and exclude from non-default agents
+//  - `CapabilitiesSearchTool` to scope FTS5 results for the default
+//    agent
+//  - `CapabilitiesLoadTool` to refuse non-configure tool loads from
+//    the default agent
+
+extension ToolRegistry {
+    /// Write tools across every registered `ConfigurationDomain`.
+    /// Computed live so adding a new domain at runtime expands the
+    /// set without an extra step.
+    static var configureWriteToolNames: Set<String> {
+        var union: Set<String> = []
+        for domain in ConfigurationDomainRegistry.shared.domains {
+            union.formUnion(domain.writeToolNames)
+        }
+        return union
+    }
+
+    /// Every tool that exists for the *configure* surface — the three
+    /// generic reads (`osaurus_status`, `osaurus_list`,
+    /// `osaurus_describe`) plus every write across every domain. Used
+    /// by `SystemPromptComposer.resolveTools` to strip configure tools
+    /// from non-default agents' schemas.
+    static var configureToolNames: Set<String> {
+        configureWriteToolNames.union([
+            "osaurus_status",
+            "osaurus_list",
+            "osaurus_describe",
+        ])
+    }
+
+    /// Fixed turn-1 schema for the default agent. Eight names: three
+    /// reads, two discovery tools (gateway to every write), three
+    /// agent-loop tools (`todo` / `complete` / `clarify`). Writes are
+    /// not here — they enter the schema only via
+    /// `capabilities_load`. Stable across sessions for KV-cache reuse.
+    static let defaultAgentAllowedToolNames: Set<String> = [
+        "osaurus_status",
+        "osaurus_list",
+        "osaurus_describe",
+        "capabilities_search",
+        "capabilities_load",
+        "todo",
+        "complete",
+        "clarify",
+    ]
 }

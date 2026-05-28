@@ -22,6 +22,14 @@ struct FloatingInputCard: View {
     let pickerItems: [ModelPickerItem]
     @Binding var activeModelOptions: [String: ModelOptionValue]
     let isStreaming: Bool
+    /// True while the Privacy Filter review sheet is up (or about to
+    /// be) and the network hasn't started yet. In this window we hide
+    /// the Stop button — its target task is suspended in the review
+    /// sheet's continuation, and the sheet has its own Cancel button.
+    /// Once the first inbound delta lands, `ChatSession` flips this
+    /// back to false and the Stop button reappears alongside the
+    /// streaming UI.
+    let isAwaitingPrivacyReview: Bool
     let supportsImages: Bool
     /// Current estimated context token count for the session
     let estimatedContextTokens: Int
@@ -67,6 +75,7 @@ struct FloatingInputCard: View {
         pickerItems: [ModelPickerItem],
         activeModelOptions: Binding<[String: ModelOptionValue]>,
         isStreaming: Bool,
+        isAwaitingPrivacyReview: Bool = false,
         supportsImages: Bool,
         estimatedContextTokens: Int,
         contextBreakdown: ContextBreakdown = .zero,
@@ -93,6 +102,7 @@ struct FloatingInputCard: View {
         self.pickerItems = pickerItems
         self._activeModelOptions = activeModelOptions
         self.isStreaming = isStreaming
+        self.isAwaitingPrivacyReview = isAwaitingPrivacyReview
         self.supportsImages = supportsImages
         self.estimatedContextTokens = estimatedContextTokens
         self.contextBreakdown = contextBreakdown
@@ -1350,6 +1360,10 @@ extension FloatingInputCard {
                             onEdit: attachment.isPastedContent
                                 ? {
                                     pastedContentEdit = attachment
+                                } : nil,
+                            onInline: attachment.isPastedContent
+                                ? {
+                                    inlinePastedContent(attachment)
                                 } : nil
                         )
                     case .audio, .audioRef, .video, .videoRef:
@@ -1385,6 +1399,25 @@ extension FloatingInputCard {
                 }
             )
         }
+    }
+
+    private func inlinePastedContent(_ attachment: Attachment) {
+        guard let content = attachment.loadDocumentContent(), !content.isEmpty else { return }
+        let existing = localText
+        let combined: String
+        if existing.isEmpty {
+            combined = content
+        } else if existing.hasSuffix("\n") {
+            combined = existing + content
+        } else {
+            combined = existing + "\n" + content
+        }
+        withAnimation(theme.springAnimation()) {
+            pendingAttachments.removeAll { $0.id == attachment.id }
+        }
+        localText = combined
+        text = combined
+        isFocused = true
     }
 
     // MARK: - Selector Row (Model + Tools)
@@ -1643,11 +1676,13 @@ extension FloatingInputCard {
     }
 
     private func toggleThinking(id: String) {
-        let current =
+        let thinkingOpt = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption }
+        let currentEnabled =
             selectedModel.flatMap {
-                ModelProfileRegistry.boolOptionValue(for: $0, optionId: id, values: activeModelOptions)
+                ModelProfileRegistry.thinkingEnabled(for: $0, values: activeModelOptions)
             } ?? false
-        let newVal = !current
+        let newEnabled = !currentEnabled
+        let newVal = thinkingOpt?.inverted == true ? !newEnabled : newEnabled
 
         withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
             activeModelOptions[id] = .bool(newVal)
@@ -1662,13 +1697,10 @@ extension FloatingInputCard {
 
     private var modelOptionsSummary: String {
         guard let model = selectedModel,
-            let profile = ModelProfileRegistry.profile(for: model)
+            ModelProfileRegistry.profile(for: model) != nil
         else { return "" }
-        let defaults = profile.defaults
         let nonDefault = activeProfileOptions.compactMap { option -> String? in
-            guard let current = activeModelOptions[option.id],
-                current != defaults[option.id]
-            else { return nil }
+            guard let current = activeModelOptions[option.id] else { return nil }
             if case .segmented(let segments) = option.kind {
                 return segments.first(where: { $0.id == current.stringValue })?.label
             }
@@ -1701,12 +1733,23 @@ extension FloatingInputCard {
         .popover(isPresented: $showModelOptionsPicker, arrowEdge: .top) {
             ModelOptionsSelectorView(
                 options: activeProfileOptions,
-                values: $activeModelOptions,
-                defaults: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.defaults } ?? [:],
+                values: modelOptionsBinding,
                 profileName: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.displayName } ?? "",
                 thinkingOptionId: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
             )
         }
+    }
+
+    private var modelOptionsBinding: Binding<[String: ModelOptionValue]> {
+        Binding(
+            get: { activeModelOptions },
+            set: { newValues in
+                activeModelOptions = newValues
+                if let model = selectedModel {
+                    ModelOptionsStore.shared.saveOptions(newValues, for: model)
+                }
+            }
+        )
     }
 
     // MARK: - Sandbox Toggle Chip
@@ -2838,11 +2881,23 @@ extension FloatingInputCard {
             HStack(spacing: 8) {
                 keyboardHint
                 if isStreaming {
-                    stopButton
+                    // While the Privacy Filter review sheet is open
+                    // (and no inbound delta has arrived yet), suppress
+                    // Stop — the sheet owns the cancel UX. The
+                    // streaming Task is suspended inside
+                    // `PrivacyReviewService.review`'s continuation; the
+                    // sheet's Cancel button resolves it cleanly.
+                    if !isAwaitingPrivacyReview {
+                        stopButton
+                    }
                     if queuedSend != nil {
                         sendNowButton
                     } else {
-                        sendQueueButton
+                        // No queue-during-review: the user hasn't even
+                        // committed the in-flight message yet.
+                        if !isAwaitingPrivacyReview {
+                            sendQueueButton
+                        }
                     }
                 } else {
                     sendButton
@@ -3537,18 +3592,12 @@ private struct SelectorChip<Content: View>: View {
 private struct ModelOptionsSelectorView: View {
     let options: [ModelOptionDefinition]
     @Binding var values: [String: ModelOptionValue]
-    let defaults: [String: ModelOptionValue]
     let profileName: String
     let thinkingOptionId: String?
 
     @Environment(\.theme) private var theme
 
-    private var hasNonDefaults: Bool {
-        options.contains { option in
-            guard let current = values[option.id] else { return false }
-            return current != defaults[option.id]
-        }
-    }
+    private var hasExplicitOptions: Bool { !values.isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -3577,10 +3626,10 @@ private struct ModelOptionsSelectorView: View {
 
             Spacer()
 
-            if hasNonDefaults {
+            if hasExplicitOptions {
                 Button {
                     withAnimation(.easeOut(duration: 0.15)) {
-                        values = defaults
+                        values = [:]
                     }
                 } label: {
                     HStack(spacing: 3) {
@@ -3631,14 +3680,14 @@ private struct ModelOptionsSelectorView: View {
 
     private func segmentedRow(option: ModelOptionDefinition, segments: [ModelOptionSegment]) -> some View {
         let currentId = values[option.id]?.stringValue ?? segments.first?.id ?? ""
-        let isNonDefault = values[option.id] != defaults[option.id]
+        let isExplicit = values[option.id] != nil
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 if let icon = option.icon {
                     Image(systemName: icon)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(isNonDefault ? theme.accentColor : theme.tertiaryText)
+                        .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
                 }
                 Text(option.label)
                     .font(.system(size: 12, weight: .semibold))
@@ -3690,13 +3739,13 @@ private struct ModelOptionsSelectorView: View {
 
     private func toggleRow(option: ModelOptionDefinition, defaultValue: Bool) -> some View {
         let isOn = values[option.id]?.boolValue ?? defaultValue
-        let isNonDefault = values[option.id] != defaults[option.id]
+        let isExplicit = values[option.id] != nil
 
         return HStack(spacing: 6) {
             if let icon = option.icon {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isNonDefault ? theme.accentColor : theme.tertiaryText)
+                    .foregroundColor(isExplicit ? theme.accentColor : theme.tertiaryText)
             }
             Text(option.label)
                 .font(.system(size: 12, weight: .semibold))

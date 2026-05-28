@@ -10,7 +10,7 @@ import SwiftUI
 // MARK: - Provider Preset
 
 /// Unified provider presets shared across onboarding and provider management.
-enum ProviderPreset: String, CaseIterable, Identifiable {
+public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     case anthropic
     case azureOpenAI
     case atlasCloud
@@ -23,7 +23,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     case ollama
     case custom
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
     /// Display name
     var name: String {
@@ -334,6 +334,22 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 
     // MARK: - Matching
 
+    /// Best-effort lookup keyed by the legacy `RemoteProviderType`. Used only
+    /// by the deprecated `provider_type` argument on `osaurus_provider_add`
+    /// — picks the unambiguous preset for distinctive types and `nil` for
+    /// `.openaiLegacy` (shared by xAI, DeepSeek, Venice, OpenRouter, Ollama,
+    /// and custom) so the caller can fall back to `.custom`.
+    static func preferred(for providerType: RemoteProviderType) -> ProviderPreset? {
+        switch providerType {
+        case .anthropic: return .anthropic
+        case .openResponses: return .openai
+        case .gemini: return .google
+        case .azureOpenAI: return .azureOpenAI
+        case .openAICodex: return .openai
+        case .openaiLegacy, .osaurus: return nil
+        }
+    }
+
     /// Attempts to match an existing RemoteProvider to a known preset by host.
     static func matching(provider: RemoteProvider) -> ProviderPreset? {
         if provider.providerType == .azureOpenAI {
@@ -341,9 +357,24 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         }
 
         let host = provider.host.lowercased().trimmingCharacters(in: .whitespaces)
-        return knownPresets.first { preset in
+        if let byHost = knownPresets.first(where: { preset in
             guard !preset.configuration.host.isEmpty else { return false }
             return preset.configuration.host.lowercased() == host
+        }) {
+            return byHost
+        }
+
+        // Host didn't match a stock endpoint which is likely a custom base URL like a
+        // self-hosted proxy. Fall back to the distinctive provider types so a
+        // custom-host Anthropic/OpenAI/Gemini provider keeps its branded card and
+        // native editor instead of looking like a generic custom provider.
+        // `openaiLegacy` is intentionally excluded as it's shared by many presets
+        // (xAI, DeepSeek, Venice, OpenRouter, Ollama) so it can't identify one.
+        switch provider.providerType {
+        case .anthropic: return .anthropic
+        case .gemini: return .google
+        case .openResponses, .openAICodex: return .openai
+        case .openaiLegacy, .azureOpenAI, .osaurus: return nil
         }
     }
 }

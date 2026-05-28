@@ -16,8 +16,13 @@ enum TestHelpers {
         return url
     }
 
-    static func writeSQLiteFixture(extension pathExtension: String = "sqlite") throws -> URL {
-        let url = FileManager.default.temporaryDirectory
+    static func writeSQLiteFixture(
+        extension pathExtension: String = "sqlite",
+        in directory: URL? = nil
+    ) throws -> URL {
+        let root = directory ?? FileManager.default.temporaryDirectory
+        let url =
+            root
             .appendingPathComponent("\(UUID().uuidString)-stats.\(pathExtension)")
         let data = Data(base64Encoded: sqliteFixtureBase64, options: .ignoreUnknownCharacters)!
         try data.write(to: url, options: .atomic)

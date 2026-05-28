@@ -1178,6 +1178,32 @@ final class SelectableNSTextView: NSTextView {
     var blockquoteBarColor: NSColor = .controlAccentColor
     var secondaryBackgroundColor: NSColor = .clear
 
+    /// Closure invoked on every `mouseMoved` (when the text view is
+    /// the owner of an `NSTrackingArea` with `.mouseMoved`). Used by
+    /// `RedactionHoverController` to drive its popover without
+    /// duplicating tracking-area management. Cleared by the
+    /// controller's `detach()` so streaming chat with no privacy
+    /// hits doesn't pay for an idle dispatch on every cursor wiggle.
+    var onMouseHover: ((NSEvent) -> Void)?
+    /// Closure invoked on `mouseExited`. Drives the controller's
+    /// 80ms hide debounce.
+    var onMouseExitedHover: (() -> Void)?
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        onMouseHover?(event)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        onMouseHover?(event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        onMouseExitedHover?()
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let layoutManager = layoutManager,
             let textContainer = textContainer,

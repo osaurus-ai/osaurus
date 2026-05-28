@@ -95,9 +95,16 @@ public actor RemoteProviderService: ToolCapableService {
         let config = URLSessionConfiguration.default
         // Request timeout must be generous: thinking models can pause for minutes
         // between tokens. The app-level streamInactivityTimeout handles stall detection.
-        config.timeoutIntervalForRequest = max(provider.timeout, 300)
-        config.timeoutIntervalForResource = max(provider.timeout * 2, 600)
-        self.session = URLSession(configuration: config)
+        // When the user opts into no-timeout mode, every limit is lifted (see
+        // RemoteProvider.unboundedTimeout) so long-running turns are never interrupted.
+        if provider.disableTimeout {
+            config.timeoutIntervalForRequest = RemoteProvider.unboundedTimeout
+            config.timeoutIntervalForResource = RemoteProvider.unboundedTimeout
+        } else {
+            config.timeoutIntervalForRequest = max(provider.timeout, 300)
+            config.timeoutIntervalForResource = max(provider.timeout * 2, 600)
+        }
+        self.session = GlobalProxySettings.makeSession(base: config)
     }
 
     /// Minimum timeout for image generation models (5 minutes).
@@ -247,7 +254,9 @@ public actor RemoteProviderService: ToolCapableService {
     /// Inactivity timeout for streaming: if no bytes arrive within this interval,
     /// assume the provider has stalled and end the stream. Floor of 120s accommodates
     /// thinking models that pause between tokens during reasoning.
-    private var streamInactivityTimeout: TimeInterval { max(provider.timeout, 120) }
+    private var streamInactivityTimeout: TimeInterval {
+        provider.disableTimeout ? RemoteProvider.unboundedTimeout : max(provider.timeout, 120)
+    }
 
     /// Invalidate the URLSession to release its strong delegate reference.
     /// Must be called before discarding this service instance to avoid leaking.
@@ -318,6 +327,34 @@ public actor RemoteProviderService: ToolCapableService {
         return model
     }
 
+    /// Privacy Filter preflight shared by every cloud-bound entrypoint
+    /// (`generateOneShot`, `streamDeltas`, `respondWithTools`,
+    /// `streamWithTools`). Wraps the pipeline call so the four call
+    /// sites stay one-liners and the cancel translation lives in one
+    /// place. Returns the (possibly scrubbed) messages plus the
+    /// redaction map needed for inbound unscrubbing — `nil` when the
+    /// filter is disabled, the engine is unloaded, or the provider
+    /// override is off (all handled in `applyOutbound`).
+    ///
+    /// `PrivacyFilterPipelineError.reviewCanceled` is rethrown as
+    /// `CancellationError` so the chat layer can apply uniform
+    /// cancel UX (remove turns, restore draft) without caring whether
+    /// the cancel came from the review sheet or from `Task.cancel()`.
+    private func applyPrivacyOutbound(
+        messages: [ChatMessage],
+        parameters: GenerationParameters
+    ) async throws -> (messages: [ChatMessage], map: RedactionMap?) {
+        do {
+            return try await PrivacyFilterPipeline.applyOutbound(
+                messages: messages,
+                sessionId: parameters.sessionId,
+                providerId: provider.id
+            )
+        } catch PrivacyFilterPipelineError.reviewCanceled {
+            throw CancellationError()
+        }
+    }
+
     func generateOneShot(
         messages: [ChatMessage],
         parameters: GenerationParameters,
@@ -343,8 +380,16 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
-        let request = buildChatRequest(
+        // Privacy Filter preflight — see `applyPrivacyOutbound` for
+        // the no-op / cancel semantics. Map is nil when filtering
+        // didn't run; downstream paths short-circuit cheaply on nil.
+        let (scrubbedMessages, redactionMap) = try await applyPrivacyOutbound(
             messages: messages,
+            parameters: parameters
+        )
+
+        let request = buildChatRequest(
+            messages: scrubbedMessages,
             parameters: parameters,
             model: modelName,
             stream: false,
@@ -354,6 +399,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        WireTransportProbe.current?.replaceResponseBody(data)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
@@ -369,7 +415,12 @@ public actor RemoteProviderService: ToolCapableService {
             request: request
         )
         let (content, _) = try parseResponse(data, providerType: responseProviderType)
-        return content ?? ""
+        let (unscrubbedContent, _) = await PrivacyFilterPipeline.unscrubInbound(
+            content: content,
+            toolCalls: nil,
+            map: redactionMap
+        )
+        return unscrubbedContent ?? ""
     }
 
     func streamDeltas(
@@ -382,26 +433,35 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
+        // Privacy Filter preflight — outbound scrub, capture map for
+        // the streaming unscrubber wrap below.
+        let (scrubbedMessages, redactionMap) = try await applyPrivacyOutbound(
+            messages: messages,
+            parameters: parameters
+        )
+
         // Gemini image models don't support streamGenerateContent; fall back to generateContent.
         if provider.providerType == .gemini && Self.isImageCapableModel(modelName) {
-            return try geminiImageGenerateContent(
-                messages: messages,
+            let inner = try geminiImageGenerateContent(
+                messages: scrubbedMessages,
                 parameters: parameters,
                 model: modelName,
                 stopSequences: stopSequences,
                 tools: nil,
                 toolChoice: nil
             )
+            return PrivacyFilterPipeline.wrapInboundStream(inner, map: redactionMap)
         }
 
-        return try await _streamRemote(
+        let inner = try await _streamRemote(
             modelName: modelName,
-            messages: messages,
+            messages: scrubbedMessages,
             parameters: parameters,
             stopSequences: stopSequences,
             tools: nil,
             toolChoice: nil
         )
+        return PrivacyFilterPipeline.wrapInboundStream(inner, map: redactionMap)
     }
 
     // MARK: - ToolCapableService Protocol
@@ -428,8 +488,14 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
-        var request = buildChatRequest(
+        // Privacy Filter preflight (tool-capable one-shot).
+        let (scrubbedMessages, redactionMap) = try await applyPrivacyOutbound(
             messages: messages,
+            parameters: parameters
+        )
+
+        var request = buildChatRequest(
+            messages: scrubbedMessages,
             parameters: parameters,
             model: modelName,
             stream: false,
@@ -443,6 +509,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        WireTransportProbe.current?.replaceResponseBody(data)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
@@ -458,9 +525,14 @@ public actor RemoteProviderService: ToolCapableService {
             request: request
         )
         let (content, toolCalls) = try parseResponse(data, providerType: responseProviderType)
+        let (unscrubbedContent, unscrubbedToolCalls) = await PrivacyFilterPipeline.unscrubInbound(
+            content: content,
+            toolCalls: toolCalls,
+            map: redactionMap
+        )
 
         // Check for tool calls
-        if let toolCalls = toolCalls, let firstCall = toolCalls.first {
+        if let toolCalls = unscrubbedToolCalls, let firstCall = toolCalls.first {
             throw ServiceToolInvocation(
                 toolName: firstCall.function.name,
                 jsonArguments: firstCall.function.arguments,
@@ -469,7 +541,7 @@ public actor RemoteProviderService: ToolCapableService {
             )
         }
 
-        return content ?? ""
+        return unscrubbedContent ?? ""
     }
 
     func streamWithTools(
@@ -496,26 +568,34 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
+        // Privacy Filter preflight (tool-capable streaming).
+        let (scrubbedMessages, redactionMap) = try await applyPrivacyOutbound(
+            messages: messages,
+            parameters: parameters
+        )
+
         // Gemini image models don't support streamGenerateContent; fall back to generateContent.
         if provider.providerType == .gemini && Self.isImageCapableModel(modelName) {
-            return try geminiImageGenerateContent(
-                messages: messages,
+            let inner = try geminiImageGenerateContent(
+                messages: scrubbedMessages,
                 parameters: parameters,
                 model: modelName,
                 stopSequences: stopSequences,
                 tools: tools.isEmpty ? nil : tools,
                 toolChoice: toolChoice
             )
+            return PrivacyFilterPipeline.wrapInboundStream(inner, map: redactionMap)
         }
 
-        return try await _streamRemote(
+        let inner = try await _streamRemote(
             modelName: modelName,
-            messages: messages,
+            messages: scrubbedMessages,
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools.isEmpty ? nil : tools,
             toolChoice: toolChoice
         )
+        return PrivacyFilterPipeline.wrapInboundStream(inner, map: redactionMap)
     }
 
     // MARK: - Private Helpers
@@ -1367,6 +1447,12 @@ public actor RemoteProviderService: ToolCapableService {
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
+        // The producer runs in a `Task` whose closure inherits the
+        // calling task's locals (unlike `Task.detached`). Snapshot
+        // the probe here so the read happens once on producer
+        // entry and we don't re-touch the task-local on every chunk.
+        let probe = WireTransportProbe.current
+
         let producerTask = Task {
             do {
                 // Idempotent connect-phase retry: only retries the
@@ -1433,6 +1519,14 @@ public actor RemoteProviderService: ToolCapableService {
 
                     if let chunk = chunk {
                         lineParser.append(chunk)
+                        // Wire-verification tap. Capture the raw
+                        // pre-unscrub bytes before they're parsed
+                        // into SSE events. We tap inside the
+                        // stream loop (not at the bytes(for:) site)
+                        // so the inactivity timeout / cancel paths
+                        // still get their last delivered chunk in
+                        // the snapshot. No-op when no probe is set.
+                        probe?.appendResponseChunk(chunk)
                     } else {
                         // Stream ended naturally or inactivity timeout fired.
                         // Flush any unterminated trailing bytes as a final line.
@@ -1849,9 +1943,12 @@ public actor RemoteProviderService: ToolCapableService {
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
+        let probe = WireTransportProbe.current
+
         let producerTask = Task {
             do {
                 let (data, response) = try await currentSession.data(for: urlRequest)
+                probe?.replaceResponseBody(data)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
@@ -2001,7 +2098,10 @@ public actor RemoteProviderService: ToolCapableService {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         if Self.isImageCapableModel(request.model) {
-            urlRequest.timeoutInterval = max(provider.timeout, Self.imageModelMinTimeout)
+            urlRequest.timeoutInterval =
+                provider.disableTimeout
+                ? RemoteProvider.unboundedTimeout
+                : max(provider.timeout, Self.imageModelMinTimeout)
         }
 
         // Set Accept header based on streaming mode
@@ -2056,6 +2156,12 @@ public actor RemoteProviderService: ToolCapableService {
             bodyData = try encoder.encode(outbound)
         }
         urlRequest.httpBody = bodyData
+        // Wire-verification capture: record the post-scrub bytes
+        // BEFORE we hand them to URLSession. Idempotent inside the
+        // probe (only the first write wins) so request retries
+        // don't stomp the original snapshot. No-op when no probe
+        // is set (every non-chatUI path).
+        WireTransportProbe.current?.recordRequestBody(bodyData)
         return urlRequest
     }
 
@@ -2539,6 +2645,8 @@ struct RemoteChatRequest: Encodable {
                 anthropicToolChoice = .auto
             case .none:
                 anthropicToolChoice = AnthropicToolChoice.none
+            case .required:
+                anthropicToolChoice = .any
             case .function(let fn):
                 anthropicToolChoice = .tool(name: fn.function.name)
             }
@@ -2705,7 +2813,7 @@ struct RemoteChatRequest: Encodable {
                 mode = "AUTO"
             case .none:
                 mode = "NONE"
-            case .function:
+            case .required, .function:
                 mode = "ANY"
             }
             toolConfig = GeminiToolConfig(
@@ -2970,6 +3078,8 @@ struct RemoteChatRequest: Encodable {
                 openResponsesToolChoice = .auto
             case .none:
                 openResponsesToolChoice = OpenResponsesToolChoice.none
+            case .required:
+                openResponsesToolChoice = .required
             case .function(let fn):
                 openResponsesToolChoice = .function(name: fn.function.name)
             }
@@ -3068,16 +3178,13 @@ extension RemoteProviderService {
             throw RemoteProviderServiceError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let request = modelDiscoveryRequest(
+            url: url,
+            headers: await provider.resolvedHeadersOffMainActor(),
+            timeout: provider.timeout
+        )
 
-        // Add provider headers
-        for (key, value) in await provider.resolvedHeadersOffMainActor() {
-            request.setValue(value, forHTTPHeaderField: key)
-        }
-
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await GlobalProxySettings.makeSession().data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
@@ -3114,6 +3221,30 @@ extension RemoteProviderService {
             }
             throw error
         }
+    }
+
+    /// Builds a bounded `/models` request so provider connect tests do not hang
+    /// longer than the user-configured discovery timeout.
+    static func modelDiscoveryRequest(
+        url: URL,
+        headers: [String: String],
+        timeout: TimeInterval
+    ) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = modelDiscoveryTimeout(timeout)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        return request
+    }
+
+    static func modelDiscoveryTimeout(_ timeout: TimeInterval) -> TimeInterval {
+        guard timeout.isFinite else { return 30 }
+        return min(max(timeout, 1), 30)
     }
 
     private static func canUseManualModelDiscoveryFallback(
@@ -3163,7 +3294,7 @@ extension RemoteProviderService {
             req.setValue("application/json", forHTTPHeaderField: "Accept")
             req.timeoutInterval = min(provider.timeout, 10)
             for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
-            if let (data, response) = try? await URLSession.shared.data(for: req),
+            if let (data, response) = try? await GlobalProxySettings.makeSession().data(for: req),
                 let http = response as? HTTPURLResponse, http.statusCode < 400,
                 let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
                 !parsed.data.isEmpty
@@ -3183,7 +3314,7 @@ extension RemoteProviderService {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.timeoutInterval = min(provider.timeout, 10)
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
+        guard let (data, response) = try? await GlobalProxySettings.makeSession().data(for: req),
             let http = response as? HTTPURLResponse, http.statusCode < 400
         else {
             return ["default"]
@@ -3210,7 +3341,7 @@ extension RemoteProviderService {
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = min(provider.timeout, 30)
-        let session = URLSession(configuration: config)
+        let session = GlobalProxySettings.makeSession(base: config)
 
         let (data, response) = try await session.data(for: request)
 
@@ -3266,14 +3397,9 @@ extension RemoteProviderService {
                 throw RemoteProviderServiceError.invalidURL
             }
 
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            for (key, value) in headers {
-                request.setValue(value, forHTTPHeaderField: key)
-            }
+            let request = modelDiscoveryRequest(url: url, headers: headers, timeout: timeout)
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await GlobalProxySettings.makeSession().data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw RemoteProviderServiceError.invalidResponse

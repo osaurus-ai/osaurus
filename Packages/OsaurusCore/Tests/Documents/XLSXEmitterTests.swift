@@ -62,6 +62,61 @@ struct XLSXEmitterTests {
         }
     }
 
+    @Test func emit_rejectsWorkbookWithoutRenderableCells() async throws {
+        let url = Self.temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        await Self.expectEmptyContent {
+            try await XLSXEmitter().emit(
+                Self.document(workbook: Self.makeEmptyWorkbook()),
+                to: url
+            )
+        }
+    }
+
+    @Test func emit_rejectsRowsContainingOnlyEmptyOrWhitespaceCells() async throws {
+        let url = Self.temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        await Self.expectEmptyContent {
+            try await XLSXEmitter().emit(
+                Self.document(workbook: Self.makeWorkbookWithOnlyEmptyCells()),
+                to: url
+            )
+        }
+    }
+
+    @Test func emit_keepsFormulaLookingTextInert() async throws {
+        let url = Self.temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try await XLSXEmitter().emit(
+            Self.document(
+                workbook: Self.singleCellWorkbook(value: .string("=HYPERLINK(\"https://example.com\")"))
+            ),
+            to: url
+        )
+
+        let parsed = try await XLSXAdapter().parse(url: url, sizeLimit: 0)
+        let workbook = try #require(parsed.representation.underlying as? Workbook)
+        let sheet = try #require(workbook.sheets.first)
+        #expect(sheet.cell("A1")?.value == .string("=HYPERLINK(\"https://example.com\")"))
+        #expect(sheet.cell("A1")?.formula == nil)
+    }
+
+    @Test func emit_rejectsStringsBeyondExcelCellLimit() async throws {
+        let url = Self.temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let overlong = String(repeating: "a", count: 32_768)
+
+        await #expect(throws: DocumentAdapterError.self) {
+            try await XLSXEmitter().emit(
+                Self.document(workbook: Self.singleCellWorkbook(value: .string(overlong))),
+                to: url
+            )
+        }
+    }
+
     @Test func bootstrap_registersXLSXEmitter() {
         let registry = DocumentFormatRegistry()
 
@@ -164,6 +219,72 @@ struct XLSXEmitterTests {
         )
     }
 
+    private static func makeEmptyWorkbook() -> Workbook {
+        Workbook(
+            sheets: [
+                Workbook.Sheet(
+                    name: "Empty",
+                    index: 0,
+                    rows: [],
+                    anchor: sheetAnchor(name: "Empty", index: 0)
+                )
+            ]
+        )
+    }
+
+    private static func makeWorkbookWithOnlyEmptyCells() -> Workbook {
+        let rows = [
+            row(
+                number: 1,
+                sheetName: "Empty",
+                sheetIndex: 0,
+                cells: [
+                    cell("A1", row: 1, column: 1, value: .empty, sheetName: "Empty", sheetIndex: 0),
+                    cell("B1", row: 1, column: 2, value: .string("   "), sheetName: "Empty", sheetIndex: 0),
+                ]
+            )
+        ]
+        return Workbook(
+            sheets: [
+                Workbook.Sheet(
+                    name: "Empty",
+                    index: 0,
+                    rows: rows,
+                    anchor: sheetAnchor(name: "Empty", index: 0)
+                )
+            ]
+        )
+    }
+
+    private static func singleCellWorkbook(value: Workbook.CellValue) -> Workbook {
+        Workbook(
+            sheets: [
+                Workbook.Sheet(
+                    name: "Sheet1",
+                    index: 0,
+                    rows: [
+                        row(
+                            number: 1,
+                            sheetName: "Sheet1",
+                            sheetIndex: 0,
+                            cells: [
+                                cell(
+                                    "A1",
+                                    row: 1,
+                                    column: 1,
+                                    value: value,
+                                    sheetName: "Sheet1",
+                                    sheetIndex: 0
+                                )
+                            ]
+                        )
+                    ],
+                    anchor: sheetAnchor(name: "Sheet1", index: 0)
+                )
+            ]
+        )
+    }
+
     private static func row(
         number: Int,
         sheetName: String,
@@ -236,6 +357,17 @@ struct XLSXEmitterTests {
     private static func temporaryURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-emitted.xlsx")
+    }
+
+    private static func expectEmptyContent(_ operation: () async throws -> Void) async {
+        do {
+            try await operation()
+            Issue.record("Expected XLSX emitter to reject workbook with no renderable content")
+        } catch DocumentAdapterError.emptyContent {
+            return
+        } catch {
+            Issue.record("Expected emptyContent, received \(error)")
+        }
     }
 }
 

@@ -50,13 +50,29 @@ struct ContextBudgetPreviewTests {
             try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let previousRoot = OsaurusPaths.overrideRoot
             OsaurusPaths.overrideRoot = root
+            let previousChatConfig = ChatConfigurationStore.load()
+            var isolatedChatConfig = previousChatConfig
+            isolatedChatConfig.defaultModel = nil
+            ChatConfigurationStore.save(isolatedChatConfig)
             MemoryConfigurationStore.invalidateCache()
+            // Phase B split the Default agent's model out of
+            // ChatConfiguration. `effectiveModel` now consults
+            // DefaultAgentConfigurationStore first, so isolating only
+            // the legacy store leaves a stale model id (from a prior
+            // test run on this machine) leaking into `snapshot.model`
+            // and accidentally enabling family-specific guidance.
+            // Drop the in-memory cache so the next `load()` re-reads
+            // from the overridden root, which contains no config file
+            // and therefore yields a clean default.
+            DefaultAgentConfigurationStore.resetCacheForTests()
             var memoryConfig = MemoryConfiguration.default
             memoryConfig.enabled = true
             MemoryConfigurationStore.save(memoryConfig)
             AgentManager.shared.refresh()
             defer {
+                ChatConfigurationStore.save(previousChatConfig)
                 MemoryConfigurationStore.invalidateCache()
+                DefaultAgentConfigurationStore.resetCacheForTests()
                 OsaurusPaths.overrideRoot = previousRoot
                 AgentManager.shared.refresh()
                 try? FileManager.default.removeItem(at: root)
@@ -324,6 +340,20 @@ struct ContextBudgetPreviewTests {
             )
             let ids = sectionIds(preview)
             #expect(ids.contains("modelFamilyGuidance"))
+        }
+    }
+
+    @Test("preview: DSV4 model triggers act-now Model Family Guidance row")
+    func toolsOn_dsv4Model_includesModelFamilyGuidance() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "JANGQ/DeepSeek-V4-Flash-JANGTQ2"
+            )
+            let ids = sectionIds(preview)
+            #expect(ids.contains("modelFamilyGuidance"))
+            #expect(preview.prompt.contains("Do not say you will do it and then stop."))
         }
     }
 

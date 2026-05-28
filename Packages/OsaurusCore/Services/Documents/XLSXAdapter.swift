@@ -936,7 +936,18 @@ private struct XLSXPackageArchive {
         }
         let fileNameLength = try data.uint16LE(at: localOffset + 26)
         let extraLength = try data.uint16LE(at: localOffset + 28)
-        let payloadOffset = localOffset + 30 + fileNameLength + extraLength
+        let localNameStart = localOffset + 30
+        let localNameEnd = localNameStart + fileNameLength
+        guard localNameEnd <= data.count,
+            let rawLocalName = String(data: data.subdata(in: localNameStart ..< localNameEnd), encoding: .utf8)
+        else {
+            throw DocumentAdapterError.readFailed(underlying: "\(path) local ZIP header name is invalid")
+        }
+        let localPath = try Self.normalizeEntryName(rawLocalName)
+        guard localPath == entry.path else {
+            throw DocumentAdapterError.readFailed(underlying: "\(path) local ZIP header name mismatch")
+        }
+        let payloadOffset = localNameEnd + extraLength
         let payloadEnd = payloadOffset + entry.compressedSize
         guard payloadOffset >= 0, payloadEnd <= data.count else {
             throw DocumentAdapterError.readFailed(underlying: "\(path) ZIP payload is truncated")
@@ -959,18 +970,35 @@ private struct XLSXPackageArchive {
 
     private static func readCentralDirectory(data: Data) throws -> [String: Entry] {
         let eocdOffset = try findEndOfCentralDirectory(in: data)
+        let diskNumber = try data.uint16LE(at: eocdOffset + 4)
+        let centralDirectoryDisk = try data.uint16LE(at: eocdOffset + 6)
+        let entriesOnDisk = try data.uint16LE(at: eocdOffset + 8)
         let entryCount = try data.uint16LE(at: eocdOffset + 10)
         let centralDirectorySize = try data.uint32LE(at: eocdOffset + 12)
         let centralDirectoryOffset = try data.uint32LE(at: eocdOffset + 16)
 
-        guard centralDirectoryOffset + centralDirectorySize <= data.count else {
+        guard diskNumber == 0, centralDirectoryDisk == 0, entriesOnDisk == entryCount else {
+            throw DocumentAdapterError.readFailed(underlying: "Multi-disk XLSX ZIP archives are not supported")
+        }
+        guard entryCount != Int(UInt16.max),
+            centralDirectorySize != Int(UInt32.max),
+            centralDirectoryOffset != Int(UInt32.max)
+        else {
+            throw DocumentAdapterError.readFailed(underlying: "ZIP64 XLSX packages are not supported")
+        }
+        guard centralDirectoryOffset >= 0,
+            centralDirectorySize >= 0,
+            centralDirectoryOffset + centralDirectorySize <= eocdOffset
+        else {
             throw DocumentAdapterError.readFailed(underlying: "ZIP central directory is truncated")
         }
 
         var entries: [String: Entry] = [:]
         var offset = centralDirectoryOffset
         for _ in 0 ..< entryCount {
-            guard try data.uint32LE(at: offset) == 0x0201_4B50 else {
+            guard offset + 46 <= data.count,
+                try data.uint32LE(at: offset) == 0x0201_4B50
+            else {
                 throw DocumentAdapterError.readFailed(underlying: "ZIP central directory entry is invalid")
             }
             let flags = try data.uint16LE(at: offset + 8)
@@ -981,10 +1009,17 @@ private struct XLSXPackageArchive {
             let extraLength = try data.uint16LE(at: offset + 30)
             let commentLength = try data.uint16LE(at: offset + 32)
             let localHeaderOffset = try data.uint32LE(at: offset + 42)
+            guard compressedSize != Int(UInt32.max),
+                uncompressedSize != Int(UInt32.max),
+                localHeaderOffset != Int(UInt32.max)
+            else {
+                throw DocumentAdapterError.readFailed(underlying: "ZIP64 XLSX entries are not supported")
+            }
             let nameStart = offset + 46
             let nameEnd = nameStart + fileNameLength
-            guard nameEnd <= data.count else {
-                throw DocumentAdapterError.readFailed(underlying: "ZIP entry name is truncated")
+            let nextOffset = nameEnd + extraLength + commentLength
+            guard nameEnd <= data.count, nextOffset <= data.count else {
+                throw DocumentAdapterError.readFailed(underlying: "ZIP central directory entry is truncated")
             }
             guard let rawName = String(data: data.subdata(in: nameStart ..< nameEnd), encoding: .utf8) else {
                 throw DocumentAdapterError.readFailed(underlying: "ZIP entry name is not UTF-8")
@@ -1001,7 +1036,7 @@ private struct XLSXPackageArchive {
                 uncompressedSize: uncompressedSize,
                 localHeaderOffset: localHeaderOffset
             )
-            offset = nameEnd + extraLength + commentLength
+            offset = nextOffset
         }
         return entries
     }

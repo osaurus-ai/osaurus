@@ -3,6 +3,118 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.1</title>
+            <pubDate>Thu, 28 May 2026 03:16:37 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.1</sparkle:version>
+            <sparkle:shortVersionString>0.19.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.1/Osaurus-0.19.1.dmg" length="50150094" type="application/octet-stream" sparkle:edSignature="UTugGnGJy59OE+I+NFI1xzfUwpQsxX12se4MFuTuOENkLD0SdOjihqni0DXpbCTYxHvPr1fCiWGKulKsA1g3CQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- feat(model-browser): add Newest / Oldest sort options (#1270) by @therahul-yo
+- Fix zero free space on external model volumes (#1267) by @atomtanstudio
+- chat improvements (#1259) by @RaajeevChandran
+- Stabilize plugin spec root isolation (#1261) by @mimeding
+
+## 🚀 Features
+
+- Default Agent is now Onboarding Agent (#1271) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.0...0.19.1
+]]></description>
+        </item>
+        <item>
+            <title>0.19.0</title>
+            <pubDate>Tue, 26 May 2026 21:23:09 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.0</sparkle:version>
+            <sparkle:shortVersionString>0.19.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.0/Osaurus-0.19.0.dmg" length="49915703" type="application/octet-stream" sparkle:edSignature="p/FZGpYzLGIsCCwHbrVsxZIaghKd+q3QCHfoYZCEEY4WJOsW1IyUCx4JM0Bkhb2hZt0bQeiI/4rZGHE+2Z1WBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- added OpenAI compatible /v1/completions endpoint for FIM autocomplete (#1247) by @RaajeevChandran
+- fix: preserve exposeToNetwork setting across launches (#1243) by @miguelAngelo1999
+- Pin vMLX runtime and harden local model proof gates (#1242) by @jjang-ai
+- allow custom base URL for built in remote providers (#1246) by @RaajeevChandran
+
+## 🚀 Features
+
+- added privacy filter (#1244) by @tpae
+
+## 🧰 Maintenance
+
+- added whats new privacy filter (#1252) by @tpae
+- moved claude plugins to plugins section (#1250) by @tpae
+- improved skills page in settings (#1245) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.38...0.18.39
+]]></description>
+        </item>
+        <item>
+            <title>0.18.38</title>
+            <pubDate>Sun, 24 May 2026 12:06:20 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.38</sparkle:version>
+            <sparkle:shortVersionString>0.18.38</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.38/Osaurus-0.18.38.dmg" length="49162612" type="application/octet-stream" sparkle:edSignature="PApOmvCzy4TR+pJkDCK7zbfz48qyJHkf2afHZ2bOjk9VlDwX4R+CLbVQgqNDTjo2vyxdneWCuN9sW3MZtK3DDQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- added no timeout option for remote providers (#1237) by @RaajeevChandran
+- Pin vmlx main runtime and harden server boundaries (#1201) by @jjang-ai
+- persist per turn timing and add two page export options chooser (#1230) by @RaajeevChandran
+- Harden plugin artifact installs (#1223) by @mimeding
+- Harden plugin static file containment (#1222) by @mimeding
+- Redact provider secret header logs (#1221) by @mimeding
+- Reject empty XLSX workbook output (#1218) by @mimeding
+- Redact clipboard diagnostics (#1217) by @mimeding
+- improved export chat UI (#1227) by @RaajeevChandran
+- Harden XLSX ZIP package parsing (#1216) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed HF import not surfacing models in the models page (#1234) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- add chat rename guard (#1238) by @RaajeevChandran
+- onboarding screen language changes (#1229) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.37...0.18.38
+]]></description>
+        </item>
+        <item>
+            <title>0.18.37</title>
+            <pubDate>Fri, 22 May 2026 13:00:19 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.37</sparkle:version>
+            <sparkle:shortVersionString>0.18.37</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.37/Osaurus-0.18.37.dmg" length="49051889" type="application/octet-stream" sparkle:edSignature="mU2u/QzWeUuxB6kDPOVBbRwDCWSwTM81UGp3NDCaqgX+Bfzd3Ej64iTrZpkpvVrdEI4c3ECvH0Q6ivP7W706AQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Harden XLSX ZIP package parsing (#1216) by @mimeding
+- Harden plugin HTTP redirects against SSRF (#1215) by @mimeding
+- Wire global proxy into providers and model downloads (#1214) by @mimeding
+- Isolate eval search storage roots (#1213) by @mimeding
+- Harden structured document ingress metadata (#1212) by @mimeding
+- Harden provider discovery diagnostics (#1211) by @mimeding
+- chat sidebar improvements (#1219) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.36...0.18.37
+]]></description>
+        </item>
+        <item>
             <title>0.18.36</title>
             <pubDate>Fri, 22 May 2026 05:40:32 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

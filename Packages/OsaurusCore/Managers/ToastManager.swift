@@ -410,6 +410,9 @@ public final class ToastManager {
             // Open URL in default browser
             NSWorkspace.shared.open(url)
 
+        case .revealInFinder(let url):
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+
         case .showMainWindow:
             // Show the main app window/popover
             AppDelegate.shared?.showPopover()

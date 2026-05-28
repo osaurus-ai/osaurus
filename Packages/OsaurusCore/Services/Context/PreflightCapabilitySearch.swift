@@ -263,6 +263,27 @@ enum CapabilitySearch {
     /// recall repro.
     private static let debugTraceEnvVar = "OSAURUS_DEBUG_CAPABILITY_SEARCH"
 
+    /// Tools-only fast path. Skips the methods + skills lanes entirely
+    /// for callers that have already restricted themselves to the tools
+    /// universe (default-agent configure surface today). Avoids burning
+    /// embedder / BM25 work on hits we'd discard anyway.
+    static func searchToolsOnly(
+        query: String,
+        topK: Int,
+        allowedToolNames: Set<String>? = nil
+    ) async -> CapabilitySearchResults {
+        await CapabilitySearchDiagnostics.logSnapshotOnce(
+            reason: "CapabilitySearch.searchToolsOnly"
+        )
+        let tools = await ToolSearchService.shared.searchHybrid(
+            query: query,
+            topK: topK,
+            minFusedScore: minimumFusedScore,
+            allowedNames: allowedToolNames
+        )
+        return CapabilitySearchResults(methods: [], tools: tools, skills: [])
+    }
+
     static func search(
         query: String,
         topK: (methods: Int, tools: Int, skills: Int),
@@ -358,7 +379,7 @@ enum CapabilitySearch {
 
         logger.notice(
             """
-            CapabilitySearch query=\(query, privacy: .public)
+            CapabilitySearch query=\(query, privacy: .private(mask: .hash))
             methodsThreshold=\(methodsThreshold, privacy: .public) skillsThreshold=\(skillsThreshold, privacy: .public) fusedCutoff=\(fusedCutoff, privacy: .public)
             health=\(healthSummary, privacy: .public)
             methods raw=\(formatHits(methodDiag.rawHits), privacy: .public)
@@ -841,7 +862,7 @@ enum PreflightCapabilitySearch {
             let fallback = safeFallbackSlice(catalog: catalog, topK: topK)
             let sliceNames = fallback.map(\.name)
             logger.notice(
-                "rankCatalog fallback: query=\(query, privacy: .public) catalogSize=\(catalog.count) topK=\(topK) sliceNames=\(sliceNames.joined(separator: ","), privacy: .public) reason=empty-hits"
+                "rankCatalog fallback: query=\(query, privacy: .private(mask: .hash)) catalogSize=\(catalog.count) topK=\(topK) sliceNames=\(sliceNames.joined(separator: ","), privacy: .public) reason=empty-hits"
             )
             return fallback
         }
@@ -868,7 +889,7 @@ enum PreflightCapabilitySearch {
             let fallback = safeFallbackSlice(catalog: catalog, topK: topK)
             let sliceNames = fallback.map(\.name)
             logger.notice(
-                "rankCatalog fallback: query=\(query, privacy: .public) catalogSize=\(catalog.count) topK=\(topK) sliceNames=\(sliceNames.joined(separator: ","), privacy: .public) reason=no-mappable-hits"
+                "rankCatalog fallback: query=\(query, privacy: .private(mask: .hash)) catalogSize=\(catalog.count) topK=\(topK) sliceNames=\(sliceNames.joined(separator: ","), privacy: .public) reason=no-mappable-hits"
             )
             return fallback
         }
@@ -928,8 +949,7 @@ enum PreflightCapabilitySearch {
                 temperature: 0.0,
                 maxTokens: 256,
                 timeout: selectionTimeout,
-                fallbackModel: fallbackModel,
-                modelOptions: ["reasoningEffort": .string("no_think")]
+                fallbackModel: fallbackModel
             )
         }
     }
@@ -1108,7 +1128,7 @@ enum PreflightCapabilitySearch {
         cap: Int
     ) -> [String] {
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        logger.info("Pre-flight: raw LLM response: \(trimmed)")
+        logger.info("Pre-flight: raw LLM response: \(trimmed, privacy: .private(mask: .hash))")
         guard !trimmed.isEmpty else { return [] }
 
         let validNames = Dictionary(

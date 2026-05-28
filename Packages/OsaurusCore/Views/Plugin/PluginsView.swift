@@ -37,15 +37,36 @@ struct PluginsView: View {
 
     // Detail navigation
     @State private var selectedPlugin: PluginState?
+    /// Detail navigation for an imported Claude plugin. Mutually
+    /// exclusive with `selectedPlugin` — only one detail surface is
+    /// visible at a time.
+    @State private var selectedClaudePlugin: ClaudePluginInstalled?
 
     @ObservedObject private var managementState = ManagementStateManager.shared
+    @StateObject private var claudeAggregator = InstalledClaudePluginsAggregator()
+
+    // Live counts feeding the Claude aggregator's debounced refresh.
+    private let claudeSkillManager = SkillManager.shared
+    private let claudeScheduleManager = ScheduleManager.shared
+    private let claudeSlashCommands = SlashCommandRegistry.shared
+    @ObservedObject private var claudeMCPManager = MCPProviderManager.shared
+
+    // GitHub-import sheet state.
+    @State private var showGitHubImport: Bool = false
+    // Claude userConfig sheet.
+    @State private var showClaudeUserConfigSheet: Bool = false
+    @State private var claudeUserConfigTarget: ClaudePluginInstalled?
+    @State private var claudeRefreshDebounceTask: Task<Void, Never>?
+
+    // Search-filtered Claude plugins.
+    @State private var filteredClaudePlugins: [ClaudePluginInstalled] = []
 
     // Success toast
     @State private var successMessage: String?
 
     var body: some View {
         ZStack {
-            if selectedPlugin == nil {
+            if selectedPlugin == nil && selectedClaudePlugin == nil {
                 gridContent
                     .transition(.opacity.combined(with: .move(edge: .leading)))
             }
@@ -72,6 +93,33 @@ struct PluginsView: View {
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
 
+            if let claudePlugin = selectedClaudePlugin {
+                ClaudePluginDetailView(
+                    plugin: claudePlugin,
+                    onBack: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedClaudePlugin = nil
+                        }
+                    },
+                    onUpdate: { try await updateClaudePlugin(claudePlugin) },
+                    onUninstall: {
+                        await uninstallClaudePlugin(claudePlugin)
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedClaudePlugin = nil
+                        }
+                    },
+                    onConfigure: {
+                        claudeUserConfigTarget = claudePlugin
+                        showClaudeUserConfigSheet = true
+                    },
+                    onChange: {
+                        claudeAggregator.refresh()
+                        Task { await updateFilteredLists() }
+                    }
+                )
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
+
             if let message = successMessage {
                 VStack {
                     Spacer()
@@ -94,6 +142,10 @@ struct PluginsView: View {
                     applyPendingPluginDetailRequest()
                 }
             }
+            // Kick off a Claude-plugin update check in the background so
+            // the badge / Update button reflect the latest state on tab
+            // entry without blocking initial render.
+            Task { await claudeAggregator.checkForUpdates() }
             withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
                 hasAppeared = true
             }
@@ -140,6 +192,102 @@ struct PluginsView: View {
                 )
             }
         }
+        .sheet(isPresented: $showGitHubImport) {
+            GitHubImportSheet(
+                onImport: { skills in
+                    Task { @MainActor in
+                        _ = await claudeSkillManager.importSkillsFromMarkdown(skills)
+                        showGitHubImport = false
+                        claudeAggregator.refresh()
+                        showSuccess(L("Imported \(skills.count) items"))
+                    }
+                },
+                onCancel: { showGitHubImport = false },
+                onPluginInstallComplete: { report in
+                    Task { @MainActor in
+                        await claudeSkillManager.refresh()
+                        claudeAggregator.refresh()
+                        await updateFilteredLists()
+                        let total =
+                            report.totalImportedSkills + report.totalImportedAgents
+                            + report.totalImportedCommands + report.totalImportedMCPProviders
+                        if total > 0 {
+                            showSuccess(L("Installed \(total) items"))
+                        }
+                    }
+                }
+            )
+        }
+        .sheet(isPresented: $showClaudeUserConfigSheet) {
+            if let target = claudeUserConfigTarget,
+                let snap = target.snapshot
+            {
+                ClaudePluginUserConfigSheet(
+                    pluginId: target.pluginId,
+                    pluginName: target.displayName,
+                    pluginVersion: target.version,
+                    fields: snap.userConfigSpec,
+                    onSave: {
+                        showClaudeUserConfigSheet = false
+                        claudeAggregator.refresh()
+                    }
+                )
+            }
+        }
+        .onReceive(claudeAggregator.$plugins) { _ in
+            Task { await updateFilteredLists() }
+        }
+        .onChange(of: claudeSkillManager.skills.count) { _, _ in scheduleClaudeRefresh() }
+        .onChange(of: claudeScheduleManager.schedules.count) { _, _ in scheduleClaudeRefresh() }
+        .onChange(of: claudeSlashCommands.customCommands.count) { _, _ in scheduleClaudeRefresh() }
+        .onChange(of: claudeMCPManager.configuration.providers.count) { _, _ in
+            scheduleClaudeRefresh()
+        }
+    }
+
+    /// Debounce aggregator refreshes so a burst of changes during an
+    /// import doesn't cause repeated re-aggregations.
+    private func scheduleClaudeRefresh() {
+        claudeRefreshDebounceTask?.cancel()
+        claudeRefreshDebounceTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            claudeAggregator.refresh()
+        }
+    }
+
+    /// Re-fetch the source repo's marketplace and re-install the plugin
+    /// in `replaceExisting` mode so any newly added artifacts come in
+    /// alongside the version bump. Throws so the detail view's error
+    /// surface can show the failure.
+    private func updateClaudePlugin(_ plugin: ClaudePluginInstalled) async throws {
+        guard let snap = plugin.snapshot else { return }
+        let repo = GitHubRepo(
+            owner: snap.sourceOwner,
+            name: snap.sourceRepo,
+            branch: snap.sourceBranch ?? "main"
+        )
+        let url = "https://github.com/\(snap.sourceOwner)/\(snap.sourceRepo)"
+        let result = try await GitHubSkillService.shared.fetchPlugins(from: url)
+        guard let manifest = result.plugins.first(where: { $0.name == snap.name }) else {
+            throw GitHubSkillError.noSkillsFound
+        }
+        let selection = ClaudePluginSelection(manifest: manifest)
+        _ = await ClaudePluginInstaller.shared.install(
+            selections: [selection],
+            from: repo,
+            replaceExisting: true
+        )
+        await claudeSkillManager.refresh()
+        claudeAggregator.refresh()
+        await updateFilteredLists()
+    }
+
+    private func uninstallClaudePlugin(_ plugin: ClaudePluginInstalled) async {
+        _ = await ClaudePluginInstaller.shared.uninstall(pluginId: plugin.pluginId)
+        await claudeSkillManager.refresh()
+        claudeAggregator.refresh()
+        await updateFilteredLists()
     }
 
     /// Honor a pending `osaurus://plugins-install?tool=<id>` deeplink request.
@@ -216,19 +364,25 @@ struct PluginsView: View {
                     isRefreshButtonLoading = true
                     await repoService.refresh()
                     await PluginManager.shared.loadAll()
+                    await claudeAggregator.checkForUpdates()
                     reload()
                     isRefreshButtonLoading = false
                 }
             }
+            ClaudePluginImportButton {
+                showGitHubImport = true
+            }
         } tabsRow: {
+            let claudeCount = filteredClaudePlugins.count
+            let claudeUpdateCount = claudeAggregator.plugins.filter { $0.hasUpdate }.count
             HeaderTabsRow(
                 selection: $selectedTab,
                 counts: [
-                    .installed: installedPlugins.count,
+                    .installed: installedPlugins.count + claudeCount,
                     .browse: filteredPlugins.count,
                 ],
-                badges: updatesAvailableCount > 0
-                    ? [.installed: updatesAvailableCount]
+                badges: (updatesAvailableCount + claudeUpdateCount) > 0
+                    ? [.installed: updatesAvailableCount + claudeUpdateCount]
                     : nil,
                 searchText: $searchText,
                 searchPlaceholder: "Search plugins"
@@ -240,12 +394,12 @@ struct PluginsView: View {
 
     private var installedTabContent: some View {
         Group {
-            if installedPlugins.isEmpty {
+            if installedPlugins.isEmpty && filteredClaudePlugins.isEmpty {
                 emptyState(
                     icon: "puzzlepiece.extension",
                     title: L("No plugins installed"),
                     subtitle: searchText.isEmpty
-                        ? "Browse the repository to install plugins"
+                        ? "Browse the repository or import a Claude plugin"
                         : "Try a different search term"
                 )
             } else {
@@ -279,6 +433,37 @@ struct PluginsView: View {
                                         reload()
                                     },
                                     onChange: { reload() }
+                                )
+                            }
+
+                            let nativeOffset = installedPlugins.count
+                            ForEach(
+                                Array(filteredClaudePlugins.enumerated()),
+                                id: \.element.id
+                            ) { index, claudePlugin in
+                                ClaudePluginCard(
+                                    plugin: claudePlugin,
+                                    animationDelay: Double(index + nativeOffset) * 0.05,
+                                    hasAppeared: hasAppeared,
+                                    onSelect: {
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                            selectedClaudePlugin = claudePlugin
+                                        }
+                                    },
+                                    onUpdate: {
+                                        try await updateClaudePlugin(claudePlugin)
+                                    },
+                                    onUninstall: {
+                                        await uninstallClaudePlugin(claudePlugin)
+                                    },
+                                    onConfigure: {
+                                        claudeUserConfigTarget = claudePlugin
+                                        showClaudeUserConfigSheet = true
+                                    },
+                                    onChange: {
+                                        claudeAggregator.refresh()
+                                        Task { await updateFilteredLists() }
+                                    }
                                 )
                             }
                         }
@@ -444,24 +629,53 @@ struct PluginsView: View {
         ].contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
     }
 
+    nonisolated private static func claudePluginMatchesQuery(
+        _ plugin: ClaudePluginInstalled,
+        query: String
+    ) -> Bool {
+        guard !query.isEmpty else { return true }
+        let queryLower = query.lowercased()
+        var candidates: [String] = [
+            plugin.displayName.lowercased(),
+            plugin.pluginId.lowercased(),
+            plugin.sourceLabel.lowercased(),
+        ]
+        if let snap = plugin.snapshot {
+            if let description = snap.description {
+                candidates.append(description.lowercased())
+            }
+            candidates.append(contentsOf: snap.keywords.map { $0.lowercased() })
+            if let authorName = snap.authorName {
+                candidates.append(authorName.lowercased())
+            }
+        }
+        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+    }
+
     private func updateFilteredLists() async {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let currentPlugins = repoService.plugins
+        let currentClaudePlugins = claudeAggregator.plugins
 
-        let (browseResult, installedResult) =
+        let (browseResult, installedResult, claudeResult) =
             await Task.detached(priority: .userInitiated) {
                 let browse = currentPlugins.filter { Self.pluginMatchesQuery($0, query: query) }
                 let installed =
                     currentPlugins
                     .filter { $0.isInstalled && Self.pluginMatchesQuery($0, query: query) }
                     .sorted { $0.displayName < $1.displayName }
-                return (browse, installed)
+                let claude =
+                    currentClaudePlugins
+                    .filter { Self.claudePluginMatchesQuery($0, query: query) }
+                    .sorted { $0.displayName.lowercased() < $1.displayName.lowercased() }
+                return (browse, installed, claude)
             }.value
 
         guard !Task.isCancelled else { return }
 
         filteredPlugins = browseResult
         installedPlugins = installedResult
+        filteredClaudePlugins = claudeResult
 
         var permissionCount = 0
         var missingPerms: [String: [SystemPermission]] = [:]
@@ -495,6 +709,51 @@ struct PluginsView: View {
         PluginsView()
     }
 #endif
+
+// MARK: - Claude Plugin Import Button
+
+/// Single-action button mirroring the Skills header dropdown but
+/// scoped to Claude plugins (GitHub-only). Lifts the dispatch-after-
+/// dismiss safety net from `SkillsView`'s `ImportDropdownButton` so a
+/// `.sheet` presented from inside the menu doesn't deadlock SwiftUI.
+private struct ClaudePluginImportButton: View {
+    @Environment(\.theme) private var theme
+    let onSelect: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: { dispatchAfterDismiss(onSelect) }) {
+            HStack(spacing: 6) {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 13, weight: .medium))
+                Text("Import", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundStyle(theme.secondaryText)
+            .fixedSize()
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground)
+                    .opacity(isHovering ? 0.8 : 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) { isHovering = hovering }
+        }
+        .localizedHelp("Import Claude plugin from GitHub")
+    }
+
+    private func dispatchAfterDismiss(_ action: @escaping () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleepForPopoverDismiss()
+            action()
+        }
+    }
+}
 
 // MARK: - Plugin Card (Grid)
 
@@ -1608,7 +1867,10 @@ private struct PluginDetailView: View {
 
 // MARK: - Shared Components
 
-private struct StatusCapsuleBadge: View {
+/// Compact pill used by both native and Claude plugin cards to surface a
+/// short "Installed" / "Update" / "Error" / "Key Required" state next to
+/// the version badge.
+struct StatusCapsuleBadge: View {
     let icon: String
     let text: String
     let color: Color

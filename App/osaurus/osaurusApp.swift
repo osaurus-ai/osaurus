@@ -58,7 +58,7 @@ private extension osaurusApp {
                             ChatWindowManager.shared.createWindow(agentId: agent.id)
                         }
                     } label: {
-                        Text(verbatim: agent.isBuiltIn ? L("Default") : agent.name)
+                        Text(verbatim: agent.displayName)
                     }
                 }
             } label: {
@@ -296,7 +296,7 @@ private extension osaurusApp {
                         ChatWindowManager.shared.createWindow(agentId: agent.id)
                     }
                 } label: {
-                    Text(verbatim: agent.isBuiltIn ? L("Default") : agent.name)
+                    Text(verbatim: agent.displayName)
                 }
             }
 

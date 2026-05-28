@@ -2,10 +2,10 @@
 //  ConcurrencySection.swift
 //  osaurus
 //
-//  Concurrency & batching controls. `maxConcurrentSequences` +
-//  `prefillStepSize` + `continuousBatching` are wired end-to-end
-//  through `MLXBatchAdapter.Registry`; the rest persist for a
-//  follow-up runtime bridge.
+//  Concurrency & batching controls. `continuousBatching` gates the
+//  multi-slot scheduler, `maxConcurrentSequences` hot-resizes the resident
+//  BatchEngine, and `prefillStepSize` is passed per request. The remaining
+//  contract fields persist for a follow-up runtime bridge.
 //
 //  Live BatchEngine diagnostics live in `LiveActivitySection` (its own
 //  sidebar anchor) so users can monitor activity without scrolling
@@ -39,6 +39,13 @@ struct ConcurrencySection: View {
             )
             .onChange(of: maxConcurrentText) { _, _ in commitMaxConcurrent() }
 
+            SettingsToggle(
+                title: L("Continuous Batching"),
+                description:
+                    "When off, Osaurus pins the BatchEngine to one active slot even if Concurrent Sessions is higher.",
+                isOn: $draft.concurrency.continuousBatching
+            )
+
             OptionalIntField(
                 label: "Prompt Prefill Chunk Size",
                 placeholder: "Empty = engine default",
@@ -46,19 +53,19 @@ struct ConcurrencySection: View {
                 value: $draft.concurrency.prefillStepSize
             )
 
-            SettingsToggle(
-                title: L("Continuous Batching"),
-                description:
-                    "Let new requests join an in-flight batch so multiple users share the same decode loop.",
-                isOn: $draft.concurrency.continuousBatching
-            )
-
             SettingsDivider()
 
             SettingsSubsection(label: "Planned Batching Controls") {
                 VStack(alignment: .leading, spacing: 12) {
                     ServerSettingsPlannedBanner(
-                        blurb: "Persisted today; runtime consumers are not yet implemented."
+                        blurb: "Persisted today; runtime consumers for these fields are not yet implemented."
+                    )
+
+                    SettingsToggle(
+                        title: L("Continuous Batching"),
+                        description:
+                            "Reserved contract flag for explicit scheduler gating; concurrent sessions controls the active BatchEngine slot count today.",
+                        isOn: $draft.concurrency.continuousBatching
                     )
 
                     OptionalIntField(

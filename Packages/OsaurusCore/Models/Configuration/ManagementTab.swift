@@ -26,6 +26,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
     case insights
     case server
     case permissions
+    case privacy
     case identity
     case storage
     case settings
@@ -50,6 +51,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .insights: "chart.bar.doc.horizontal"
         case .server: "server.rack"
         case .permissions: "lock.shield.fill"
+        case .privacy: "hand.raised.fill"
         case .identity: "person.badge.key.fill"
         case .storage: "externaldrive.fill.badge.checkmark"
         case .settings: "gearshape.fill"
@@ -74,6 +76,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .insights: L("Insights")
         case .server: L("Server")
         case .permissions: L("Permissions")
+        case .privacy: L("Privacy")
         case .identity: L("Identity")
         case .storage: L("Storage")
         case .settings: L("Settings")

@@ -69,7 +69,7 @@ struct ContentBlockDisplayTests {
         )
 
         let thinkingText = blocks.compactMap { block -> String? in
-            guard case let .thinking(_, text, _) = block.kind else { return nil }
+            guard case let .thinking(_, text, _, _) = block.kind else { return nil }
             return text
         }.first
         let paragraphTexts = blocks.compactMap { block -> String? in

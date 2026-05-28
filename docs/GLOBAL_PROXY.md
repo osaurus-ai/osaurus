@@ -9,11 +9,12 @@ boundaries.
 
 ## Status
 
-This PR only adds the design note, URL validation, and a URLSession factory
-reference implementation. It does not add settings UI, persistence, provider
-rewiring, model-download rewiring, plugin rewiring, or per-provider overrides.
-Those are rollout steps so the shared network policy can be reviewed before it
-touches every network path.
+The current rollout adds the validated URL format, URLSession factory, settings
+persistence, and first call-site wiring for remote provider traffic plus model
+and Hugging Face downloads. Plugin HTTP, MCP OAuth, relay, theme sharing, GitHub
+skill import, sandbox provisioning, local health checks, and per-provider
+overrides remain follow-up work so the shared network policy can be reviewed in
+bounded steps.
 
 ## Proxy Policy
 
@@ -47,20 +48,22 @@ single global web proxy covers both web request families. SOCKS and SOCKS5 URLs
 populate only the SOCKS keys. The foundation does not install PAC files, bypass
 lists, environment variables, or destination rewrites.
 
+`GlobalProxySettings` reads the persisted optional URL from `server.json` and
+fails closed when the value is missing or invalid. It reads that JSON directly
+instead of calling `ServerConfigurationStore` so background networking services
+can create sessions synchronously without crossing the Settings UI's main-actor
+store boundary.
+
 ## Rollout Plan
 
-1. Add encrypted settings storage for an optional global proxy URL. Invalid
-   values should fail closed at save time with the validator's error reason.
-2. Add settings UI that displays only the redacted endpoint. Proxy credentials,
-   if supported later, must be edited as separate secret fields.
-3. Migrate URLSession call sites in small PRs. Known affected paths include
-   remote provider requests, model downloads and catalog refreshes, plugin
-   fetch/search traffic, MCP HTTP/SSE traffic, GitHub skill requests, and remote
-   agent HTTP traffic.
-4. Add smoke coverage with a stub proxy that records CONNECT/HTTP/SOCKS attempts
+1. Migrate the remaining URLSession call sites in small PRs. Known affected
+   paths include plugin fetch/search traffic, MCP HTTP/SSE and OAuth traffic,
+   GitHub skill requests, relay traffic, theme sharing, sandbox provisioning,
+   and remote agent HTTP traffic.
+2. Add smoke coverage with a stub proxy that records CONNECT/HTTP/SOCKS attempts
    for provider and model-download flows. Include a DNS-leak check before
    marking #1091 complete.
-5. Keep per-provider proxy selection and model mirror selection as separate
+3. Keep per-provider proxy selection and model mirror selection as separate
    designs. The global endpoint is intentionally simpler and should apply before
    more granular routing is considered.
 

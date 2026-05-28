@@ -152,14 +152,7 @@ public struct Router {
             model.modified_at = now
             model.size = 0
             model.digest = ""
-            model.details = ModelDetails(
-                parent_model: "",
-                format: "safetensors",
-                family: "unknown",
-                families: ["unknown"],
-                parameter_size: "",
-                quantization_level: ""
-            )
+            model.details = ModelDetails.localMLXModelDetails(for: modelName)
             return model
         }
 

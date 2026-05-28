@@ -194,6 +194,7 @@ follow-up after assistant reasoning/tool state. Record `runs.jsonl`.
 | Image VL | Qwen VL, ZAYA1-VL, Gemma VLM, Pixtral/Mistral VL | image token IDs, media salt isolation, repeated same image cache hit |
 | Video VL | Qwen VL, SmolVLM, omni | data:video mp4 extension preservation, frame extraction, changed video cache miss |
 | Audio/omni | Nemotron-Omni | input_audio temp-file materialization, audio sample prep, changed audio cache miss |
+| Image generation | Z-Image, Flux, Flux2 Klein, Qwen Image, Kontext/Fill/Edit | exact local image-model autodetect, tokenizer/text-encoder load, safetensors key-map coverage, prompt-sensitive multi-turn PNG/JPEG output, edit/generation capability split, cancellation, unload/reload, and app/API parity |
 | Tool calling | MiniMax, Qwen, Mistral, Laguna, Gemma | structured tool_calls, tool result turn, no XML-in-content fallback |
 
 ## Known Regression Classes

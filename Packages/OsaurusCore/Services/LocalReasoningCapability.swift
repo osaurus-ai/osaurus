@@ -4,9 +4,9 @@
 //
 //  Inspects a locally-installed model's chat template to determine whether
 //  it supports thinking/reasoning — without hardcoding per-family heuristics.
-//  Drives both the UI reasoning toggle and the streaming prepend-think
-//  middleware so new reasoning model families (JANG, MiniMax, Mistral-Small-4,
-//  etc.) are picked up automatically as long as they ship a chat template.
+//  Drives the UI reasoning toggle and metadata reporting so new reasoning
+//  model families (JANG, MiniMax, Mistral-Small-4, etc.) are picked up
+//  automatically as long as they ship a chat template.
 //
 //  JANG bundles that omit a chat template entirely — DSV4-Flash is the
 //  canonical case, it ships `encoding/encoding_dsv4.py` instead of a Jinja
@@ -24,8 +24,8 @@ enum LocalReasoningCapability {
         /// Template reads an `enable_thinking` kwarg.
         let hasEnableThinkingKwarg: Bool
         /// Template itself injects a literal `<think>` opener into the assistant prompt
-        /// tail, which means the model's generated stream will only contain the closing
-        /// `</think>` and needs a middleware prepend for the UI tag parser to work.
+        /// tail. This is reported as metadata only; runtime code must not synthesize
+        /// or prepend thinking tags to repair model output.
         let templateInjectsThinkTag: Bool
         /// True when the template both exposes a toggle kwarg and uses
         /// reasoning markers the runtime recognizes.

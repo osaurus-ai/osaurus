@@ -20,6 +20,19 @@ private final class SendableBool: @unchecked Sendable {
     }
 }
 
+private final class ChannelCloseFutureBox: @unchecked Sendable {
+    private var future: EventLoopFuture<Void>?
+    private let lock = NSLock()
+
+    func set(_ value: EventLoopFuture<Void>) {
+        lock.withLock { future = value }
+    }
+
+    func snapshot() -> EventLoopFuture<Void>? {
+        lock.withLock { future }
+    }
+}
+
 private final class LockedStringAccumulator: @unchecked Sendable {
     private let lock = NSLock()
     private var storage = ""
@@ -150,6 +163,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private let chatEngine: ChatEngineProtocol
     private let trustLoopback: Bool
     private let _isChannelActive = SendableBool(false)
+    private let requestTasks = HTTPRequestTaskRegistry()
+    private let channelCloseFuture = ChannelCloseFutureBox()
     private static let openResponsesContextStore = OpenResponsesContextStore()
     /// Per-request scratch state. `internal` so peer-file helpers (e.g.
     /// `HTTPRequestParse.readRequestBody()`) can drain the buffered body
@@ -191,12 +206,39 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     func channelActive(context: ChannelHandlerContext) {
         _isChannelActive.value = true
+        channelCloseFuture.set(context.channel.closeFuture)
         context.fireChannelActive()
     }
 
     func channelInactive(context: ChannelHandlerContext) {
         _isChannelActive.value = false
+        requestTasks.cancelAll()
         context.fireChannelInactive()
+    }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if case ChannelEvent.inputClosed = event {
+            _isChannelActive.value = false
+            requestTasks.cancelAll()
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
+
+    private func runRequestTask(
+        priority: TaskPriority? = nil,
+        operation: @escaping () async -> Void
+    ) {
+        let id = UUID()
+        let requestTasks = requestTasks
+        let operationBox = RequestTaskOperation(operation)
+        let task = Task(priority: priority) {
+            defer { requestTasks.remove(id: id) }
+            await operationBox.run()
+        }
+        channelCloseFuture.snapshot()?.whenComplete { _ in
+            task.cancel()
+        }
+        requestTasks.insert(id: id, task: task)
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -433,6 +475,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleShowEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
                 handleChatCompletions(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/completions" || path == "/v1/completions" {
+                handleCompletions(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/generate" {
                 handleOllamaGenerate(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat" {
@@ -465,7 +509,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleAnthropicMessages(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/audio/transcriptions" {
                 handleAudioTranscriptions(head: head, context: context, startTime: startTime, userAgent: userAgent)
-            } else if head.method == .POST, path == "/responses" {
+            } else if head.method == .POST, path == "/responses" || path == "/v1/responses" {
                 handleOpenResponses(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/memory/ingest" {
                 handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)
@@ -589,7 +633,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logMethod = method
         let logPath = path
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let cached = await ModelRuntime.shared.cachedModelSummaries()
             var aggregate: [String: Int] = [
                 "prefix_hits": 0,
@@ -641,6 +685,30 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["cache_enabled"] = true
                 row["is_hybrid"] = stats.isHybrid
                 row["is_paged_incompatible"] = stats.isPagedIncompatible
+                if let topology = summary.cacheTopology {
+                    row["cache_topology"] =
+                        [
+                            "layer_count": topology.layerCount,
+                            "kv_layer_count": topology.kvLayerCount,
+                            "chunked_kv_layer_count": topology.chunkedKVLayerCount,
+                            "quantized_kv_layer_count": topology.quantizedKVLayerCount,
+                            "turbo_quant_kv_layer_count": topology.turboQuantKVLayerCount,
+                            "compilable_kv_layer_count": topology.compilableKVLayerCount,
+                            "compilable_turbo_quant_kv_layer_count": topology.compilableTurboQuantKVLayerCount,
+                            "rotating_kv_layer_count": topology.rotatingKVLayerCount,
+                            "compilable_rotating_kv_layer_count": topology.compilableRotatingKVLayerCount,
+                            "rotating_wrapper_layer_count": topology.rotatingWrapperLayerCount,
+                            "hybrid_pool_layer_count": topology.hybridPoolLayerCount,
+                            "mamba_layer_count": topology.mambaLayerCount,
+                            "compilable_mamba_layer_count": topology.compilableMambaLayerCount,
+                            "arrays_layer_count": topology.arraysLayerCount,
+                            "zaya_cca_layer_count": topology.zayaCCALayerCount,
+                            "cache_list_layer_count": topology.cacheListLayerCount,
+                            "requires_ssm_companion_state": topology.requiresSSMCompanionState,
+                            "requires_disk_backed_restore": topology.requiresDiskBackedCoordinatorRestore,
+                            "tags": topology.topologyTags,
+                        ] as [String: Any]
+                }
 
                 var paged: [String: Any] = ["enabled": stats.pagedEnabled]
                 if let pagedStats = stats.pagedStats {
@@ -666,8 +734,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     aggregate["disk_l2_hits", default: 0] += diskStats.hits
                     aggregate["disk_l2_misses", default: 0] += diskStats.misses
                     aggregate["disk_l2_stores", default: 0] += diskStats.stores
-                    aggregate["prefix_hits", default: 0] += diskStats.hits
-                    aggregate["prefix_misses", default: 0] += diskStats.misses
                 }
                 row["block_disk_store"] = disk
 
@@ -913,10 +979,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let webDir = versionDir.appendingPathComponent(webSpec.static_dir, isDirectory: true)
                     let fileURL = webDir.appendingPathComponent(filePath)
 
-                    // Prevent escaping the web directory
-                    let resolvedPath = fileURL.standardizedFileURL.path
-                    let webDirPath = webDir.standardizedFileURL.path
-                    guard resolvedPath.hasPrefix(webDirPath) else {
+                    guard
+                        let resolvedFileURL = Self.containedPluginStaticFileURL(
+                            for: fileURL,
+                            webDirectory: webDir
+                        )
+                    else {
                         return self.sendPluginErrorFromTask(
                             loop: loop,
                             ctxBound: ctxBound,
@@ -932,12 +1000,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
 
                     let apiMount = webSpec.api_mount ?? "/api"
-                    if FileManager.default.fileExists(atPath: resolvedPath) {
+                    if FileManager.default.fileExists(atPath: resolvedFileURL.path) {
                         return self.serveStaticFile(
                             loop: loop,
                             ctxBound: ctxBound,
                             version: version,
-                            filePath: resolvedPath,
+                            filePath: resolvedFileURL.path,
                             pluginId: pluginId,
                             apiMount: apiMount,
                             agentId: agentIdStr,
@@ -950,13 +1018,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
 
                     // SPA fallback: serve entry point for non-file paths
-                    let entryPath = webDir.appendingPathComponent(webSpec.entry).path
-                    if FileManager.default.fileExists(atPath: entryPath) {
+                    let entryURL = webDir.appendingPathComponent(webSpec.entry)
+                    guard
+                        let resolvedEntryURL = Self.containedPluginStaticFileURL(
+                            for: entryURL,
+                            webDirectory: webDir
+                        )
+                    else {
+                        return self.sendPluginErrorFromTask(
+                            loop: loop,
+                            ctxBound: ctxBound,
+                            version: version,
+                            status: .forbidden,
+                            message: "Access denied",
+                            corsHeaders: corsHeaders,
+                            startTime: startTime,
+                            method: method,
+                            path: path,
+                            userAgent: userAgent
+                        )
+                    }
+                    if FileManager.default.fileExists(atPath: resolvedEntryURL.path) {
                         return self.serveStaticFile(
                             loop: loop,
                             ctxBound: ctxBound,
                             version: version,
-                            filePath: entryPath,
+                            filePath: resolvedEntryURL.path,
                             pluginId: pluginId,
                             apiMount: apiMount,
                             agentId: agentIdStr,
@@ -1432,6 +1519,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// Resolves symlinks before plugin static serving so path checks use the real filesystem boundary.
+    static func containedPluginStaticFileURL(for candidateURL: URL, webDirectory: URL) -> URL? {
+        let baseURL = webDirectory.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedURL = candidateURL.resolvingSymlinksInPath().standardizedFileURL
+        let basePath = baseURL.path
+        let resolvedPath = resolvedURL.path
+
+        guard resolvedPath == basePath || resolvedPath.hasPrefix(basePath + "/") else {
+            return nil
+        }
+        return resolvedURL
+    }
+
     /// Validates a Bearer token from the Authorization header.
     /// Returns true if the token is a valid `osk-v1` access key.
     private func isValidOwnerAuth(headers: [String: String]) -> Bool {
@@ -1754,6 +1854,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         // Log and close the connection to avoid NIO debug preconditions crashing the app
         print("[Osaurus][NIO] errorCaught: \(error)")
+        requestTasks.cancelAll()
         context.close(promise: nil)
     }
 
@@ -1837,14 +1938,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Chat handlers
 
-    /// Enrich a chat request with the agent's system prompt and memory context
-    /// when an agent ID is provided via the `X-Osaurus-Agent-Id` header.
+    /// Enrich an agent-loop request with the agent's system prompt and memory context.
     ///
-    /// Goes through `composeChatContext` (the same entry point the chat UI
-    /// uses) and then injects the rendered prompt + memory snippet into the
-    /// outgoing message array. `executionMode: .none` matches the original
-    /// HTTP-path semantics — sandbox / folder modes are chat-window-only;
-    /// HTTP requests don't have one of those bound.
+    /// Goes through `composeChatContext` and injects the rendered prompt +
+    /// memory snippet into the outgoing message array. Do not call this from
+    /// the strict OpenAI-compatible `/chat/completions` path; that endpoint
+    /// passes client messages/tools through unchanged.
     private static func enrichWithAgentContext(
         _ request: ChatCompletionRequest,
         agentId: String?
@@ -1944,6 +2043,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        // Memory writes against the Default agent must not be reachable from HTTP.
+        // The in-app Chat is the only sanctioned writer for the Default agent.
+        if let agentUUID = UUID(uuidString: req.agent_id),
+            let rejection = Agent.rejectBuiltInForExternalSurface(
+                agentUUID,
+                source: "http/memory/ingest"
+            )
+        {
+            let bodyJSON = #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .forbidden,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: bodyJSON
+            )
+            logRequest(
+                method: "POST",
+                path: "/memory/ingest",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 403,
+                startTime: startTime,
+                errorMessage: rejection.message
+            )
+            return
+        }
+
         let cors = stateRef.value.corsHeaders
         guard MemoryConfigurationStore.load().enabled else {
             let responseBody = #"{"error":"memory_disabled","message":"Memory is disabled"}"#
@@ -1975,7 +2102,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let db = MemoryDatabase.shared
             guard await MemoryDatabase.waitForSharedOpen(timeoutSeconds: 8) else {
                 let responseBody = #"{"error":"memory_database_unavailable","message":"Memory database is not ready"}"#
@@ -2218,7 +2345,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             (head.headers.first(name: "Host") ?? "unknown")
             .components(separatedBy: ":").first ?? "unknown"
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // 1. Verify the connector's signature over the nonce.
             let hexSig = req.signature.hasPrefix("0x") ? String(req.signature.dropFirst(2)) : req.signature
             guard let sigBytes = Data(hexEncoded: hexSig),
@@ -2518,7 +2645,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // 1. Resolve a local agent that matches the invite address. The
             //    receiver only ever connects via the relay tunnel, so the
             //    address has to belong to an agent on THIS device.
@@ -2640,8 +2767,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
 
-        Task(priority: .userInitiated) {
-            let agents = await MainActor.run { AgentManager.shared.agents }
+        runRequestTask(priority: .userInitiated) {
+            // Built-in agents (the Default agent) live only in-app; the
+            // listing endpoint must not advertise them so external clients
+            // can never even attempt to address them.
+            let agents = await MainActor.run {
+                AgentManager.shared.agents.filter { !$0.isBuiltIn }
+            }
 
             let db = MemoryDatabase.shared
             var memoryCounts: [String: Int] = [:]
@@ -2743,8 +2875,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        Task(priority: .userInitiated) {
-            guard let agent = await MainActor.run(body: { AgentManager.shared.agent(for: agentId) }) else {
+        runRequestTask(priority: .userInitiated) {
+            // Built-in agents are not exposed via HTTP — return 404 (not 403)
+            // so external clients learn the id is unreachable but cannot
+            // distinguish "no such agent" from "you are not allowed to see
+            // this one". This matches the listing endpoint's filter behavior.
+            guard let agent = await MainActor.run(body: { AgentManager.shared.agent(for: agentId) }),
+                !agent.isBuiltIn
+            else {
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
@@ -2864,6 +3002,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        // Built-in agents (the Default agent) are not reachable from any
+        // external surface — they exist only inside the in-app Chat. Reject
+        // before any enrichment so secrets / system prompts / memory writes
+        // for built-ins are unreachable from HTTP.
+        if let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run") {
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .forbidden,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body:
+                    #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+            )
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 403,
+                startTime: startTime,
+                errorMessage: rejection.message
+            )
+            return
+        }
+
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let writer = SSEResponseWriter()
@@ -2881,7 +3044,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // Resolve model: client sends "default" when no specific model was known
             let model: String
             if req.model.isEmpty || req.model == "default" {
@@ -2975,6 +3138,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 iterationReq.reasoning_effort = req.reasoning_effort
 
                 var responseContent = ""
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 // Local models can emit multiple tool calls in a single
                 // completion; ServiceToolInvocations carries the full batch.
                 var pendingInvocations: [ServiceToolInvocation] = []
@@ -2987,6 +3153,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         // OpenAI extended `reasoning_content` channel
                         // and do NOT mix it into `responseContent`.
                         if let reasoning = StreamingReasoningHint.decode(delta) {
+                            if let pending = contentCoalescer.flush() {
+                                hop {
+                                    writerBound.value.writeContent(
+                                        pending,
+                                        model: model,
+                                        responseId: responseId,
+                                        created: created,
+                                        context: ctx.value
+                                    )
+                                }
+                            }
                             hop {
                                 writerBound.value.writeReasoning(
                                     reasoning,
@@ -3001,9 +3178,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if StreamingStatsHint.decode(delta) != nil { continue }
                         if StreamingToolHint.isSentinel(delta) { continue }
                         responseContent += delta
+                        if let chunk = contentCoalescer.append(delta) {
+                            hop {
+                                writerBound.value.writeContent(
+                                    chunk,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
+                    }
+                    if let pending = contentCoalescer.flush() {
                         hop {
                             writerBound.value.writeContent(
-                                delta,
+                                pending,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
@@ -3021,7 +3211,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // the actual on-wire status (200) so dashboards don't
                     // mis-attribute a delivered stream as a 500.
                     hop {
-                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
                     }
                     logSelf.logRequest(
@@ -3169,7 +3359,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
         let agentIdentifier = String(components[1])
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // Resolve identifier: try UUID first, then crypto address
             guard let agentId = await MainActor.run(body: { AgentManager.shared.resolveAgentId(agentIdentifier) })
             else {
@@ -3184,6 +3374,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         body: #"{"error":"agent_not_found","message":"No agent found for the given identifier"}"#
                     )
                 }
+                return
+            }
+
+            if let rejection = Agent.rejectBuiltInForExternalSurface(
+                agentId,
+                source: "http/agents/dispatch"
+            ) {
+                let bodyJSON =
+                    #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: bodyJSON
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: requestBodyString,
+                    responseStatus: 403,
+                    startTime: logStartTime,
+                    errorMessage: rejection.message
+                )
                 return
             }
 
@@ -3317,7 +3536,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let (responseBody, found) = await MainActor.run {
                 guard let state = BackgroundTaskManager.shared.taskState(for: taskId) else {
                     return (#"{"error":"not_found","message":"Task not found"}"#, false)
@@ -3383,7 +3602,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             await MainActor.run {
                 BackgroundTaskManager.shared.cancelTask(taskId)
             }
@@ -3456,7 +3675,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let response = json["response"] as? String
             else {
@@ -3562,7 +3781,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
                 let embeddings = try await EmbeddingService.shared.embed(texts: texts)
 
@@ -3635,6 +3854,286 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     errorMessage: error.localizedDescription
                 )
             }
+        }
+    }
+
+    // MARK: - Legacy Completions (/v1/completions)
+    // `CompletionRequest` lives in OpenAIAPI.swift alongside
+    // `ChatCompletionRequest`. The response DTOs below are encode-only.
+
+    private struct CompletionChoiceDTO: Encodable {
+        let text: String
+        let index: Int
+        let finish_reason: String?
+    }
+    private struct CompletionUsageDTO: Encodable {
+        let prompt_tokens: Int
+        let completion_tokens: Int
+        let total_tokens: Int
+    }
+    private struct CompletionResponseDTO: Encodable {
+        let id: String
+        let object: String
+        let created: Int
+        let model: String
+        let choices: [CompletionChoiceDTO]
+        let usage: CompletionUsageDTO?
+    }
+
+    private static func encodeCompletionJSON(_ dto: CompletionResponseDTO) -> String? {
+        guard let data = try? JSONEncoder().encode(dto) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// OpenAI-legacy `/v1/completions`: raw-prompt completion with a
+    /// `text_completion` response shape. Routes through the chat-template-
+    /// bypassing raw generation path so FIM prompts reach the model verbatim.
+    private func handleCompletions(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        guard let req = try? JSONDecoder().decode(CompletionRequest.self, from: data),
+            !req.prompt.isEmpty
+        else {
+            let body = Self.errorBody(
+                .openai(type: "invalid_request_error"),
+                message: "Invalid request format: 'prompt' is required"
+            )
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: body
+            )
+            logRequest(
+                method: "POST",
+                path: "/completions",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid completions request"
+            )
+            return
+        }
+
+        let accept = head.headers.first(name: "Accept") ?? ""
+        let wantsSSE = (req.stream ?? false) || accept.contains("text/event-stream")
+        let created = Int(Date().timeIntervalSince1970)
+        let responseId = Self.shortId(prefix: "cmpl-", length: 12)
+        let model = req.model
+        let prompt = req.prompt
+        let stop = req.stop
+        let params = GenerationParameters(
+            temperature: req.temperature,
+            maxTokens: req.resolvedMaxTokens,
+            maxTokensExplicit: req.maxTokens != nil,
+            topPOverride: req.topP
+        )
+        let promptTokens = TokenEstimator.estimate(prompt)
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        let version = head.version
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+
+        if wantsSSE {
+            let writer = SSEResponseWriter()
+            let writerBound = NIOLoopBound(writer, eventLoop: loop)
+            hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
+            let keepaliveTask = Self.startSSEKeepalive(
+                writer: writerBound,
+                channel: context.channel,
+                loop: loop,
+                ctx: ctx
+            )
+            runRequestTask(priority: .userInitiated) {
+                defer { keepaliveTask.cancel() }
+                var accumulated = ""
+                let finishReason = "stop"
+                do {
+                    let stream = try await MLXService.shared.streamRawCompletion(
+                        prompt: prompt,
+                        parameters: params,
+                        requestedModel: model,
+                        stopSequences: stop
+                    )
+                    // `streamRawCompletion` yields only plain generated text
+                    // (reasoning / tool / stats events are dropped upstream in
+                    // `ModelRuntime.streamRawText`), so no sentinel filtering is
+                    // needed here.
+                    for try await delta in stream {
+                        if delta.isEmpty { continue }
+                        accumulated += delta
+                        let chunk = CompletionResponseDTO(
+                            id: responseId,
+                            object: "text_completion",
+                            created: created,
+                            model: model,
+                            choices: [CompletionChoiceDTO(text: delta, index: 0, finish_reason: nil)],
+                            usage: nil
+                        )
+                        if let json = Self.encodeCompletionJSON(chunk) {
+                            hop { writerBound.value.writeRawJSONData(json, context: ctx.value) }
+                        }
+                    }
+                } catch {
+                    hop { writerBound.value.writeError(error.localizedDescription, context: ctx.value) }
+                }
+                let final = CompletionResponseDTO(
+                    id: responseId,
+                    object: "text_completion",
+                    created: created,
+                    model: model,
+                    choices: [CompletionChoiceDTO(text: "", index: 0, finish_reason: finishReason)],
+                    usage: nil
+                )
+                hop {
+                    if let json = Self.encodeCompletionJSON(final) {
+                        writerBound.value.writeRawJSONData(json, context: ctx.value)
+                    }
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/completions",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: model,
+                    tokensInput: promptTokens,
+                    tokensOutput: TokenEstimator.estimate(accumulated),
+                    temperature: req.temperature,
+                    maxTokens: req.resolvedMaxTokens
+                )
+            }
+            return
+        }
+
+        // Non-streaming
+        runRequestTask(priority: .userInitiated) {
+            do {
+                let stream = try await MLXService.shared.streamRawCompletion(
+                    prompt: prompt,
+                    parameters: params,
+                    requestedModel: model,
+                    stopSequences: stop
+                )
+                var text = ""
+                for try await delta in stream {
+                    text += delta
+                }
+                let completionTokens = TokenEstimator.estimate(text)
+                let response = CompletionResponseDTO(
+                    id: responseId,
+                    object: "text_completion",
+                    created: created,
+                    model: model,
+                    choices: [CompletionChoiceDTO(text: text, index: 0, finish_reason: "stop")],
+                    usage: CompletionUsageDTO(
+                        prompt_tokens: promptTokens,
+                        completion_tokens: completionTokens,
+                        total_tokens: promptTokens + completionTokens
+                    )
+                )
+                let body = Self.encodeCompletionJSON(response) ?? "{}"
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                hop {
+                    Self.writeFullResponse(
+                        ctx: ctx,
+                        version: version,
+                        status: .ok,
+                        headers: headersCopy,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/completions",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: startTime,
+                    model: model,
+                    tokensInput: promptTokens,
+                    tokensOutput: completionTokens,
+                    temperature: req.temperature,
+                    maxTokens: req.resolvedMaxTokens,
+                    finishReason: .stop
+                )
+            } catch {
+                let message = error.localizedDescription
+                let status: HTTPResponseStatus =
+                    error is MLXService.RuntimePolicyError ? .badRequest : .internalServerError
+                let body = Self.errorBody(.openai(type: "internal_error"), message: message)
+                hop {
+                    Self.writeFullResponse(
+                        ctx: ctx,
+                        version: version,
+                        status: status,
+                        headers: [("Content-Type", "application/json; charset=utf-8")],
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/completions",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: Int(status.code),
+                    startTime: startTime,
+                    model: model,
+                    errorMessage: message
+                )
+            }
+        }
+    }
+
+    /// Write a complete HTTP response (head + body + end, then close) on the
+    /// event loop. Must be called from within a `hop { }` so `ctx.value` is
+    /// touched on its loop. Mirrors the inline write the chat path uses.
+    private static func writeFullResponse(
+        ctx: NIOLoopBound<ChannelHandlerContext>,
+        version: HTTPVersion,
+        status: HTTPResponseStatus,
+        headers: [(String, String)],
+        body: String
+    ) {
+        var responseHead = HTTPResponseHead(version: version, status: status)
+        var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+        buffer.writeString(body)
+        var nioHeaders = HTTPHeaders()
+        for (name, value) in headers { nioHeaders.add(name: name, value: value) }
+        nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+        nioHeaders.add(name: "Connection", value: "close")
+        responseHead.headers = nioHeaders
+        let c = ctx.value
+        c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+        c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+        c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+            ctx.value.close(promise: nil)
         }
     }
 
@@ -3727,7 +4226,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         httpTrace.set("http_input_audio_count", req.messages.reduce(0) { $0 + $1.audioInputs.count })
         httpTrace.set("http_input_video_count", req.messages.reduce(0) { $0 + $1.videoUrls.count })
 
-        let memoryAgentId = head.headers.first(name: "X-Osaurus-Agent-Id")
+        // The Default (built-in) agent is unreachable from external HTTP.
+        // Silently drop the header if it points at the Default id so that
+        // memory writes and per-agent persistence never touch the built-in
+        // agent's data. Inference itself is unaffected — model selection
+        // and tools still work, just unattributed to the default.
+        let rawMemoryAgentId = head.headers.first(name: "X-Osaurus-Agent-Id")
+        let memoryAgentId: String? = {
+            guard let raw = rawMemoryAgentId else { return nil }
+            if let uuid = UUID(uuidString: raw), uuid == Agent.defaultId { return nil }
+            return raw
+        }()
 
         // HTTP-specific persistence knobs:
         //   X-Persist: false   → skip writing the conversation to chat history
@@ -3756,30 +4265,56 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logUserAgent = userAgent
             let logRequestBody = requestBodyString
             let logModel = model
-            let logTemperature = req.temperature ?? 0.7
-            let logMaxTokens = req.max_tokens ?? 1024
+            let logTemperature = req.temperature
+            let logMaxTokens = req.resolvedMaxTokens ?? 1024
             let logSelf = self
+            let disconnected = SendableBool(false)
+            let channelClosed = SendableBool(false)
+            context.channel.closeFuture.whenComplete { _ in
+                channelClosed.value = true
+                disconnected.value = true
+            }
             // SSE keepalive: emit a `: ping` comment line every 15s so
             // intermediate proxies / load balancers do not idle out long
-            // tool-execution / reasoning pauses. Cancelled when the
-            // producer task finishes.
+            // tool-execution / reasoning pauses. Channel close futures and
+            // write failures handle disconnect cancellation; the keepalive
+            // cadence must not be shortened into a 250ms busy heartbeat.
             let keepaliveTask = Self.startSSEKeepalive(
                 writer: writerBound,
                 channel: context.channel,
                 loop: loop,
-                ctx: ctx
+                ctx: ctx,
+                disconnected: disconnected
             )
-            Task(priority: .userInitiated) {
+            runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
+                let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
+                var emittedSemanticDelta = false
+                func markSemanticDeltaIfConnected() {
+                    if self._isChannelActive.value && !disconnected.value && !channelClosed.value {
+                        emittedSemanticDelta = true
+                    }
+                }
+                defer {
+                    if !wasResidentBeforeStream && !emittedSemanticDelta
+                        && (disconnected.value || channelClosed.value)
+                    {
+                        Task {
+                            await ModelRuntime.shared.unload(name: model)
+                        }
+                    }
+                }
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
-                    let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
-                    httpTrace.mark("http_enrich_done")
+                    let enrichedReq = req
+                    httpTrace.mark("http_context_passthrough_done")
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
 
-                    // Compute prefix evidence after enrichment so it tracks
-                    // the actual system prompt + tool schema payload sent.
+                    // Compute prefix evidence from the exact request sent to
+                    // the OpenAI-compatible server path. Agent context is
+                    // intentionally not injected here; the app chat and
+                    // /agents/{id}/run paths own composed context.
                     let prefixHash: String = {
                         let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
                         return ModelRuntime.computePrefixHash(
@@ -3800,14 +4335,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.mark("http_sse_role_written")
 
                     httpTrace.mark("http_stream_chat_start")
+                    try Task.checkCancellation()
                     let stream = try await chatEngine.streamChat(request: enrichedReq)
                     httpTrace.mark("http_stream_chat_ready")
+                    if disconnected.value { throw CancellationError() }
                     var accumulatedContent = ""
+                    var contentCoalescer = Self.StreamDeltaCoalescer(
+                        interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                    )
                     var authoritativeCompletionTokens: Int?
                     var streamFinishReason = "stop"
                     for try await delta in stream {
+                        try Task.checkCancellation()
+                        if disconnected.value { throw CancellationError() }
                         if let reasoning = StreamingReasoningHint.decode(delta) {
                             httpTrace.markFirstSemanticDelta("reasoning")
+                            markSemanticDeltaIfConnected()
+                            if let pending = contentCoalescer.flush() {
+                                hop {
+                                    writerBound.value.writeContent(
+                                        pending,
+                                        model: model,
+                                        responseId: responseId,
+                                        created: created,
+                                        context: ctx.value
+                                    )
+                                }
+                            }
                             hop {
                                 writerBound.value.writeReasoning(
                                     reasoning,
@@ -3828,10 +4382,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         if StreamingToolHint.isSentinel(delta) { continue }
                         httpTrace.markFirstSemanticDelta("content")
+                        markSemanticDeltaIfConnected()
                         accumulatedContent += delta
+                        if let chunk = contentCoalescer.append(delta) {
+                            hop {
+                                writerBound.value.writeContent(
+                                    chunk,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
+                        if disconnected.value { throw CancellationError() }
+                    }
+                    if disconnected.value { throw CancellationError() }
+                    if let pending = contentCoalescer.flush() {
                         hop {
                             writerBound.value.writeContent(
-                                delta,
+                                pending,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
@@ -3901,6 +4471,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // per invocation, sharing one finish_reason="tool_calls".
                     // OpenAI clients deduplicate by `index`.
                     httpTrace.markFirstSemanticDelta("tool_calls")
+                    markSemanticDeltaIfConnected()
                     httpTrace.set("http_tool_call_count", invs.invocations.count)
                     let includeUsage = req.stream_options?.include_usage == true
                     // Use `req.messages` here (not `enrichedReq.messages`)
@@ -3962,6 +4533,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } catch let inv as ServiceToolInvocation {
                     // Single tool invocation — same emission as above.
                     httpTrace.markFirstSemanticDelta("tool_calls")
+                    markSemanticDeltaIfConnected()
                     httpTrace.set("http_tool_call_count", 1)
                     let includeUsage = req.stream_options?.include_usage == true
                     let promptTokens = Self.estimatePromptTokens(req.messages)
@@ -4018,7 +4590,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // the actual on-wire status (200) so dashboards don't
                     // mis-attribute a delivered stream as a 500.
                     hop {
-                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
                     }
                     httpTrace.mark("http_sse_error_written")
@@ -4052,21 +4624,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logUserAgent = userAgent
             let logRequestBody = requestBodyString
             let logModel = model
-            let logTemperature = req.temperature ?? 0.7
-            let logMaxTokens = req.max_tokens ?? 1024
+            let logTemperature = req.temperature
+            let logMaxTokens = req.resolvedMaxTokens ?? 1024
             let logSelf = self
-            Task(priority: .userInitiated) {
+            runRequestTask(priority: .userInitiated) {
                 do {
                     httpTrace.mark("http_task_start")
                     let chatEngine = self.chatEngine
-                    let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
-                    httpTrace.mark("http_enrich_done")
+                    let enrichedReq = req
+                    httpTrace.mark("http_context_passthrough_done")
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
                     httpTrace.mark("http_complete_chat_start")
                     var resp = try await chatEngine.completeChat(request: enrichedReq)
                     httpTrace.mark("http_complete_chat_done")
-                    // Compute prefix evidence after enrichment so it tracks
-                    // the actual system prompt + tool schema payload sent.
+                    // Compute prefix evidence from the exact request sent to
+                    // the OpenAI-compatible server path. Agent context is
+                    // intentionally not injected here; the app chat and
+                    // /agents/{id}/run paths own composed context.
                     let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
                     resp.prefix_hash = ModelRuntime.computePrefixHash(
                         systemContent: sysContent,
@@ -4151,6 +4725,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             engineError.httpStatus == 404
                             ? "invalid_request_error" : "service_unavailable"
                         message = engineError.errorDescription ?? error.localizedDescription
+                    } else if error is MLXService.RuntimePolicyError {
+                        status = .badRequest
+                        errorType = "invalid_request_error"
+                        message = error.localizedDescription
                     } else {
                         status = .internalServerError
                         errorType = "internal_error"
@@ -4263,14 +4841,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         let logModel = req.model
-        let logTemperature = req.temperature ?? 0.7
-        let logMaxTokens = req.max_tokens ?? 1024
+        let logTemperature = req.temperature
+        let logMaxTokens = req.resolvedMaxTokens ?? 1024
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
+            let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: req.model)
+            var emittedSemanticDelta = false
+            func markSemanticDeltaIfChannelActive() {
+                if self._isChannelActive.value {
+                    emittedSemanticDelta = true
+                }
+            }
+            defer {
+                if !wasResidentBeforeStream && !emittedSemanticDelta
+                    && (!self._isChannelActive.value || Task.isCancelled)
+                {
+                    Task {
+                        await ModelRuntime.shared.unload(name: req.model)
+                    }
+                }
+            }
             do {
                 let chatEngine = self.chatEngine
+                try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: req)
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 for try await delta in stream {
+                    try Task.checkCancellation()
                     // Ollama-style NDJSON has no `reasoning` / `thinking`
                     // field today — `StreamingReasoningHint`, along with
                     // `StreamingToolHint` / `StreamingStatsHint`, is
@@ -4281,9 +4880,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if StreamingReasoningHint.decode(delta) != nil { continue }
                     if StreamingStatsHint.decode(delta) != nil { continue }
                     if StreamingToolHint.isSentinel(delta) { continue }
+                    if let chunk = contentCoalescer.append(delta) {
+                        markSemanticDeltaIfChannelActive()
+                        hop {
+                            writerBound.value.writeContent(
+                                chunk,
+                                model: req.model,
+                                responseId: "",
+                                created: Int(Date().timeIntervalSince1970),
+                                context: ctx.value
+                            )
+                        }
+                    }
+                }
+                if let pending = contentCoalescer.flush() {
                     hop {
                         writerBound.value.writeContent(
-                            delta,
+                            pending,
                             model: req.model,
                             responseId: "",
                             created: Int(Date().timeIntervalSince1970),
@@ -4356,7 +4969,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // NDJSON response head was already 200 — surface as in-band
                 // NDJSON error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -4389,8 +5002,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
+                try Task.checkCancellation()
                 let response = try await self.chatEngine.completeChat(request: request)
                 let message = response.choices.first?.message
                 let body = Self.ollamaChatJSON(
@@ -4420,7 +5034,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     tokensInput: response.usage.prompt_tokens,
                     tokensOutput: response.usage.completion_tokens,
-                    temperature: request.temperature ?? 0.7,
+                    temperature: request.temperature,
                     maxTokens: request.max_tokens ?? 1024,
                     finishReason: message?.tool_calls?.isEmpty == false ? .toolCalls : .stop
                 )
@@ -4449,7 +5063,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     model: request.model,
                     toolCalls: toolLogs,
-                    temperature: request.temperature ?? 0.7,
+                    temperature: request.temperature,
                     maxTokens: request.max_tokens ?? 1024,
                     finishReason: .toolCalls
                 )
@@ -4476,18 +5090,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     model: request.model,
                     toolCalls: [toolLog],
-                    temperature: request.temperature ?? 0.7,
+                    temperature: request.temperature,
                     maxTokens: request.max_tokens ?? 1024,
                     finishReason: .toolCalls
                 )
             } catch {
                 let body = Self.ollamaGenerateErrorJSON(error.localizedDescription)
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                let status: HTTPResponseStatus =
+                    error is MLXService.RuntimePolicyError ? .badRequest : .internalServerError
                 hop {
                     logSelf.sendResponse(
                         context: ctx.value,
                         version: head.version,
-                        status: .internalServerError,
+                        status: status,
                         headers: headers,
                         body: body
                     )
@@ -4497,7 +5113,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/chat",
                     userAgent: userAgent,
                     requestBody: requestBodyString,
-                    responseStatus: 500,
+                    responseStatus: error is MLXService.RuntimePolicyError ? 400 : 500,
                     startTime: startTime,
                     model: request.model,
                     errorMessage: error.localizedDescription
@@ -4621,19 +5237,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         let logModel = chatRequest.model
-        let logTemperature = chatRequest.temperature ?? 0.7
+        let logTemperature = chatRequest.temperature
         let logMaxTokens = chatRequest.max_tokens ?? 1024
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
+                try Task.checkCancellation()
                 let stream = try await self.chatEngine.streamChat(request: chatRequest)
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 for try await delta in stream {
                     if StreamingReasoningHint.decode(delta) != nil { continue }
                     if StreamingStatsHint.decode(delta) != nil { continue }
                     if StreamingToolHint.isSentinel(delta) { continue }
+                    if let chunk = contentCoalescer.append(delta) {
+                        hop {
+                            writerBound.value.writeContent(
+                                chunk,
+                                model: chatRequest.model,
+                                created: Int(Date().timeIntervalSince1970),
+                                context: ctx.value
+                            )
+                        }
+                    }
+                }
+                if let pending = contentCoalescer.flush() {
                     hop {
                         writerBound.value.writeContent(
-                            delta,
+                            pending,
                             model: chatRequest.model,
                             created: Int(Date().timeIntervalSince1970),
                             context: ctx.value
@@ -4662,7 +5294,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } catch {
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -4695,8 +5327,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
+                try Task.checkCancellation()
                 let response = try await self.chatEngine.completeChat(request: request)
                 let content = response.choices.first?.message.content ?? ""
                 let body = Self.ollamaGenerateJSON(
@@ -4725,18 +5358,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     tokensInput: response.usage.prompt_tokens,
                     tokensOutput: response.usage.completion_tokens,
-                    temperature: request.temperature ?? 0.7,
+                    temperature: request.temperature,
                     maxTokens: request.max_tokens ?? 1024,
                     finishReason: .stop
                 )
             } catch {
                 let body = Self.ollamaGenerateErrorJSON(error.localizedDescription)
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                let status: HTTPResponseStatus =
+                    error is MLXService.RuntimePolicyError ? .badRequest : .internalServerError
                 hop {
                     logSelf.sendResponse(
                         context: ctx.value,
                         version: head.version,
-                        status: .internalServerError,
+                        status: status,
                         headers: headers,
                         body: body
                     )
@@ -4746,7 +5381,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/generate",
                     userAgent: userAgent,
                     requestBody: requestBodyString,
-                    responseStatus: 500,
+                    responseStatus: error is MLXService.RuntimePolicyError ? 400 : 500,
                     startTime: startTime,
                     model: request.model,
                     errorMessage: error.localizedDescription
@@ -4857,18 +5492,40 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// but keep intermediate proxies from idling out long
     /// tool-execution or reasoning pauses. Callers must `cancel()` the
     /// returned task when their producer finishes.
-    static func startSSEKeepalive(
+    private static func startSSEKeepalive(
         writer: NIOLoopBound<SSEResponseWriter>,
         channel: Channel,
         loop: EventLoop,
-        ctx: NIOLoopBound<ChannelHandlerContext>
+        ctx: NIOLoopBound<ChannelHandlerContext>,
+        disconnected: SendableBool? = nil,
+        intervalNanoseconds: UInt64 = 15_000_000_000
     ) -> Task<Void, Never> {
         Task<Void, Never>(priority: .background) {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                try? await Task.sleep(nanoseconds: intervalNanoseconds)
                 if Task.isCancelled { return }
-                guard channel.isActive else { return }
-                loop.execute { writer.value.writePing(ctx.value) }
+                guard channel.isActive else {
+                    disconnected?.value = true
+                    return
+                }
+                loop.execute {
+                    guard channel.isActive else {
+                        disconnected?.value = true
+                        return
+                    }
+                    var buf = channel.allocator.buffer(capacity: 16)
+                    buf.writeString(": ping\n\n")
+                    let promise = loop.makePromise(of: Void.self)
+                    promise.futureResult.whenFailure { _ in
+                        disconnected?.value = true
+                        ctx.value.close(promise: nil)
+                    }
+                    ctx.value.writeAndFlush(
+                        NIOAny(HTTPServerResponsePart.body(.byteBuffer(buf))),
+                        promise: promise
+                    )
+                    ctx.value.read()
+                }
             }
         }
     }
@@ -4996,7 +5653,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logMethod = method
         let logPath = path
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let inflight = await ModelLease.shared.snapshot()
             let cached = await ModelRuntime.shared.cachedModelSummaries()
             let residency = await ModelResidencyManager.shared.snapshots()
@@ -5089,7 +5746,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logSelf = self
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // Get local models
             var models = MLXService.getAvailableModels().map { OpenAIModel(modelName: $0) }
             if FoundationModelService.isDefaultModelAvailable() {
@@ -5144,7 +5801,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logSelf = self
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let now = Date().ISO8601Format()
 
             // Get local models
@@ -5155,14 +5812,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 m.modified_at = now
                 m.size = 0
                 m.digest = ""
-                m.details = ModelDetails(
-                    parent_model: "",
-                    format: "safetensors",
-                    family: "unknown",
-                    families: ["unknown"],
-                    parameter_size: "",
-                    quantization_level: ""
-                )
+                m.details = ModelDetails.localMLXModelDetails(for: name)
                 return m
             }
 
@@ -5322,7 +5972,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
         let modelName = req.model
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             // Handle "foundation" model specially
             if modelName.lowercased() == "foundation" || modelName.lowercased() == "default" {
                 if FoundationModelService.isDefaultModelAvailable() {
@@ -5468,7 +6118,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let entries = await MainActor.run {
                 ToolRegistry.shared.listTools().filter { $0.enabled }
             }
@@ -5528,6 +6178,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         } else {
             data = Data()
             requestBodyString = nil
+        }
+
+        // Tool calls attributed to the Default agent are not exposable externally.
+        // Custom-agent and unattributed (anonymous) calls keep working.
+        if let header = head.headers.first(name: "X-Osaurus-Agent-Id"),
+            let agentUUID = UUID(uuidString: header),
+            let rejection = Agent.rejectBuiltInForExternalSurface(
+                agentUUID,
+                source: "http/mcp/call"
+            )
+        {
+            let bodyJSON = #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .forbidden,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: bodyJSON
+            )
+            logRequest(
+                method: "POST",
+                path: "/mcp/call",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 403,
+                startTime: startTime,
+                errorMessage: rejection.message
+            )
+            return
         }
 
         struct CallBody: Codable {
@@ -5609,7 +6288,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         let logSelf = self
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             let toolCallStartTime = Date()
             do {
                 // Validate against schema if available
@@ -5861,15 +6540,42 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logModel = model
         let logSelf = self
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
+            let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
+            var emittedSemanticDelta = false
+            func markSemanticDeltaIfChannelActive() {
+                if self._isChannelActive.value {
+                    emittedSemanticDelta = true
+                }
+            }
+            defer {
+                if !wasResidentBeforeStream && !emittedSemanticDelta
+                    && (!self._isChannelActive.value || Task.isCancelled)
+                {
+                    Task {
+                        await ModelRuntime.shared.unload(name: model)
+                    }
+                }
+            }
             do {
                 let chatEngine = self.chatEngine
+                try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 for try await delta in stream {
+                    try Task.checkCancellation()
                     // Reasoning sentinel must be decoded BEFORE the
                     // generic `isSentinel` filter, otherwise it gets
                     // dropped together with tool/stats hints.
                     if let reasoning = StreamingReasoningHint.decode(delta) {
+                        markSemanticDeltaIfChannelActive()
+                        if let pending = contentCoalescer.flush() {
+                            hop {
+                                writerBound.value.writeTextDelta(pending, context: ctx.value)
+                            }
+                        }
                         hop {
                             writerBound.value.writeThinkingDelta(reasoning, context: ctx.value)
                         }
@@ -5882,8 +6588,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         continue
                     }
                     if StreamingToolHint.isSentinel(delta) { continue }
+                    if let chunk = contentCoalescer.append(delta) {
+                        markSemanticDeltaIfChannelActive()
+                        hop {
+                            writerBound.value.writeTextDelta(chunk, context: ctx.value)
+                        }
+                    }
+                }
+                if let pending = contentCoalescer.flush() {
+                    markSemanticDeltaIfChannelActive()
                     hop {
-                        writerBound.value.writeTextDelta(delta, context: ctx.value)
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
                     }
                 }
                 hop {
@@ -5903,6 +6618,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } catch let invs as ServiceToolInvocations {
                 // Multi-tool MLX completion: one `tool_use` content block
                 // per invocation, then a single `tool_use` finish.
+                markSemanticDeltaIfChannelActive()
                 hop {
                     for inv in invs.invocations {
                         self.writeAnthropicToolUse(inv, writer: writerBound.value, context: ctx.value)
@@ -5926,6 +6642,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } catch let inv as ServiceToolInvocation {
                 // Single tool invocation — same emission path.
+                markSemanticDeltaIfChannelActive()
                 hop {
                     self.writeAnthropicToolUse(inv, writer: writerBound.value, context: ctx.value)
                     writerBound.value.writeFinish(stopReason: "tool_use", context: ctx.value)
@@ -5947,7 +6664,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -5988,9 +6705,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logModel = model
         let logSelf = self
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
                 let chatEngine = self.chatEngine
+                try Task.checkCancellation()
                 let resp = try await chatEngine.completeChat(request: internalReq)
 
                 // Convert OpenAI response to Anthropic format
@@ -6129,7 +6847,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch {
-                let errorResp = AnthropicError(message: error.localizedDescription, errorType: "api_error")
+                let isPolicyError = error is MLXService.RuntimePolicyError
+                let errorResp = AnthropicError(
+                    message: error.localizedDescription,
+                    errorType: isPolicyError ? "invalid_request_error" : "api_error"
+                )
                 let errorJson =
                     (try? JSONEncoder.osaurusCanonical().encode(errorResp))
                     .map { String(decoding: $0, as: UTF8.self) }
@@ -6140,7 +6862,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let body = errorJson
 
                 hop {
-                    var responseHead = HTTPResponseHead(version: head.version, status: .internalServerError)
+                    var responseHead = HTTPResponseHead(
+                        version: head.version,
+                        status: isPolicyError ? .badRequest : .internalServerError
+                    )
                     var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
                     buffer.writeString(body)
                     var nioHeaders = HTTPHeaders()
@@ -6161,7 +6886,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/messages",
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
-                    responseStatus: 500,
+                    responseStatus: isPolicyError ? 400 : 500,
                     startTime: logStartTime,
                     model: logModel,
                     errorMessage: error.localizedDescription
@@ -6266,7 +6991,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let modelParam = parsed.fields["model"]
         let responseFormat = parsed.fields["response_format"] ?? "json"
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
                 // Write audio data to temp file
                 let tempDir = FileManager.default.temporaryDirectory
@@ -6583,15 +7308,53 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let messageItemOpen = AtomicBoolBox()
         let outputText = LockedStringAccumulator()
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
+            let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
+            var emittedSemanticDelta = false
+            func markSemanticDeltaIfChannelActive() {
+                if self._isChannelActive.value {
+                    emittedSemanticDelta = true
+                }
+            }
+            defer {
+                if !wasResidentBeforeStream && !emittedSemanticDelta
+                    && (!self._isChannelActive.value || Task.isCancelled)
+                {
+                    Task {
+                        await ModelRuntime.shared.unload(name: model)
+                    }
+                }
+            }
             do {
                 let chatEngine = self.chatEngine
+                try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
+                var contentCoalescer = Self.StreamDeltaCoalescer(
+                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                )
                 for try await delta in stream {
+                    try Task.checkCancellation()
                     // Reasoning sentinel must be decoded BEFORE the
                     // generic `isSentinel` filter, otherwise it gets
                     // dropped together with tool/stats hints.
                     if let reasoning = StreamingReasoningHint.decode(delta) {
+                        markSemanticDeltaIfChannelActive()
+                        if let pending = contentCoalescer.flush() {
+                            outputText.append(pending)
+                            hop {
+                                // First non-reasoning chunk: close the
+                                // reasoning item (if any) then open the
+                                // message item so the text deltas land on
+                                // the message item.
+                                writerBound.value.writeReasoningItemDone(context: ctx.value)
+                                if !messageItemOpen.value {
+                                    messageItemOpen.value = true
+                                    writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                                    writerBound.value.writeContentPartAdded(context: ctx.value)
+                                }
+                                writerBound.value.writeTextDelta(pending, context: ctx.value)
+                            }
+                        }
                         hop {
                             writerBound.value.writeReasoningDelta(
                                 reasoning,
@@ -6608,7 +7371,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         continue
                     }
                     if StreamingToolHint.isSentinel(delta) { continue }
-                    outputText.append(delta)
+                    if let chunk = contentCoalescer.append(delta) {
+                        markSemanticDeltaIfChannelActive()
+                        outputText.append(chunk)
+                        hop {
+                            // First non-reasoning chunk: close the reasoning
+                            // item (if any) then open the message item so the
+                            // text deltas land on the message item.
+                            writerBound.value.writeReasoningItemDone(context: ctx.value)
+                            if !messageItemOpen.value {
+                                messageItemOpen.value = true
+                                writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                                writerBound.value.writeContentPartAdded(context: ctx.value)
+                            }
+                            writerBound.value.writeTextDelta(chunk, context: ctx.value)
+                        }
+                    }
+                }
+                if let pending = contentCoalescer.flush() {
+                    markSemanticDeltaIfChannelActive()
+                    outputText.append(pending)
                     hop {
                         // First non-reasoning chunk: close the reasoning
                         // item (if any) then open the message item so the
@@ -6619,7 +7401,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
                             writerBound.value.writeContentPartAdded(context: ctx.value)
                         }
-                        writerBound.value.writeTextDelta(delta, context: ctx.value)
+                        writerBound.value.writeTextDelta(pending, context: ctx.value)
                     }
                 }
                 hop {
@@ -6653,6 +7435,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch let invs as ServiceToolInvocations {
+                markSemanticDeltaIfChannelActive()
                 // Multi-tool MLX completion: emit one function_call item
                 // per invocation. Use the lazy `messageItemOpen` flag so
                 // we don't close an item that was never opened.
@@ -6691,6 +7474,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
+                markSemanticDeltaIfChannelActive()
                 // Single tool invocation — same flow with one item.
                 hop {
                     writerBound.value.writeReasoningItemDone(context: ctx.value)
@@ -6727,7 +7511,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -6940,9 +7724,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logModel = model
         let logSelf = self
 
-        Task(priority: .userInitiated) {
+        runRequestTask(priority: .userInitiated) {
             do {
                 let chatEngine = self.chatEngine
+                try Task.checkCancellation()
                 let resp = try await chatEngine.completeChat(request: internalReq)
 
                 // Convert to Open Responses format
@@ -7049,7 +7834,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch {
-                let errorResp = OpenResponsesErrorResponse(code: "api_error", message: error.localizedDescription)
+                let isPolicyError = error is MLXService.RuntimePolicyError
+                let errorResp = OpenResponsesErrorResponse(
+                    code: isPolicyError ? "invalid_request_error" : "api_error",
+                    message: error.localizedDescription
+                )
                 let errorJson =
                     (try? JSONEncoder.osaurusCanonical().encode(errorResp))
                     .map { String(decoding: $0, as: UTF8.self) }
@@ -7060,7 +7849,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let body = errorJson
 
                 hop {
-                    var responseHead = HTTPResponseHead(version: head.version, status: .internalServerError)
+                    var responseHead = HTTPResponseHead(
+                        version: head.version,
+                        status: isPolicyError ? .badRequest : .internalServerError
+                    )
                     var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
                     buffer.writeString(body)
                     var nioHeaders = HTTPHeaders()
@@ -7081,7 +7873,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/responses",
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
-                    responseStatus: 500,
+                    responseStatus: isPolicyError ? 400 : 500,
                     startTime: logStartTime,
                     model: logModel,
                     errorMessage: error.localizedDescription

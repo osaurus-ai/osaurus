@@ -98,6 +98,10 @@ Each agent gets its own Linux user and home directory. The VM connects back to O
 
 Three layers -- identity, pinned facts, and per-session episodes -- plus a transcript fallback. Agents distill conversations once at session end (not on every turn), score what matters by salience, and surface at most one compact slice per request based on what you're actually asking. A background consolidator decays, merges, and evicts so memory stays sharp instead of bloating. Most turns inject ~800 tokens or less; many inject zero. See the [Memory Guide](docs/MEMORY.md).
 
+### Privacy Filter
+
+When you send to a cloud model, an on-device classifier — OpenAI's `openai/privacy-filter` (Apache-2.0, 1.5B params / 50M active sparse-MoE), served via the MLX conversion `mlx-community/openai-privacy-filter-bf16` (~2.8 GB) — detects names, emails, phones, URLs, addresses, dates, account numbers, and free-form secrets, alongside deterministic regex for SSN, credit cards, IBAN, AWS keys, GitHub tokens, and your own custom patterns. Each detection is shown in a review sheet with a scrubbed preview before sending; approved entities are swapped for stable `[PERSON_1]` / `[EMAIL_2]` placeholders, and streaming replies are unscrubbed back on the fly so the chat reads naturally. **Fail-closed**: if the post-scrub scan finds anything that leaked, the send is blocked. Verify wire-level redaction in the **Insights** panel — it captures the exact bytes the cloud saw. See the [Privacy Filter Guide](docs/PRIVACY_FILTER.md).
+
 ### Identity
 
 Every participant -- human, agent, device -- gets a secp256k1 cryptographic address. Authority flows from your master key (iCloud Keychain) down to each agent in a verifiable chain of trust. Create portable access keys (`osk-v1`), scope per-agent, revoke anytime. See [Identity docs](docs/IDENTITY.md).

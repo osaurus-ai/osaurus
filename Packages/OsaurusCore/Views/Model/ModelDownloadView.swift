@@ -18,6 +18,8 @@ enum ModelSortOption: String, CaseIterable, Identifiable {
     case compatibility
     case sizeAsc
     case sizeDesc
+    case newest
+    case oldest
 
     var id: String { rawValue }
 
@@ -29,6 +31,8 @@ enum ModelSortOption: String, CaseIterable, Identifiable {
         case .compatibility: return "Compatibility"
         case .sizeAsc: return "Size (Smallest first)"
         case .sizeDesc: return "Size (Largest first)"
+        case .newest: return "Newest"
+        case .oldest: return "Oldest"
         }
     }
 
@@ -40,6 +44,8 @@ enum ModelSortOption: String, CaseIterable, Identifiable {
         case .compatibility: return "checkmark.seal"
         case .sizeAsc: return "arrow.up.circle"
         case .sizeDesc: return "arrow.down.circle"
+        case .newest: return "calendar.badge.clock"
+        case .oldest: return "calendar"
         }
     }
 }
@@ -1078,10 +1084,17 @@ struct ModelDownloadView: View {
     private func computeGridLists() -> GridLists {
         let mem = systemMonitor.totalMemoryGB
 
-        let osaurusOnly = modelManager.availableModels.filter { Self.isOsaurusAI($0) }
+        // All tab = OsaurusAI catalog + models the user owns/is downloading +
+        // (when searching) anything matching the query. without the latter two,
+        // imported/pasted repos inserted into `availableModels` are filtered
+        // out and never appear
+        let hasQuery = !debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let allTabBase = modelManager.availableModels.filter { model in
+            Self.isOsaurusAI(model) || isUserModel(model) || hasQuery
+        }
         let osaurusSuggested = modelManager.suggestedModels.filter { Self.isOsaurusAI($0) }
 
-        let availSearched = SearchService.filterModels(osaurusOnly, with: debouncedSearchText)
+        let availSearched = SearchService.filterModels(allTabBase, with: debouncedSearchText)
         let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
         let allFiltered = applySort(to: availFiltered)
 
@@ -1212,11 +1225,37 @@ struct ModelDownloadView: View {
                 if l != r { return sortOption == .sizeAsc ? l < r : l > r }
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
+        case .newest, .oldest:
+            // Models without a known HF `lastModified` timestamp drop to the
+            // bottom so dated entries always lead the list regardless of order.
+            return models.sorted { lhs, rhs in
+                switch (lhs.releasedAt, rhs.releasedAt) {
+                case let (l?, r?):
+                    if l != r { return sortOption == .newest ? l > r : l < r }
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                case (nil, nil):
+                    break
+                }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
         }
     }
 
     private static func isOsaurusAI(_ model: MLXModel) -> Bool {
         model.id.lowercased().hasPrefix("osaurusai/")
+    }
+
+    /// True when the model is on disk or actively downloading/paused — keeps
+    /// imported/non-curated models visible in the All tab.
+    private func isUserModel(_ model: MLXModel) -> Bool {
+        if model.isDownloaded { return true }
+        switch modelManager.downloadStates[model.id] ?? .notStarted {
+        case .downloading, .paused: return true
+        default: return false
+        }
     }
 
     private func compatibilityRank(_ model: MLXModel) -> Int {
@@ -1528,6 +1567,7 @@ private struct HuggingFaceImportSheet: View {
                     .background(Circle().fill(theme.tertiaryBackground))
             }
             .buttonStyle(PlainButtonStyle())
+            .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
@@ -1607,14 +1647,6 @@ private struct HuggingFaceImportSheet: View {
     private var footer: some View {
         HStack {
             Spacer()
-            Button(action: { dismiss() }) {
-                Text("Cancel", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.cancelAction)
-
             Button(action: submit) {
                 HStack(spacing: 6) {
                     if isResolving {
@@ -1664,11 +1696,11 @@ private struct HuggingFaceImportSheet: View {
                 && !ModelManager.nameLooksLikeMLX(repoId)
             {
                 errorMessage = L(
-                    "Repos outside mlx-community must have “mlx” in the repo name (e.g. user/Model-mlx-4bit)."
+                    "Repos outside mlx-community must advertise an MLX-native artifact family in the repo name, such as MLX, MXFP, JANG, JANGTQ, or TurboQuant."
                 )
             } else {
                 errorMessage = L(
-                    "This repo doesn't appear to be MLX-compatible. Try a model from mlx-community or one with “-mlx” in its name."
+                    "This repo did not pass the MLX-compatible metadata/file check. Use an MLX, MXFP, JANG, JANGTQ, or TurboQuant repo with config, tokenizer, and model weights."
                 )
             }
         }

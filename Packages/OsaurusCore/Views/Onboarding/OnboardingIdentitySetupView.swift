@@ -249,7 +249,7 @@ struct IdentityBody: View {
                 bulletRow(
                     icon: "checkmark.seal.fill",
                     title: L("Prove it's really you"),
-                    detail: L("Stops anyone from impersonating your agent.")
+                    detail: L("Stops anyone from pretending to be you.")
                 )
                 bulletRow(
                     icon: "key.horizontal.fill",

@@ -500,6 +500,7 @@ struct ServerSettingsStatusBadge: View {
 
     enum Status {
         case engineReady
+        case partial
         case needsBridge
         case future
         case hostOwned
@@ -507,6 +508,7 @@ struct ServerSettingsStatusBadge: View {
         var label: String {
             switch self {
             case .engineReady: return "Live"
+            case .partial: return "Partial"
             case .needsBridge: return "Planned"
             case .future: return "Future"
             case .hostOwned: return "Host"
@@ -516,6 +518,7 @@ struct ServerSettingsStatusBadge: View {
         func color(theme: ThemeProtocol) -> Color {
             switch self {
             case .engineReady: return theme.successColor
+            case .partial: return theme.warningColor
             case .needsBridge: return theme.warningColor
             case .future: return theme.tertiaryText
             case .hostOwned: return theme.accentColor

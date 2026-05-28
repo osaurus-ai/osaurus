@@ -8,6 +8,8 @@
 //    - Gemma tends to enumerate tools, hallucinate names, and get chatty.
 //    - GPT/Codex needs explicit "act, don't promise" + verification framing.
 //    - GLM/Qwen are usually well-behaved; a small reminder is enough.
+//    - DeepSeek/DSV4 can narrate a tool plan instead of emitting DSML, so
+//      it gets a compact act-now reminder.
 //    - Everything else gets nothing — silence is a feature.
 //
 //  Each family gets a tightly-targeted block instead of one universal
@@ -25,6 +27,7 @@ enum ModelFamily: String, Sendable {
     case gptCodex
     case googleGemma
     case glmQwen
+    case deepSeek
     case other
 }
 
@@ -42,6 +45,7 @@ enum ModelFamilyGuidance {
             (.gptCodex, ["gpt", "codex", "o1", "o3", "o4"]),
             (.googleGemma, ["gemma", "gemini"]),
             (.glmQwen, ["glm", "qwen"]),
+            (.deepSeek, ["deepseek", "dsv4"]),
         ]
         for (family, markers) in groups where markers.contains(where: raw.contains) {
             return family
@@ -56,6 +60,7 @@ enum ModelFamilyGuidance {
         case .gptCodex: return gptCodexGuidance
         case .googleGemma: return googleGemmaGuidance
         case .glmQwen: return glmQwenGuidance
+        case .deepSeek: return deepSeekGuidance
         case .other: return nil
         }
     }
@@ -157,5 +162,27 @@ enum ModelFamilyGuidance {
         what you'll do next; just do the next step.
         - When you've genuinely finished, say so plainly and stop calling \
         tools. Don't invent extra steps to look thorough.
+        """
+
+    /// DeepSeek / DSV4: strong act-now guidance. DSV4 local rows prove it can
+    /// emit structured DSML tool calls, but in app chat it may otherwise say
+    /// "let me look" and then stop with text. This block avoids naming any
+    /// specific tool so it stays safe outside folder/sandbox mode; the active
+    /// schema and mode-specific prompt sections carry the actual tool names.
+    static let deepSeekGuidance = """
+        # Tool-use discipline
+
+        - If the next step is to inspect files, list a directory, run a \
+        command, check state, or verify a claim, emit the appropriate tool \
+        call now. Do not say you will do it and then stop.
+        - If you mention looking, checking, reading, listing, running, editing, \
+        or verifying something, perform that action with a listed tool in the \
+        same response.
+        - After a tool result, continue with the next concrete tool call when \
+        more evidence is needed. Only answer in prose once the requested work \
+        is actually grounded or complete.
+        - Use only tools present in the schema for this request. If the needed \
+        capability is missing, use the listed discovery path or tell the user \
+        exactly what is unavailable.
         """
 }

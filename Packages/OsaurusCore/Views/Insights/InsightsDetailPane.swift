@@ -66,23 +66,21 @@ struct InsightsDetailPane: View {
 
                 Spacer()
 
-                if log.formattedRequestBody != nil {
-                    headerActionButton(
-                        title: Text("Copy Request", bundle: .module),
-                        icon: "doc.on.doc",
-                        helpText: Text("Copy request JSON", bundle: .module),
-                        action: copyRequest
-                    )
-                }
+                copyMenu(
+                    title: Text("Copy Request", bundle: .module),
+                    icon: "doc.on.doc",
+                    helpText: Text("Copy request JSON", bundle: .module),
+                    localBody: log.formattedRequestBody,
+                    serverBody: log.formattedWireRequestBody
+                )
 
-                if log.formattedResponseBody != nil {
-                    headerActionButton(
-                        title: Text("Copy Response", bundle: .module),
-                        icon: "arrow.down.doc",
-                        helpText: Text("Copy response", bundle: .module),
-                        action: copyResponse
-                    )
-                }
+                copyMenu(
+                    title: Text("Copy Response", bundle: .module),
+                    icon: "arrow.down.doc",
+                    helpText: Text("Copy response", bundle: .module),
+                    localBody: log.formattedResponseBody,
+                    serverBody: log.formattedWireResponseBody
+                )
             }
 
             HStack(alignment: .center, spacing: 10) {
@@ -147,6 +145,60 @@ struct InsightsDetailPane: View {
         }
         .buttonStyle(PlainButtonStyle())
         .help(helpText)
+    }
+
+    /// Copy affordance for Request / Response: collapses to a single
+    /// button when only one body exists (no wire capture: HTTP API,
+    /// MLX, Foundation, plugins), and expands to a Menu with
+    /// explicit Server / Local items when both are present. Hidden
+    /// entirely when neither body is captured.
+    @ViewBuilder
+    private func copyMenu(
+        title: Text,
+        icon: String,
+        helpText: Text,
+        localBody: String?,
+        serverBody: String?
+    ) -> some View {
+        if localBody != nil || serverBody != nil {
+            if localBody != nil && serverBody != nil {
+                Menu {
+                    Button(action: { copy(serverBody) }) {
+                        Text("insights.body.copy.server", bundle: .module)
+                    }
+                    Button(action: { copy(localBody) }) {
+                        Text("insights.body.copy.local", bundle: .module)
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: icon)
+                            .font(.system(size: 10, weight: .semibold))
+                        title
+                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.tertiaryBackground.opacity(0.5))
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(helpText)
+            } else {
+                headerActionButton(
+                    title: title,
+                    icon: icon,
+                    helpText: helpText,
+                    action: { copy(serverBody ?? localBody) }
+                )
+            }
+        }
     }
 
     private func sourceIcon(_ source: RequestSource) -> String {
@@ -216,8 +268,20 @@ struct InsightsDetailPane: View {
         Group {
             switch selectedTab {
             case .prompt: PromptTab(log: log)
-            case .request: BodyTab(bodyText: log.formattedRequestBody, kind: .request, log: log)
-            case .response: BodyTab(bodyText: log.formattedResponseBody, kind: .response, log: log)
+            case .request:
+                BodyTab(
+                    localBody: log.formattedRequestBody,
+                    serverBody: log.formattedWireRequestBody,
+                    kind: .request,
+                    log: log
+                )
+            case .response:
+                BodyTab(
+                    localBody: log.formattedResponseBody,
+                    serverBody: log.formattedWireResponseBody,
+                    kind: .response,
+                    log: log
+                )
             case .params: ParamsTab(log: log)
             }
         }
@@ -267,14 +331,8 @@ struct InsightsDetailPane: View {
 
     // MARK: - Copy actions
 
-    private func copyRequest() {
-        guard let body = log.formattedRequestBody else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(body, forType: .string)
-    }
-
-    private func copyResponse() {
-        guard let body = log.formattedResponseBody else { return }
+    private func copy(_ body: String?) {
+        guard let body, !body.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(body, forType: .string)
     }
@@ -676,6 +734,30 @@ private struct ToolCard: View {
 
 // MARK: - Body Tab
 
+/// Which body the user is looking at inside the Request / Response
+/// tab. The pair (`local`, `server`) collapses the previous separate
+/// "Wire Request" / "Wire Response" tabs into a sub-toggle so the
+/// page never has 6 tabs.
+enum InsightsBodySource: Hashable {
+    /// What Osaurus saw from the local caller (Chat UI -> Osaurus,
+    /// or HTTP API client -> Osaurus). Unscrubbed for chat sends.
+    case local
+    /// What the cloud provider actually saw on the wire
+    /// (post Privacy Filter, raw pre-unscrub stream on return).
+    /// Hidden when the wire probe didn't capture anything (MLX,
+    /// Foundation, plugins, or local HTTP API rows).
+    case server
+
+    /// Default selection rule. Server wins whenever a wire body
+    /// exists — that's the trust artifact the user opened the tab
+    /// for; otherwise fall back to the unscrubbed local body so the
+    /// tab isn't empty for MLX / Foundation / plugin / HTTP API
+    /// rows.
+    static func defaultSource(local: String?, server: String?) -> InsightsBodySource {
+        server != nil ? .server : .local
+    }
+}
+
 private struct BodyTab: View {
     @Environment(\.theme) private var theme
 
@@ -683,44 +765,148 @@ private struct BodyTab: View {
         case request, response
 
         var emptyIcon: String {
-            self == .request ? "arrow.up.circle" : "arrow.down.circle"
+            switch self {
+            case .request: return "arrow.up.circle"
+            case .response: return "arrow.down.circle"
+            }
         }
 
         @ViewBuilder
-        var emptyMessage: some View {
-            switch self {
-            case .request: Text("No request body captured", bundle: .module)
-            case .response: Text("No response body captured", bundle: .module)
+        func emptyMessage(source: InsightsBodySource) -> some View {
+            switch (self, source) {
+            case (.request, .local):
+                Text("No request body captured", bundle: .module)
+            case (.response, .local):
+                Text("No response body captured", bundle: .module)
+            case (.request, .server):
+                Text("insights.body.empty.server.request", bundle: .module)
+            case (.response, .server):
+                Text("insights.body.empty.server.response", bundle: .module)
             }
         }
     }
 
-    let bodyText: String?
+    let localBody: String?
+    let serverBody: String?
     let kind: Kind
     let log: RequestLog
 
+    @State private var source: InsightsBodySource
+
+    init(localBody: String?, serverBody: String?, kind: Kind, log: RequestLog) {
+        self.localBody = localBody
+        self.serverBody = serverBody
+        self.kind = kind
+        self.log = log
+        _source = State(
+            initialValue: InsightsBodySource.defaultSource(local: localBody, server: serverBody)
+        )
+    }
+
+    private var hasBothSources: Bool {
+        localBody != nil && serverBody != nil
+    }
+
+    private var activeBody: String? {
+        source == .server ? serverBody : localBody
+    }
+
     var body: some View {
         ScrollView {
-            if let text = bodyText {
-                Text(text)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(textColor)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.codeBlockBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(borderColor, lineWidth: 1)
-                            )
-                    )
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 20)
-            } else {
-                emptyState
+            VStack(alignment: .leading, spacing: 10) {
+                if hasBothSources {
+                    sourcePicker
+                    captionRow
+                }
+                if let text = activeBody {
+                    Text(text)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(textColor)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.codeBlockBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(borderColor, lineWidth: 1)
+                                )
+                        )
+                } else {
+                    emptyState
+                }
             }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 20)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    /// Two-pill segmented control. Rendered only when both bodies
+    /// exist; the visual is intentionally similar to the parent
+    /// tab strip so the relationship reads as "tab > sub-tab".
+    private var sourcePicker: some View {
+        HStack(spacing: 4) {
+            sourcePill(.server, label: Text("insights.body.source.server", bundle: .module))
+            sourcePill(.local, label: Text("insights.body.source.local", bundle: .module))
+            Spacer()
+        }
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground.opacity(0.4))
+        )
+    }
+
+    private func sourcePill(_ value: InsightsBodySource, label: Text) -> some View {
+        let isSelected = source == value
+        let isServer = value == .server
+        return Button(action: { source = value }) {
+            HStack(spacing: 5) {
+                Image(systemName: isServer ? "shield.lefthalf.filled" : "laptopcomputer")
+                    .font(.system(size: 10, weight: .semibold))
+                label
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+            }
+            .foregroundColor(isSelected ? .white : theme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? theme.accentColor.opacity(0.85) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    @ViewBuilder
+    private var captionRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: source == .server ? "shield.lefthalf.filled" : "laptopcomputer")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(source == .server ? theme.accentColor : theme.tertiaryText)
+            captionText
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var captionText: some View {
+        switch (kind, source) {
+        case (.request, .local):
+            Text("insights.body.caption.local.request", bundle: .module)
+        case (.request, .server):
+            Text("insights.body.caption.server.request", bundle: .module)
+        case (.response, .local):
+            Text("insights.body.caption.local.response", bundle: .module)
+        case (.response, .server):
+            Text("insights.body.caption.server.response", bundle: .module)
         }
     }
 
@@ -731,7 +917,7 @@ private struct BodyTab: View {
                 Image(systemName: kind.emptyIcon)
                     .font(.system(size: 28))
                     .foregroundColor(theme.tertiaryText.opacity(0.5))
-                kind.emptyMessage
+                kind.emptyMessage(source: source)
                     .font(.system(size: 12))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -743,14 +929,22 @@ private struct BodyTab: View {
     private var textColor: Color {
         switch kind {
         case .request: return theme.primaryText
-        case .response: return log.isSuccess ? theme.primaryText : theme.errorColor
+        case .response:
+            return log.isSuccess ? theme.primaryText : theme.errorColor
         }
     }
 
+    /// Border color is the trust signal: server view always carries
+    /// the accent border (this is the wire body), local response
+    /// keeps the existing green/red status tinting.
     private var borderColor: Color {
+        if source == .server {
+            return theme.accentColor.opacity(0.35)
+        }
         switch kind {
         case .request: return theme.primaryBorder.opacity(0.2)
-        case .response: return log.isSuccess ? Color.green.opacity(0.2) : Color.red.opacity(0.2)
+        case .response:
+            return log.isSuccess ? Color.green.opacity(0.2) : Color.red.opacity(0.2)
         }
     }
 }

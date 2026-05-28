@@ -42,6 +42,7 @@ public struct PresentationSlide: Codable, Equatable, Sendable {
     public let number: Int
     public let sourcePart: String
     public let label: String
+    public let isHidden: Bool
     public let textRuns: [PresentationTextRun]
     public let speakerNotes: PresentationSpeakerNotes?
 
@@ -54,6 +55,7 @@ public struct PresentationSlide: Codable, Equatable, Sendable {
         number: Int,
         sourcePart: String,
         label: String,
+        isHidden: Bool = false,
         textRuns: [PresentationTextRun],
         speakerNotes: PresentationSpeakerNotes? = nil
     ) {
@@ -63,8 +65,32 @@ public struct PresentationSlide: Codable, Equatable, Sendable {
         self.number = number
         self.sourcePart = sourcePart
         self.label = label
+        self.isHidden = isHidden
         self.textRuns = textRuns
         self.speakerNotes = speakerNotes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            index: container.decode(Int.self, forKey: .index),
+            number: container.decode(Int.self, forKey: .number),
+            sourcePart: container.decode(String.self, forKey: .sourcePart),
+            label: container.decode(String.self, forKey: .label),
+            isHidden: container.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false,
+            textRuns: container.decode([PresentationTextRun].self, forKey: .textRuns),
+            speakerNotes: container.decodeIfPresent(PresentationSpeakerNotes.self, forKey: .speakerNotes)
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case index
+        case number
+        case sourcePart
+        case label
+        case isHidden
+        case textRuns
+        case speakerNotes
     }
 }
 

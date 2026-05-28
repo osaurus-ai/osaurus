@@ -25,6 +25,7 @@ struct ServerConfigurationStoreTests {
         #expect(decoded.backlog == defaults.backlog)
         #expect(decoded.genTopP == defaults.genTopP)
         #expect(decoded.genMaxKVSize == nil)
+        #expect(decoded.globalProxyURL == nil)
         #expect(decoded.modelIdleResidencyPolicy == defaults.modelIdleResidencyPolicy)
     }
 
@@ -47,6 +48,7 @@ struct ServerConfigurationStoreTests {
         config.exposeToNetwork = true
         config.genTopP = 0.7
         config.genMaxKVSize = 16384
+        config.globalProxyURL = "http://proxy.example.com:8080"
 
         ServerConfigurationStore.save(config)
         let loaded = ServerConfigurationStore.load()

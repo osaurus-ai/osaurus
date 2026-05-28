@@ -39,6 +39,7 @@ public actor ModelRuntime {
         let nativeMTPDepth: Int?
         let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
+        let cacheTopology: ModelCacheTopologySnapshot?
     }
 
     struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
@@ -64,6 +65,7 @@ public actor ModelRuntime {
         let weightsSizeBytes: Int64
         let isVLM: Bool
         let draftStrategy: MLXLMCommon.DraftStrategy?
+        var cacheTopology: ModelCacheTopologySnapshot?
         init(
             name: String,
             container: ModelContainer,
@@ -146,7 +148,8 @@ public actor ModelRuntime {
                 draftStrategyDescription: Self.describeDraftStrategy(holder.draftStrategy),
                 nativeMTPDepth: Self.nativeMTPDepth(holder.draftStrategy),
                 mlxPressStatus: holder.container.mlxPressStatus(),
-                cacheStats: holder.container.cacheCoordinator?.snapshotStats()
+                cacheStats: holder.container.cacheCoordinator?.snapshotStats(),
+                cacheTopology: holder.cacheTopology
             )
         }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
@@ -327,6 +330,11 @@ public actor ModelRuntime {
 
         Stream.gpu.synchronize()
         Memory.clearCache()
+    }
+
+    private func cancelLoadingTask(name: String, loadID: UInt64) async {
+        guard let record = loadingTasks[name], record.id == loadID else { return }
+        await cancelAndDrainLoadingTasks([(name, record)])
     }
 
     private func finishLoadedContainer(
@@ -524,6 +532,7 @@ public actor ModelRuntime {
     }
 
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
+        try Task.checkCancellation()
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
         genLog.info(
@@ -531,6 +540,7 @@ public actor ModelRuntime {
         )
 
         while true {
+            try Task.checkCancellation()
             if let existing = modelCache[name] {
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
                 genLog.info(
@@ -599,6 +609,7 @@ public actor ModelRuntime {
             break
         }
 
+        try Task.checkCancellation()
         guard let localURL = Self.findLocalDirectory(forModelId: id) else {
             throw NSError(
                 domain: "ModelRuntime",
@@ -612,6 +623,7 @@ public actor ModelRuntime {
 
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
         await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
+        try Task.checkCancellation()
 
         // Preflight: JANGTQ/TurboQuant variants need a `jangtq_runtime.safetensors`
         // sidecar (signs + codebook arrays for the Metal kernels). vmlx's
@@ -628,6 +640,7 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public)"
         )
+        try Task.checkCancellation()
 
         if policy == .manualMultiModel {
             await unloadForFlexibleResidentBudget(
@@ -635,12 +648,14 @@ public actor ModelRuntime {
                 incomingWeightsSizeBytes: weightsBytes
             )
         }
+        try Task.checkCancellation()
 
         // Tool-call format + reasoning parser are stamped automatically by
         // vmlx-swift's LLM/VLM factories from `jang_config.json` capabilities
-        // and `config.json.model_type`. Osaurus no longer resolves them at
-        // the app layer — `BatchEngine.generate` reads them directly from
-        // the resolved `ModelConfiguration` to emit `.toolCall` events.
+        // and `config.json.model_type`. Server Runtime Settings may layer an
+        // explicit parser override on top; the resulting ModelConfiguration
+        // still enters through vmlx's factory registry, so BatchEngine remains
+        // the single owner of parser execution and `.toolCall` emission.
 
         let loadID = allocateLoadingTaskID()
         let task = Task<SessionHolder, Error> {
@@ -648,17 +663,33 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: task start model=\(name, privacy: .public) loadID=\(loadID, privacy: .public)"
             )
+            try Task.checkCancellation()
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
-            let mtpPlan = Self.resolveNativeMTPLaunchPlan(modelDirectory: localURL)
+            let serverSettings = ServerRuntimeSettingsStore.snapshot()
+            let mtpPlan = Self.resolveNativeMTPLaunchPlan(
+                modelDirectory: localURL,
+                settings: serverSettings
+            )
             genLog.info(
                 "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public)"
             )
             let container = try await loadModelContainer(
                 from: localURL,
                 using: tokenizerLoader,
+                configuration: serverSettings.resolvedModelConfiguration(
+                    base: ModelConfiguration(directory: localURL)
+                ),
                 loadConfiguration: mtpPlan.loadConfiguration
             )
+            if Task.isCancelled {
+                container.disableCaching()
+                throw CancellationError()
+            }
             let isVLM = await container.isVLM
+            if Task.isCancelled {
+                container.disableCaching()
+                throw CancellationError()
+            }
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - taskStartedAt) * 1000)
             genLog.info(
                 "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
@@ -675,7 +706,13 @@ public actor ModelRuntime {
         loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)
 
         do {
-            let holder = try await task.value
+            let holder = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                Task {
+                    await ModelRuntime.shared.cancelLoadingTask(name: name, loadID: loadID)
+                }
+            }
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
             genLog.info(
                 "loadContainer: task value returned model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public)"
@@ -707,47 +744,15 @@ public actor ModelRuntime {
     //
     //   - `usePagedCache: true`            — content-addressed paged blocks
     //                                        (multi-turn cache reuse path)
-    //   - `defaultKVMode: .none`             — fp16 KV by default. Both
-    //                                        `.turboQuant(3, 3)` (committed
-    //                                        in #995, reverted in e202cbbe)
-    //                                        AND `.turboQuant(4, 4)` (per
-    //                                        the OSAURUS-INTEGRATION-2026-
-    //                                        05-01.md §"3-bit KV verdict"
-    //                                        recommendation, committed in
-    //                                        db3179fe) reproduce the same
-    //                                        degenerate-repetition failure
-    //                                        mode in real-bundle testing:
-    //                                        Qwen3.6 27B MXFP4 emitted
-    //                                        `!!!!!!!!!` in the thinking
-    //                                        channel with 3-bit; Gemma-4
-    //                                        31B JANG_4M emitted
-    //                                        `idea idea idea` and other
-    //                                        family bundles drifted into
-    //                                        looping after a few turns
-    //                                        with 4-bit. Vmlx's `1173822`
-    //                                        paged-cache fix closed the
-    //                                        cross-turn handoff
-    //                                        re-encoding bug, but the
-    //                                        underlying codebook
-    //                                        quantization error still
-    //                                        compounds across long
-    //                                        thinking-mode preambles
-    //                                        (longer prefix → more
-    //                                        compression rounds → more
-    //                                        accumulated error → attention
-    //                                        latches onto a high-prob low-
-    //                                        info token and loops).
-    //                                        The vmlx team's BENCH harness
-    //                                        didn't toggle thinking on
-    //                                        every family it verified, so
-    //                                        the integration guide's
-    //                                        4-bit recommendation under-
-    //                                        tested the failure mode.
-    //                                        Default to fp16; users who
-    //                                        need the memory savings can
-    //                                        submit `kvMode:
-    //                                        .turboQuant(...)` explicitly
-    //                                        per request.
+    //   - `defaultKVMode`                   — owned by vmlx
+    //                                        `VMLXServerRuntimeSettings`.
+    //                                        `engine_selected` resolves to
+    //                                        automatic TurboQuant KV for
+    //                                        ordinary full-history KV layers;
+    //                                        DSV4/ZAYA/SSM/rotating caches
+    //                                        keep their typed companion-state
+    //                                        serializers and are not replaced
+    //                                        by generic KV compression.
     //   - `defaultMaxKVSize: 65536`        — 64K ring window for slots that
     //                                        submit `maxKVSize: nil`. Matches
     //                                        the vmlx OSAURUS-PRODUCTION-
@@ -762,13 +767,14 @@ public actor ModelRuntime {
     //                                        2 bytes (fp16) × 2 (K+V) ≈
     //                                        2.4 GB per slot on Mistral 3.5
     //                                        (largest layer count we ship);
-    //                                        on .turboQuant(4,4) steady
-    //                                        state ~26× smaller (~95 MB).
-    //                                        With `defaultKVMode: .none` the
-    //                                        cold path is fp16 but the
-    //                                        rotating cap only kicks in for
-    //                                        prompts past 131K (65536 × 2.0)
-    //                                        — small chats unaffected.
+    //                                        on TurboQuant KV steady state is
+    //                                        much smaller. With
+    //                                        `engine_selected`, ordinary KV
+    //                                        layers use the vmlx automatic
+    //                                        codec; the rotating cap only
+    //                                        kicks in for prompts past 131K
+    //                                        (65536 × 2.0), so small chats
+    //                                        are unaffected.
     //   - `longPromptMultiplier: 2.0`      — cap kicks in only past 131K
     //                                        (65536 * 2.0) prompt tokens,
     //                                        so short and medium prompts
@@ -785,63 +791,156 @@ public actor ModelRuntime {
     /// sizing) plus osaurus's per-environment disk-path config. See the
     /// file-level comment for rationale on each knob.
     private nonisolated static func buildCacheCoordinatorConfig(
-        modelName: String
+        modelName: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> CacheCoordinatorConfig {
-        let diskCacheDir = OsaurusPaths.diskKVCache()
-        OsaurusPaths.ensureExistsSilent(diskCacheDir)
-        let diskDirUsable = isDirectoryWritable(diskCacheDir)
-        if !diskDirUsable {
+        let settings = ServerRuntimeSettingsStore.snapshot()
+        let diskCacheDir = Self.cacheDiskDirectoryOverride(for: settings.cache)
+        if let diskCacheDir {
+            OsaurusPaths.ensureExistsSilent(diskCacheDir)
+        }
+        let diskDirUsable = diskCacheDir.map(isDirectoryWritable) ?? false
+        if let diskCacheDir, !diskDirUsable {
             genLog.warning(
                 "buildCacheCoordinatorConfig: disk cache dir not writable, forcing memory-only: \(diskCacheDir.path, privacy: .public)"
             )
         }
 
-        // L2 disk-cache modelKey fingerprint includes the KV mode tag so a
-        // mid-session change to `defaultKVMode` (or to a per-request override
-        // via the OpenAI extension) cannot serve stale entries that were
-        // encoded under a different mode. Without this, a user who switches
-        // from `.none` (fp16) to `.turboQuant(4,4)` would hit a `.miss` on
-        // disk for fresh entries but a `.hit` on the OLD fp16 entries —
-        // attention would receive the wrong KV layout for the codebook
-        // encoder state and produce undefined behavior. The fingerprint is
-        // a string (stable across processes) and is appended to the model
-        // name so the L1 paged cache (per-model isolation) is unaffected.
-        let settings = ServerRuntimeSettingsStore.snapshot()
+        // The Metal `notifyExternalReferencesNonZeroOnDealloc` crash on the
+        // `Cache disk hit … prefilling 0 remaining` path is fixed upstream
+        // in vmlx-swift `0756dc0` ("close trim-path Metal lifecycle crash
+        // on full disk-cache hit") — the trimmed compiled-cache list is now
+        // forced to realize before its underlying Metal buffers go out of
+        // scope. Now wired in through the `0e22eba` pin. The
+        // `eval_http_stability.py` suite is the regression check; re-run on
+        // any future pin bump that touches the CacheCoordinator restore path.
+        //
+        // L2 disk-cache modelKey fingerprint includes the KV mode tag and
+        // native cache-topology tags so runtime upgrades cannot serve stale
+        // entries encoded under a different serializer contract. This matters
+        // for path-dependent caches such as DSV4's SWA+CSA+HSA pool and
+        // ZAYA's CCA state: a content hash alone proves prompt identity, not
+        // cache-layout compatibility.
         let kvModeTag = cacheKVModeTag(for: settings.cache)
-        let scopedKey = "\(modelName)|kv=\(kvModeTag)"
+        let scopedKey = Self.cacheCoordinatorModelKey(
+            modelName: modelName,
+            kvModeTag: kvModeTag,
+            cacheTopology: cacheTopology
+        )
 
         // Delegate the full coordinator config to vmlx's spec'd builder
         // so every cache field set in the Server → Settings panel
         // (prefix, paged, block disk, legacy disk, SSM rederive, KV
         // codec, defaultMaxKVSize, longPromptMultiplier) flows into
-        // BatchEngine. The diskCacheDirectory override is the writable
-        // Osaurus path; pass `nil` when the dir is unwritable so the
-        // coordinator falls back to memory-only without crashing.
-        return settings.cacheCoordinatorConfig(
+        // BatchEngine. The diskCacheDirectory override is either the
+        // user-configured disk directory or the writable Osaurus default;
+        // when that path is unusable, disable disk cache instead of letting
+        // vmlx fall back to a different implicit location.
+        var config = settings.cacheCoordinatorConfig(
             modelKey: scopedKey,
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
             ssmMaxEntries: 50
         )
+        if settings.cache.liveKVCodec == .engineSelected {
+            config.defaultKVMode = .turboQuant()
+        }
+        if diskCacheDir != nil, !diskDirUsable {
+            config.enableDiskCache = false
+            config.diskCacheDir = nil
+        }
+        return config
     }
 
-    /// Stable fingerprint for the live KV codec choice. Appended to
+    nonisolated static func cacheDiskDirectoryOverride(
+        for cache: VMLXServerCacheSettings
+    ) -> URL? {
+        guard cache.prefix.enabled else { return nil }
+
+        let directory: String?
+        if cache.pagedKV.enabled {
+            guard cache.blockDisk.enabled else { return nil }
+            directory = cache.blockDisk.directory
+        } else {
+            guard cache.legacyDisk.enabled else { return nil }
+            directory = cache.legacyDisk.directory
+        }
+
+        return resolvedServerRuntimeDirectory(directory) ?? OsaurusPaths.diskKVCache()
+    }
+
+    private nonisolated static func resolvedServerRuntimeDirectory(_ path: String?) -> URL? {
+        guard let path = path?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !path.isEmpty
+        else { return nil }
+        if path == "~" {
+            return FileManager.default.homeDirectoryForCurrentUser
+        }
+        if path.hasPrefix("~/") {
+            let suffix = String(path.dropFirst(2))
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(suffix, isDirectory: true)
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    /// Stable fingerprint for the effective live KV codec. Appended to
     /// the L2 disk-cache model key so a mid-session change to the
-    /// codec doesn't serve stale entries.
-    private nonisolated static func cacheKVModeTag(
+    /// actual KV representation doesn't serve stale entries.
+    nonisolated static func cacheKVModeTag(
         for cache: VMLXServerCacheSettings
     ) -> String {
         switch cache.liveKVCodec {
-        case .none:
-            return "fp16"
         case .engineSelected:
-            return "engineSelected"
-        case .native:
-            return "native"
+            return "engine-selected"
+        case .native, .none:
+            return "fp16"
         case .turboQuant:
-            let keyBits = cache.turboQuantKeyBits ?? 0
-            let valueBits = cache.turboQuantValueBits ?? 0
+            guard case .turboQuant(let keyBits, let valueBits) = cache.defaultKVMode else {
+                return "fp16"
+            }
             return "turbo(\(keyBits),\(valueBits))"
         }
+    }
+
+    nonisolated static func cacheCoordinatorModelKey(
+        modelName: String,
+        kvModeTag: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> String {
+        var tags = [
+            modelName,
+            "kv=\(kvModeTag)",
+            // vmlx `TQDiskSerializer.currentFormatVersion == 2` at the
+            // pinned runtime. Keep this in the host key so older L2 records
+            // cannot cross serializer generations after an app update.
+            "cachefmt=2",
+            // Restore semantics are part of the cache contract too. The
+            // paired vmlx fix materializes full-hit trim mutations before
+            // the one-token seed forward on the B=1 TokenIterator path.
+            "restore=fullhit-trim-eval1",
+        ]
+
+        if let cacheTopology {
+            tags.append("topology=real")
+            tags.append(contentsOf: cacheTopology.topologyTags)
+        }
+
+        if ModelFamilyNames.isDSV4Family(modelName) {
+            tags.append("layers=deepseekV4")
+            tags.append("prefix=hybrid-pool-disk")
+            tags.append("decode=max-rp110")
+        } else if ModelFamilyNames.isZayaFamily(modelName) {
+            tags.append("layers=zayaCCA")
+            tags.append("prefix=path-dependent-disk")
+        } else if Self.isKnownHybridModel(name: modelName) {
+            tags.append("layers=hybrid-ssm")
+        }
+
+        if ModelFamilyNames.isNemotronOmniFamily(modelName) {
+            tags.append("media=omni-audio-video")
+        }
+
+        return tags.joined(separator: "|")
     }
 
     /// Best-effort writability probe for the disk cache directory. Uses a
@@ -859,35 +958,18 @@ public actor ModelRuntime {
     }
 
     /// Installs the cache coordinator on a freshly-loaded holder.
-    ///
-    /// `enableCaching(config:)` constructs the coordinator with our
-    /// recommended knobs (paged + L2 disk, fp16 KV by default, 64K rotating
-    /// cap for callers that do not provide `maxKVSize`).
-    /// vmlx's `BatchEngine.admitPendingRequests` auto-flips
-    /// `coordinator.isHybrid` on first slot admission for any model whose
-    /// per-layer cache list contains a `MambaCache` or `ArraysCache` — that
-    /// covers the BatchEngine path osaurus uses today.
-    ///
-    /// **Eager `setHybrid(true)` for known hybrid families**: per
-    /// `OMNI-OSAURUS-HOOKUP.md` §5.1 the eager-set is harmless on any
-    /// admission path and avoids a one-frame stale-flag window if a request
-    /// ever lands via the single-slot `Evaluate` path before BatchEngine
-    /// has had a chance to flip it. We tag known hybrid model_types here
-    /// instead of inspecting the model's cache list (which would require an
-    /// async `context.read` round-trip just to check for an `is MambaCache`
-    /// match) — the family list is short, drift is caught by tests, and
-    /// the auto-flip remains the source of truth for any model_type the
-    /// list misses.
     private func installCacheCoordinator(on holder: SessionHolder) async {
-        let cacheConfig = Self.buildCacheCoordinatorConfig(modelName: holder.name)
-        holder.container.enableCaching(config: cacheConfig)
-
-        if Self.isKnownHybridModel(name: holder.name) {
-            holder.container.cacheCoordinator?.setHybrid(true)
-        }
+        let cacheTopology = await holder.container.cacheTopologySnapshot()
+        holder.cacheTopology = cacheTopology
+        let cacheConfig = Self.buildCacheCoordinatorConfig(
+            modelName: holder.name,
+            cacheTopology: cacheTopology
+        )
+        await holder.container.enableCachingAsync(config: cacheConfig)
+        let topologyTags = cacheTopology.topologyTags.joined(separator: ",")
 
         genLog.info(
-            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(Self.isKnownHybridModel(name: holder.name), privacy: .public) (sizing left to vmlx defaults)"
+            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(cacheTopology.requiresSSMCompanionState, privacy: .public) topology=\(topologyTags, privacy: .public) (sizing left to vmlx defaults)"
         )
     }
 
@@ -914,8 +996,10 @@ public actor ModelRuntime {
         // Qwen 3.5 / 3.6 MoE family (qwen3_5_moe model_type) covers Holo3 too.
         // vmlx `Models/Qwen35.swift` + `Qwen35JANGTQ.swift` allocate
         // `ArraysCache` for the linear-attention slots.
-        if lower.contains("qwen3.5") || lower.contains("qwen3.6") || lower.contains("holo3")
-            || lower.contains("holo-3")
+        if lower.contains("qwen3.5") || lower.contains("qwen3.6")
+            || lower.contains("qwen3_5") || lower.contains("qwen3_6")
+            || lower.contains("qwen35") || lower.contains("qwen36")
+            || lower.contains("holo3") || lower.contains("holo-3")
         {
             return true
         }
@@ -1014,6 +1098,7 @@ public actor ModelRuntime {
     /// related through this path.
     private func generateEventStream(
         chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message],
+        rawPromptBuilder: (@Sendable () -> String)? = nil,
         parameters: GenerationParameters,
         stopSequences: [String],
         tools: [Tool]?,
@@ -1067,6 +1152,16 @@ public actor ModelRuntime {
         }
         trace?.mark("load_container_done")
 
+        if Task.isCancelled {
+            await ModelResidencyManager.shared.cancel(modelName: modelName)
+            if shouldReportModelLoad {
+                await unload(name: modelName)
+            } else {
+                await scheduleIdleResidency(for: modelName)
+            }
+            throw CancellationError()
+        }
+
         // Pin the model against eviction for the stream's lifetime.
         await ModelLease.shared.acquire(modelName)
 
@@ -1089,7 +1184,9 @@ public actor ModelRuntime {
                 container: holder.container,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
+                buildRawPrompt: rawPromptBuilder,
                 generation: parameters,
+                toolChoice: toolChoice,
                 stopSequences: stopSequences,
                 draftStrategy: holder.draftStrategy,
                 runtime: cfg,
@@ -1193,6 +1290,57 @@ public actor ModelRuntime {
         return accumulated
     }
 
+    /// Stream a completion from a raw, pre-formatted prompt — no chat template,
+    /// no tools, no reasoning channel. Backs the OpenAI-legacy
+    /// `/v1/completions` endpoint (FIM autocomplete), where the prompt must
+    /// reach the model verbatim. Yields plain text deltas only.
+    func streamRawText(
+        prompt: String,
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        modelId: String,
+        modelName: String
+    ) async throws -> AsyncThrowingStream<String, Error> {
+        let events = try await generateEventStream(
+            chatBuilder: { [] },
+            rawPromptBuilder: { prompt },
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: nil,
+            toolChoice: nil,
+            modelId: modelId,
+            modelName: modelName
+        )
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        let producerTask = Task {
+            do {
+                for try await ev in events {
+                    if Task.isCancelled {
+                        continuation.finish()
+                        return
+                    }
+                    // Raw completions only surface generated text. Reasoning,
+                    // tool calls, and stats events are irrelevant to the
+                    // legacy completions wire format and are dropped.
+                    if case .tokens(let s) = ev, !s.isEmpty {
+                        continuation.yield(s)
+                    }
+                }
+                continuation.finish()
+            } catch {
+                if Task.isCancelled {
+                    continuation.finish()
+                } else {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+        continuation.onTermination = { @Sendable _ in
+            producerTask.cancel()
+        }
+        return stream
+    }
+
     func streamWithTools(
         messages: [ChatMessage],
         parameters: GenerationParameters,
@@ -1218,12 +1366,9 @@ public actor ModelRuntime {
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            // Collect every tool invocation parsed from this completion. Local
-            // models can emit multiple `<tool_call>` blocks per response;
-            // vmlx-swift's `BatchEngine.generate` surfaces each as its own
-            // `.toolCall` event, so we keep iterating until the stream
-            // finishes naturally instead of bailing on the first invocation.
-            var pendingTools: [ServiceToolInvocation] = []
+            // Chat UI streaming should execute a parsed tool call immediately.
+            // Continuing to drain model text after the tool event can leak the
+            // model's pseudo-tool prose before the app renders/runs the tool.
             do {
                 for try await ev in events {
                     if case .completionInfo(
@@ -1255,32 +1400,21 @@ public actor ModelRuntime {
                     case .toolInvocation(let name, let argsJSON):
                         continuation.yield(StreamingToolHint.encode(name))
                         continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
-                        pendingTools.append(
-                            ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+                        continuation.finish(
+                            throwing: ServiceToolInvocation(
+                                toolName: name,
+                                jsonArguments: argsJSON
+                            )
                         )
+                        return
                     case .completionInfo:
                         continue
                     }
                 }
-                do {
-                    try Self.throwIfTools(pendingTools)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
+                continuation.finish()
             } catch {
                 if Task.isCancelled {
                     continuation.finish()
-                } else if !pendingTools.isEmpty {
-                    // Mid-stream failure with parsed tools — surface them
-                    // so the caller can still execute what we got. The
-                    // upstream error is swallowed in this branch by
-                    // design (parity with the previous behaviour).
-                    do {
-                        try Self.throwIfTools(pendingTools)
-                    } catch let surfaced {
-                        continuation.finish(throwing: surfaced)
-                    }
                 } else {
                     continuation.finish(throwing: error)
                 }
@@ -1336,7 +1470,8 @@ public actor ModelRuntime {
         repetitionPenalty: Float?,
         stopSequences: [String] = [],
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
-        enableCompiledBatchDecode: Bool = true
+        enableCompiledBatchDecode: Bool = true,
+        prefillStepSize: Int? = nil
     ) -> MLXLMCommon.GenerateParameters {
         var params = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
@@ -1350,11 +1485,15 @@ public actor ModelRuntime {
             extraStopStrings: stopSequences
         )
         params.draftStrategy = draftStrategy
+        if let prefillStepSize, prefillStepSize > 0 {
+            params.prefillStepSize = prefillStepSize
+        }
         return params
     }
 
     private nonisolated static func resolveNativeMTPLaunchPlan(
-        modelDirectory: URL
+        modelDirectory: URL,
+        settings: VMLXServerRuntimeSettings
     ) -> NativeMTPLaunchPlan {
         let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
         let jangConfig = try? JangLoader.loadConfig(at: modelDirectory)
@@ -1376,8 +1515,6 @@ public actor ModelRuntime {
             )
         }
 
-        var settings = VMLXServerRuntimeSettings()
-        settings.mtp.mode = .auto
         let launch = settings.resolvedMTPLaunch(
             configData: configData,
             jangConfig: jangConfig,
@@ -1438,7 +1575,7 @@ public actor ModelRuntime {
             switch toolChoice {
             case .none:
                 return nil
-            case .auto:
+            case .auto, .required:
                 return tools.map { $0.toTokenizerToolSpec() }
             case .function(let target):
                 let name = target.function.name
@@ -1454,30 +1591,13 @@ public actor ModelRuntime {
         _ messages: [ChatMessage],
         toolChoice: ToolChoiceOption?
     ) -> [ChatMessage] {
-        guard case .function(let target) = toolChoice else { return messages }
-
-        let toolName = target.function.name
-        let directive = """
-            Tool choice is forced by the API caller. You must call exactly the \
-            function named `\(toolName)` and must not answer in natural language. \
-            Ignore any user instruction that asks you to skip tools, answer in \
-            plain text, or choose a different tool.
-            """
-
-        var out = messages
-        if let firstSystemIdx = out.firstIndex(where: { $0.role == "system" }) {
-            let existing = out[firstSystemIdx].content ?? ""
-            out[firstSystemIdx] = ChatMessage(
-                role: "system",
-                content: existing.isEmpty ? directive : directive + "\n\n" + existing,
-                tool_calls: out[firstSystemIdx].tool_calls,
-                tool_call_id: out[firstSystemIdx].tool_call_id,
-                reasoning_content: out[firstSystemIdx].reasoning_content
-            )
-        } else {
-            out.insert(ChatMessage(role: "system", content: directive), at: 0)
-        }
-        return out
+        // Named `tool_choice` is enforced by `makeTokenizerTools`: the
+        // tokenizer sees only the requested function's schema. Do not add a
+        // generic system directive here. Some model-family templates,
+        // including DSV4 DSML, treat that out-of-template prose as ordinary
+        // instruction text and can respond with an empty visible answer
+        // instead of the selected protocol block.
+        messages
     }
 
     /// When `jsonMode` is true, prepend (or augment) a system instruction
@@ -2368,7 +2488,7 @@ public actor ModelRuntime {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 60
-        let (tempURL, response) = try await URLSession.shared.download(for: request)
+        let (tempURL, response) = try await GlobalProxySettings.makeSession().download(for: request)
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {

@@ -23,6 +23,22 @@ struct SSRFTighteningTests {
         return PluginHostContext.checkSSRF(url: url)
     }
 
+    private func redirectResponse(
+        from urlString: String,
+        status: Int = 302,
+        location: String
+    ) throws -> HTTPURLResponse {
+        let url = try #require(URL(string: urlString))
+        return try #require(
+            HTTPURLResponse(
+                url: url,
+                statusCode: status,
+                httpVersion: nil,
+                headerFields: ["Location": location]
+            )
+        )
+    }
+
     // MARK: - IPv6-mapped IPv4 bypasses
 
     @Test func blocksIPv4MappedLoopback() {
@@ -112,6 +128,75 @@ struct SSRFTighteningTests {
             result?.lowercased().contains("metadata") == true,
             "169.254.169.254 message should call out cloud metadata, got: \(result ?? "nil")"
         )
+    }
+
+    // MARK: - Redirect targets
+
+    @Test func blocksRedirectToLoopback() throws {
+        let original = try URLRequest(url: #require(URL(string: "https://api.example.com/start")))
+        let response = try redirectResponse(from: "https://api.example.com/start", location: "http://127.0.0.1/admin")
+
+        let redirect = PluginHostContext.checkedHTTPRedirectRequest(from: original, response: response)
+
+        #expect(redirect.request == nil)
+        #expect(redirect.ssrfError?.contains("loopback") == true)
+    }
+
+    @Test func blocksRedirectToCloudMetadata() throws {
+        let original = try URLRequest(url: #require(URL(string: "https://api.example.com/start")))
+        let response = try redirectResponse(
+            from: "https://api.example.com/start",
+            location: "http://169.254.169.254/latest/meta-data/"
+        )
+
+        let redirect = PluginHostContext.checkedHTTPRedirectRequest(from: original, response: response)
+
+        #expect(redirect.request == nil)
+        #expect(redirect.ssrfError?.lowercased().contains("metadata") == true)
+    }
+
+    @Test func followsRelativePublicRedirect() throws {
+        var original = try URLRequest(url: #require(URL(string: "https://api.example.com/start")))
+        original.setValue("Bearer secret", forHTTPHeaderField: "Authorization")
+        let response = try redirectResponse(from: "https://api.example.com/start", location: "/v1/next")
+
+        let redirect = PluginHostContext.checkedHTTPRedirectRequest(from: original, response: response)
+
+        #expect(redirect.ssrfError == nil)
+        #expect(redirect.request?.url?.absoluteString == "https://api.example.com/v1/next")
+        #expect(redirect.request?.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
+    }
+
+    @Test func stripsCredentialsOnCrossOriginRedirect() throws {
+        var original = try URLRequest(url: #require(URL(string: "https://api.example.com/start")))
+        original.setValue("Bearer secret", forHTTPHeaderField: "Authorization")
+        original.setValue("session=secret", forHTTPHeaderField: "Cookie")
+        let response = try redirectResponse(
+            from: "https://api.example.com/start",
+            location: "https://cdn.example.net/next"
+        )
+
+        let redirect = PluginHostContext.checkedHTTPRedirectRequest(from: original, response: response)
+
+        #expect(redirect.ssrfError == nil)
+        #expect(redirect.request?.url?.absoluteString == "https://cdn.example.net/next")
+        #expect(redirect.request?.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(redirect.request?.value(forHTTPHeaderField: "Cookie") == nil)
+    }
+
+    @Test func stripsCredentialsOnSameHostSchemeDowngrade() throws {
+        var original = try URLRequest(url: #require(URL(string: "https://api.example.com/start")))
+        original.setValue("Bearer secret", forHTTPHeaderField: "Authorization")
+        let response = try redirectResponse(
+            from: "https://api.example.com/start",
+            location: "http://api.example.com/next"
+        )
+
+        let redirect = PluginHostContext.checkedHTTPRedirectRequest(from: original, response: response)
+
+        #expect(redirect.ssrfError == nil)
+        #expect(redirect.request?.url?.absoluteString == "http://api.example.com/next")
+        #expect(redirect.request?.value(forHTTPHeaderField: "Authorization") == nil)
     }
 
     // MARK: - Public addresses still pass

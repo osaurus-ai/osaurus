@@ -47,6 +47,7 @@ enum RemoteToolDetection {
         for name in toolNames {
             if let range = window.range(of: #""name"\s*:\s*"\#(name)""#, options: [.regularExpression])
                 ?? window.range(of: #""tool_name"\s*:\s*"\#(name)""#, options: [.regularExpression])
+                ?? window.range(of: #""tool"\s*:\s*"\#(name)""#, options: [.regularExpression])
             {
                 if let jsonRange = findEnclosingJSONObject(around: range.lowerBound, in: window) {
                     let candidate = String(window[jsonRange])
@@ -130,6 +131,25 @@ enum RemoteToolDetection {
             if let argsString = obj["arguments"] as? String { return (name, argsString) }
             if let argsObj = obj["arguments"],
                 let argsData = try? JSONSerialization.data(withJSONObject: argsObj, options: .osaurusCanonical),
+                let argsJSON = String(data: argsData, encoding: .utf8)
+            {
+                return (name, argsJSON)
+            }
+        }
+        if let name = obj["tool"] as? String {
+            // Tool result envelopes also carry a `"tool"` field. They are
+            // not invocations and must not be re-executed as calls.
+            guard obj["ok"] == nil, obj["result"] == nil else { return nil }
+            if let argsString = obj["arguments"] as? String { return (name, argsString) }
+            if let argsObj = obj["arguments"] ?? obj["parameters"],
+                let argsData = try? JSONSerialization.data(withJSONObject: argsObj, options: .osaurusCanonical),
+                let argsJSON = String(data: argsData, encoding: .utf8)
+            {
+                return (name, argsJSON)
+            }
+            let reserved = Set(["tool", "tool_name", "name", "function", "arguments", "parameters", "type", "id"])
+            let topLevelArgs = obj.filter { !reserved.contains($0.key) }
+            if let argsData = try? JSONSerialization.data(withJSONObject: topLevelArgs, options: .osaurusCanonical),
                 let argsJSON = String(data: argsData, encoding: .utf8)
             {
                 return (name, argsJSON)

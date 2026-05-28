@@ -21,9 +21,11 @@ final class ChatSessionsManager: ObservableObject {
     @Published var currentSessionId: UUID?
 
     private init() {
-        Task { @MainActor [weak self] in
-            self?.refresh()
-        }
+        // Load synchronously so the first reader (ChatWindowState.init)
+        // sees populated sessions. Deferring this via Task caused the
+        // sidebar to render empty on first open until something else
+        // (New Chat, agent switch) triggered a manual refresh.
+        sessions = ChatSessionStore.loadAll()
     }
 
     // MARK: - Public API
@@ -78,11 +80,33 @@ final class ChatSessionsManager: ObservableObject {
         sessions.removeAll { $0.id == id }
     }
 
-    /// Rename a session
+    /// Rename a session.
+    ///
+    /// Pulls from the in-memory list first because new sessions are only
+    /// flushed to `ChatSessionStore` after their first turn writes, so a
+    /// rename issued before that flush would otherwise be dropped.
     func rename(id: UUID, title: String) {
-        guard var session = ChatSessionStore.load(id: id) else { return }
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
+        else { return }
         session.title = title
         session.updatedAt = Date()
+        ChatSessionStore.save(session)
+        upsertInMemory(session)
+    }
+
+    /// Toggle a session's archive flag. Same in-memory-first lookup as
+    /// `rename` because a freshly created chat may not be in the store yet.
+    /// Does not touch `updatedAt` so an archive doesn't bubble the row to
+    /// the top of the recent list and confuse the user.
+    func setArchived(id: UUID, archived: Bool) {
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
+        else { return }
+        guard session.archived != archived else { return }
+        session.archived = archived
         ChatSessionStore.save(session)
         upsertInMemory(session)
     }

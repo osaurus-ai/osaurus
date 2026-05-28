@@ -81,7 +81,9 @@ public struct PullCommand: Command {
         let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
 
         for file in files {
-            let dest = destination.appendingPathComponent(file.path)
+            guard let dest = destinationURL(forRemotePath: file.path, under: destination) else {
+                continue
+            }
             let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
             let existingSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
             if existingSize == file.size {
@@ -104,18 +106,13 @@ public struct PullCommand: Command {
         // Download each file sequentially with progress
         var completedBytes = alreadyDownloaded
         for file in filesToDownload {
-            let encodedPath =
-                file.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file.path
             guard
-                let downloadURL = URL(
-                    string: "https://huggingface.co/\(modelId)/resolve/main/\(encodedPath)"
-                )
+                let downloadURL = resolveDownloadURL(repoId: modelId, path: file.path),
+                let fileDest = destinationURL(forRemotePath: file.path, under: destination)
             else {
-                fputs("Invalid URL for file: \(file.path)\n", stderr)
+                fputs("Invalid remote path for file: \(file.path)\n", stderr)
                 continue
             }
-
-            let fileDest = destination.appendingPathComponent(file.path)
 
             // Create intermediate subdirectories if needed (e.g. for sharded weights)
             let parent = fileDest.deletingLastPathComponent()
@@ -164,6 +161,100 @@ public struct PullCommand: Command {
         }
     }
 
+    // MARK: - Remote path containment
+
+    /// HF tree entries are remote input but become local files; accept only
+    /// portable relative paths before appending them under the model directory.
+    static func normalizedRemoteFilePath(_ path: String) -> String? {
+        guard !path.isEmpty,
+            !path.contains("\\"),
+            !path.contains("\0"),
+            !(path as NSString).isAbsolutePath
+        else {
+            return nil
+        }
+
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.isEmpty else { return nil }
+        var normalized: [String] = []
+        for component in components {
+            guard !component.isEmpty,
+                component != ".",
+                component != ".."
+            else {
+                return nil
+            }
+            normalized.append(String(component))
+        }
+        return normalized.joined(separator: "/")
+    }
+
+    static func destinationURL(forRemotePath path: String, under directory: URL) -> URL? {
+        guard let safePath = normalizedRemoteFilePath(path) else { return nil }
+        let base = directory.standardizedFileURL
+        let destination =
+            safePath
+            .split(separator: "/")
+            .reduce(base) { partial, component in
+                partial.appendingPathComponent(String(component))
+            }
+            .standardizedFileURL
+
+        guard isContained(destination, in: base),
+            existingParentChainIsContained(for: destination, under: base)
+        else {
+            return nil
+        }
+        return destination
+    }
+
+    static func resolveDownloadURL(repoId: String, path: String) -> URL? {
+        guard let safePath = normalizedRemoteFilePath(path) else { return nil }
+        var comps = URLComponents()
+        comps.scheme = "https"
+        comps.host = "huggingface.co"
+        comps.path = "/\(repoId)/resolve/main/\(safePath)"
+        return comps.url
+    }
+
+    private static func existingParentChainIsContained(for destination: URL, under base: URL) -> Bool {
+        let fileManager = FileManager.default
+        let resolvedBase = base.resolvingSymlinksInPath().standardizedFileURL
+        let parent = destination.deletingLastPathComponent().standardizedFileURL
+        let baseComponents = base.pathComponents
+        let parentComponents = parent.pathComponents
+        guard parentComponents.count >= baseComponents.count,
+            Array(parentComponents.prefix(baseComponents.count)) == baseComponents
+        else {
+            return false
+        }
+
+        var current = base
+        for component in parentComponents.dropFirst(baseComponents.count) {
+            current = current.appendingPathComponent(component, isDirectory: true)
+            guard isContained(current.standardizedFileURL, in: base) else { return false }
+            guard fileManager.fileExists(atPath: current.path) else { break }
+            guard (try? fileManager.destinationOfSymbolicLink(atPath: current.path)) == nil else {
+                return false
+            }
+
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: current.path, isDirectory: &isDirectory),
+                isDirectory.boolValue,
+                isContained(current.resolvingSymlinksInPath().standardizedFileURL, in: resolvedBase)
+            else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func isContained(_ url: URL, in directory: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        let directoryPath = directory.standardizedFileURL.path
+        return path == directoryPath || path.hasPrefix(directoryPath + "/")
+    }
+
     // MARK: - HuggingFace file listing
 
     private struct MatchedFile {
@@ -201,11 +292,12 @@ public struct PullCommand: Command {
 
             let files: [(path: String, size: Int64)] = nodes.compactMap { node in
                 guard node.type != "directory" else { return nil }
-                let filename = (node.path as NSString).lastPathComponent
+                guard let safePath = normalizedRemoteFilePath(node.path) else { return nil }
+                let filename = (safePath as NSString).lastPathComponent
                 guard matchers.contains(where: { $0.matches(filename) }) else { return nil }
                 let size = node.size ?? node.lfs?.size ?? 0
                 guard size > 0 else { return nil }
-                return (path: node.path, size: size)
+                return (path: safePath, size: size)
             }
             return files
         } catch {

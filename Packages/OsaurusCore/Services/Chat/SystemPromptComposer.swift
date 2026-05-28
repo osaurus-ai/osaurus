@@ -516,6 +516,13 @@ public struct SystemPromptComposer: Sendable {
         cachedPreflight: PreflightResult?,
         trace: TTFTTrace?
     ) async -> PreflightResult {
+        // Default agent gets a fixed 8-tool baseline; any preflight
+        // picks would be stripped by `resolveTools` anyway, so the
+        // LLM selector call would burn tokens for no schema effect.
+        if agentId == Agent.defaultId {
+            trace?.set("preflightSource", "default_agent_skipped")
+            return .empty
+        }
         if let cachedPreflight {
             trace?.set("preflightSource", "cached")
             return cachedPreflight
@@ -1425,6 +1432,25 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
+        // Phase C default-agent surface:
+        //   * For the Default agent, hard-restrict to the 8-tool baseline
+        //     (3 reads + 2 discovery + 3 agent-loop). Writes are NOT in
+        //     the turn-1 schema — they enter only via `capabilities_load`,
+        //     which `additionalToolNames` carries above.
+        //   * For every other agent, strip the configure tools wholesale.
+        //     Even if a registration path leaks `osaurus_provider_add`
+        //     into the schema, the strip filter keeps the model from
+        //     seeing it.
+        if snapshot.agentId == Agent.defaultId {
+            let allowed = ToolRegistry.defaultAgentAllowedToolNames
+                .union(additionalToolNames)
+            byName = byName.filter { allowed.contains($0.key) }
+        } else {
+            for name in ToolRegistry.configureToolNames {
+                byName.removeValue(forKey: name)
+            }
+        }
+
         return canonicalToolOrder(Array(byName.values))
     }
 
@@ -1493,7 +1519,21 @@ public struct SystemPromptComposer: Sendable {
         executionMode: ExecutionMode
     ) -> SystemPromptComposer {
         var composer = SystemPromptComposer()
-        composer.appendBasePrompt(systemPrompt: snapshot.systemPrompt)
+        // Default-agent system-prompt addendum (Phase C). The
+        // configure-agent menu is derived from
+        // `ConfigurationDomainRegistry` and prepended to the user's
+        // own persona so the addendum sits as a *system role*
+        // preamble. Memoized inside the builder so adding it costs
+        // a single pointer read per compose.
+        let basePrompt: String
+        if snapshot.agentId == Agent.defaultId {
+            let addendum = DefaultAgentSystemPromptBuilder.render()
+            let userPersona = snapshot.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            basePrompt = userPersona.isEmpty ? addendum : addendum + "\n\n" + snapshot.systemPrompt
+        } else {
+            basePrompt = snapshot.systemPrompt
+        }
+        composer.appendBasePrompt(systemPrompt: basePrompt)
         return composer
     }
 

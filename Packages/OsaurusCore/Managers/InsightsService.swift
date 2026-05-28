@@ -358,10 +358,23 @@ extension InsightsService {
         maxTokens: Int? = nil,
         toolCalls: [ToolCallLog]? = nil,
         finishReason: RequestLog.FinishReason? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        wireRequestBody: Data? = nil,
+        wireResponseBody: Data? = nil
     ) {
         let trimmedRequest = truncateBody(requestBody)
         let trimmedResponse = truncateBody(responseBody)
+        // Wire bodies are passed as `Data` so the probe doesn't have
+        // to pay an utf8 -> String cost on the stream hot path. We
+        // do the decode + truncate here, on the main-actor Task
+        // hop, so insights logging stays off the critical streaming
+        // thread.
+        let trimmedWireRequest = truncateBody(
+            wireRequestBody.flatMap { String(data: $0, encoding: .utf8) }
+        )
+        let trimmedWireResponse = truncateBody(
+            wireResponseBody.flatMap { String(data: $0, encoding: .utf8) }
+        )
 
         Task { @MainActor in
             let log = RequestLog(
@@ -381,7 +394,9 @@ extension InsightsService {
                 maxTokens: maxTokens,
                 toolCalls: toolCalls,
                 finishReason: finishReason,
-                errorMessage: errorMessage
+                errorMessage: errorMessage,
+                wireRequestBody: trimmedWireRequest,
+                wireResponseBody: trimmedWireResponse
             )
             shared.log(log)
         }
@@ -404,7 +419,9 @@ extension InsightsService {
         finishReason: RequestLog.FinishReason = .stop,
         errorMessage: String? = nil,
         requestBody: String? = nil,
-        responseBody: String? = nil
+        responseBody: String? = nil,
+        wireRequestBody: Data? = nil,
+        wireResponseBody: Data? = nil
     ) {
         logRequest(
             source: source,
@@ -421,7 +438,9 @@ extension InsightsService {
             maxTokens: maxTokens,
             toolCalls: toolCalls,
             finishReason: finishReason,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            wireRequestBody: wireRequestBody,
+            wireResponseBody: wireResponseBody
         )
     }
 

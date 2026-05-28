@@ -107,7 +107,7 @@ Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift)
 | Tool            | Description                                                  |
 | --------------- | ------------------------------------------------------------ |
 | `file_tree`     | List directory structure with project-aware ignore patterns. Use this instead of `ls`/`tree` in `shell_run`. |
-| `file_read`     | Read file contents (supports line ranges and tail-only mode). Use this instead of `cat`/`head`/`tail`. |
+| `file_read`     | Read text with line ranges and XLSX workbooks with bounded sheet previews. Use this instead of `cat`/`head`/`tail`. |
 | `file_write`    | Create or overwrite files. Use this instead of `echo`/`cat` heredoc. |
 | `file_edit`     | Surgical exact-string replacement. Use this instead of `sed`/`awk`. |
 | `file_search`   | ripgrep-style search across the folder. Use this instead of `grep`/`rg`/`find`. |

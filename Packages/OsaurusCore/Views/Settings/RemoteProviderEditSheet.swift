@@ -87,6 +87,8 @@ private struct AddProviderFlow: View {
     // Advanced settings
     @State private var showAdvanced = false
     @State private var timeout: Double = 60
+    @State private var disableTimeout: Bool = false
+    @State private var showNoTimeoutWarning = false
     @State private var customHeaders: [HeaderEntry] = []
 
     private var canTest: Bool {
@@ -148,6 +150,16 @@ private struct AddProviderFlow: View {
             }
             withAnimation { hasAppeared = true }
         }
+        .themedAlert(
+            "Disable request timeout?",
+            isPresented: $showNoTimeoutWarning,
+            accessory: AnyView(NoTimeoutWarningContent()),
+            buttons: [
+                .cancel("Cancel"),
+                .destructive("Disable Timeout") { disableTimeout = true },
+            ],
+            presentationStyle: .contained
+        )
     }
 
     private var stepTransition: AnyTransition {
@@ -426,6 +438,7 @@ private struct AddProviderFlow: View {
                 manualModelIdsText = ""
                 showAdvanced = false
                 timeout = 60
+                disableTimeout = false
                 customHeaders = []
             }
         } label: {
@@ -551,6 +564,97 @@ private struct AddProviderFlow: View {
         let path = knownBasePath.trimmingCharacters(in: .whitespaces)
         result += path.isEmpty ? "/openai/v1" : (path.hasPrefix("/") ? path : "/" + path)
         return result
+    }
+
+    /// Whether the add flow shows the optional endpoint override for the
+    /// selected known preset. Hidden for Azure (which has its own required
+    /// endpoint section) and for OpenAI's ChatGPT/Codex OAuth mode, which
+    /// talks to OpenAI's fixed OAuth backend so a base-URL override is moot.
+    private var showsKnownEndpointOverride: Bool {
+        guard let preset = selectedPreset, preset.isKnown, preset != .azureOpenAI else { return false }
+        if preset == .openai && openAIAuthMode == .chatGPTSubscription { return false }
+        return true
+    }
+
+    /// Optional base-URL override for known presets, shown under "Advanced".
+    /// Pre-filled with the preset's official endpoint; editing it points the
+    /// native provider type (Anthropic, OpenAI, Gemini)
+    private var knownEndpointOverrideSection: some View {
+        let officialHost = selectedPreset?.configuration.host ?? ""
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "network")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                Text("ENDPOINT", bundle: .module)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                    .tracking(0.5)
+            }
+
+            Text(
+                "Override the base URL to route through a proxy or self-hosted gateway. Leave as-is for the official endpoint.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("PROTOCOL", bundle: .module)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .tracking(0.5)
+                    SegmentedToggle {
+                        SegmentedToggleButton("HTTPS", isSelected: knownProtocol == .https) { knownProtocol = .https }
+                        SegmentedToggleButton("HTTP", isSelected: knownProtocol == .http) { knownProtocol = .http }
+                    }
+                }
+                .frame(width: 140)
+
+                ProviderTextField(
+                    label: "Host",
+                    placeholder: officialHost,
+                    text: $knownHost,
+                    isMonospaced: true
+                )
+                .onChange(of: knownHost) { _, _ in testResult = nil }
+            }
+
+            HStack(spacing: 12) {
+                ProviderTextField(
+                    label: "Port",
+                    placeholder: knownProtocol == .https ? "443" : "80",
+                    text: $knownPort,
+                    isMonospaced: true
+                )
+                .frame(width: 90)
+                .onChange(of: knownPort) { _, _ in testResult = nil }
+
+                ProviderTextField(
+                    label: "Base Path",
+                    placeholder: selectedPreset?.configuration.basePath ?? "/v1",
+                    text: $knownBasePath,
+                    isMonospaced: true
+                )
+                .onChange(of: knownBasePath) { _, _ in testResult = nil }
+            }
+
+            if !knownHost.trimmingCharacters(in: .whitespaces).isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "link")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.accentColor)
+                    Text(buildKnownEndpointPreview())
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor.opacity(0.1)))
+            }
+        }
     }
 
     private var apiKeySection: some View {
@@ -910,27 +1014,13 @@ private struct AddProviderFlow: View {
 
             if showAdvanced {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Timeout
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("REQUEST TIMEOUT", bundle: .module)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(theme.tertiaryText)
-                                .tracking(0.5)
-                            Spacer()
-                            Text("\(Int(timeout))s", bundle: .module)
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.inputBackground)
-                                )
-                        }
-                        Slider(value: $timeout, in: 10 ... 300, step: 10)
-                            .tint(theme.accentColor)
+                    // Optional base-URL override for known presets.
+                    if showsKnownEndpointOverride {
+                        knownEndpointOverrideSection
                     }
+
+                    // Timeout
+                    timeoutSection
 
                     // Custom headers
                     VStack(alignment: .leading, spacing: 10) {
@@ -972,6 +1062,66 @@ private struct AddProviderFlow: View {
                 .padding(.top, 12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+    }
+
+    // MARK: - Timeout
+
+    private var timeoutSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("REQUEST TIMEOUT", bundle: .module)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                    .tracking(0.5)
+                Spacer()
+                Text(disableTimeout ? "No limit" : "\(Int(timeout))s", bundle: .module)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.inputBackground)
+                    )
+            }
+            Slider(value: $timeout, in: 10 ... 300, step: 10)
+                .tint(theme.accentColor)
+                .disabled(disableTimeout)
+                .opacity(disableTimeout ? 0.4 : 1)
+
+            // Intercepting binding: turning the switch ON only opens the warning;
+            // `disableTimeout` flips to true after the user confirms. Turning OFF
+            // is immediate. This keeps loadProvider() (which sets the @State
+            // directly) from spuriously triggering the alert on sheet open.
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Disable timeout", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Text("Let requests run with no time limit", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                Spacer()
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { disableTimeout },
+                        set: { wantsOn in
+                            if wantsOn {
+                                showNoTimeoutWarning = true
+                            } else {
+                                disableTimeout = false
+                            }
+                        }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(theme.accentColor)
+            }
+            .padding(.top, 6)
         }
     }
 
@@ -1174,6 +1324,7 @@ private struct AddProviderFlow: View {
             enabled: true,
             autoConnect: true,
             timeout: timeout,
+            disableTimeout: disableTimeout,
             manualModelIds: parseManualModelIds(manualModelIdsText),
             secretHeaderKeys: secretKeys
         )
@@ -1237,6 +1388,7 @@ private struct AddProviderFlow: View {
             enabled: true,
             autoConnect: true,
             timeout: timeout,
+            disableTimeout: disableTimeout,
             secretHeaderKeys: secretKeys
         )
 
@@ -1252,20 +1404,22 @@ private struct AddProviderFlow: View {
         }
     }
 
+    /// Resolve the connection for a known preset, applying the user's endpoint
+    /// overrides (`knownHost` etc.) on top of the preset defaults. Blank fields
+    /// fall back to the official preset values, so users who never touch the
+    /// override get the stock endpoint
     private func knownProviderConnection(for preset: ProviderPreset) -> ProviderPresetConfiguration {
         let config = preset.configuration
-        guard preset == .azureOpenAI else { return config }
-
         let trimmedHost = knownHost.trimmingCharacters(in: .whitespaces)
         let trimmedBasePath = knownBasePath.trimmingCharacters(in: .whitespaces)
         let port: Int? = knownPort.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(knownPort)
 
         return ProviderPresetConfiguration(
             name: config.name,
-            host: trimmedHost,
+            host: trimmedHost.isEmpty ? config.host : trimmedHost,
             providerProtocol: knownProtocol,
             port: port,
-            basePath: trimmedBasePath.isEmpty ? "/openai/v1" : trimmedBasePath,
+            basePath: trimmedBasePath.isEmpty ? config.basePath : trimmedBasePath,
             authType: config.authType,
             providerType: config.providerType
         )
@@ -1304,6 +1458,8 @@ private struct EditProviderFlow: View {
     // Advanced
     @State private var showAdvanced = false
     @State private var timeout: Double = 60
+    @State private var disableTimeout: Bool = false
+    @State private var showNoTimeoutWarning = false
     @State private var customHeaders: [HeaderEntry] = []
 
     // UI state
@@ -1358,6 +1514,16 @@ private struct EditProviderFlow: View {
             loadProvider()
             withAnimation { hasAppeared = true }
         }
+        .themedAlert(
+            "Disable request timeout?",
+            isPresented: $showNoTimeoutWarning,
+            accessory: AnyView(NoTimeoutWarningContent()),
+            buttons: [
+                .cancel("Cancel"),
+                .destructive("Disable Timeout") { disableTimeout = true },
+            ],
+            presentationStyle: .contained
+        )
     }
 
     // MARK: - Header
@@ -1831,26 +1997,7 @@ private struct EditProviderFlow: View {
                     }
 
                     // Timeout
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("REQUEST TIMEOUT", bundle: .module)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(theme.tertiaryText)
-                                .tracking(0.5)
-                            Spacer()
-                            Text("\(Int(timeout))s", bundle: .module)
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.inputBackground)
-                                )
-                        }
-                        Slider(value: $timeout, in: 10 ... 300, step: 10)
-                            .tint(theme.accentColor)
-                    }
+                    timeoutSection
 
                     // Custom headers
                     VStack(alignment: .leading, spacing: 10) {
@@ -1892,6 +2039,66 @@ private struct EditProviderFlow: View {
                 .padding(.top, 12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+    }
+
+    // MARK: - Timeout
+
+    private var timeoutSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("REQUEST TIMEOUT", bundle: .module)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                    .tracking(0.5)
+                Spacer()
+                Text(disableTimeout ? "No limit" : "\(Int(timeout))s", bundle: .module)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.inputBackground)
+                    )
+            }
+            Slider(value: $timeout, in: 10 ... 300, step: 10)
+                .tint(theme.accentColor)
+                .disabled(disableTimeout)
+                .opacity(disableTimeout ? 0.4 : 1)
+
+            // Intercepting binding: turning the switch ON only opens the warning;
+            // `disableTimeout` flips to true after the user confirms. Turning OFF
+            // is immediate. This keeps loadProvider() (which sets the @State
+            // directly) from spuriously triggering the alert on sheet open.
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Disable timeout", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Text("Let requests run with no time limit", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                Spacer()
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { disableTimeout },
+                        set: { wantsOn in
+                            if wantsOn {
+                                showNoTimeoutWarning = true
+                            } else {
+                                disableTimeout = false
+                            }
+                        }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(theme.accentColor)
+            }
+            .padding(.top, 6)
         }
     }
 
@@ -2032,6 +2239,7 @@ private struct EditProviderFlow: View {
         authType = provider.authType
         providerType = provider.providerType
         timeout = provider.timeout
+        disableTimeout = provider.disableTimeout
         manualModelIdsText = provider.manualModelIds.joined(separator: "\n")
         customHeaders = provider.customHeaders.map { HeaderEntry(key: $0.key, value: $0.value, isSecret: false) }
         for key in provider.secretHeaderKeys {
@@ -2092,6 +2300,7 @@ private struct EditProviderFlow: View {
             enabled: provider.enabled,
             autoConnect: true,
             timeout: timeout,
+            disableTimeout: disableTimeout,
             manualModelIds: parseManualModelIds(manualModelIdsText),
             secretHeaderKeys: secretKeys
         )
@@ -2102,6 +2311,36 @@ private struct EditProviderFlow: View {
 
         onSave(updatedProvider, apiKey.isEmpty ? nil : apiKey, nil)
         dismiss()
+    }
+}
+
+// MARK: - No-Timeout Warning Content
+
+private struct NoTimeoutWarningContent: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Requests will run with no time limit. Before enabling:", bundle: .module)
+            bullet(
+                "A stalled provider or dropped connection can hang a request indefinitely. You'll have to stop it manually"
+            )
+            bullet("Upstream timeouts (LM Studio, proxies, tunnels) still apply")
+            bullet("Only use this on trusted hardware for long-running work")
+        }
+        .font(.system(size: 13))
+        .foregroundColor(theme.secondaryText)
+        .lineSpacing(2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 8)
+    }
+
+    private func bullet(_ text: LocalizedStringKey) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(verbatim: "•")
+            Text(text, bundle: .module)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -2352,105 +2591,6 @@ private struct CompactHeaderRow: View {
             }
             .buttonStyle(PlainButtonStyle())
         }
-    }
-}
-
-// MARK: - Provider TextField
-
-private struct ProviderTextField: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    let placeholder: String
-    @Binding var text: String
-    var isMonospaced: Bool = false
-
-    @State private var isFocused = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(LocalizedStringKey(label), bundle: .module)
-                .textCase(.uppercase)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
-                .tracking(0.5)
-
-            HStack(spacing: 10) {
-                ZStack(alignment: .leading) {
-                    if text.isEmpty {
-                        Text(LocalizedStringKey(placeholder), bundle: .module)
-                            .font(.system(size: 13, design: isMonospaced ? .monospaced : .default))
-                            .foregroundColor(themeManager.currentTheme.placeholderText)
-                            .allowsHitTesting(false)
-                    }
-
-                    TextField(
-                        "",
-                        text: $text,
-                        onEditingChanged: { editing in
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                isFocused = editing
-                            }
-                        }
-                    )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: isMonospaced ? .monospaced : .default))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isFocused
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
-            )
-        }
-    }
-}
-
-// MARK: - Provider Secure Field
-
-private struct ProviderSecureField: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let placeholder: String
-    @Binding var text: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ZStack(alignment: .leading) {
-                if text.isEmpty {
-                    Text(LocalizedStringKey(placeholder), bundle: .module)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-
-                SecureField("", text: $text)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                )
-        )
     }
 }
 
