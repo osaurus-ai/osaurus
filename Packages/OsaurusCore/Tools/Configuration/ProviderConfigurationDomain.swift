@@ -167,7 +167,7 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
                 "description": .string("Override host. Optional for managed vendors."),
             ]),
         ]),
-        "required": .array([.string("name")]),
+        "required": .array([.string("name"), .string("provider")]),
     ])
 
     /// The credential sheet is user-paced — letting the registry's
@@ -237,14 +237,22 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
                 retryable: false
             )
         case .apiKey(let key, let headers):
+            // `.none`-auth providers (e.g. Ollama) flow through the same
+            // `.apiKey` outcome with an empty string when the user skips
+            // the optional key field. Pass nil to the manager so we don't
+            // write an empty record to Keychain.
+            let storageAuthType = request.instructions.storageAuthType
+            let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedKey: String? =
+                (storageAuthType == .none || trimmedKey.isEmpty) ? nil : trimmedKey
             let providerId = await MainActor.run {
                 buildAndAdd(
                     displayName: displayName,
                     resolution: resolution,
-                    storageAuthType: request.instructions.storageAuthType,
+                    storageAuthType: storageAuthType,
                     hostOverride: hostOverride,
                     extraHeaders: headers,
-                    apiKey: key,
+                    apiKey: resolvedKey,
                     oauthTokens: nil
                 )
             }
@@ -255,7 +263,7 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
                     "status": "added",
                     "connecting": true,
                     "next_steps": [
-                        "Use osaurus_describe({scope: 'provider', id: '\(providerId.uuidString)'}) "
+                        "Use osaurus_describe({scope: 'providers', id: '\(providerId.uuidString)'}) "
                             + "to see connection status and discovered models."
                     ],
                 ]
@@ -336,14 +344,43 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
         }
 
         let defaults = endpointDefaults(for: resolution)
-        let host = (hostOverride?.isEmpty == false) ? hostOverride! : defaults.host
         let providerType = resolution.providerType
+        let extras = extraHeaders ?? [:]
+
+        // The credential sheet collects non-secret extras (host, deployment,
+        // …) keyed by the catalog field id. Reserved keys map onto explicit
+        // `RemoteProvider` fields below — anything else passes through as a
+        // custom header for `.openaiLegacy` providers. Treating "host" and
+        // "deployment" as reserved keeps custom/Azure flows from leaking
+        // endpoint info into the headers map.
+        let sheetHost = extras["host"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let host: String
+        if let override = hostOverride, !override.isEmpty {
+            host = override
+        } else if !sheetHost.isEmpty {
+            host = sheetHost
+        } else {
+            host = defaults.host
+        }
+
         var headers: [String: String] = [:]
-        if let extra = extraHeaders, providerType == .openaiLegacy {
-            for (k, v) in extra where k != "host" && k != "deployment" {
+        if providerType == .openaiLegacy {
+            for (k, v) in extras where !Self.reservedExtraKeys.contains(k) {
                 headers[k] = v
             }
         }
+
+        // Azure routes requests through deployment names rather than model
+        // names, so the Settings UI persists the deployment list in
+        // `manualModelIds`. Mirror that here — accept comma/newline-separated
+        // values so a single tool call can register multiple deployments,
+        // matching the in-app flow.
+        var manualModelIds: [String] = []
+        if providerType == .azureOpenAI {
+            let raw = extras["deployment"] ?? ""
+            manualModelIds = Self.parseManualModelIds(raw)
+        }
+
         let provider = RemoteProvider(
             name: displayName,
             host: host,
@@ -355,7 +392,8 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
             providerType: providerType,
             enabled: true,
             autoConnect: true,
-            timeout: 60
+            timeout: 60,
+            manualModelIds: manualModelIds
         )
         RemoteProviderManager.shared.addProvider(
             provider,
@@ -363,6 +401,30 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
             oauthTokens: oauthTokens
         )
         return provider.id
+    }
+
+    /// Extra-field keys that map to explicit `RemoteProvider` columns rather
+    /// than free-form `customHeaders`. Kept here (rather than on the catalog
+    /// entry) because the mapping is provider-shape specific. Exposed
+    /// `internal` so tests can assert the contract without copy-pasting it.
+    static let reservedExtraKeys: Set<String> = ["host", "deployment"]
+
+    /// Split a comma/newline-separated list of deployment names into a
+    /// deduped, trimmed, order-preserving array. Mirrors the parser in
+    /// `RemoteProviderEditSheet` so chat-driven Azure providers persist
+    /// identically to those configured via Settings.
+    static func parseManualModelIds(_ text: String) -> [String] {
+        var seen = Set<String>()
+        var values: [String] = []
+        for part in text.split(whereSeparator: { $0 == "\n" || $0 == "," }) {
+            let value = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { continue }
+            let key = value.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            values.append(value)
+        }
+        return values
     }
 
     /// Vendor host/protocol/basePath sourced from `preset.configuration`,

@@ -63,10 +63,19 @@ struct ProviderCredentialPromptSheet: View {
 
     private var canSave: Bool {
         if isOAuthFlow { return oauthTokens != nil }
-        guard !trimmed(apiKey).isEmpty else { return false }
+        if requiresApiKey, trimmed(apiKey).isEmpty { return false }
         return request.instructions.extraFields
             .filter { $0.isRequired }
             .allSatisfy { !trimmed(extraFieldValue(for: $0.key)).isEmpty }
+    }
+
+    /// True when the catalog requires a secret to authenticate. Ollama and
+    /// other `.none` providers can be saved (and tested) without one — the
+    /// sheet must let the user proceed with an empty `apiKey` field there,
+    /// otherwise the catalog hint "Leave blank if your local Ollama
+    /// doesn't require one" is unreachable.
+    private var requiresApiKey: Bool {
+        request.instructions.storageAuthType != .none
     }
 
     /// True once we've either tested successfully or completed OAuth —
@@ -287,19 +296,27 @@ struct ProviderCredentialPromptSheet: View {
     private var apiKeyBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(request.instructions.extraFields, id: \.key) { field in
-                ProviderTextField(
-                    label: field.label + (field.isRequired ? " *" : ""),
-                    placeholder: field.placeholder,
-                    text: Binding(
-                        get: { extraFieldValue(for: field.key) },
-                        set: { extraFieldValues[field.key] = $0 }
-                    ),
-                    isMonospaced: field.key == "host"
-                )
+                VStack(alignment: .leading, spacing: 4) {
+                    ProviderTextField(
+                        label: field.label + (field.isRequired ? " *" : ""),
+                        placeholder: field.placeholder,
+                        text: Binding(
+                            get: { extraFieldValue(for: field.key) },
+                            set: { extraFieldValues[field.key] = $0 }
+                        ),
+                        isMonospaced: field.key == "host"
+                    )
+                    if let help = field.helpText, !help.isEmpty {
+                        Text(help)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(L("API KEY *"))
+                Text(requiresApiKey ? L("API KEY *") : L("API KEY (optional)"))
                     .textCase(.uppercase)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(theme.tertiaryText)
@@ -564,7 +581,7 @@ struct ProviderCredentialPromptSheet: View {
             return
         }
         let key = trimmed(apiKey)
-        guard !key.isEmpty else { return }
+        if requiresApiKey, key.isEmpty { return }
         onComplete(.apiKey(key: key, headers: collectedExtraHeaders()))
     }
 
@@ -621,7 +638,7 @@ struct ProviderCredentialPromptSheet: View {
 
     private func runTestConnection() {
         let key = trimmed(apiKey)
-        guard !key.isEmpty else { return }
+        if requiresApiKey, key.isEmpty { return }
 
         // Build the same temp provider shape `RemoteProviderEditSheet` does
         // so the inline test result accurately reflects what we'll persist.

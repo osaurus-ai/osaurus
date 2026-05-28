@@ -92,7 +92,7 @@ public final class OsaurusPluginInstallTool: OsaurusTool, PermissionedTool, @unc
                 "status": "installed",
                 "next_steps": [
                     "If the plugin requires API keys or webhooks, direct the user to Settings → Plugins → Secrets.",
-                    "Use osaurus_describe({scope: 'plugin', id: '\(pluginId)'}) to inspect its tools.",
+                    "Use osaurus_describe({scope: 'plugins', id: '\(pluginId)'}) to inspect its tools.",
                 ],
             ]
         )

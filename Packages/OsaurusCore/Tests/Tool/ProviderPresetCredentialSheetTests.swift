@@ -87,6 +87,17 @@ struct ProviderPresetCredentialSheetTests {
     }
 
     @Test
+    func ollamaPreset_keyFormatHintAdvertisesOptionalKey() {
+        // The sheet's `canSave` / `runTestConnection` / `save` paths all
+        // gate on `storageAuthType == .none` to allow an empty key. The
+        // catalog must keep `.none` (and a hint that says it's optional)
+        // so that contract stays honest.
+        let entry = ProviderCredentialInstructionsCatalog.entry(for: .ollama)
+        #expect(entry.storageAuthType == .none)
+        #expect(entry.keyFormatHint?.contains("blank") == true)
+    }
+
+    @Test
     func everyKnownPresetHasCatalogEntry() {
         // Sanity guard so adding a new preset case forces a catalog
         // entry — otherwise the chat sheet would render an empty form.
@@ -153,9 +164,13 @@ struct ProviderPresetCredentialSheetTests {
 
     @Test
     func coordinator_supportsOAuth_recognizesOpenrouterPreset() {
-        #expect(OAuthSignInCoordinator.supportsOAuth(.openrouter) == true)
-        #expect(OAuthSignInCoordinator.supportsOAuth(.deepseek) == false)
-        #expect(OAuthSignInCoordinator.supportsOAuth(.anthropic) == false)
+        // Explicitly qualify the enum — both `ProviderPreset` and
+        // `RemoteProviderType` carry these cases, and `supportsOAuth` has
+        // overloads for both, so `.anthropic` / `.openrouter` are ambiguous
+        // on their own.
+        #expect(OAuthSignInCoordinator.supportsOAuth(ProviderPreset.openrouter) == true)
+        #expect(OAuthSignInCoordinator.supportsOAuth(ProviderPreset.deepseek) == false)
+        #expect(OAuthSignInCoordinator.supportsOAuth(ProviderPreset.anthropic) == false)
     }
 
     @Test
@@ -223,5 +238,88 @@ struct ProviderPresetCredentialSheetTests {
     func resolver_isCaseInsensitive() {
         #expect(ProviderToolShared.resolve("OpenRouter") != nil)
         #expect(ProviderToolShared.resolve("DEEPSEEK") != nil)
+    }
+
+    // MARK: - Tool schema contract
+
+    @Test
+    func providerAddTool_marksProviderAsRequiredAlongsideName() {
+        // The schema must match the runtime behavior: `execute` errors when
+        // neither `provider` nor `provider_type` is supplied, so the schema
+        // had been lying to the model. Lock the contract here so it can't
+        // silently drift back to `name`-only.
+        let tool = OsaurusProviderAddTool()
+        guard case .object(let schema) = tool.parameters else {
+            Issue.record("provider_add schema must be an object")
+            return
+        }
+        guard case .array(let required) = schema["required"] else {
+            Issue.record("provider_add schema must declare a `required` array")
+            return
+        }
+        let names: [String] = required.compactMap { value in
+            if case .string(let s) = value { return s }
+            return nil
+        }
+        #expect(names.contains("name"))
+        #expect(names.contains("provider"))
+        // `provider_type` is the deprecated alias — it must NOT be required.
+        #expect(names.contains("provider_type") == false)
+    }
+
+    // MARK: - Azure deployments → manualModelIds
+
+    @Test
+    func parseManualModelIds_singleEntryYieldsOneId() {
+        #expect(OsaurusProviderAddTool.parseManualModelIds("gpt-4o") == ["gpt-4o"])
+    }
+
+    @Test
+    func parseManualModelIds_commaAndNewlineSeparated() {
+        let parsed = OsaurusProviderAddTool.parseManualModelIds(
+            "gpt-4o, gpt-4o-mini\nprod-chat"
+        )
+        #expect(parsed == ["gpt-4o", "gpt-4o-mini", "prod-chat"])
+    }
+
+    @Test
+    func parseManualModelIds_dedupesCaseInsensitivelyKeepingFirstSpelling() {
+        // Matches `RemoteProviderEditSheet.parseManualModelIds` — the first
+        // spelling wins so chat-driven Azure providers persist identically
+        // to those configured via Settings.
+        let parsed = OsaurusProviderAddTool.parseManualModelIds(
+            "GPT-4o, gpt-4o,  gpt-4o "
+        )
+        #expect(parsed == ["GPT-4o"])
+    }
+
+    @Test
+    func parseManualModelIds_emptyAndWhitespaceCollapseToEmptyArray() {
+        #expect(OsaurusProviderAddTool.parseManualModelIds("") == [])
+        #expect(OsaurusProviderAddTool.parseManualModelIds(" , \n , ") == [])
+    }
+
+    @Test
+    func azureCatalogEntry_advertisesMultiDeploymentInPlaceholderAndHelpText() {
+        // The Settings UI lets users register many Azure deployments at
+        // once via comma/newline-separated text. The chat flow now mirrors
+        // that — guard the user-facing hints so they don't regress to
+        // "single deployment" wording.
+        let entry = ProviderCredentialInstructionsCatalog.entry(for: .azureOpenAI)
+        guard let deployment = entry.extraFields.first(where: { $0.key == "deployment" }) else {
+            Issue.record("Azure catalog entry must include a deployment field")
+            return
+        }
+        #expect(deployment.placeholder.contains(","))
+        #expect(deployment.helpText?.isEmpty == false)
+    }
+
+    @Test
+    func reservedExtraKeys_blockHostAndDeploymentFromCustomHeaders() {
+        // `.openaiLegacy` providers pass through unknown extra fields as
+        // custom headers, so the reserved keys must stay opaque or Azure
+        // would leak its endpoint into the headers map.
+        #expect(OsaurusProviderAddTool.reservedExtraKeys.contains("host"))
+        #expect(OsaurusProviderAddTool.reservedExtraKeys.contains("deployment"))
     }
 }

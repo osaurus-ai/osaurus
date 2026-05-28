@@ -138,7 +138,7 @@ public final class OsaurusAgentCreateTool: OsaurusTool, PermissionedTool, @unche
                 "name": agent.name,
                 "status": "created",
                 "next_steps": [
-                    "call osaurus_describe({scope: 'agent', id: '\(agent.id.uuidString)'}) to see effective settings",
+                    "call osaurus_describe({scope: 'agents', id: '\(agent.id.uuidString)'}) to see effective settings",
                     "call osaurus_agent_activate({id: '\(agent.id.uuidString)'}) to switch to it",
                 ],
             ]

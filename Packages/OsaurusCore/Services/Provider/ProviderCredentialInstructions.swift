@@ -31,11 +31,21 @@ public struct ProviderCredentialField: Sendable, Equatable {
     public let key: String
     public let label: String
     public let placeholder: String
+    /// Optional one-liner shown beneath the field. Use for value-format hints
+    /// (e.g. "Comma or newline-separated") that wouldn't fit in the placeholder.
+    public let helpText: String?
     public let isRequired: Bool
-    public init(key: String, label: String, placeholder: String, isRequired: Bool) {
+    public init(
+        key: String,
+        label: String,
+        placeholder: String,
+        helpText: String? = nil,
+        isRequired: Bool
+    ) {
         self.key = key
         self.label = label
         self.placeholder = placeholder
+        self.helpText = helpText
         self.isRequired = isRequired
     }
 }
@@ -132,8 +142,12 @@ public enum ProviderCredentialInstructionsCatalog {
                     ),
                     ProviderCredentialField(
                         key: "deployment",
-                        label: L("Deployment"),
-                        placeholder: L("gpt-4o"),
+                        label: L("Deployments"),
+                        placeholder: L("gpt-4o, gpt-4o-mini"),
+                        helpText: L(
+                            "One or more Azure deployment names — comma or newline-separated. "
+                                + "Stored as the provider's model list."
+                        ),
                         isRequired: true
                     ),
                 ],

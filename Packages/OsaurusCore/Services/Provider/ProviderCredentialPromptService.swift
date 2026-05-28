@@ -112,7 +112,14 @@ public enum ProviderCredentialPromptService {
     private static var closeObserver: NSObjectProtocol?
     private static var localKeyMonitor: Any?
     private static var globalKeyMonitor: Any?
-    private static var pendingTask: Task<Void, Never>?
+    /// Tail of the prompt chain. Each call replaces this with its own
+    /// in-flight task, and the task's lifetime spans the *entire* prompt
+    /// — including the user-facing wait on the sheet — so subsequent
+    /// callers serialize behind the actual interaction instead of just
+    /// the queueing handshake. Without this, two overlapping tool calls
+    /// could both reach `present(...)` and clobber the shared
+    /// `window` / `closeObserver` / `localKeyMonitor` state.
+    private static var pendingTask: Task<ProviderCredentialResult, Never>?
 
     /// Hook used by tests to short-circuit the sheet. When set,
     /// `requestCredentials(_:)` immediately resolves to whatever the
@@ -128,20 +135,31 @@ public enum ProviderCredentialPromptService {
     public static func requestCredentials(
         _ request: ProviderCredentialRequest
     ) async -> ProviderCredentialResult {
-        // Serialize: chain behind any pending sheet so two simultaneous
-        // tool calls don't open two windows.
         let previous = pendingTask
-        let serializer = Task<Void, Never> { await previous?.value }
-        pendingTask = serializer
-        await serializer.value
+        let job = Task<ProviderCredentialResult, Never> { @MainActor in
+            // Drain the previous prompt fully (including its sheet wait)
+            // before we mount our own — otherwise two panels could share
+            // the same `window` slot and resume the wrong continuation.
+            _ = await previous?.value
 
-        if let bypass = bypassUI {
-            return bypass(request)
-        }
+            if let bypass = bypassUI {
+                return bypass(request)
+            }
 
-        return await withCheckedContinuation { (cont: CheckedContinuation<ProviderCredentialResult, Never>) in
-            present(request: request, continuation: cont)
+            return await withCheckedContinuation {
+                (cont: CheckedContinuation<ProviderCredentialResult, Never>) in
+                present(request: request, continuation: cont)
+            }
         }
+        pendingTask = job
+        let result = await job.value
+
+        // Once we're the trailing prompt, clear the chain anchor so we
+        // don't pin the task graph around for the rest of the process.
+        if pendingTask == job {
+            pendingTask = nil
+        }
+        return result
     }
 
     // MARK: - Presentation
