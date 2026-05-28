@@ -351,6 +351,12 @@ Kimi is intentionally excluded from this matrix for now per current scope.
   tool call, no DSML/tool-marker leak, and resident DSV4 stayed healthy with
   the same 43-layer hybrid topology. This proves Messages tool-result follow-up
   parity, not repeat disk-hit reuse.
+  Immediate repeat of the same Messages tool-result follow-up is green at
+  `/tmp/osaurus-pr1268-80e87491-dsv4-messages-tool-result-repeat-cache-20260528-100913`:
+  both turns answered `The line count is 3.`, no extra tool calls, no
+  DSML/tool-marker leak, and turn 2 produced `disk_l2_hits +1` with no new
+  misses. This is a repeat disk-hit proof for the Messages tool-result follow-up
+  surface only.
   Two broader rows are explicitly not green: omitted `max_tokens` timed out and
   left lingering inflight requests
   (`/tmp/osaurus-pr1268-695d5869-dsv4-required-repeat-20260528-084132`), and
