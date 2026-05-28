@@ -710,3 +710,27 @@ Result:
 - Topology: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating KV layers, disk-backed restore required, TurboQuant KV layers 0.
 - Token/s: OpenAI-compatible tool turns emitted zero completion tokens; visible answer row emitted 21 completion tokens at 0.31 tok/s cold and 18 completion tokens at 0.32 tok/s warm.
 - Boundary: functional/tool/cache proof is green for JANGTQ2 under the explicit harness max-token cap, but speed remains poor and JANGTQ-K generic required-tool behavior remains red/partial.
+
+## 2026-05-28 13:46 PDT - Qwen 27B MXFP4 CRACK MTP exact-head SSM cache proof
+
+Artifacts:
+
+- Cold row: `/tmp/osaurus-pr1268-d7b700ca-qwen27-mxfp4-crack-mtp-required-cache-cold-20260528-134548`.
+- Warm row: `/tmp/osaurus-pr1268-d7b700ca-qwen27-mxfp4-crack-mtp-required-cache-warm-20260528-134614`.
+
+Build/runtime boundary:
+
+- Osaurus head: `d7b700caf7b0e3b2d8e7fb66e0715136744565e2`.
+- vMLX pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- No-sign Release app: `/Users/eric/osaurus-pr1268-live/build/DerivedData/Build/Products/Release/osaurus.app`.
+- Launch mode: keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
+
+Result:
+
+- PASS: cold and warm rows routed turn 1 required `line_count` to a structured tool call with exact args `red\ngreen\nblue`, no visible content, and no protocol leakage.
+- PASS: cold and warm rows routed turn 3 second required `line_count` after assistant/tool history to a structured tool call with exact args `one\ntwo`, no visible content, and no protocol leakage.
+- PASS: cold and warm tool-result follow-ups returned visible answer `3 lines were counted.` with `finish_reason: "stop"`.
+- PASS: warm row proved hybrid cache reuse with `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`.
+- Topology: 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layers 0.
+- Token/s: OpenAI-compatible tool turns emitted zero completion tokens; visible answer row emitted 5 completion tokens at 6.44 tok/s cold and 5.78 tok/s warm.
+- Boundary: this clears the baseline Qwen 27B MXFP4 CRACK MTP required-tool/cache row. It does not clear the separate large-context thinking/file-tool screenshot class, where prior evidence still shows a 1024-token thinking-budget length stop and no cache/SSM hit proof.
