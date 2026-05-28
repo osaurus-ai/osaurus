@@ -1,15 +1,15 @@
 # PR 1268 objective completion audit
 
-Checked at: 2026-05-28 09:25 PDT
+Checked at: 2026-05-28 09:38 PDT
 
 Current boundary:
 
 - Osaurus PR: `#1268`
-- Osaurus head at audit start: `2113261378319b393ededdb9ffb323eb568c7413`
+- Osaurus head at audit update start: `7a7d2273407bfad9e3bcbec21dc2d88fcb3c1037`
 - vMLX main / Osaurus pin: `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`
 - Osaurus merge policy: do not merge by agent
 - vMLX merge policy: vMLX is agent-managed and is already on main
-- CI boundary: `5f358de57fed0fcc61cb28e464a03745c6e9a1b8` was green for `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft`; the newer `2113261378319b393ededdb9ffb323eb568c7413` documentation head was still rerunning CI when this audit was written
+- CI boundary: `7a7d2273407bfad9e3bcbec21dc2d88fcb3c1037` was green for `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft` before the `/v1/messages` documentation update
 - No-sign app proof boundary: code-equivalent build `695d5869ea9821732649bffb3789469568e6db55`
 
 This file is a completion audit against the full runtime objective. It is not a
@@ -31,11 +31,11 @@ or surface.
 | TurboQuant KV defaults | Partial | `engineSelected` is topology-gated; proven compatible full-KV rows may use TurboQuant by default, while DSV4/ZAYA/ZAYA-VL/Gemma rotating/hybrid rows stay native unless proven. | Broader TurboQuant encode/decode safety still needs per-topology proof before broad default expansion. |
 | Hybrid SSM async rederive | Partial | SSM rederive is enabled by default and documented for Qwen, Ling, and Nemotron SSM rows with companion-hit proof in selected artifacts. | Not every hybrid family/sibling has current-head companion-hit proof. |
 | CCA companion cache behavior | Partial | ZAYA/ZAYA-VL rows prove CCA topology and selected disk L2 media reuse. | ZAYA CCA companion-hit depth remains unproven and must not be relabeled as generic SSM proof. |
-| DSV4 Flash DSML parser and cache topology | Partial/green under explicit controls | Green artifact `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603` proves 5/5 required `line_count` turns with exact args, no DSML leak, no reasoning leakage, DSV4 43-layer hybrid topology, TurboQuant KV 0, disk L2 stores. Responses route artifact `/tmp/osaurus-pr1268-5f358de5-dsv4-responses-required-20260528-091946` proves one non-streaming `/v1/responses` `function_call` with exact args and no DSML leak under explicit controls. Streaming Responses artifact `/tmp/osaurus-pr1268-7a7d2273-dsv4-responses-stream-required-20260528-093541` proves reasoning-summary events plus final structured function-call event with exact args, no DSML leak, DSV4 topology preserved, and disk L2 stores +1. | Omitted reasoning/max rows are red/partial; repeat disk-hit depth and `/v1/messages` parity remain. |
+| DSV4 Flash DSML parser and cache topology | Partial/green under explicit controls | Green artifact `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603` proves 5/5 required `line_count` turns with exact args, no DSML leak, no reasoning leakage, DSV4 43-layer hybrid topology, TurboQuant KV 0, disk L2 stores. Responses route artifact `/tmp/osaurus-pr1268-5f358de5-dsv4-responses-required-20260528-091946` proves one non-streaming `/v1/responses` `function_call` with exact args and no DSML leak under explicit controls. Streaming Responses artifact `/tmp/osaurus-pr1268-7a7d2273-dsv4-responses-stream-required-20260528-093541` proves reasoning-summary events plus final structured function-call event with exact args, no DSML leak, DSV4 topology preserved, and disk L2 stores +1. Messages artifact `/tmp/osaurus-pr1268-7a7d2273-dsv4-messages-required-20260528-093706` proves one Anthropic-compatible `/v1/messages` `tool_use` with exact args and no DSML leak. | Omitted reasoning/max rows are red/partial; repeat disk-hit depth remains. |
 | Multi-turn tool calls do not leak | Partial | DSV4, Gemma4, Ling, Nemotron, MiniMax, Qwen, and ZAYA selected rows document multi-turn `line_count` behavior without protocol leakage. | Not all tools and all API surfaces are exhaustively proven; broader tool matrix remains. |
 | Proper parser recognition | Partial | Source/parser tests cover DSV4 DSML, DSV4 JSON fallbacks, ZAYA XML line breaks, Gemma4 multiline tool envelopes, and routing guards. | GLM/GPT-OSS/Mistral/other parser-family rows remain checklist items. |
 | Prefix cache and L2 disk cache | Partial | Current rows document topology, disk stores, and selected warm hits for several families. | DSV4 active-tool disk restore/hit semantics, ZAYA CCA depth, and full family repeat-cache rows remain incomplete. |
-| Responses/cache endpoint behavior | Partial | Source guards cover OpenResponses/cache wiring; DSV4 non-streaming `/v1/responses` route proof is green for tool-parser parity under explicit controls, and DSV4 streaming `/v1/responses` proof is green for reasoning-summary plus structured function-call event parity. | Streaming moved disk stores but neither Responses row is a repeat disk-hit proof; `/v1/messages` parity remains pending. |
+| Responses/cache endpoint behavior | Partial | Source guards cover OpenResponses/cache wiring; DSV4 non-streaming `/v1/responses`, streaming `/v1/responses`, and `/v1/messages` route proofs are green for tool-parser/event parity under explicit controls. | Streaming Responses and Messages moved disk stores, but none of these endpoint parity rows is a repeat cache-hit proof. |
 | VL/video/media processing | Partial | ZAYA-VL has real red PNG media rows and repeat disk L2 proof; Nemo structural media paths are documented. | Nemo audio/video live rows, Qwen/Gemma VL/video rows, media cache salts, and UI screenshots remain. |
 | Matmul/Hadamard/2D/3D/runtime kernel concerns | Not fully audited in #1268 | vMLX source is on main and CI/osaurus source guards are green. | No current artifact proves every kernel/path concern across all target models; keep as runtime follow-up unless a concrete regression appears. |
 | Runtime speed | Deferred | The objective explicitly makes speed last; selected rows include timing/token evidence where generated. | Do not promote speed claims until functional/parser/cache rows are green per family. |

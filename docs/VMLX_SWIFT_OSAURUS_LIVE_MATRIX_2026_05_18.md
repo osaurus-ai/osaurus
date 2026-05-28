@@ -337,6 +337,13 @@ Kimi is intentionally excluded from this matrix for now per current scope.
   visible, DSV4 topology stayed 43 layers / 41 hybrid-pool / 2 rotating /
   TurboQuant KV 0, and disk L2 stores moved `+1`. This proves streaming
   Responses event/tool parity and store behavior, not repeat disk-hit reuse.
+  `/v1/messages` now has a focused Anthropic-compatible route proof at
+  `/tmp/osaurus-pr1268-7a7d2273-dsv4-messages-required-20260528-093706`:
+  explicit `max_tokens: 256`, required `line_count` tool choice, HTTP 200, one
+  `tool_use` content item, exact multiline args, `stop_reason: "tool_use"`, no
+  visible DSML/tool-marker leak, and healthy resident DSV4 after the request.
+  This proves Messages tool-parser parity only; disk L2 stores moved but this is
+  not a repeat disk-hit proof.
   Two broader rows are explicitly not green: omitted `max_tokens` timed out and
   left lingering inflight requests
   (`/tmp/osaurus-pr1268-695d5869-dsv4-required-repeat-20260528-084132`), and
