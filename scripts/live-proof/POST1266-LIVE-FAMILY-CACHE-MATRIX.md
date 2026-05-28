@@ -734,3 +734,27 @@ Result:
 - Topology: 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layers 0.
 - Token/s: OpenAI-compatible tool turns emitted zero completion tokens; visible answer row emitted 5 completion tokens at 6.44 tok/s cold and 5.78 tok/s warm.
 - Boundary: this clears the baseline Qwen 27B MXFP4 CRACK MTP required-tool/cache row. It does not clear the separate large-context thinking/file-tool screenshot class, where prior evidence still shows a 1024-token thinking-budget length stop and no cache/SSM hit proof.
+
+## 2026-05-28 13:51 PDT - ZAYA text JANGTQ4 exact-head required-tool/disk proof
+
+Artifacts:
+
+- Cold row: `/tmp/osaurus-pr1268-04dbc2cd-zaya-text-jangtq4-required-cache-cold-20260528-134803`.
+- Warm row: `/tmp/osaurus-pr1268-04dbc2cd-zaya-text-jangtq4-required-cache-warm-20260528-135005`.
+
+Build/runtime boundary:
+
+- Osaurus head: `04dbc2cdd011a24a61fc45d32e27fd1790b92f13`.
+- vMLX pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- No-sign Release app: `/Users/eric/osaurus-pr1268-live/build/DerivedData/Build/Products/Release/osaurus.app`.
+- Launch mode: keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
+
+Result:
+
+- PASS: cold and warm rows routed turn 1 required `line_count` to a structured tool call with exact args `red\ngreen\nblue`, no visible content, and no protocol leakage.
+- PASS: cold and warm rows routed turn 3 second required `line_count` after assistant/tool history to a structured tool call with exact args `one\ntwo`, no visible content, and no protocol leakage.
+- PASS: cold and warm tool-result follow-ups returned visible line-count answers with `finish_reason: "stop"`.
+- PASS: warm row proved disk cache reuse with `disk_l2_hits +1`.
+- Topology: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layers 0.
+- Token/s: OpenAI-compatible tool turns emitted zero completion tokens; visible answer row emitted 5 completion tokens at 6.47 tok/s cold and 7 completion tokens at 11.71 tok/s warm.
+- Boundary: this clears the previous ZAYA text turn-3 argument-fidelity failure and proves disk-L2 reuse. ZAYA CCA companion-hit depth remains partial because the warm row recorded `zaya_cca_companion_hits 0` and `zaya_cca_companion_misses +1`.
