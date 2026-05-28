@@ -161,18 +161,19 @@ struct ChatWindowStateAgentSyncTests {
     /// preserved across the issue-1004 fix. Without this, a future
     /// contributor could remove that observer thinking the new Combine
     /// sink covers Default-agent updates too — but the Default agent's
-    /// settings live in `ChatConfiguration`, not the `Agent` struct, so
+    /// settings live in `DefaultAgentConfiguration` (split out of
+    /// `ChatConfiguration` in Phase B), not the `Agent` struct, so
     /// they never trigger a `$agents` emission.
     @Test("Default agent system prompt change → cachedSystemPrompt updates via .appConfigurationChanged")
     func defaultAgentSystemPromptChange_updatesCachedSystemPrompt() async throws {
         try await ChatHistoryTestStorage.run {
             let window = makeWindow(for: Agent.defaultId)
-            let originalConfig = ChatConfigurationStore.load()
-            defer { ChatConfigurationStore.save(originalConfig) }
+            let originalConfig = DefaultAgentConfigurationStore.load()
+            defer { DefaultAgentConfigurationStore.save(originalConfig) }
 
             var updatedConfig = originalConfig
             updatedConfig.systemPrompt = "new-default-prompt-\(UUID().uuidString.prefix(6))"
-            ChatConfigurationStore.save(updatedConfig)
+            DefaultAgentConfigurationStore.save(updatedConfig)
 
             // .appConfigurationChanged observer dispatches via OperationQueue.main,
             // which is asynchronous even from main thread.

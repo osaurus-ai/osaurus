@@ -306,9 +306,11 @@ struct PluginPlanDispatchToolSelectionTests {
 @MainActor
 struct PluginDispatchToolStorePopulationTests {
 
-    /// Recognizably-fake plugin id + the default agent. The default
-    /// agent always exists, which avoids wiring up a throwaway one for
-    /// the per-agent task-cap path.
+    /// Recognizably-fake plugin id. The built-in Default agent is now
+    /// locked to in-app surfaces (see `Agent.rejectBuiltInForExternalSurface`),
+    /// so plugin dispatch tests have to wire up their own throwaway agent
+    /// — using `Agent.defaultId` here would land in a 403 envelope rather
+    /// than the `DispatchRequest` path we're trying to pin.
     private let pluginId = "com.test.dispatch.tool-store"
 
     private func reset() async {
@@ -316,15 +318,34 @@ struct PluginDispatchToolStorePopulationTests {
         PluginOnceLogger._resetForTesting(forKeyPrefix: "\(pluginId)|")
     }
 
+    /// Spin up a throwaway custom agent for a single dispatch. Caller
+    /// awaits `cleanup()` once they're done with the dispatched task —
+    /// `AgentManager.delete` is async because of sandbox cleanup, so we
+    /// can't deliver it through a sync `defer`.
+    private func makeScopedAgent() -> (id: UUID, cleanup: () async -> Void) {
+        let agent = Agent(
+            name: "PluginDispatchToolStoreAgent-\(UUID().uuidString.prefix(6))",
+            systemPrompt: "Test identity",
+            agentAddress: "test-plugin-dispatch-\(UUID().uuidString)"
+        )
+        AgentManager.shared.add(agent)
+        return (
+            agent.id,
+            { _ = await AgentManager.shared.delete(id: agent.id) }
+        )
+    }
+
     /// Dispatch a request and return the resolved task id. Caller is
-    /// responsible for cleanup via `mgr.finalizeTask(...)`.
+    /// responsible for cleanup via `mgr.finalizeTask(...)` plus the
+    /// `cleanup` closure returned alongside the task id.
     private func dispatch(
+        agentId: UUID,
         prompt: String,
         requestedToolNames: [String]
     ) async -> UUID? {
         let request = DispatchRequest(
             prompt: prompt,
-            agentId: Agent.defaultId,
+            agentId: agentId,
             sourcePluginId: pluginId,
             source: .plugin,
             requestedToolNames: requestedToolNames
@@ -337,17 +358,24 @@ struct PluginDispatchToolStorePopulationTests {
     func nonEmptyRequestedToolsLandInSessionStore() async throws {
         await reset()
         let mgr = BackgroundTaskManager.shared
+        let scoped = makeScopedAgent()
 
         let taskId = try #require(
-            await dispatch(prompt: "hello", requestedToolNames: ["share_artifact"])
+            await dispatch(
+                agentId: scoped.id,
+                prompt: "hello",
+                requestedToolNames: ["share_artifact"]
+            )
         )
-        defer { mgr.finalizeTask(taskId) }
 
         let names = await SessionToolStateStore.shared.get(taskId.uuidString)?.loadedToolNames ?? []
         #expect(
             names.contains("share_artifact"),
             "appendLoadedTools must use the dispatch task id as the store key"
         )
+
+        mgr.finalizeTask(taskId)
+        await scoped.cleanup()
     }
 
     @Test
@@ -356,14 +384,21 @@ struct PluginDispatchToolStorePopulationTests {
         // an empty `requestedToolNames` must not seed `loadedToolNames`.
         await reset()
         let mgr = BackgroundTaskManager.shared
+        let scoped = makeScopedAgent()
 
         let taskId = try #require(
-            await dispatch(prompt: "hello", requestedToolNames: [])
+            await dispatch(
+                agentId: scoped.id,
+                prompt: "hello",
+                requestedToolNames: []
+            )
         )
-        defer { mgr.finalizeTask(taskId) }
 
         let names = await SessionToolStateStore.shared.get(taskId.uuidString)?.loadedToolNames ?? []
         #expect(names.isEmpty, "Empty requestedToolNames must not seed loadedToolNames")
+
+        mgr.finalizeTask(taskId)
+        await scoped.cleanup()
     }
 
     @Test

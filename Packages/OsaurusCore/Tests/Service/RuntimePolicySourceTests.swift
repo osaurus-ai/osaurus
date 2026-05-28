@@ -1573,10 +1573,18 @@ struct RuntimePolicySourceTests {
             chatView.contains("if !sys.isEmpty { msgs.append(ChatMessage(role: \"system\", content: sys)) }"),
             "Chat UI request history must retain the composed system/context prefix."
         )
+        // Indentation-tolerant regex: the loop body must (a) gate the
+        // append on the optional return from `turnToMessage`, and (b)
+        // forward the resulting message via `msgs.append(msg)`. Pinning
+        // the exact whitespace was fragile — wrapping the surrounding
+        // closure in another layer (as Phase A/B did) silently broke
+        // the literal even though the contract was preserved.
+        let appendRegex = try NSRegularExpression(
+            pattern: #"if let msg = turnToMessage\(t, isLastTurn: isLastTurn\) \{\s+msgs\.append\(msg\)\s+\}"#
+        )
+        let appendNSRange = NSRange(chatView.startIndex ..< chatView.endIndex, in: chatView)
         #expect(
-            chatView.contains(
-                "if let msg = turnToMessage(t, isLastTurn: isLastTurn) {\n                            msgs.append(msg)\n                        }"
-            ),
+            appendRegex.firstMatch(in: chatView, range: appendNSRange) != nil,
             "Every non-empty prior user/assistant/tool turn should be converted into ChatMessage history."
         )
         #expect(buildMessages.lowerBound < streamRequest.lowerBound)
