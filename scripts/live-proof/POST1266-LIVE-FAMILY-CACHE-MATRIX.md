@@ -378,3 +378,26 @@ Focused DSV4 app row:
 - No sampler overrides in script payloads.
 - Boundary: this short rerun did not prove DSV4 cache-hit counters; `/admin/cache-stats` did not retain a DSV4 model row at summary capture. Use earlier warm DSV4 artifacts for disk L2 hit proof until a fresh current-head cache-hit rerun is captured.
 - Additional boundary: this row proves the OpenAI-compatible app/server tool path. Do not promote it as signed/notarized release proof while `CodeSigningHelper.xpc` remains active.
+
+## 2026-05-28 04:24 PDT - Current-head ZAYA-VL media required-tool proof after vMLX main repin
+
+Current Osaurus head: `2b4f576dbe1159054677eaee3e9d2467ff396da1`.
+Current vMLX pin: `c300e496505dd4aa027fcb0f0c69d0fa6aca270a`.
+No-sign Release app: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-release-nosign-2b4f576d/Build/Products/Release/osaurus.app`.
+Launch mode: `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, `OSAURUS_TEST_ROOT=/tmp/osaurus-pr1268-2b4f576d-keychain-free-open-20260528-042237`.
+
+ZAYA-VL media required-tool row:
+
+- Artifact: `/tmp/osaurus-pr1268-2b4f576d-zaya-vl-media-tool-multiturn-20260528-042420`
+- Model: `zaya1-vl-8b-jangtq4`
+- Classification: `pass`
+- Turn 1 required `line_count` with 56x56 red PNG: structured tool call, exact args `alpha\nbeta\ngamma`.
+- Turn 2 after tool result: visible answer `The line count is 3. The dominant image color is red.`
+- No `value_1`, no `example_function_name`, no DSML/protocol leak.
+- Cache topology: `layers=40`, `zayaCCALayers=40`, `companion=zaya-cca`, `restore=disk-backed`, TurboQuant KV layer count `0`.
+- Cache counters: `disk_l2_misses=4`, `disk_l2_stores=3`; no ZAYA CCA companion hit was required for this short row.
+
+Invalid payload boundary:
+
+- Artifact: `/tmp/osaurus-pr1268-2b4f576d-zaya-vl-media-tool-errorbody-20260528-042348`
+- The earlier 1x1 PNG request failed correctly with `Height: 1 must be larger than factor: 28`; this was a test-payload issue, not the duplicate ZAYA media placeholder regression.
