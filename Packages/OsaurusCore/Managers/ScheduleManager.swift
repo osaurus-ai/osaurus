@@ -345,6 +345,19 @@ public final class ScheduleManager {
 
     /// Execute a schedule by dispatching to TaskDispatcher
     private func executeSchedule(_ schedule: Schedule) {
+        // Schedules MUST target an explicit custom agent. nil or built-in
+        // agentIds were previously coerced to `Agent.defaultId`, silently
+        // running anonymous schedules under the Default agent. Refuse the
+        // execution outright now — the Schedules tab requires a real agent
+        // selection when creating a schedule.
+        if let rejection = Agent.rejectBuiltInForExternalSurface(
+            schedule.agentId,
+            source: "schedule/executeSchedule"
+        ) {
+            print("[Osaurus] Skipping schedule '\(schedule.name)': \(rejection.message)")
+            return
+        }
+
         var triggeredSchedule = schedule
         triggeredSchedule.lastTriggeredAt = Date()
         ScheduleStore.save(triggeredSchedule)
@@ -406,14 +419,22 @@ public final class ScheduleManager {
             ScheduleStore.save(updatedSchedule)
             refresh()
 
+            // executeSchedule rejects schedules without a real custom-agent
+            // id up front, so `schedule.agentId` is guaranteed non-nil here.
+            // The previous `?? Agent.defaultId` notification fallback would
+            // have mis-attributed result toasts to the Default agent for
+            // any zombie schedule slipping through.
+            var userInfo: [String: Any] = [
+                "scheduleId": schedule.id,
+                "sessionId": chatSessionId,
+            ]
+            if let agentId = schedule.agentId {
+                userInfo["agentId"] = agentId
+            }
             NotificationCenter.default.post(
                 name: .scheduleExecutionCompleted,
                 object: nil,
-                userInfo: [
-                    "scheduleId": schedule.id,
-                    "sessionId": chatSessionId,
-                    "agentId": schedule.agentId ?? Agent.defaultId,
-                ]
+                userInfo: userInfo
             )
             print("[Osaurus] Schedule completed: \(schedule.name)")
 

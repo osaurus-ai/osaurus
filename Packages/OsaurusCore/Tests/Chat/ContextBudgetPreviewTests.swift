@@ -55,6 +55,16 @@ struct ContextBudgetPreviewTests {
             isolatedChatConfig.defaultModel = nil
             ChatConfigurationStore.save(isolatedChatConfig)
             MemoryConfigurationStore.invalidateCache()
+            // Phase B split the Default agent's model out of
+            // ChatConfiguration. `effectiveModel` now consults
+            // DefaultAgentConfigurationStore first, so isolating only
+            // the legacy store leaves a stale model id (from a prior
+            // test run on this machine) leaking into `snapshot.model`
+            // and accidentally enabling family-specific guidance.
+            // Drop the in-memory cache so the next `load()` re-reads
+            // from the overridden root, which contains no config file
+            // and therefore yields a clean default.
+            DefaultAgentConfigurationStore.resetCacheForTests()
             var memoryConfig = MemoryConfiguration.default
             memoryConfig.enabled = true
             MemoryConfigurationStore.save(memoryConfig)
@@ -62,6 +72,7 @@ struct ContextBudgetPreviewTests {
             defer {
                 ChatConfigurationStore.save(previousChatConfig)
                 MemoryConfigurationStore.invalidateCache()
+                DefaultAgentConfigurationStore.resetCacheForTests()
                 OsaurusPaths.overrideRoot = previousRoot
                 AgentManager.shared.refresh()
                 try? FileManager.default.removeItem(at: root)

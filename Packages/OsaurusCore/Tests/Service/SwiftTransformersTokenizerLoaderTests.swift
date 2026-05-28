@@ -147,6 +147,7 @@ struct SwiftTransformersTokenizerLoaderTests {
 
         let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
         let snapshot = AgentConfigSnapshot(
+            agentId: Agent.defaultId,
             toolsDisabled: false,
             memoryDisabled: false,
             autonomousConfig: nil,

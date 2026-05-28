@@ -2043,6 +2043,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        // Memory writes against the Default agent must not be reachable from HTTP.
+        // The in-app Chat is the only sanctioned writer for the Default agent.
+        if let agentUUID = UUID(uuidString: req.agent_id),
+            let rejection = Agent.rejectBuiltInForExternalSurface(
+                agentUUID,
+                source: "http/memory/ingest"
+            )
+        {
+            let bodyJSON = #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .forbidden,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: bodyJSON
+            )
+            logRequest(
+                method: "POST",
+                path: "/memory/ingest",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 403,
+                startTime: startTime,
+                errorMessage: rejection.message
+            )
+            return
+        }
+
         let cors = stateRef.value.corsHeaders
         guard MemoryConfigurationStore.load().enabled else {
             let responseBody = #"{"error":"memory_disabled","message":"Memory is disabled"}"#
@@ -2740,7 +2768,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
 
         runRequestTask(priority: .userInitiated) {
-            let agents = await MainActor.run { AgentManager.shared.agents }
+            // Built-in agents (the Default agent) live only in-app; the
+            // listing endpoint must not advertise them so external clients
+            // can never even attempt to address them.
+            let agents = await MainActor.run {
+                AgentManager.shared.agents.filter { !$0.isBuiltIn }
+            }
 
             let db = MemoryDatabase.shared
             var memoryCounts: [String: Int] = [:]
@@ -2843,7 +2876,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         runRequestTask(priority: .userInitiated) {
-            guard let agent = await MainActor.run(body: { AgentManager.shared.agent(for: agentId) }) else {
+            // Built-in agents are not exposed via HTTP — return 404 (not 403)
+            // so external clients learn the id is unreachable but cannot
+            // distinguish "no such agent" from "you are not allowed to see
+            // this one". This matches the listing endpoint's filter behavior.
+            guard let agent = await MainActor.run(body: { AgentManager.shared.agent(for: agentId) }),
+                !agent.isBuiltIn
+            else {
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
@@ -2959,6 +2998,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 status: .badRequest,
                 headers: [("Content-Type", "application/json; charset=utf-8")],
                 body: #"{"error":"invalid_agent_id","message":"Invalid agent UUID in path"}"#
+            )
+            return
+        }
+
+        // Built-in agents (the Default agent) are not reachable from any
+        // external surface — they exist only inside the in-app Chat. Reject
+        // before any enrichment so secrets / system prompts / memory writes
+        // for built-ins are unreachable from HTTP.
+        if let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run") {
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .forbidden,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body:
+                    #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+            )
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 403,
+                startTime: startTime,
+                errorMessage: rejection.message
             )
             return
         }
@@ -3310,6 +3374,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         body: #"{"error":"agent_not_found","message":"No agent found for the given identifier"}"#
                     )
                 }
+                return
+            }
+
+            if let rejection = Agent.rejectBuiltInForExternalSurface(
+                agentId,
+                source: "http/agents/dispatch"
+            ) {
+                let bodyJSON =
+                    #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: bodyJSON
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: requestBodyString,
+                    responseStatus: 403,
+                    startTime: logStartTime,
+                    errorMessage: rejection.message
+                )
                 return
             }
 
@@ -4133,7 +4226,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         httpTrace.set("http_input_audio_count", req.messages.reduce(0) { $0 + $1.audioInputs.count })
         httpTrace.set("http_input_video_count", req.messages.reduce(0) { $0 + $1.videoUrls.count })
 
-        let memoryAgentId = head.headers.first(name: "X-Osaurus-Agent-Id")
+        // The Default (built-in) agent is unreachable from external HTTP.
+        // Silently drop the header if it points at the Default id so that
+        // memory writes and per-agent persistence never touch the built-in
+        // agent's data. Inference itself is unaffected — model selection
+        // and tools still work, just unattributed to the default.
+        let rawMemoryAgentId = head.headers.first(name: "X-Osaurus-Agent-Id")
+        let memoryAgentId: String? = {
+            guard let raw = rawMemoryAgentId else { return nil }
+            if let uuid = UUID(uuidString: raw), uuid == Agent.defaultId { return nil }
+            return raw
+        }()
 
         // HTTP-specific persistence knobs:
         //   X-Persist: false   → skip writing the conversation to chat history
@@ -6075,6 +6178,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         } else {
             data = Data()
             requestBodyString = nil
+        }
+
+        // Tool calls attributed to the Default agent are not exposable externally.
+        // Custom-agent and unattributed (anonymous) calls keep working.
+        if let header = head.headers.first(name: "X-Osaurus-Agent-Id"),
+            let agentUUID = UUID(uuidString: header),
+            let rejection = Agent.rejectBuiltInForExternalSurface(
+                agentUUID,
+                source: "http/mcp/call"
+            )
+        {
+            let bodyJSON = #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .forbidden,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: bodyJSON
+            )
+            logRequest(
+                method: "POST",
+                path: "/mcp/call",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 403,
+                startTime: startTime,
+                errorMessage: rejection.message
+            )
+            return
         }
 
         struct CallBody: Codable {

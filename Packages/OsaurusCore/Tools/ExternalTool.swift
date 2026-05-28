@@ -73,7 +73,12 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     /// - Parameter payload: Original JSON payload
     /// - Returns: Payload with secrets injected, or original payload if no secrets or parsing fails
     private func injectSecrets(into payload: String, agentId: UUID? = nil) -> String {
-        let agentId = agentId ?? Agent.defaultId
+        // No agent context (or Default-agent context) means the tool is being
+        // invoked anonymously. Return the payload unchanged rather than
+        // injecting the Default agent's secrets — the previous
+        // `?? Agent.defaultId` fallback leaked the built-in agent's secret
+        // namespace to anonymous tool paths.
+        guard let agentId = agentId, agentId != Agent.defaultId else { return payload }
         let secrets = plugin.resolvedSecrets(agentId: agentId)
         guard !secrets.isEmpty else { return payload }
 

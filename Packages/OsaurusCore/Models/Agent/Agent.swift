@@ -225,12 +225,16 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         id == defaultId.uuidString
     }
 
-    /// The default agent - uses global settings
+    /// The default agent — front door to configuring Osaurus.
+    /// Renders as "Osaurus" in chat and the picker; subtitle nudges
+    /// users toward the configure flow that's unique to this agent.
+    /// `avatar: "green"` resolves the bundled `osaurus-avatar-green`
+    /// asset in `NativeMessageCellView`/`SharedHeaderComponents`.
     public static var `default`: Agent {
         Agent(
             id: defaultId,
-            name: "Default",
-            description: "Uses your global chat settings",
+            name: "Osaurus",
+            description: "Configure Osaurus & answer questions",
             systemPrompt: "",
             themeId: nil,
             defaultModel: nil,
@@ -238,7 +242,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
             maxTokens: nil,
             isBuiltIn: true,
             createdAt: Date.distantPast,
-            updatedAt: Date.distantPast
+            updatedAt: Date.distantPast,
+            avatar: "green"
         )
     }
 

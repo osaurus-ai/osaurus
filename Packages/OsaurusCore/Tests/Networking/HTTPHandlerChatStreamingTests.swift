@@ -738,10 +738,26 @@ struct HTTPHandlerChatStreamingTests {
         let server = try await startTestServer(with: engine)
         defer { Task { await server.shutdown() } }
 
+        // The built-in Default agent UUID is locked to in-app surfaces
+        // (`Agent.rejectBuiltInForExternalSurface`), so `/agents/<defaultId>/run`
+        // returns a `built_in_agent_not_exposable` envelope. Use a custom
+        // agent so the tool-loop sentinel scrubbing path is what we're
+        // actually exercising.
+        let scopedAgent = await MainActor.run { () -> Agent in
+            let agent = Agent(
+                name: "HTTPAgentRunSentinel-\(UUID().uuidString.prefix(6))",
+                systemPrompt: "Test identity",
+                agentAddress: "http-agent-run-\(UUID().uuidString)"
+            )
+            AgentManager.shared.add(agent)
+            return agent
+        }
+        defer { Task { @MainActor in _ = await AgentManager.shared.delete(id: scopedAgent.id) } }
+
         var request = URLRequest(
             url: URL(
                 string:
-                    "http://\(server.host):\(server.port)/agents/00000000-0000-0000-0000-000000000001/run"
+                    "http://\(server.host):\(server.port)/agents/\(scopedAgent.id.uuidString)/run"
             )!
         )
         request.httpMethod = "POST"

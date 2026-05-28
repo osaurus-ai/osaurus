@@ -111,10 +111,12 @@ struct ModelDownloadServiceStorageTests {
         // volumeAvailableCapacityForImportantUsage query while the legacy
         // filesystem attributes still expose the real writable space.
         let expected: Int64 = 6 * 1024 * 1024 * 1024
-        guard let bytes = OsaurusPaths.resolvedVolumeFreeBytes(
-            importantCapacity: 0,
-            legacyFree: expected
-        ) else {
+        guard
+            let bytes = OsaurusPaths.resolvedVolumeFreeBytes(
+                importantCapacity: 0,
+                legacyFree: expected
+            )
+        else {
             Issue.record("expected legacy free space fallback")
             return
         }

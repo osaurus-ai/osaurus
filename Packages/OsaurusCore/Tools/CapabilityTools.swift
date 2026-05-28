@@ -106,7 +106,30 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         }
 
         let agentContextId = Self.resolveAgentContextId(explicit: agentId)
-        let allowedToolNames = await Self.allowedToolNames(for: agentContextId)
+        let isDefaultAgent = agentContextId == Agent.defaultId
+        let baseAllowedToolNames = await Self.allowedToolNames(for: agentContextId)
+
+        // Phase C scoping:
+        //   * Default agent: results restricted to the configure writes
+        //     so search returns ONLY `osaurus_*_<verb>` candidates. The
+        //     default agent has no business loading sandbox/MCP/plugin
+        //     tools — its job is configuration.
+        //   * Other agents: the configure write set is masked out so a
+        //     stray ranking can't surface them.
+        // `ToolRegistry.configure*ToolNames` read the `@MainActor`
+        // `ConfigurationDomainRegistry`; snapshot once so the search
+        // loop below stays off the main actor.
+        let (configureWrites, configureAll) = await MainActor.run {
+            (ToolRegistry.configureWriteToolNames, ToolRegistry.configureToolNames)
+        }
+        let effectiveAllowedToolNames: Set<String>?
+        if isDefaultAgent {
+            effectiveAllowedToolNames = configureWrites
+        } else if let base = baseAllowedToolNames {
+            effectiveAllowedToolNames = base.subtracting(configureAll)
+        } else {
+            effectiveAllowedToolNames = nil
+        }
 
         // Run each query independently and merge by best score per item.
         // The previous implementation joined every query into one string
@@ -115,15 +138,26 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         // tokenises as a longer, less precise sentence the embedder
         // doesn't recognise. The whole point of accepting an array is
         // "OR these searches", not "concatenate them".
+        //
+        // Default agent takes the tools-only fast path: methods and
+        // skills are off-limits on that surface, so ranking them is
+        // pure wasted embedder work.
         let perQueryResults: [CapabilitySearchResults] = await withTaskGroup(
             of: CapabilitySearchResults.self
         ) { group in
             for q in queries {
                 group.addTask {
-                    await CapabilitySearch.search(
+                    if isDefaultAgent {
+                        return await CapabilitySearch.searchToolsOnly(
+                            query: q,
+                            topK: Self.perQueryTopK.tools,
+                            allowedToolNames: effectiveAllowedToolNames
+                        )
+                    }
+                    return await CapabilitySearch.search(
                         query: q,
                         topK: Self.perQueryTopK,
-                        allowedToolNames: allowedToolNames
+                        allowedToolNames: effectiveAllowedToolNames
                     )
                 }
             }
@@ -431,6 +465,12 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     // MARK: - Loaders
 
     private func loadMethod(_ methodId: String) async -> String {
+        if ChatExecutionContext.currentAgentId == Agent.defaultId {
+            return
+                "Error: Method loading is disabled for the configuration agent. "
+                + "Use `capabilities_search` to find a configuration tool (osaurus_*_<verb>) "
+                + "and load it directly.\n"
+        }
         do {
             guard let method = try await MethodService.shared.load(id: methodId) else {
                 return "Error: Method '\(methodId)' not found.\n"
@@ -503,6 +543,21 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     }
 
     private func loadTool(_ toolId: String) async -> String {
+        // Phase C default-agent gate: limit `capabilities_load` to the
+        // configure write tools. Everything else (sandbox, MCP, plugin
+        // tools) is hard-stopped with a routing hint so the model
+        // self-corrects without burning a turn.
+        if ChatExecutionContext.currentAgentId == Agent.defaultId {
+            let configureWrites = await MainActor.run {
+                ToolRegistry.configureWriteToolNames
+            }
+            if !configureWrites.contains(toolId) {
+                return
+                    "Error: Default agent can only load configuration write tools "
+                    + "(`osaurus_*_<verb>`). Use `osaurus_status`, `osaurus_list`, or "
+                    + "`osaurus_describe` for reads; nothing else needs `capabilities_load`.\n"
+            }
+        }
         let allowedNames = await grantedToolNamesForCurrentAgent()
         let (isEnabled, isBuiltIn, toolSpec) = await MainActor.run {
             (
@@ -544,6 +599,12 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     }
 
     private func loadSkill(_ skillName: String) async -> String {
+        if ChatExecutionContext.currentAgentId == Agent.defaultId {
+            return
+                "Error: Skill loading is disabled for the configuration agent. "
+                + "Use `capabilities_search` to find a configuration tool (osaurus_*_<verb>) "
+                + "and load it directly.\n"
+        }
         let skill = await MainActor.run {
             SkillManager.shared.skill(named: skillName)
         }

@@ -21,6 +21,11 @@ import Foundation
 
 public struct AgentConfigSnapshot: Sendable, Equatable {
 
+    /// Agent id this snapshot was captured for. Used by gates that
+    /// depend on default-vs-custom routing (e.g. the Phase-C
+    /// default-agent allowlist filter / configure-tool strip).
+    public let agentId: UUID
+
     /// OR of the request-scoped `toolsDisabled` flag and the agent's
     /// `effectiveToolsDisabled`. Already factors in the global
     /// `ChatConfiguration.disableTools` switch.
@@ -65,6 +70,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     public let dbEnabled: Bool
 
     public init(
+        agentId: UUID,
         toolsDisabled: Bool,
         memoryDisabled: Bool,
         autonomousConfig: AutonomousExecConfig?,
@@ -74,6 +80,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         systemPrompt: String,
         dbEnabled: Bool
     ) {
+        self.agentId = agentId
         self.toolsDisabled = toolsDisabled
         self.memoryDisabled = memoryDisabled
         self.autonomousConfig = autonomousConfig
@@ -101,6 +108,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     ) -> AgentConfigSnapshot {
         let mgr = AgentManager.shared
         return AgentConfigSnapshot(
+            agentId: agentId,
             toolsDisabled: requestToolsDisabled || mgr.effectiveToolsDisabled(for: agentId),
             memoryDisabled: mgr.effectiveMemoryDisabled(for: agentId),
             autonomousConfig: mgr.effectiveAutonomousExec(for: agentId),

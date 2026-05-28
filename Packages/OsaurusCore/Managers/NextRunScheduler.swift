@@ -180,6 +180,18 @@ public final class NextRunScheduler {
     }
 
     private func dispatch(entry: NextRunEntry) async {
+        // Self-scheduled wakes MUST target a real custom agent. Refuse to
+        // dispatch under the built-in Default agent (the previous code
+        // could have silently fallen back to it through the dispatcher's
+        // `?? Agent.defaultId` coercion, which has now been removed).
+        if let rejection = Agent.rejectBuiltInForExternalSurface(
+            entry.agentId,
+            source: "scheduler/NextRun"
+        ) {
+            print("[NextRunScheduler] dispatch skipped: \(rejection.message)")
+            return
+        }
+
         let request = DispatchRequest(
             prompt: entry.instructions,
             agentId: entry.agentId,

@@ -84,36 +84,26 @@ extension View {
 
 // MARK: - Hero Agent Avatar
 
-/// Renders a hero-sized avatar for a given agent: either the built-in
-/// placeholder (theme-tinted circle + `person.fill`) or the mascot
-/// illustration via `AgentAvatarView` with `bleedsToEdge: true`.
+/// Renders a hero-sized avatar for a given agent. Built-in and custom
+/// agents share the same `AgentAvatarView` path so the default Osaurus
+/// agent gets the same gradient-circle backing as every other agent —
+/// previously the built-in branch rendered the mascot PNG without that
+/// backing, leaving the dino floating against the chat background.
 /// Shared by `ChatEmptyState.heroAvatar` and `ChatEmptyStateNoModels.welcomeAvatar`.
 private struct HeroAgentAvatar: View {
     let agent: Agent
-    @Environment(\.theme) private var theme
 
     var body: some View {
-        if agent.isBuiltIn {
-            ZStack {
-                Circle()
-                    .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
-                Image(systemName: "person.fill")
-                    .font(.system(size: heroAvatarIconFontSize, weight: .medium))
-                    .foregroundColor(theme.secondaryText.opacity(0.85))
-            }
-            .frame(width: heroAvatarDiameter, height: heroAvatarDiameter)
-        } else {
-            AgentAvatarView(
-                mascotId: agent.avatar,
-                name: agent.name,
-                tint: agentColorFor(agent.name),
-                diameter: heroAvatarDiameter,
-                customImageURL: agent.customAvatarURL,
-                monogramFontSize: heroAvatarIconFontSize,
-                borderWidth: 0,
-                bleedsToEdge: true
-            )
-        }
+        AgentAvatarView(
+            mascotId: agent.avatar,
+            name: agent.name,
+            tint: agentColorFor(agent.name),
+            diameter: heroAvatarDiameter,
+            customImageURL: agent.customAvatarURL,
+            monogramFontSize: heroAvatarIconFontSize,
+            borderWidth: 0,
+            bleedsToEdge: true
+        )
     }
 }
 
