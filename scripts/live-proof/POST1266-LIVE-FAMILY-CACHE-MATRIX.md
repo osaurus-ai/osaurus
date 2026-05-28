@@ -542,3 +542,33 @@ Gemma3n required-tool boundary correction:
 - vMLX main commit `cc3f5f4` stops inferring Gemma3n tool support from `model_type` alone. Plain `gemma3n`, `gemma3n_text`, and `gemma-3n-e2b-it` now resolve to no tool parser unless an explicit bundle/JANG tool-parser stamp opts in.
 - Focused vMLX validation: `swift test --scratch-path /tmp/vmlx-gemma3n-tool-heuristic-build --filter gemma3nModelTypeDoesNotInventToolSupport --jobs 1 --no-parallel` passed with 1 test.
 - This does not make Gemma3n required-tool calling work; it prevents a false-positive support claim. Keep the live Gemma3n required-tool row partial/unsupported until a native/stamped Gemma3n tool contract exists and passes live multi-turn proof.
+
+## 2026-05-28 07:02 PDT - Current-head DSV4 proof and Gemma3n unsupported-tool guard
+
+Current local head before commit: `319bfeb06ae082f0a77b48c992bcd93bb3e8e04a`.
+Current vMLX main pin: `cc3f5f4dc1317ffa09c46050ba0847f495887747`.
+No-sign/keychain-free app: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-release-nosign-319bfeb0/Build/Products/Release/osaurus.app`.
+
+Artifacts:
+
+- Inventory: `/tmp/osaurus-pr1268-319bfeb0-current-inventory-20260528-065436`.
+- DSV4 JANGTQ2: `/tmp/osaurus-pr1268-319bfeb0-dsv4-jangtq2-20260528-065445`.
+- Gemma3n unsupported boundary before guard: `/tmp/osaurus-pr1268-319bfeb0-gemma3n-boundary-20260528-065603`.
+
+DSV4 result:
+
+- PASS: required `line_count` routed to a structured tool call.
+- PASS: tool-result follow-up produced visible answer with no DSML/protocol leakage.
+- PASS: second required tool call after assistant/tool history routed to a structured tool call.
+- Cache topology: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating layers, disk-backed restore required, TurboQuant KV layers 0.
+- Boundary: stores/misses moved, but no disk L2 hit was proven in this short fresh row.
+
+Gemma3n result and fix:
+
+- Before the Osaurus-side guard, `gemma-3n-e2b-it-4bit` failed required-tool live proof by emitting visible `<|tool>model:model` fragments and no structured tool call.
+- This is not a parser success case. vMLX main `cc3f5f4` correctly stops inferring Gemma3n tool support from `model_type` alone.
+- Osaurus now blocks known unsupported Gemma3n local tool requests in `MLXService.validateRuntimePolicy` before decode and prevents the SwiftTransformers tokenizer fallback from injecting Gemma required-tool declarations/instructions for Gemma3n.
+- Focused validation after source fix:
+  - `MLXServiceRuntimePolicyTests`: 7/7 passed.
+  - `SwiftTransformersTokenizerLoaderTests/gemma3nLocalTokenizerDoesNotInventRequiredToolContractFromFallback`: passed.
+- Gemma3n remains unsupported for required tool calling until a native/stamped Gemma3n tool contract exists and passes live multi-turn proof.

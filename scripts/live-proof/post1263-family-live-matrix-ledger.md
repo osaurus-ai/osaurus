@@ -87,3 +87,23 @@ Each promoted row needs current-head evidence for:
 | MiniMax M2.7 JANG_K | pass | cold row `/tmp/osaurus-pr1264-31a3ba86-minimax-m27-jang-k-crack-20260527-085022/minimax-m27-jang-k-crack/minimax-m2.7-jang_k-crack_summary.json`; warm row `/tmp/osaurus-pr1264-31a3ba86-minimax-m27-jang-k-crack-warm-20260527-085056/minimax-m27-jang-k-crack/minimax-m2.7-jang_k-crack_summary.json`; current-head clean-start proof `/tmp/osaurus-pr1264-4369301f-minimax-jang-k-store-20260527-090636/SUMMARY.json` | exact multi-turn `line_count`, no protocol leak, visible post-tool answer, 62 full-KV layers, TurboQuant KV 0. Current-head clean-start proof began with no loaded model and passed with `disk_l2_hits +2`, `disk_l2_misses 0`, `disk_l2_stores +7`, turn2 visible `Three lines were counted.`, and 39.45 tok/s on the visible answer |
 | MiMo V2.5 | excluded from current #1268 merge gate | prior source note `/Users/eric/jang`: `uv run --project jang-tools pytest -q jang-tools/tests/mimo_v2_contract_test.py`; vMLX `d69a12168fe6d5c89cb2756ca478f0ea7e18c7d3` | Current user decision is to forget MiMo for this PR because it is not working right now. Keep the old topology note only as future context: expected `mimo_v2_flash` topology is 9 full-attention `KVCacheSimple` layers plus 39 SWA `RotatingKVCache` layers, with TurboQuant KV limited to full-attention KV layers only. Do not block #1268 on MiMo live proof, and do not claim MiMo is production-ready. |
 | HY3/Hunyuan local rows | live blocked | `/v1/models` on the current `775e785e` no-sign app did not list `hy3`/`hunyuan`; raw source bundle exists at `/Volumes/EricsLLMDrive/sources/Hy3-preview` with `config.json`, tokenizer files, and 112 safetensor shards | live Osaurus proof is blocked by missing imported model id, not by a completed runtime row. Do not infer HY3/CAA/CCA behavior from ZAYA, MiniMax, or MiMo source guards |
+
+### 2026-05-28 07:02 PDT Gemma3n unsupported-tool boundary tightened
+
+- Current local worktree head before commit: `319bfeb06ae082f0a77b48c992bcd93bb3e8e04a`, pinned to vMLX main `cc3f5f4dc1317ffa09c46050ba0847f495887747`.
+- Fresh no-sign Release app from that head was launched keychain-free from `build/DerivedData-pr1268-release-nosign-319bfeb0/Build/Products/Release/osaurus.app` with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
+- Fresh inventory artifact: `/tmp/osaurus-pr1268-319bfeb0-current-inventory-20260528-065436`, 43 models visible.
+- Fresh DSV4 JANGTQ2 artifact: `/tmp/osaurus-pr1268-319bfeb0-dsv4-jangtq2-20260528-065445`.
+  - Turn 1 required `line_count`: pass.
+  - Turn 2 visible answer after tool result: pass, no DSML/protocol leak.
+  - Turn 3 second required tool after assistant/tool history: pass.
+  - DSV4 topology: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating layers, disk-backed restore required, TurboQuant KV 0.
+  - Boundary remains: disk L2 stores/misses moved but no current-row hit was proven.
+- Fresh Gemma3n boundary artifact before the Osaurus-side guard: `/tmp/osaurus-pr1268-319bfeb0-gemma3n-boundary-20260528-065603`.
+  - Classification: fail/unsupported for required tools.
+  - Failure shape: visible `<|tool>model:model` fragments and missing structured tool call.
+- Follow-up source fix in this worktree blocks known unsupported Gemma3n local tool requests in `MLXService.validateRuntimePolicy` before decode and updates the tokenizer fallback so Gemma3n does not synthesize required-tool declarations/instructions.
+- Focused validation after source fix:
+  - `MLXServiceRuntimePolicyTests`: 7/7 passed.
+  - `SwiftTransformersTokenizerLoaderTests/gemma3nLocalTokenizerDoesNotInventRequiredToolContractFromFallback`: passed.
+- This is a support-boundary fix, not a promotion. Gemma3n remains unsupported for required tool calling until a native/stamped Gemma3n tool contract exists and passes live multi-turn proof.

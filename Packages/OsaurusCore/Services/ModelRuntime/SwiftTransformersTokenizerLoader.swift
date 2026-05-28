@@ -213,11 +213,12 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             && upstream.convertTokenToId("<think>") != nil
             && upstream.convertTokenToId("</think>") != nil
         let normalizedModelType = modelType?.lowercased()
+        let modelTypeIsGemma3n =
+            normalizedModelType == "gemma3n"
+            || normalizedModelType == "gemma3n_text"
         let modelTypeIsGemma3 =
             normalizedModelType == "gemma3"
             || normalizedModelType == "gemma3_text"
-            || normalizedModelType == "gemma3n"
-            || normalizedModelType == "gemma3n_text"
         let modelTypeIsZayaVL =
             normalizedModelType == "zaya1_vl"
             || normalizedModelType == "zaya_vl"
@@ -322,6 +323,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         }
         if upstream.bosToken == "<bos>",
             !(chatTemplateTools?.isEmpty ?? true),
+            !modelTypeIsGemma3n,
             Self.requiresToolChoice(adjustedContext),
             (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
         {
@@ -423,17 +425,18 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             }
             if upstream.bosToken == "<bos>" {
                 let template =
-                    (chatTemplateTools?.isEmpty ?? true)
+                    (chatTemplateTools?.isEmpty ?? true) || modelTypeIsGemma3n
                     ? MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal
                     : MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools
                 let fallbackMessages = Self.requiresToolChoice(adjustedContext)
                     ? Self.compactGemma4CompletedToolHistoryForRequiredChoice(messages)
                     : messages
+                let fallbackTools = modelTypeIsGemma3n ? nil : chatTemplateTools
                 return try fallback(
                     label: "Gemma4",
                     template: template,
                     messages: fallbackMessages,
-                    tools: chatTemplateTools,
+                    tools: fallbackTools,
                     additionalContext: adjustedContext,
                     addGenerationPrompt: addGenerationPrompt
                 )
