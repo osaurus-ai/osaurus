@@ -42,6 +42,15 @@ row is production-clear.
 - Topology: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: Ling JANGTQ2 is green for this parser/tool/history row, but cache proof remains partial because disk L2 hits stayed 0 while misses/stores moved.
 
+## 2026-05-28 Ling MXFP4 current-head timeout/app-exit blocked row
+
+- Osaurus head at check: `270300f70e9eacc95aa4204ea8cfeead53ca3a46`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-270300f7-ling-mxfp4-tool-cache-20260528-111408`.
+- Result: first required `line_count` request timed out client-side before a response artifact was written. Immediately after, `/health` showed `ling-2.6-flash-mxfp4-crack` loaded with one in-flight request and zero cache movement; a later health check found port `1337` unavailable and no `osaurus` process remained for that app path.
+- Topology before the app disappeared: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: Ling MXFP4 is blocked/red for this current-head proof attempt. The artifact proves timeout/app-exit behavior, not model correctness; do not promote Ling MXFP4 until a clean no-sign app repeat produces structured tools, visible tool-result answer, no leaks, and SSM/L2 cache evidence.
+
 ## 2026-05-28 MiniMax M2.7 small JANGTQ required-tool green row
 
 - Osaurus head at check: `0bba84c9bc8d1b60a872d29bd28e9af3aee586dd`.
