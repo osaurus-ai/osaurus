@@ -1384,6 +1384,7 @@ struct RuntimePolicySourceTests {
     func liveProofKeychainDisabledModeKeepsStartupOffUserKeychain() throws {
         let paths = try Self.source("Utils/OsaurusPaths.swift")
         let storage = try Self.source("Identity/StorageKeyManager.swift")
+        let storageMigration = try Self.source("Views/Storage/StorageMigrationOverlay.swift")
         let appDelegate = try Self.source("AppDelegate.swift")
         let keychainHelper = try Self.source("Services/Keychain/KeychainQueryHelpers.swift")
         let agentSecrets = try Self.source("Services/Keychain/AgentSecretsKeychain.swift")
@@ -1395,6 +1396,8 @@ struct RuntimePolicySourceTests {
         #expect(storage.contains("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"))
         #expect(storage.contains("generateInMemoryKey()"))
         #expect(storage.contains("if Self.disablesKeychainForProcess"))
+        #expect(storageMigration.contains("if StorageKeyManager.disablesKeychainForProcess"))
+        #expect(storageMigration.contains("without touching the user's at-rest migration/keychain"))
         #expect(appDelegate.contains("private var keychainDisabledTestMode"))
         #expect(appDelegate.contains("private var keychainDisabledUIPresentationMode"))
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
