@@ -401,3 +401,22 @@ Invalid payload boundary:
 
 - Artifact: `/tmp/osaurus-pr1268-2b4f576d-zaya-vl-media-tool-errorbody-20260528-042348`
 - The earlier 1x1 PNG request failed correctly with `Height: 1 must be larger than factor: 28`; this was a test-payload issue, not the duplicate ZAYA media placeholder regression.
+
+## 2026-05-28 04:34 PDT - ZAYA-VL repeated media required-tool cache-hit proof
+
+Current Osaurus head: `b681ea663c511cdeb45a97a20a2b050ea51cd40f`.
+Current vMLX pin: `c300e496505dd4aa027fcb0f0c69d0fa6aca270a`.
+Live app: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-release-nosign-2b4f576d/Build/Products/Release/osaurus.app`.
+
+Artifact:
+
+- `/tmp/osaurus-pr1268-b681ea66-zaya-vl-repeat-cache-hit-20260528-043444`
+
+Result:
+
+- Model: `zaya1-vl-8b-jangtq4`
+- Classification: `pass_with_cache_boundary`
+- Repeated media required `line_count`: structured tool call, exact args `alpha\nbeta\ngamma`.
+- Cache delta from `/admin/cache-stats`: `disk_l2_hits +1`, `disk_l2_misses +3`, `zaya_cca_companion_misses +1`.
+- Cache topology: `layers=40`, `zayaCCALayers=40`, `companion=zaya-cca`, `restore=disk-backed`, TurboQuant KV layer count `0`.
+- Boundary: this proves disk L2 reuse on the ZAYA-VL media/tool row and companion-cache accounting, but not a ZAYA CCA companion hit. Do not claim ZAYA CCA hit reuse until a row records `zaya_cca_companion_hits > 0`.
