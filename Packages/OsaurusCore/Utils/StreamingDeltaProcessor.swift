@@ -19,35 +19,6 @@
 
 import Foundation
 
-/// Temporary pacing diagnostic logger — writes to /tmp/osaurus-pacing.log.
-enum PacingLog {
-    static let url = URL(fileURLWithPath: "/tmp/osaurus-pacing.log")
-    private static let queue = DispatchQueue(label: "osaurus.pacing.log")
-    nonisolated(unsafe) private static var sessionStartLogged = false
-    static func log(_ msg: String) {
-        let t = CFAbsoluteTimeGetCurrent()
-        queue.async {
-            if !sessionStartLogged {
-                sessionStartLogged = true
-                let header = "===== session start \(Date()) (CACurrentMediaTime=\(t)) =====\n"
-                if let d = header.data(using: .utf8) {
-                    try? d.write(to: url)
-                }
-            }
-            let line = "[\(String(format: "%.4f", t))] \(msg)\n"
-            guard let data = line.data(using: .utf8) else { return }
-            if FileManager.default.fileExists(atPath: url.path),
-               let fh = try? FileHandle(forWritingTo: url) {
-                defer { try? fh.close() }
-                _ = try? fh.seekToEnd()
-                try? fh.write(contentsOf: data)
-            } else {
-                try? data.write(to: url)
-            }
-        }
-    }
-}
-
 /// Processes streaming LLM deltas into a ChatTurn with buffering and
 /// throttled UI updates.
 @MainActor
@@ -138,8 +109,6 @@ final class StreamingDeltaProcessor {
         ChatPerfTrace.shared.count("stream.deltaBytes", delta.utf8.count)
         deltaBuffer += delta
 
-        PacingLog.log("receiveDelta size=\(delta.count) bufferAfter=\(deltaBuffer.count) smooth=\(smoothStreamingEnabled) pacingTimerActive=\(pacingTimer != nil)")
-
         if smoothStreamingEnabled {
             startPacingTimerIfNeeded()
             return
@@ -205,7 +174,6 @@ final class StreamingDeltaProcessor {
     /// the response is silently dropped (the visible text ends
     /// mid-sentence even though the model produced the full content).
     func finalize() async {
-        PacingLog.log("finalize() called bufferSize=\(deltaBuffer.count) smooth=\(smoothStreamingEnabled) pacingTimerActive=\(pacingTimer != nil)")
         invalidateTimer()
 
         if smoothStreamingEnabled && !deltaBuffer.isEmpty {
@@ -221,7 +189,6 @@ final class StreamingDeltaProcessor {
             stopPacingTimer()
             let remaining = deltaBuffer
             deltaBuffer = ""
-            PacingLog.log("finalize() DRAINED \(remaining.count) chars immediately")
             appendContent(remaining)
         }
         syncToTurn()
@@ -253,7 +220,6 @@ final class StreamingDeltaProcessor {
 
     private func startPacingTimerIfNeeded() {
         guard pacingTimer == nil else { return }
-        PacingLog.log("startPacingTimer pending=\(deltaBuffer.count)")
         pacingTimer = Timer.scheduledTimer(
             withTimeInterval: Self.pacingTickInterval,
             repeats: true
@@ -265,9 +231,6 @@ final class StreamingDeltaProcessor {
     }
 
     private func stopPacingTimer() {
-        if pacingTimer != nil {
-            PacingLog.log("stopPacingTimer pending=\(deltaBuffer.count)")
-        }
         pacingTimer?.invalidate()
         pacingTimer = nil
     }
@@ -281,7 +244,6 @@ final class StreamingDeltaProcessor {
     private func pacingTick() {
         let pending = deltaBuffer.count
         if pending == 0 {
-            PacingLog.log("pacingTick EMPTY → stop timer")
             stopPacingTimer()
             // Wake up `finalize()` if it's waiting for the tail to drain.
             if let cont = pacingDoneContinuation {
@@ -294,7 +256,6 @@ final class StreamingDeltaProcessor {
         let take = min(pending, max(Self.pacingCharsPerTick, scaled))
         let chunk = String(deltaBuffer.prefix(take))
         deltaBuffer = String(deltaBuffer.dropFirst(take))
-        PacingLog.log("pacingTick pending=\(pending) take=\(take) remaining=\(deltaBuffer.count)")
         appendContent(chunk)
         lastFlushTime = Date()
         syncToTurn()
