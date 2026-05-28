@@ -152,3 +152,12 @@ ZAYA CCA repeat-cache artifact:
 - This supersedes the prior partial classification for MiniMax Small JANGTQ on the current no-sign app path. The row is now behavior-pass plus disk-L2-hit-pass.
 - Missing-family inventory artifact: `/tmp/osaurus-pr1268-23f0c39-missing-family-inventory-20260528-073227`.
 - `bailing`, `hy3`, and `hunyuan` selected zero rows from the current `/v1/models` inventory, so those remain import/model-availability blocked rather than runtime-proven.
+
+### 2026-05-28 07:37 PDT Gemma4 latest-head rotating-KV proof
+
+- Artifact: `/tmp/osaurus-pr1268-77236bc4-gemma4-jang4m-20260528-073742`.
+- `gemma-4-26b-a4b-it-jang_4m-crack` passes the current app/API row: turn 1 required `line_count`, visible post-tool answer, and turn 3 second required `line_count` after assistant/tool history.
+- Visible answer: `There were 3 lines counted.`
+- Cache delta: `disk_l2_hits +0`, `disk_l2_misses +2`, `disk_l2_stores +4`.
+- Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV 0.
+- Keep Gemma4 classified as behavior-pass/rotating-topology-pass with a disk-hit boundary. Do not claim warm rotating-state disk-hit reuse from this row.

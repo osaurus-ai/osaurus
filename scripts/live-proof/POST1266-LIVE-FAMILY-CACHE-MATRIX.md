@@ -618,3 +618,18 @@ Missing-family inventory:
 
 - Artifact: `/tmp/osaurus-pr1268-23f0c39-missing-family-inventory-20260528-073227`.
 - `bailing`, `hy3`, and `hunyuan` selected zero rows from the current `/v1/models` inventory. These remain import/model-availability blocked, not runtime-proven.
+
+## 2026-05-28 07:37 PDT - Latest-head Gemma4 rotating-KV proof
+
+Artifact:
+
+- Gemma4 JANG_4M: `/tmp/osaurus-pr1268-77236bc4-gemma4-jang4m-20260528-073742`.
+
+Result:
+
+- PASS: `gemma-4-26b-a4b-it-jang_4m-crack` routed turn 1 required `line_count` to a structured tool call with exact multiline args.
+- PASS: tool-result follow-up returned visible answer `There were 3 lines counted.` with no protocol/reasoning leak.
+- PASS: turn 3 second required `line_count` after assistant/tool history routed to a structured tool call with exact args.
+- Cache delta: `disk_l2_hits +0`, `disk_l2_misses +2`, `disk_l2_stores +4`.
+- Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV 0.
+- Classification: pass with cache boundary. This row proves latest-head Gemma4 tool/history behavior and rotating topology, but still does not prove warm disk-hit reuse for Gemma rotating state.
