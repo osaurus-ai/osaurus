@@ -3,6 +3,30 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.1</title>
+            <pubDate>Thu, 28 May 2026 03:16:37 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.1</sparkle:version>
+            <sparkle:shortVersionString>0.19.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.1/Osaurus-0.19.1.dmg" length="50150094" type="application/octet-stream" sparkle:edSignature="UTugGnGJy59OE+I+NFI1xzfUwpQsxX12se4MFuTuOENkLD0SdOjihqni0DXpbCTYxHvPr1fCiWGKulKsA1g3CQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- feat(model-browser): add Newest / Oldest sort options (#1270) by @therahul-yo
+- Fix zero free space on external model volumes (#1267) by @atomtanstudio
+- chat improvements (#1259) by @RaajeevChandran
+- Stabilize plugin spec root isolation (#1261) by @mimeding
+
+## 🚀 Features
+
+- Default Agent is now Onboarding Agent (#1271) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.0...0.19.1
+]]></description>
+        </item>
+        <item>
             <title>0.19.0</title>
             <pubDate>Tue, 26 May 2026 21:23:09 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
