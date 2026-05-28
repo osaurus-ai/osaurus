@@ -67,9 +67,25 @@ final class MCPOAuthDiscoveryTests: XCTestCase {
     func testPRMFallsBackToWellKnown() {
         let server = URL(string: "https://mcp.example.com/mcp")!
         let resolved = MCPOAuthDiscovery.prmURL(forServer: server, hint: nil)
-        // RFC 9728 § the resource metadata is at /.well-known/oauth-protected-resource.
-        XCTAssertEqual(resolved?.path, "/.well-known/oauth-protected-resource")
+        // RFC 9728 §3.1 canonical form prefixes the well-known with the resource path.
+        XCTAssertEqual(resolved?.path, "/.well-known/oauth-protected-resource/mcp")
         XCTAssertEqual(resolved?.host, "mcp.example.com")
+    }
+
+    func testPRMCandidatesIncludeBothPathScopedAndRoot() {
+        let server = URL(string: "https://mcp.example.com/mcp")!
+        let candidates = MCPOAuthDiscovery.prmCandidateURLs(forServer: server, hint: nil).map(\.absoluteString)
+        // Path-scoped canonical form comes first (RFC 9728 §3.1).
+        XCTAssertEqual(candidates.first, "https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+        // Root-scoped form is also probed for deployments that serve there.
+        XCTAssertTrue(candidates.contains("https://mcp.example.com/.well-known/oauth-protected-resource"))
+    }
+
+    func testPRMCandidatesForRootResourceCollapseToOne() {
+        let server = URL(string: "https://mcp.example.com")!
+        let candidates = MCPOAuthDiscovery.prmCandidateURLs(forServer: server, hint: nil).map(\.absoluteString)
+        // No path → path-scoped and root forms are identical; only one probe.
+        XCTAssertEqual(candidates, ["https://mcp.example.com/.well-known/oauth-protected-resource"])
     }
 
     func testASMCandidatesIncludeRFC8414AndOIDC() {
@@ -235,6 +251,28 @@ final class MCPOAuthDiscoveryTests: XCTestCase {
             asm,
             origin: URL(string: "http://localhost:7331/mcp")!
         )
+    }
+
+    /// Live discovery probe against a real MCP server. Disabled by default —
+    /// opt in by setting `RUN_LIVE_OAUTH=1` and `LIVE_MCP_SERVER_URL=<https url>`
+    /// in the test environment. Exercises the full PRM→ASM resolution path
+    /// against an actual RFC 9728 deployment without hard-coding any vendor.
+    func testLiveDiscoveryAgainstRealServer() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["RUN_LIVE_OAUTH"] == "1")
+        guard
+            let raw = ProcessInfo.processInfo.environment["LIVE_MCP_SERVER_URL"],
+            let server = URL(string: raw),
+            server.scheme == "https"
+        else {
+            throw XCTSkip("Set LIVE_MCP_SERVER_URL to an https MCP endpoint to run this test.")
+        }
+
+        let discovery = MCPOAuthDiscovery()
+        let (prm, asm) = try await discovery.discover(serverURL: server, hint: nil)
+        XCTAssertFalse(prm.authorizationServers.isEmpty)
+        XCTAssertFalse(asm.issuer.isEmpty)
+        XCTAssertFalse(asm.authorizationEndpoint.isEmpty)
+        XCTAssertFalse(asm.tokenEndpoint.isEmpty)
     }
 }
 

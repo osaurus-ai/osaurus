@@ -158,19 +158,55 @@ public actor MCPOAuthDiscovery {
 
     /// Resolve the PRM document URL for a given MCP server, preferring the
     /// `resource_metadata` hint from a `WWW-Authenticate` challenge.
+    ///
+    /// Returns the first candidate from `prmCandidateURLs` — primarily a
+    /// convenience for callers that just need a single URL (and for tests).
+    /// Real fetching uses the full candidate list.
     public static func prmURL(forServer serverURL: URL, hint: URL?) -> URL? {
+        prmCandidateURLs(forServer: serverURL, hint: hint).first
+    }
+
+    /// Ordered list of PRM URLs to probe for a given MCP server.
+    ///
+    /// - If `hint` (the `resource_metadata=` URL from a `WWW-Authenticate`
+    ///   challenge) is present and passes the discovery URL policy, it is the
+    ///   sole candidate — RFC 9728 §5.1 makes that the canonical pointer.
+    /// - Otherwise we probe both well-known layouts described by RFC 9728 §3.1:
+    ///     1. Path-scoped: `<host>/.well-known/oauth-protected-resource<path>`
+    ///        (the spec-canonical form for resources with a path).
+    ///     2. Root: `<host>/.well-known/oauth-protected-resource`
+    ///        (what most single-tenant deployments serve).
+    ///   For a path-less server URL the two collapse to a single entry after
+    ///   de-dup.
+    public static func prmCandidateURLs(forServer serverURL: URL, hint: URL?) -> [URL] {
         if let hint {
-            return MCPOAuthURLPolicy.allowsDiscoveredURL(hint, from: serverURL) ? hint : nil
+            return MCPOAuthURLPolicy.allowsDiscoveredURL(hint, from: serverURL) ? [hint] : []
         }
-        // RFC 9728 §3.1: place at the well-known path for the resource. We use
-        // the server's host (path-scoped probing is allowed but most deployments
-        // serve the doc at the root).
-        var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false)
-        components?.path = "/.well-known/oauth-protected-resource"
-        components?.query = nil
-        components?.fragment = nil
-        guard let url = components?.url else { return nil }
-        return MCPOAuthURLPolicy.allowsDiscoveredURL(url, from: serverURL) ? url : nil
+        guard var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false) else {
+            return []
+        }
+        components.query = nil
+        components.fragment = nil
+
+        let originalPath = components.path
+        let trimmedPath = originalPath == "/" ? "" : originalPath
+
+        var candidates: [URL] = []
+
+        // RFC 9728 §3.1 canonical form: well-known prefixes the resource path.
+        components.path = "/.well-known/oauth-protected-resource" + trimmedPath
+        if let url = components.url { candidates.append(url) }
+
+        // Common deployment shortcut: root-scoped well-known.
+        if !trimmedPath.isEmpty {
+            components.path = "/.well-known/oauth-protected-resource"
+            if let url = components.url { candidates.append(url) }
+        }
+
+        var seen = Set<URL>()
+        return candidates
+            .filter { seen.insert($0).inserted }
+            .filter { MCPOAuthURLPolicy.allowsDiscoveredURL($0, from: serverURL) }
     }
 
     /// Fetch (and cache) the PRM document for an MCP server.
@@ -178,33 +214,53 @@ public actor MCPOAuthDiscovery {
         serverURL: URL,
         hint: URL?
     ) async throws -> MCPProtectedResourceMetadata {
-        guard let prmURL = Self.prmURL(forServer: serverURL, hint: hint) else {
+        let candidates = Self.prmCandidateURLs(forServer: serverURL, hint: hint)
+        guard !candidates.isEmpty else {
             throw MCPOAuthDiscoveryError.invalidServerURL
         }
-        if let cached = prmCache[prmURL] {
-            return cached
+        for candidate in candidates {
+            if let cached = prmCache[candidate] {
+                return cached
+            }
         }
 
-        let (data, response) = try await safeFetch(prmURL)
-        guard response.statusCode == 200 else {
-            if response.statusCode == 404 {
-                throw MCPOAuthDiscoveryError.prmNotFound
+        var lastError: MCPOAuthDiscoveryError?
+        for candidate in candidates {
+            let data: Data
+            let response: HTTPURLResponse
+            do {
+                (data, response) = try await safeFetch(candidate)
+            } catch let error as MCPOAuthDiscoveryError {
+                lastError = error
+                continue
             }
-            throw MCPOAuthDiscoveryError.httpError(response.statusCode, String(data: data, encoding: .utf8))
+
+            guard response.statusCode == 200 else {
+                if response.statusCode == 404 {
+                    lastError = .prmNotFound
+                    continue
+                }
+                lastError = .httpError(response.statusCode, String(data: data, encoding: .utf8))
+                continue
+            }
+
+            do {
+                let metadata = try JSONDecoder().decode(MCPProtectedResourceMetadata.self, from: data)
+                guard !metadata.authorizationServers.isEmpty else {
+                    throw MCPOAuthDiscoveryError.noAuthorizationServers
+                }
+                prmCache[candidate] = metadata
+                return metadata
+            } catch let error as MCPOAuthDiscoveryError {
+                lastError = error
+                continue
+            } catch {
+                lastError = .prmDecodeFailed(error.localizedDescription)
+                continue
+            }
         }
 
-        do {
-            let metadata = try JSONDecoder().decode(MCPProtectedResourceMetadata.self, from: data)
-            guard !metadata.authorizationServers.isEmpty else {
-                throw MCPOAuthDiscoveryError.noAuthorizationServers
-            }
-            prmCache[prmURL] = metadata
-            return metadata
-        } catch let error as MCPOAuthDiscoveryError {
-            throw error
-        } catch {
-            throw MCPOAuthDiscoveryError.prmDecodeFailed(error.localizedDescription)
-        }
+        throw lastError ?? .prmNotFound
     }
 
     /// Fetch (and cache) ASM for a given authorization-server URL.
