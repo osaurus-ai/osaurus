@@ -7,10 +7,12 @@
 //  All accounts are scoped under the service `ai.osaurus.mcp` and named
 //  `<providerUUID>.<suffix>` so `deleteAllSecrets(for:)` can prefix-match.
 //  Suffixes in use:
-//    - `.token`         (legacy/static bearer token)
-//    - `.oauth.tokens`  (OAuth 2.1 token blob)
-//    - `.header.<key>`  (per-header secret)
-//    - `.env.<key>`     (per-env-var secret for stdio subprocesses)
+//    - `.token`               (legacy/static bearer token)
+//    - `.oauth.tokens`        (OAuth 2.1 token blob)
+//    - `.oauth.client_secret` (OAuth `client_secret` for confidential-client
+//                              providers without DCR — e.g. HubSpot)
+//    - `.header.<key>`        (per-header secret)
+//    - `.env.<key>`           (per-env-var secret for stdio subprocesses)
 //
 
 import Foundation
@@ -88,6 +90,27 @@ public enum MCPProviderKeychain {
         getOAuthTokens(for: providerId) != nil
     }
 
+    // MARK: - OAuth client_secret
+    //
+    // Only used by confidential-client OAuth flows that don't ship RFC 7591
+    // Dynamic Client Registration (HubSpot's MCP Auth Apps today). Public-
+    // native clients leave this slot empty and rely on PKCE alone.
+
+    @discardableResult
+    public static func saveOAuthClientSecret(_ clientSecret: String, for providerId: UUID) -> Bool {
+        setData(Data(clientSecret.utf8), account: oauthClientSecretAccount(for: providerId))
+    }
+
+    public static func getOAuthClientSecret(for providerId: UUID) -> String? {
+        getData(account: oauthClientSecretAccount(for: providerId))
+            .flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    @discardableResult
+    public static func deleteOAuthClientSecret(for providerId: UUID) -> Bool {
+        deleteItem(account: oauthClientSecretAccount(for: providerId))
+    }
+
     // MARK: - Header secrets
 
     @discardableResult
@@ -124,14 +147,16 @@ public enum MCPProviderKeychain {
 
     // MARK: - Bulk delete
 
-    /// Delete every Keychain item this enum owns for `providerId` — token, OAuth blob,
-    /// and any number of header secrets. Used when removing a provider entirely or
-    /// resetting the app.
+    /// Delete every Keychain item this enum owns for `providerId` — bearer
+    /// token, OAuth tokens, OAuth `client_secret`, and any number of header
+    /// or env secrets. Used when removing a provider entirely or resetting
+    /// the app.
     public static func deleteAllSecrets(for providerId: UUID) {
         if KeychainQueryHelpers.disablesKeychainForProcess { return }
         // Targeted deletes (cheap, idempotent).
         deleteToken(for: providerId)
         deleteOAuthTokens(for: providerId)
+        deleteOAuthClientSecret(for: providerId)
 
         // Sweep any remaining `<uuid>.header.*` entries by enumerating accounts.
         let prefix = "\(providerId.uuidString)."
@@ -164,6 +189,10 @@ public enum MCPProviderKeychain {
 
     private static func oauthAccount(for providerId: UUID) -> String {
         "\(providerId.uuidString).oauth.tokens"
+    }
+
+    private static func oauthClientSecretAccount(for providerId: UUID) -> String {
+        "\(providerId.uuidString).oauth.client_secret"
     }
 
     private static func headerAccount(key: String, for providerId: UUID) -> String {

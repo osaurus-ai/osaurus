@@ -88,4 +88,53 @@ struct MCPProviderTemplateTests {
         let sorted = displayNames.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         #expect(displayNames == sorted, "Catalog is not alphabetically sorted by displayName")
     }
+
+    @Test func confidentialOAuthTemplatesAreFullyConfigured() {
+        // OAuth templates that flag `requiresManualOAuthCredentials` must
+        // ship both a docs link AND a fixed loopback port — without those,
+        // the connect-known confidential-client form has nothing useful to
+        // render and the redirect URI it surfaces would be `127.0.0.1:0`.
+        let confidential = MCPProviderTemplate.allTemplates.filter {
+            $0.requiresManualOAuthCredentials
+        }
+        #expect(
+            !confidential.isEmpty,
+            "expected at least one confidential-client OAuth template (HubSpot)"
+        )
+        for template in confidential {
+            #expect(
+                template.authType == .oauth,
+                "Template \(template.id) flags requiresManualOAuthCredentials but isn't .oauth"
+            )
+            let helpURL = template.oauthSetupHelpURL
+            #expect(
+                helpURL != nil,
+                "Template \(template.id) requires manual OAuth credentials but has no oauthSetupHelpURL"
+            )
+            #expect(helpURL?.scheme == "https", "Template \(template.id) oauthSetupHelpURL must use https")
+            #expect(helpURL?.host?.isEmpty == false, "Template \(template.id) oauthSetupHelpURL is missing a host")
+            #expect(
+                (template.oauthFixedLoopbackPort ?? 0) > 1024,
+                "Template \(template.id) must pin oauthFixedLoopbackPort to a non-zero unprivileged port"
+            )
+        }
+    }
+
+    @Test func hubspotIsConfidentialOAuthOnCanonicalHost() {
+        // HubSpot is the canonical confidential-client OAuth template:
+        //   - URL must point at mcp.hubspot.com (the documented endpoint).
+        //     The `app.hubspot.com/mcp/v1/http` alias tripped users into
+        //     pasting Private App PATs, which mcp.hubspot.com rejects.
+        //   - authType must be `.oauth` so the connect-known sheet renders
+        //     the OAuth flow instead of the API-key screen.
+        //   - requiresManualOAuthCredentials must be true because HubSpot's
+        //     ASM publishes no `registration_endpoint`.
+        let hubspot = MCPProviderTemplate.allTemplates.first { $0.id == "hubspot" }
+        #expect(hubspot != nil)
+        #expect(hubspot?.authType == .oauth)
+        #expect(hubspot?.requiresManualOAuthCredentials == true)
+        #expect(hubspot?.url == "https://mcp.hubspot.com")
+        #expect(hubspot?.oauthFixedLoopbackPort != nil)
+        #expect(hubspot?.apiKeyHelpURL == nil)
+    }
 }

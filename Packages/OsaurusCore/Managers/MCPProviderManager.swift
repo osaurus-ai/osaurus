@@ -101,6 +101,7 @@ public final class MCPProviderManager: ObservableObject {
         // If the user switched away from OAuth, drop any cached tokens for this provider.
         if previous?.authType == .oauth && provider.authType != .oauth {
             MCPProviderKeychain.deleteOAuthTokens(for: provider.id)
+            MCPProviderKeychain.deleteOAuthClientSecret(for: provider.id)
         }
 
         // Reconnect if was connected and still enabled

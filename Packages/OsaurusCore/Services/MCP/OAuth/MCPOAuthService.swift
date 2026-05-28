@@ -15,10 +15,16 @@
 //
 //  All steps follow the MCP `2025-06-18` authorization spec:
 //    - PRM (RFC 9728) → ASM (RFC 8414, with OIDC fallback)
-//    - DCR (RFC 7591) for `client_id`
-//    - PKCE S256 + state for the authorize step
-//    - RFC 8707 `resource=` parameter on every authorize / token request
-//    - Loopback `http://127.0.0.1:<ephemeral port>/callback` redirect URI
+//    - DCR (RFC 7591) for `client_id`, with a fallback path for confidential-
+//      client vendors (e.g. HubSpot's MCP Auth Apps) that don't publish a
+//      `registration_endpoint` and instead require the user to register an
+//      OAuth app by hand and supply both `client_id` and `client_secret`.
+//    - PKCE S256 + state for the authorize step.
+//    - RFC 8707 `resource=` parameter on every authorize / token request.
+//    - Loopback `http://127.0.0.1:<port>/callback` redirect URI. The port is
+//      kernel-assigned by default; vendors that require an exact-match
+//      registered redirect URI can pin it via
+//      `MCPOAuthConfig.loopbackPort`.
 //
 
 import AppKit
@@ -43,7 +49,9 @@ public enum MCPOAuthError: LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .invalidServerURL: return "MCP server URL is not a valid HTTP(S) URL"
-        case .missingClientId: return "OAuth client_id was not registered with the authorization server"
+        case .missingClientId:
+            return
+                "OAuth client_id is missing — register an app with the authorization server or paste a client_id manually"
         case .missingTokenEndpoint: return "Authorization server metadata is missing token_endpoint"
         case .missingAuthorizationEndpoint:
             return "Authorization server metadata is missing authorization_endpoint"
@@ -122,7 +130,10 @@ public enum MCPOAuthService {
         // 2. Resolve scopes.
         let scopes = resolveScopes(provider: provider, prm: prm, asm: asm, hint: hint)
 
-        // 3. Loopback server on an ephemeral port.
+        // 3. Loopback server on an ephemeral port — or a provider-specified
+        // fixed port when the vendor requires an exact-match redirect URI
+        // (HubSpot's MCP Auth Apps register a single redirect URI with the
+        // exact port baked in).
         let pkce: PKCEPair
         do {
             pkce = try PKCE.makePair()
@@ -131,11 +142,18 @@ public enum MCPOAuthService {
         }
         let state = PKCE.makeState()
 
+        let loopbackPort: LoopbackPort = {
+            if let pinned = provider.oauth?.loopbackPort, pinned != 0 {
+                return .fixed(pinned)
+            }
+            return .ephemeral
+        }()
+
         let server: OAuthLoopbackServer
         do {
             server = try OAuthLoopbackServer(
                 expectedState: state,
-                port: .ephemeral,
+                port: loopbackPort,
                 callbackPath: "/callback"
             )
             try await server.start()
@@ -151,7 +169,13 @@ public enum MCPOAuthService {
         }
         let redirectURI = "http://127.0.0.1:\(port)/callback"
 
-        // 4. Ensure we have a `client_id` — DCR if needed.
+        // 4. Ensure we have a `client_id`. Order of preference:
+        //    a. Cached on the provider record (manual entry for vendors without
+        //       DCR — HubSpot's MCP Auth Apps — or a previous DCR result).
+        //    b. RFC 7591 Dynamic Client Registration when the AS publishes a
+        //       `registration_endpoint`.
+        //    Skipping DCR when (a) is set lets us support confidential-client
+        //    OAuth providers whose AS metadata advertises no DCR.
         let clientId: String
         if let cached = provider.oauth?.clientId, !cached.isEmpty {
             clientId = cached
@@ -171,6 +195,12 @@ public enum MCPOAuthService {
                 throw MCPOAuthError.registration(error)
             }
         }
+
+        // Confidential-client `client_secret`, when stored in Keychain. Vendors
+        // whose ASM advertises `client_secret_post` (HubSpot) need this in
+        // every token POST; public-native clients leave it empty and rely on
+        // PKCE alone.
+        let clientSecret = resolveClientSecret(for: provider.id)
 
         // 5. Build the authorization URL and open the browser.
         guard let authorizeURL = URL(string: asm.authorizationEndpoint) else {
@@ -205,13 +235,16 @@ public enum MCPOAuthService {
         let tokens = try await exchangeAuthorizationCode(
             tokenURL: tokenURL,
             clientId: clientId,
+            clientSecret: clientSecret,
             code: callback.code,
             verifier: pkce.verifier,
             redirectURI: redirectURI,
             resource: canonical
         )
 
-        // 8. Build the cached config and persist tokens.
+        // 8. Build the cached config and persist tokens. Preserve the
+        // `loopbackPort` from the input so the next refresh / re-sign-in
+        // keeps using the same port the vendor expects.
         let config = MCPOAuthConfig(
             clientId: clientId,
             redirectURI: redirectURI,
@@ -221,7 +254,8 @@ public enum MCPOAuthService {
             authorizationEndpoint: asm.authorizationEndpoint,
             tokenEndpoint: asm.tokenEndpoint,
             registrationEndpoint: asm.registrationEndpoint,
-            serverMetadataCachedAt: Date()
+            serverMetadataCachedAt: Date(),
+            loopbackPort: provider.oauth?.loopbackPort
         )
         if persist {
             MCPProviderKeychain.saveOAuthTokens(tokens, for: provider.id)
@@ -254,6 +288,12 @@ public enum MCPOAuthService {
             "refresh_token": refreshToken,
             "client_id": clientId,
         ]
+        // Confidential-client OAuth (HubSpot) advertises `client_secret_post`
+        // and rejects refresh requests without `client_secret`. Public clients
+        // never store one, so this branch is a no-op for the DCR path.
+        if let secret = resolveClientSecret(for: provider.id), !secret.isEmpty {
+            form["client_secret"] = secret
+        }
         if let resource = oauth.resource, !resource.isEmpty {
             form["resource"] = resource
         }
@@ -369,9 +409,13 @@ public enum MCPOAuthService {
     }
 
     /// Exchange an authorization code for tokens. Always sends `resource=`.
+    /// `clientSecret` is included in the form body when non-nil — required for
+    /// confidential-client OAuth providers whose ASM advertises
+    /// `client_secret_post` (e.g. HubSpot).
     public static func exchangeAuthorizationCode(
         tokenURL: URL,
         clientId: String,
+        clientSecret: String? = nil,
         code: String,
         verifier: String,
         redirectURI: String,
@@ -384,6 +428,9 @@ public enum MCPOAuthService {
             "code_verifier": verifier,
             "redirect_uri": redirectURI,
         ]
+        if let clientSecret, !clientSecret.isEmpty {
+            form["client_secret"] = clientSecret
+        }
         if let resource, !resource.isEmpty {
             form["resource"] = resource
         }
@@ -399,6 +446,20 @@ public enum MCPOAuthService {
     /// Test seam: replace with a fixture-driven token POST in unit tests.
     nonisolated(unsafe) public static var tokenRequestOverride:
         ((URL, [String: String]) async throws -> ParsedTokenResponse)?
+
+    /// Test seam: replace the Keychain lookup for `client_secret` in unit
+    /// tests. Production code should leave this nil so the real Keychain
+    /// wrapper is used.
+    nonisolated(unsafe) public static var clientSecretAccessorOverride: ((UUID) -> String?)?
+
+    /// Resolve the `client_secret` for `providerId`. Tests stub this via
+    /// `clientSecretAccessorOverride`; production reads from Keychain.
+    static func resolveClientSecret(for providerId: UUID) -> String? {
+        if let override = clientSecretAccessorOverride {
+            return override(providerId)
+        }
+        return MCPProviderKeychain.getOAuthClientSecret(for: providerId)
+    }
 
     public struct ParsedTokenResponse: Sendable, Equatable {
         public let accessToken: String

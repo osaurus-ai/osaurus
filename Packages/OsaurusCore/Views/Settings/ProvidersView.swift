@@ -810,11 +810,15 @@ private struct ProviderEditSheet: View {
     // Manual OAuth override fields. Surfaced under an "Advanced" disclosure
     // inside the OAuth section so users can wire up MCP servers that don't
     // implement RFC 9728 PRM — those servers must supply at least the
-    // authorize + token endpoints by hand.
+    // authorize + token endpoints by hand. `manualClientId` /
+    // `manualClientSecret` are also reused by the connect-known
+    // confidential-client flow (HubSpot's MCP Auth Apps) which forces both
+    // values to be entered up front before sign-in is allowed.
     @State private var showOAuthAdvanced: Bool = false
     @State private var manualAuthEndpoint: String = ""
     @State private var manualTokenEndpoint: String = ""
     @State private var manualClientId: String = ""
+    @State private var manualClientSecret: String = ""
     @State private var manualScopes: String = ""
 
     // Stdio editor state. `transport` drives the HTTP/stdio fork of the
@@ -1154,13 +1158,21 @@ private struct ProviderEditSheet: View {
 
     /// Reset the draft to a blank slate. Used when transitioning between phases
     /// so a previous selection's name / url / OAuth state doesn't leak through.
-    /// Token state is dropped from Keychain via `resetDraftOAuthState`.
+    /// Token state is dropped from Keychain via `resetDraftOAuthState`. Manual
+    /// OAuth override fields are also wiped so a half-typed Client ID /
+    /// Client Secret from one template doesn't bleed into the next.
     private func clearDraft(authType: MCPProviderAuthType, name: String = "", url: String = "") {
         self.name = name
         self.url = url
         self.authType = authType
         customHeaders.removeAll()
         testResult = nil
+        manualAuthEndpoint = ""
+        manualTokenEndpoint = ""
+        manualClientId = ""
+        manualClientSecret = ""
+        manualScopes = ""
+        showOAuthAdvanced = false
         resetDraftOAuthState()
     }
 
@@ -1350,6 +1362,12 @@ private struct ProviderEditSheet: View {
                 case .oauth:
                     if isOAuthSignedIn {
                         connectedBlock(template: template)
+                    } else if template.requiresManualOAuthCredentials {
+                        // Confidential-client OAuth flow (HubSpot's MCP Auth
+                        // Apps): user must register an app in the vendor's
+                        // portal first and paste both client_id +
+                        // client_secret before sign-in is allowed.
+                        confidentialOAuthBlock(template: template)
                     } else {
                         signInBlock(template: template)
                     }
@@ -1375,35 +1393,7 @@ private struct ProviderEditSheet: View {
     @ViewBuilder
     private func signInBlock(template: MCPProviderTemplate) -> some View {
         VStack(spacing: 10) {
-            Button(action: signInWithOAuth) {
-                HStack(spacing: 8) {
-                    if isSigningIn {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .frame(width: 14, height: 14)
-                    } else {
-                        Image(systemName: "person.badge.key.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    Group {
-                        if isSigningIn {
-                            Text("Waiting for browser…", bundle: .module)
-                        } else {
-                            Text("Sign In with \(template.displayName)", bundle: .module)
-                        }
-                    }
-                    .font(.system(size: 14, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 22)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(themeManager.currentTheme.accentColor)
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(isSigningIn)
+            oauthSignInButton(template: template, enabled: true)
 
             Text(
                 "We'll open your browser to sign in. After approving, you'll be redirected back to Osaurus.",
@@ -1414,6 +1404,48 @@ private struct ProviderEditSheet: View {
             .multilineTextAlignment(.center)
             .frame(maxWidth: 360)
         }
+    }
+
+    /// Big "Sign In with [Provider]" button shared by the OAuth+DCR and
+    /// confidential-client OAuth flows. Visual treatment matches across
+    /// both so the connect-known screen reads as one design family — only
+    /// the gating predicate differs (DCR is always enabled; confidential-
+    /// client waits on Client ID + Client Secret being filled in).
+    @ViewBuilder
+    private func oauthSignInButton(template: MCPProviderTemplate, enabled: Bool) -> some View {
+        Button(action: signInWithOAuth) {
+            HStack(spacing: 8) {
+                if isSigningIn {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .frame(width: 14, height: 14)
+                } else {
+                    Image(systemName: "person.badge.key.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                Group {
+                    if isSigningIn {
+                        Text("Waiting for browser…", bundle: .module)
+                    } else {
+                        Text("Sign In with \(template.displayName)", bundle: .module)
+                    }
+                }
+                .font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(
+                        enabled
+                            ? themeManager.currentTheme.accentColor
+                            : themeManager.currentTheme.accentColor.opacity(0.4)
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(isSigningIn || !enabled)
     }
 
     @ViewBuilder
@@ -1459,6 +1491,179 @@ private struct ProviderEditSheet: View {
             .buttonStyle(PlainButtonStyle())
             .disabled(isSigningIn)
         }
+    }
+
+    /// Connect-known body for OAuth providers without DCR (HubSpot's MCP Auth
+    /// Apps). Walks the user through registering an OAuth app in the vendor's
+    /// portal, surfaces the exact loopback redirect URI they need to register
+    /// (with a copy button), and collects the resulting Client ID + Client
+    /// Secret before allowing the browser sign-in.
+    @ViewBuilder
+    private func confidentialOAuthBlock(template: MCPProviderTemplate) -> some View {
+        // The template is expected to pin a port (see
+        // `MCPProviderTemplateTests.confidentialOAuthTemplatesAreFullyConfigured`);
+        // the `?? 0` fallback only fires for a programming error and renders
+        // a deliberately-wrong URL so it surfaces in development.
+        let redirectURI = "http://127.0.0.1:\(template.oauthFixedLoopbackPort ?? 0)/callback"
+        let canSignIn =
+            !manualClientId.trimmingCharacters(in: .whitespaces).isEmpty
+            && !manualClientSecret.trimmingCharacters(in: .whitespaces).isEmpty
+
+        VStack(alignment: .leading, spacing: 14) {
+            confidentialOAuthSetupCard(template: template, redirectURI: redirectURI)
+
+            if let helpURL = template.oauthSetupHelpURL {
+                Button(action: { NSWorkspace.shared.open(helpURL) }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "link.circle.fill")
+                            .font(.system(size: 11))
+                        Text("Open \(template.displayName) docs", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+
+            VStack(spacing: 10) {
+                MCPStyledTextField(
+                    label: "Client ID",
+                    placeholder: "Paste the Client ID",
+                    text: $manualClientId,
+                    isMonospaced: true
+                )
+                MCPStyledSecureField(
+                    label: "Client Secret",
+                    placeholder: "Paste the Client Secret",
+                    text: $manualClientSecret
+                )
+            }
+            .frame(maxWidth: 460)
+
+            HStack {
+                Spacer(minLength: 0)
+                oauthSignInButton(template: template, enabled: canSignIn)
+                Spacer(minLength: 0)
+            }
+
+            Text(
+                "Your Client Secret is stored in your macOS Keychain and only sent to \(template.displayName).",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(themeManager.currentTheme.tertiaryText)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// Numbered setup-step card rendered above the credential fields. The
+    /// order matters: register the OAuth app first, otherwise the redirect
+    /// URI mismatch on the first sign-in attempt is the only feedback the
+    /// user gets.
+    @ViewBuilder
+    private func confidentialOAuthSetupCard(
+        template: MCPProviderTemplate,
+        redirectURI: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            confidentialOAuthStep(
+                number: 1,
+                text: String(
+                    format: L("Create an OAuth app in the %@ developer portal."),
+                    template.displayName
+                )
+            )
+            confidentialOAuthStep(
+                number: 2,
+                text: L("Register this exact redirect URI in the app's settings:")
+            )
+            redirectURIRow(redirectURI)
+            confidentialOAuthStep(
+                number: 3,
+                text: L("Paste the resulting Client ID and Client Secret below, then click Sign In.")
+            )
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(themeManager.currentTheme.tertiaryBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(themeManager.currentTheme.primaryBorder, lineWidth: 1)
+        )
+    }
+
+    /// One numbered row in the confidential-OAuth setup card. Mirrors the
+    /// "Where do I get my key?" tone but with explicit ordering since the
+    /// steps are ordering-sensitive (URI must be registered before sign-in).
+    @ViewBuilder
+    private func confidentialOAuthStep(number: Int, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("\(number).")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                .frame(width: 18, alignment: .trailing)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(themeManager.currentTheme.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Selectable redirect-URI value with a Copy button. Rendering the URI
+    /// outside a `TextField` so it reads as documentation rather than an
+    /// editable field — the user must register it byte-for-byte and an
+    /// accidental edit here would silently break the next sign-in.
+    @ViewBuilder
+    private func redirectURIRow(_ uri: String) -> some View {
+        HStack(spacing: 8) {
+            Text(uri)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(themeManager.currentTheme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                        )
+                )
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Button(action: { copyToPasteboard(uri) }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 11))
+                    Text("Copy", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(themeManager.currentTheme.accentColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(themeManager.currentTheme.accentColor.opacity(0.10))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.leading, 26)
+    }
+
+    /// Replace the system pasteboard contents with `value`. Pulled out so
+    /// the Copy buttons can stay one-line readable.
+    private func copyToPasteboard(_ value: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
     }
 
     @ViewBuilder
@@ -1514,7 +1719,9 @@ private struct ProviderEditSheet: View {
     }
 
     /// "Add Provider" enable rule for the connect-known footer. OAuth waits on
-    /// sign-in, bearer-token waits on a non-empty key, none is always ready.
+    /// sign-in (which for confidential-client templates also implies that
+    /// client_id + client_secret were filled in beforehand), bearer-token
+    /// waits on a non-empty key, none is always ready.
     private func canSaveKnown(_ template: MCPProviderTemplate) -> Bool {
         switch template.authType {
         case .oauth:
@@ -1875,13 +2082,16 @@ private struct ProviderEditSheet: View {
 
     /// Drop any in-flight OAuth credentials for the current draft id and clear
     /// the matching UI flags. Safe to call repeatedly; Keychain delete is
-    /// idempotent on missing items.
+    /// idempotent on missing items. Confidential-client `client_secret` is
+    /// purged too so a half-finished HubSpot draft can't leak its secret into
+    /// a fresh draft on the same `effectiveProviderId`.
     private func resetDraftOAuthState() {
         token = ""
         oauthError = nil
         oauthConfig = nil
         isOAuthSignedIn = false
         MCPProviderKeychain.deleteOAuthTokens(for: effectiveProviderId)
+        MCPProviderKeychain.deleteOAuthClientSecret(for: effectiveProviderId)
     }
 
     @ViewBuilder
@@ -2016,13 +2226,32 @@ private struct ProviderEditSheet: View {
     private func signInWithOAuth() {
         let trimmedURL = url.trimmingCharacters(in: .whitespaces)
         guard !trimmedURL.isEmpty else { return }
+
+        // Confidential-client templates (HubSpot's MCP Auth Apps) require the
+        // user to paste both client_id + client_secret before sign-in. Stash
+        // the secret in Keychain so `MCPOAuthService` can include it in the
+        // token POST without ever copying it back into the in-memory provider
+        // record.
+        if let template = activeTemplate, template.requiresManualOAuthCredentials {
+            let trimmedClientId = manualClientId.trimmingCharacters(in: .whitespaces)
+            let trimmedClientSecret = manualClientSecret.trimmingCharacters(in: .whitespaces)
+            guard !trimmedClientId.isEmpty, !trimmedClientSecret.isEmpty else { return }
+            MCPProviderKeychain.saveOAuthClientSecret(
+                trimmedClientSecret,
+                for: effectiveProviderId
+            )
+        }
+
         isSigningIn = true
         oauthError = nil
 
-        // Build a draft provider record carrying any cached client_id plus any
-        // manual endpoint overrides the user typed in the Advanced disclosure.
-        // Whenever both endpoints are present the OAuth service will skip RFC
-        // 9728 discovery entirely.
+        // Build a draft provider record carrying any cached client_id, manual
+        // endpoint overrides from the Advanced disclosure, and the active
+        // template's `oauthFixedLoopbackPort` (when set, e.g. HubSpot). When
+        // both endpoints are present the OAuth service skips RFC 9728
+        // discovery entirely; when `oauthFixedLoopbackPort` is set, the
+        // loopback server binds the exact port the user registered with the
+        // vendor instead of an ephemeral one.
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let mergedOAuth = mergedManualOAuthConfig()
         let draftProvider = MCPProvider(
@@ -2050,7 +2279,10 @@ private struct ProviderEditSheet: View {
     /// Combine the manual override text fields with whatever `oauthConfig`
     /// already has cached from previous sign-ins. Empty manual fields fall
     /// through to the cached value so a partial override doesn't blow away
-    /// data the user can't see.
+    /// data the user can't see. When the user is configuring a known template
+    /// that pins a fixed loopback port (HubSpot), that port is baked into the
+    /// merged config so `MCPOAuthService.signIn` and subsequent refreshes
+    /// keep using it.
     private func mergedManualOAuthConfig() -> MCPOAuthConfig? {
         let auth = manualAuthEndpoint.trimmingCharacters(in: .whitespaces)
         let token = manualTokenEndpoint.trimmingCharacters(in: .whitespaces)
@@ -2060,15 +2292,22 @@ private struct ProviderEditSheet: View {
             .split(whereSeparator: { $0 == " " || $0 == "," })
             .map { String($0).trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+        let templatePort = activeTemplate?.oauthFixedLoopbackPort
 
         let anyManual = !auth.isEmpty || !token.isEmpty || !clientId.isEmpty || !scopes.isEmpty
-        guard anyManual || oauthConfig != nil else { return nil }
+        guard anyManual || oauthConfig != nil || templatePort != nil else { return nil }
 
         var merged = oauthConfig ?? MCPOAuthConfig()
         if !auth.isEmpty { merged.authorizationEndpoint = auth }
         if !token.isEmpty { merged.tokenEndpoint = token }
         if !clientId.isEmpty { merged.clientId = clientId }
         if !scopes.isEmpty { merged.scopes = scopes }
+        // Templates with a pinned port (HubSpot's MCP Auth Apps) win over a
+        // previously-cached nil. We never let a saved nil clobber the
+        // template's port either — the template is the source of truth here.
+        if let templatePort, templatePort != 0 {
+            merged.loopbackPort = templatePort
+        }
         return merged
     }
 
