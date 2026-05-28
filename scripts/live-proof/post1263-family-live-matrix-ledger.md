@@ -170,3 +170,12 @@ ZAYA CCA repeat-cache artifact:
 - Disk L2 hits stayed `0`; misses reached `10`; stores reached `5`.
 - Topology remained DSV4 hybrid pool: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating layers, disk-backed restore required, TurboQuant KV 0.
 - Keep DSV4 JANGTQ2 classified as fresh multi-turn tool-correctness pass but repeat-cache/tool-argument-stability partial. Do not claim DSV4 repeat-cache readiness from this PR.
+
+### 2026-05-28 07:44 PDT DSV4 named-tool repeat isolation
+
+- Artifact: `/tmp/osaurus-pr1268-3ba72413-dsv4-named-repeat-20260528-074419`.
+- Named OpenAI tool-choice form improved DSV4 repeat behavior but did not fully close the row.
+- Turns 1 through 4 emitted structured `line_count` calls with exact args `red\ngreen\nblue` and no DSML/protocol leak.
+- Turn 5 emitted `line_count` with args `red\n green\n blue`, adding spaces before later lines, so exact argument preservation still failed.
+- Disk L2 hits were proven: turn 2 `disk_l2_hits +1`, turn 3 `disk_l2_hits +1`; final counters reached `disk_l2_hits=2`, `disk_l2_misses=17`, `disk_l2_stores=9`.
+- Keep DSV4 repeat-cache readiness partial: disk-hit movement is now proven in the named isolation, but exact repeated tool arguments are still unstable.

@@ -647,3 +647,18 @@ Result:
 - Disk cache counters moved monotonically but never hit: `disk_l2_hits` stayed `0`, `disk_l2_misses` reached `10`, `disk_l2_stores` reached `5`.
 - Topology stayed DSV4 hybrid pool: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating layers, disk-backed restore required, TurboQuant KV 0.
 - Classification: fail for repeated required-tool argument stability and still no DSV4 disk-hit proof. Keep the fresh multi-turn DSV4 correctness row, but do not claim repeat-cache readiness for DSV4 JANGTQ2.
+
+## 2026-05-28 07:44 PDT - DSV4 named-tool repeat isolation
+
+Artifact:
+
+- DSV4 named `line_count` repeat probe: `/tmp/osaurus-pr1268-3ba72413-dsv4-named-repeat-20260528-074419`.
+
+Result:
+
+- Named OpenAI tool-choice form (`{"type":"function","function":{"name":"line_count"}}`) improved the DSV4 repeat row but did not fully fix it.
+- Turns 1 through 4 routed to structured `line_count` calls with exact args `red\ngreen\nblue` and no DSML/protocol leakage.
+- Turn 5 routed to `line_count`, but args changed to `red\n green\n blue`, adding spaces before later lines. This is semantically line-count-equivalent but not an exact-argument pass.
+- Disk L2 hits were proven in this isolation: turn 2 `disk_l2_hits +1`, turn 3 `disk_l2_hits +1`; final counters reached `disk_l2_hits=2`, `disk_l2_misses=17`, `disk_l2_stores=9`.
+- Topology stayed DSV4 hybrid pool: 43 layers, 41 hybrid-pool/rotating-wrapper layers, 2 rotating layers, disk-backed restore required, TurboQuant KV 0.
+- Boundary: named tool-choice is a useful DSV4 isolation and proves disk-hit movement, but repeated required/named tool-call argument exactness is still not stable enough to claim DSV4 repeat-cache readiness.
