@@ -1,19 +1,19 @@
 # PR 1268 objective completion audit
 
-Checked at: 2026-05-28 10:10 PDT
+Checked at: 2026-05-28 12:55 PDT
 
 Current boundary:
 
 - Osaurus PR: `#1268`
-- Current checked Osaurus head before the Gemma4 default-rail patch: `270300f70e9eacc95aa4204ea8cfeead53ca3a46`
-- Last green Osaurus head before the Gemma4 default-rail patch: `270300f70e9eacc95aa4204ea8cfeead53ca3a46`
-- vMLX main / Osaurus pin: `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`
+- Current checked Osaurus head before this vMLX repin: `6e88953fd87b1dd2b7c0722fe00f6b59da1e6a96`
+- Last green Osaurus head before this vMLX repin: `6e88953fd87b1dd2b7c0722fe00f6b59da1e6a96`
+- vMLX main / Osaurus pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`
 - Osaurus merge policy: do not merge by agent
 - vMLX merge policy: vMLX is agent-managed and is already on main
-- CI boundary: `a1d101d6f22dfff41052c1af33975c25663175cd` is green for `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft`; re-check the live PR head after any later documentation-only push
+- CI boundary: `6e88953fd87b1dd2b7c0722fe00f6b59da1e6a96` is green for `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft`; re-check the live PR head after this vMLX repin
 - No-sign app proof boundary: code-equivalent build `695d5869ea9821732649bffb3789469568e6db55`
 - Current app observation at this audit refresh: no-sign build `DerivedData-pr1268-release-nosign-695d5869` is healthy with `deepseek-v4-flash-jangtq2` resident, no in-flight requests, and DSV4 cache topology still 43 layers / 41 hybrid-pool / 2 rotating / TurboQuant KV 0.
-- Fresh Nemotron Omni MXFP4 row is red/partial, not production-clear: `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-20260528-102745` proves cold structured `line_count` tool turns, visible tool-result answer, no protocol leakage, 29-layer topology with 23 Mamba/SSM layers, and SSM companion topology; however it records no disk L2 hit. The immediate repeat `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-repeat-20260528-102806` fails turn 3 because `tool_choice: "required"` returns visible text `Two lines were counted.` instead of a structured tool call, all three responses report the same `prefix_hash`, and the requested model is no longer resident by the after-snapshot. Treat Nemo Omni MXFP4 required-tool repeat/cache behavior as red until root-caused without prompt coercion.
+- Fresh Nemotron Omni MXFP4 row is red/partial, not production-clear: `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-20260528-102745` proves cold structured `line_count` tool turns, visible tool-result answer, no protocol leakage, 29-layer topology with 23 Mamba/SSM layers, and SSM companion topology; however it records no disk L2 hit. The immediate repeat `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-repeat-20260528-102806` fails turn 3 because `tool_choice: "required"` returns visible text `Two lines were counted.` instead of a structured tool call, all three responses report the same `prefix_hash`, and the requested model is no longer resident by the after-snapshot. vMLX `d83b22b3d0350aa45b5b853dd4838ea34af47497` fixes the identified template root cause by scoping the native Nemotron fallback required-tool reminder to the latest user turn after no-tool history; focused source tests pass. Treat Nemo Omni MXFP4 as source-fixed but still live-red until a fresh no-sign app row proves the repeat and cache behavior from the new Osaurus pin.
 - Fresh Nemotron Omni JANGTQ4 selected text/tool row is green for parser/history but cache-partial: `/tmp/osaurus-pr1268-nemotron-jangtq4-required-tool-repeat-20260528-123917` proves exact structured `line_count` calls before and after tool-result history, visible answer `The count is 3.`, no protocol leakage, and healthy resident model state after the run. Cache proof remained partial with `disk_l2_misses +2`, `disk_l2_stores +3`, `disk_l2_hits 0`, and SSM companion hits/rederives `0`; media/audio/video behavior remains unproven, and this does not clear the MXFP4 repeat-required-tool red row.
 - Fresh ZAYA text JANGTQ4 row is red/partial, not production-clear: `/tmp/osaurus-pr1268-c9fdc4c3-zaya-text-jangtq4-tool-cache-20260528-103322` proves first structured `line_count`, visible tool-result answer, ZAYA CCA topology, disk-backed restore requirement, and no protocol leakage; however turn 3 emitted a structured `line_count` call with argument ` ... ` instead of exact `one\ntwo`, and disk L2 hits stayed 0. Treat ZAYA text required-tool argument fidelity and repeat-cache proof as red until root-caused without parser repair.
 - Fresh Ling JANGTQ2 row is parser/tool green but cache-partial: `/tmp/osaurus-pr1268-3a46be1f-ling-jangtq2-tool-cache-20260528-103538` proves exact structured required tool calls before and after tool-result history, visible follow-up answer, no protocol leakage, 32-layer topology with 28 arrays/SSM companion layers and 4 KV layers; however disk L2 hits stayed 0 while misses/stores moved, so repeat-cache proof remains partial.
@@ -36,7 +36,7 @@ or surface.
 |---|---|---|---|
 | One Osaurus consolidation PR | Green | `#1268` is the only open PR in the `#1247`-`#1268` consolidation range; older PRs are merged or closed/superseded. | Keep future fixes in `#1268` until merge; do not reopen duplicate family PRs. |
 | Do not merge Osaurus by agent | Green | `#1268` remains open, not draft, mergeable, and unmerged. | Human merge only. |
-| vMLX main fully updated with current fixes | Green for current pin | `osaurus-ai/vmlx-swift` main and Osaurus pin are `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`. | Any new vMLX fix must land on vMLX main first, then #1268 must repin. |
+| vMLX main fully updated with current fixes | Green for current pin | `osaurus-ai/vmlx-swift` main and Osaurus pin are `d83b22b3d0350aa45b5b853dd4838ea34af47497`. | Any new vMLX fix must land on vMLX main first, then #1268 must repin. |
 | No fake runtime guards or prompt coercion | Green for source policy | Source guards preserve no forced reasoning tags, no hidden sampler clamps, no parser output repair, no DSV4 forced repetition guard, and no required-tool prompt coercion. | Keep investigating runtime causes instead of adding decode/template disguises. |
 | Model generation config considered | Partial | Source policy requires omitted sampler fields to come from bundle config rather than synthetic Osaurus defaults. | DSV4 lacks `max_new_tokens` in bundle config; omitted max-token behavior remains not green. |
 | Max output token behavior | Partial | DSV4 required-tool proof passes with explicit `max_tokens: 256`. | Decide/fix omitted DSV4 max-token behavior without inventing model-incorrect defaults. |
