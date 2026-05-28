@@ -99,7 +99,13 @@ row is production-clear.
   - Result: five structured required tool calls and a coherent final answer; no `!!!!!!!!` loop and no parser/tool marker leak.
   - Boundary: turn 1 argument became `red\n\ngreen\nblue` instead of exact `red\ngreen\nblue`, so this row is not an exact-argument promotion even though the line count stayed correct.
   - Cache boundary: `disk_l2_stores +10`, but `disk_l2_hits`, SSM companion hits, and companion rederives stayed 0.
-- Verdict: the screenshot loop is not reproduced by the small two-tool or five-tool synthetic rows. Keep Qwen 27B MXFP4 thinking+large-tool-history classified partial until a larger file-tool context row reproduces or clears the `!!!!!!!!` failure. Do not add hidden repetition penalties, max-token clamps, or parser repair for this.
+- File-tool artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-filetool-repro-20260528-120924`.
+  - Request shape: Thinking enabled, five sequential file-tool turns (`file_tree`, repeated `file_read`), then a final answer over the gathered project fixture.
+  - Result: five structured tool-call turns and one coherent final answer; no `!!!!!!!!` loop and no raw tool-envelope marker leaked into ordinary assistant text.
+  - Boundary: absolute `file_read` paths returned not found until the model switched to the relative `docs/runtime.md` path, so this row is not a file-tool fidelity promotion.
+  - Boundary: the artifact summary flags `DSML` in the final visible answer, but that is fixture content (`DSV4 uses DSML tools`), not a DSV4 parser/protocol leak.
+  - Cache boundary: `disk_l2_stores +6`, but `disk_l2_hits`, SSM companion hits, and SSM companion rederives stayed 0.
+- Verdict: the screenshot loop is not reproduced by the small two-tool, five-tool synthetic, or file-tool fixture rows. Keep Qwen 27B MXFP4 thinking+large-tool-history classified partial until a larger real file-tool context row reproduces or clears the `!!!!!!!!` failure with exact file-read semantics and cache-hit/SSM-companion evidence. Do not add hidden repetition penalties, max-token clamps, or parser repair for this.
 
 ## 2026-05-28 ZAYA-VL JANGTQ4 red image media/cache green row
 
