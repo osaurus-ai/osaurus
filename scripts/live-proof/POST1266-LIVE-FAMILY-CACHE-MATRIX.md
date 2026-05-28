@@ -483,3 +483,31 @@ Boundary:
 
 - This supersedes the prior `bbc43385` DSV4 artifact for current-head readiness because `1503be2f` added nonstreaming abandoned-request cancellation after that run.
 - It still does not claim a warm repeat DSV4 cache-hit row; it proves current-head required-tool multi-turn correctness and topology safety.
+
+## 2026-05-28 06:21 PDT - Current-head DSV4 repeat-cache boundary
+
+Current Osaurus head: `2a2a6d4b039e61fd9338c42287fa9b35798328cb`.
+No-sign Release app: `/Users/eric/osaurus-pr1268-live/build/DerivedData-pr1268-1503be2f-nosign/Build/Products/Release/osaurus.app`.
+Current vMLX main pin: `d3d76b4c11c1f3e83e787f0464120087167c1609`.
+
+Artifact:
+
+- `/tmp/osaurus-pr1268-2a2a6d4b-dsv4-repeat-cache-proof-20260528-062120`
+
+Result:
+
+- Seed request: required `line_count`, exact multiline argument `red\ngreen\nblue`, no visible content, duration 25.425s.
+- Second identical request: required `line_count`, exact multiline argument `red\ngreen\nblue`, no visible content, duration 15.035s.
+- Third identical request after the second request stored L2 state: FAILED. It returned hidden reasoning only with `finish_reason=length`, no structured tool call, and no visible assistant content.
+
+Cache evidence:
+
+- Seed delta: `disk_l2_misses +2`, `disk_l2_stores +0`, `disk_l2_hits +0`.
+- Second-request delta: `disk_l2_misses +2`, `disk_l2_stores +1`, `disk_l2_hits +0`.
+- After third failure: aggregate `disk_l2_misses=7`, `disk_l2_stores=3`, `disk_l2_hits=0`.
+- Topology remained DSV4 hybrid pool: 43 layers, 41 `hybridPoolLayers`, 41 `rotatingWrapperLayers`, 2 `rotatingLayers`, `restore=disk-backed`, TurboQuant KV layers 0.
+
+Boundary:
+
+- Do not claim DSV4 warm disk-L2 cache-hit readiness from the current proof set.
+- Current-head DSV4 required-tool correctness is proven for the multi-turn fresh correctness row above, but repeated identical required-tool cache reuse still needs root-cause work. The third-repeat failure suggests DSV4 disk-backed hybrid-pool reuse/store timing or prompt/cache boundary interaction can still break required-tool routing.
