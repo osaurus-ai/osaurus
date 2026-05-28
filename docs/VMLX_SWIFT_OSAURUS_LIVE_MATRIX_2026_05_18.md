@@ -54,14 +54,18 @@ row is production-clear.
 - Topology: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: ZAYA text JANGTQ4 remains red/partial for multi-turn required-tool argument fidelity and repeat L2 reuse. This must not be hidden with parser repair.
 
-## 2026-05-28 Ling JANGTQ2 required-tool parser green, cache partial row
+## 2026-05-28 Ling JANGTQ2 required-tool and SSM cache green row
 
-- Osaurus head at check: `3a46be1f783a504aac284c489ed81f34d34d0809`.
-- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
-- Artifact: `/tmp/osaurus-pr1268-3a46be1f-ling-jangtq2-tool-cache-20260528-103538`.
-- Result: turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered `The tool counted 3 lines.`; turn 3 produced exact structured `line_count` args `one\ntwo`; no protocol leakage appeared.
+- Osaurus head at check: `722f138ff933a93fae226e6fb687c648fd3419a1`.
+- vMLX pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- No-sign app path: `/Users/eric/osaurus-pr1268-live/build/DerivedData/Build/Products/Release/osaurus.app`.
+- Cold artifact: `/tmp/osaurus-pr1268-722f138f-ling-jangtq2-required-cache-cold-20260528-142834`.
+- Warm artifact: `/tmp/osaurus-pr1268-722f138f-ling-jangtq2-required-cache-warm-20260528-142907`.
+- Result: cold and warm rows produced exact structured `line_count` args `red\ngreen\nblue` on turn 1 and exact structured `line_count` args `one\ntwo` on turn 3 after assistant/tool history; both tool turns returned `content=null` with no visible protocol leakage, and both tool-result follow-ups returned visible line-count answers with `finish_reason: "stop"`.
+- Cache result: warm row proved `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`; cold row proved stores/topology without falsely claiming hits.
 - Topology: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
-- Verdict: Ling JANGTQ2 is green for this parser/tool/history row, but cache proof remains partial because disk L2 hits stayed 0 while misses/stores moved.
+- Token/s: visible follow-up emitted 10 completion tokens at 11.14 tok/s cold and 5 completion tokens at 7.43 tok/s warm; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
+- Verdict: Ling JANGTQ2 is green for required-tool parsing, assistant/tool history replay, visible tool-result finalization, disk L2 reuse, and SSM companion cache reuse. The older cache-partial artifact `/tmp/osaurus-pr1268-3a46be1f-ling-jangtq2-tool-cache-20260528-103538` is superseded. Ling MXFP4 remains a separate blocked/red row below.
 
 ## 2026-05-28 Ling MXFP4 current-head timeout/app-exit blocked row
 

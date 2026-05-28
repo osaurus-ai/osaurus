@@ -758,3 +758,27 @@ Result:
 - Topology: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layers 0.
 - Token/s: OpenAI-compatible tool turns emitted zero completion tokens; visible answer row emitted 5 completion tokens at 6.47 tok/s cold and 7 completion tokens at 11.71 tok/s warm.
 - Boundary: this clears the previous ZAYA text turn-3 argument-fidelity failure and proves disk-L2 reuse. ZAYA CCA companion-hit depth remains partial because the warm row recorded `zaya_cca_companion_hits 0` and `zaya_cca_companion_misses +1`.
+
+## 2026-05-28 14:29 PDT - Ling JANGTQ2 exact-head SSM cache proof
+
+Artifacts:
+
+- Cold row: `/tmp/osaurus-pr1268-722f138f-ling-jangtq2-required-cache-cold-20260528-142834`.
+- Warm row: `/tmp/osaurus-pr1268-722f138f-ling-jangtq2-required-cache-warm-20260528-142907`.
+
+Build/runtime boundary:
+
+- Osaurus head: `722f138ff933a93fae226e6fb687c648fd3419a1`.
+- vMLX pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- No-sign Release app: `/Users/eric/osaurus-pr1268-live/build/DerivedData/Build/Products/Release/osaurus.app`.
+- Launch mode: keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`.
+
+Result:
+
+- PASS: cold and warm rows routed turn 1 required `line_count` to a structured tool call with exact args `red\ngreen\nblue`, no visible content, and no protocol leakage.
+- PASS: cold and warm rows routed turn 3 second required `line_count` after assistant/tool history to a structured tool call with exact args `one\ntwo`, no visible content, and no protocol leakage.
+- PASS: cold and warm tool-result follow-ups returned visible line-count answers with `finish_reason: "stop"`.
+- PASS: warm row proved hybrid cache reuse with `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`.
+- Topology: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layers 0.
+- Token/s: OpenAI-compatible tool turns emitted zero completion tokens; visible answer row emitted 10 completion tokens at 11.14 tok/s cold and 5 completion tokens at 7.43 tok/s warm.
+- Boundary: this clears the Ling JANGTQ2 cache-partial row. Ling MXFP4 remains a separate timeout/app-exit red row.
