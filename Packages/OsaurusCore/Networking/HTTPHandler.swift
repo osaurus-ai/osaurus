@@ -4162,7 +4162,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logRequestBody = requestBodyString
             let logModel = model
             let logTemperature = req.temperature
-            let logMaxTokens = req.resolvedMaxTokens ?? 1024
+            let logMaxTokens = req.resolvedMaxTokens
             let logSelf = self
             let disconnected = SendableBool(false)
             let channelClosed = SendableBool(false)
@@ -4521,7 +4521,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logRequestBody = requestBodyString
             let logModel = model
             let logTemperature = req.temperature
-            let logMaxTokens = req.resolvedMaxTokens ?? 1024
+            let logMaxTokens = req.resolvedMaxTokens
             let logSelf = self
             runRequestTask(priority: .userInitiated) {
                 do {
@@ -4738,7 +4738,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logRequestBody = requestBodyString
         let logModel = req.model
         let logTemperature = req.temperature
-        let logMaxTokens = req.resolvedMaxTokens ?? 1024
+        let logMaxTokens = req.resolvedMaxTokens
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
             let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: req.model)
@@ -4931,7 +4931,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     tokensInput: response.usage.prompt_tokens,
                     tokensOutput: response.usage.completion_tokens,
                     temperature: request.temperature,
-                    maxTokens: request.max_tokens ?? 1024,
+                    maxTokens: request.max_tokens,
                     finishReason: message?.tool_calls?.isEmpty == false ? .toolCalls : .stop
                 )
             } catch let invs as ServiceToolInvocations {
@@ -4960,7 +4960,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     toolCalls: toolLogs,
                     temperature: request.temperature,
-                    maxTokens: request.max_tokens ?? 1024,
+                    maxTokens: request.max_tokens,
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
@@ -4987,7 +4987,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     toolCalls: [toolLog],
                     temperature: request.temperature,
-                    maxTokens: request.max_tokens ?? 1024,
+                    maxTokens: request.max_tokens,
                     finishReason: .toolCalls
                 )
             } catch {
@@ -5134,7 +5134,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logRequestBody = requestBodyString
         let logModel = chatRequest.model
         let logTemperature = chatRequest.temperature
-        let logMaxTokens = chatRequest.max_tokens ?? 1024
+        let logMaxTokens = chatRequest.max_tokens
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
             do {
@@ -5255,7 +5255,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     tokensInput: response.usage.prompt_tokens,
                     tokensOutput: response.usage.completion_tokens,
                     temperature: request.temperature,
-                    maxTokens: request.max_tokens ?? 1024,
+                    maxTokens: request.max_tokens,
                     finishReason: .stop
                 )
             } catch {
