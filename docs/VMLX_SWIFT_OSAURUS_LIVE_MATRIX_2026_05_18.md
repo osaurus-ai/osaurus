@@ -70,6 +70,21 @@ row is production-clear.
 - Validation boundary: fresh vMLX focused tests on `d83b22b3d0350aa45b5b853dd4838ea34af47497` passed for `DeepseekV4ChatTemplateFallbackFocusedTests/zayaVLFallbackPreservesVisionAndTools` and `DeepseekV4ChatTemplateFallbackFocusedTests/zayaVLRequiredToolChoiceRepeatsAfterNoToolHistory` using scratch path `/tmp/vmlx-zaya-required-tool-proof-2`.
 - Verdict: ZAYA text JANGTQ4 is functional and not showing the user-feared loop/leak failure in this current-head confidence pass, but it is not deterministic production-clear. Keep it partial/flaky until stronger live proof clears the argument-fidelity flake. Do not hide this with parser repair, prompt coercion, or hidden sampler/default changes.
 
+## 2026-05-28 ZAYA text and Ling JANGTQ current PR-head confidence pass
+
+- Osaurus PR head at check: `939c275563c841939bc34f36619d8aeb532ed56c`.
+- vMLX main / Osaurus pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- Artifact: `/tmp/osaurus-pr1268-939c2755-confidence-zaya-ling-20260528-232831`.
+- Models: `zaya1-8b-jangtq4` and `ling-2.6-flash-jangtq2-crack`.
+- ZAYA result: the strict three-turn required/none/required harness passed. Turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered visibly with `Three lines were counted.` and no tool call; turn 3 produced exact structured `line_count` args `one\ntwo`. No protocol marker leaked, no incoherent visible loop occurred, no hidden visible content appeared on tool-call turns, and the app remained healthy with no in-flight request after the row.
+- ZAYA topology/cache result: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, and TurboQuant KV layer count 0. This row proves topology and disk-backed restore but not CCA companion-hit reuse; it recorded disk L2 misses/stores with `disk_l2_hits 0`.
+- ZAYA token/s: visible follow-up emitted 5 completion tokens at 8.64 tok/s; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
+- Ling result: the same harness passed with exact `red\ngreen\nblue` and `one\ntwo` structured `line_count` arguments, visible turn 2 answer, no protocol leak, no length stop, and healthy app state after the row.
+- Ling topology/cache result: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, and TurboQuant KV layer count 0. This row proves topology and disk-backed restore; earlier warm rows remain the cache-hit proof for Ling because this short row recorded `disk_l2_hits 0`.
+- Guard refresh: `assert-tool-choice-required-routing.sh`, `assert-server-settings-runtime-wiring.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-no-forced-behavior-pr.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, and `assert-osaurus-pr-hygiene.sh` passed on this PR head. These cover ZAYA required/named tokenizer regressions, server settings UI/runtime wiring, keychain-free proof paths, no hidden sampler/default/forced-behavior repairs, vMLX pin/checkout readiness, Responses/cache source wiring, chat reasoning/UI routing, HTTP cancellation, model tool/capability surfaces, and PR hygiene.
+- UI visual boundary: the no-sign app at `build/DerivedData/Build/Products/Release/osaurus.app` was running and `/health` was healthy, but Computer Use UI inspection failed before reading the app with tool configuration error `unknown variant default, expected fast or flex in service_tier`. This row therefore has live API/app proof plus source UI guards, not a fresh visual screenshot.
+- Verdict: ZAYA text and Ling JANGTQ2 are green for this current PR-head focused multi-turn required-tool/parser/topology confidence row. ZAYA CCA companion-hit depth, broader direct-mode/statistical repeat confidence, and broader media/video/UI visual proof remain separate partial rows.
+
 ## 2026-05-28 Ling JANGTQ2 required-tool and SSM cache green row
 
 - Osaurus head at check: `722f138ff933a93fae226e6fb687c648fd3419a1`.
