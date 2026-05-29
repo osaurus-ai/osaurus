@@ -249,16 +249,41 @@ final class ConfigureAIState: ObservableObject {
         }
     }
 
-    /// Picks the first `isTopSuggestion` model that this Mac can run, so
-    /// onboarding never auto-selects a disabled row that would dead-end
-    /// the CTA. When every candidate is `.tooLarge` `selectedModel`
-    /// stays nil and the picker shows the empty-state redirect instead.
-    /// `.unknown` (no param info / monitor not yet populated) falls
-    /// through as eligible.
+    /// Auto-selects the local row the user is most likely to want.
+    ///
+    /// Priority:
+    ///   1. A model already on disk — so a user re-onboarded by an
+    ///      `onboardingVersion` bump lands on "Continue" instead of being
+    ///      nudged to re-download something they already have. A curated
+    ///      top-pick that's downloaded wins over an ad-hoc local model.
+    ///   2. Otherwise the first `isTopSuggestion` model this Mac can run,
+    ///      so onboarding never auto-selects a disabled row that would
+    ///      dead-end the CTA.
+    ///
+    /// When nothing is downloaded and every curated candidate is
+    /// `.tooLarge`, `selectedModel` stays nil and the picker shows the
+    /// empty-state redirect instead. `.unknown` (no param info / monitor
+    /// not yet populated) falls through as eligible.
     func ensureLocalSelection(totalMemoryGB: Double) {
         guard selectedModel == nil else { return }
+        let fits: (MLXModel) -> Bool = {
+            $0.compatibility(totalMemoryGB: totalMemoryGB) != .tooLarge
+        }
+
+        // A model already on disk is runnable regardless of the compat
+        // heuristic — the user downloaded (and presumably ran) it before.
+        let downloaded = ModelManager.shared.deduplicatedModels().filter(\.isDownloaded)
+        if let topDownloaded = downloaded.first(where: \.isTopSuggestion) {
+            selectedModel = topDownloaded
+            return
+        }
+        if let anyDownloaded = downloaded.first {
+            selectedModel = anyDownloaded
+            return
+        }
+
         selectedModel = ModelManager.shared.suggestedModels.first(where: {
-            $0.isTopSuggestion && $0.compatibility(totalMemoryGB: totalMemoryGB) != .tooLarge
+            $0.isTopSuggestion && fits($0)
         })
     }
 
@@ -671,14 +696,39 @@ struct ConfigureAIBody: View {
             .map { ($0, $0.compatibility(totalMemoryGB: totalMemoryGB)) }
     }
 
+    /// What the local picker actually renders: any models the user already
+    /// has on disk, followed by the curated top suggestions.
+    ///
+    /// Historically this step listed only curated top picks, so a user
+    /// re-onboarded by an `onboardingVersion` bump was told to download
+    /// models they already had — their existing models simply weren't
+    /// curated top-picks and so never appeared. Prepending the on-disk
+    /// models (deduped against the curated list, so a downloaded top pick
+    /// isn't shown twice) lets a returning user pick "Continue".
+    private var localPickerModels: [(model: MLXModel, compatibility: ModelCompatibility)] {
+        let totalMemoryGB = systemMonitor.totalMemoryGB
+        let curated = topSuggestionsWithCompatibility
+        let curatedIds = Set(curated.map { $0.model.id.lowercased() })
+
+        let downloaded = modelManager.deduplicatedModels()
+            .filter { $0.isDownloaded && !curatedIds.contains($0.id.lowercased()) }
+            .map { (model: $0, compatibility: $0.compatibility(totalMemoryGB: totalMemoryGB)) }
+
+        return downloaded + curated
+    }
+
     @ViewBuilder
     private var localPickerView: some View {
-        let pairs = topSuggestionsWithCompatibility
-        let hasAnyRunnable = pairs.contains(where: { $0.compatibility != .tooLarge })
+        let pairs = localPickerModels
+        // A model already on disk is always selectable — the user
+        // downloaded (and presumably ran) it before, so the compat
+        // heuristic shouldn't lock them out. Only not-yet-downloaded
+        // curated picks are gated on fit.
+        let hasAnyRunnable = pairs.contains { $0.model.isDownloaded || $0.compatibility != .tooLarge }
 
-        // When nothing fits (or there are no top suggestions at all),
-        // redirecting to the Cloud / Ollama tab beats a dead-end list
-        // of disabled rows.
+        // When nothing fits (no models on disk and no runnable curated
+        // pick), redirecting to the Cloud / Ollama tab beats a dead-end
+        // list of disabled rows.
         if !hasAnyRunnable {
             localNoCompatibleModelsView
         } else {
@@ -700,7 +750,7 @@ struct ConfigureAIBody: View {
                         badgesBelowTitle: true,
                         accessory: .radio(isSelected: state.selectedModel?.id == model.id),
                         isSelected: state.selectedModel?.id == model.id,
-                        isDisabled: pair.compatibility == .tooLarge
+                        isDisabled: pair.compatibility == .tooLarge && !model.isDownloaded
                     ) {
                         // No `withAnimation` — selecting a model otherwise
                         // morphs the CTA between "Continue" and
