@@ -109,4 +109,44 @@ struct ServerControllerConfigLoadingTests {
             )
         )
     }
+
+    @Test func runtimeConfigInputsInvalidateForGenerationAndConcurrencyChanges() {
+        let base = VMLXServerRuntimeSettings()
+
+        var generationChanged = base
+        generationChanged.generation.temperature = 0.1
+        #expect(
+            ServerController.runtimeConfigInputsRequireInvalidate(
+                previous: base,
+                next: generationChanged
+            )
+        )
+
+        var maxTokensChanged = base
+        maxTokensChanged.generation.maxTokens = 2048
+        #expect(
+            ServerController.runtimeConfigInputsRequireInvalidate(
+                previous: base,
+                next: maxTokensChanged
+            )
+        )
+
+        var concurrencyChanged = base
+        concurrencyChanged.concurrency.prefillStepSize = 256
+        #expect(
+            ServerController.runtimeConfigInputsRequireInvalidate(
+                previous: base,
+                next: concurrencyChanged
+            )
+        )
+
+        var cacheChanged = base
+        cacheChanged.cache.blockDisk.enabled = false
+        #expect(
+            !ServerController.runtimeConfigInputsRequireInvalidate(
+                previous: base,
+                next: cacheChanged
+            )
+        )
+    }
 }

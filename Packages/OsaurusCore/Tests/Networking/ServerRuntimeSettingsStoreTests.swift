@@ -287,6 +287,21 @@ struct ServerRuntimeSettingsStoreTests {
         #expect(abs(projected.genTopP - 0.85) < 1e-5)
     }
 
+    @Test func projectIntoLegacy_clearsLegacyTopPWhenRuntimeTopPIsModelDefault() async throws {
+        var base = ServerConfiguration.default
+        base.genTopP = 0.42
+
+        var settings = VMLXServerRuntimeSettings()
+        settings.generation.topP = nil
+
+        let projected = ServerRuntimeSettingsStore.projectIntoLegacy(
+            settings,
+            base: base
+        )
+
+        #expect(projected.genTopP == ServerConfiguration.default.genTopP)
+    }
+
     // MARK: - Helpers
 
     private func makeTempDirectory() throws -> URL {

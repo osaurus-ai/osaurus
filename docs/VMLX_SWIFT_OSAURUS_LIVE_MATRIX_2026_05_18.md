@@ -54,6 +54,21 @@ row is production-clear.
 - Topology: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layer count 0.
 - Verdict: ZAYA text JANGTQ4 remains red/partial for multi-turn required-tool argument fidelity and repeat L2 reuse. This must not be hidden with parser repair.
 
+## 2026-05-28 ZAYA text JANGTQ4 current-head confidence flake and rerun
+
+- Osaurus PR head at check: `2e48e1e7c14cd73b67a83aa70c3af0276ae75c29`.
+- vMLX main / Osaurus pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- Failed confidence artifact: `/tmp/osaurus-pr1268-2e48e1e7-confidence-zaya-ling-20260528-172807`.
+- Passing rerun artifact: `/tmp/osaurus-pr1268-2e48e1e7-confidence-zaya-rerun-20260528-173145`.
+- Model: `zaya1-8b-jangtq4`.
+- Failed-row result: the same strict three-turn required/none/required harness produced exact turn 1 `line_count` args `red\ngreen\nblue`, visible turn 2 answer `There were 3 lines counted.`, and one structured turn 3 `line_count` call, but turn 3 args were `{"text":"..."}` instead of exact `one\ntwo`. The failure was `turn3_args_exact` only.
+- Failed-row parser/leak result: no protocol marker leaked, no incoherent visible loop occurred, no hidden visible content appeared on tool-call turns, and the parser still returned structured `tool_calls`.
+- Passing rerun result: immediate single-model rerun with the same harness produced exact turn 1 args `red\ngreen\nblue`, visible turn 2 answer `Three lines were counted.`, exact turn 3 args `one\ntwo`, no protocol leak, no visible loop, and healthy app state after the run.
+- Topology/cache result: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, and TurboQuant KV layer count 0. The rerun proves CCA topology and disk-backed restore; it does not prove CCA companion-hit reuse.
+- Token/s: failed-row visible follow-up emitted 7 completion tokens at 10.34 tok/s; passing rerun visible follow-up emitted 5 completion tokens at 10.31 tok/s. Tool-call turns emitted zero completion tokens.
+- Source boundary: the pinned vMLX checkout at `d83b22b3d0350aa45b5b853dd4838ea34af47497` already includes explicit required/named tool-choice support in `ChatTemplateFallbacks.zayaVLVisionToolMinimal`. This aligns ZAYA fallback behavior with the existing DSV4/Nemotron required-tool template contract; it is not parser output repair, prompt-history mutation, hidden sampling, or close-token biasing.
+- Verdict: ZAYA text JANGTQ4 is functional and not showing the user-feared loop/leak failure in this current-head confidence pass, but it is not deterministic production-clear. Keep it partial/flaky until stronger live proof clears the argument-fidelity flake. Do not hide this with parser repair, prompt coercion, or hidden sampler/default changes.
+
 ## 2026-05-28 Ling JANGTQ2 required-tool and SSM cache green row
 
 - Osaurus head at check: `722f138ff933a93fae226e6fb687c648fd3419a1`.
@@ -66,6 +81,18 @@ row is production-clear.
 - Topology: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
 - Token/s: visible follow-up emitted 10 completion tokens at 11.14 tok/s cold and 5 completion tokens at 7.43 tok/s warm; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
 - Verdict: Ling JANGTQ2 is green for required-tool parsing, assistant/tool history replay, visible tool-result finalization, disk L2 reuse, and SSM companion cache reuse. The older cache-partial artifact `/tmp/osaurus-pr1268-3a46be1f-ling-jangtq2-tool-cache-20260528-103538` is superseded. Ling MXFP4 remains a separate blocked/red row below.
+
+## 2026-05-28 Ling JANGTQ2 current-head confidence row
+
+- Osaurus PR head at check: `2e48e1e7c14cd73b67a83aa70c3af0276ae75c29`.
+- vMLX main / Osaurus pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- Artifact: `/tmp/osaurus-pr1268-2e48e1e7-confidence-zaya-ling-20260528-172807`.
+- Model: `ling-2.6-flash-jangtq2-crack`.
+- Result: the strict three-turn required/none/required harness passed on current head. Turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered visibly with `Three lines were counted.` and no tool call; turn 3 produced exact structured `line_count` args `one\ntwo`.
+- Parser/leak result: no protocol marker leaked, no hidden reasoning-only visible output occurred, and all tool-call turns stayed structured with `finish_reason: "tool_calls"`.
+- Topology/cache result: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, and TurboQuant KV layer count 0. The current-head confidence row proves topology and disk-backed restore, but does not replace the earlier warm row for actual `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`.
+- Token/s: visible follow-up emitted 5 completion tokens at 6.96 tok/s; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
+- Verdict: Ling JANGTQ2 remains green for current-head required-tool/history/parser behavior without prompt coercion, parser repair, or hidden sampler defaults.
 
 ## 2026-05-28 Ling MXFP4 current-head timeout/app-exit blocked row
 

@@ -24,8 +24,9 @@ ANTHROPIC="$ROOT/Packages/OsaurusCore/Models/API/AnthropicAPI.swift"
 REMOTE="$ROOT/Packages/OsaurusCore/Services/Provider/RemoteProviderService.swift"
 RUNTIME="$ROOT/Packages/OsaurusCore/Services/ModelRuntime.swift"
 TESTS="$ROOT/Packages/OsaurusCore/Tests/Networking/ToolChoiceDecodingTests.swift"
+TOKENIZER_TESTS="$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenizerLoaderTests.swift"
 
-for file in "$OPENAI" "$RESPONSES" "$ANTHROPIC" "$REMOTE" "$RUNTIME" "$TESTS"; do
+for file in "$OPENAI" "$RESPONSES" "$ANTHROPIC" "$REMOTE" "$RUNTIME" "$TESTS" "$TOKENIZER_TESTS"; do
   [[ -f "$file" ]] || { fail_msg "missing ${file#$ROOT/}"; continue; }
 done
 
@@ -52,5 +53,11 @@ require_text "$TESTS" 'decode("\"any\"")' "Anthropic any is not accepted as Open
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/MLXBatchAdapterTests.swift" \
   "forcedToolChoiceUsesSchemaFilteringWithoutPromptDirective" \
   "named tool_choice no-prompt-directive regression exists"
+require_text "$TOKENIZER_TESTS" "zayaTextLocalTokenizerRendersZyphraToolsNotGemmaFallback" \
+  "ZAYA text required tool-choice tokenizer regression exists"
+require_text "$TOKENIZER_TESTS" "zayaVLLocalTokenizerKeepsRequiredToolReminderInCurrentUserTurn" \
+  "ZAYA multi-turn required tool-choice reminder regression exists"
+require_text "$TOKENIZER_TESTS" 'Use the `line_count` function.' \
+  "ZAYA named required tool-choice instruction regression exists"
 
 exit "$fail"

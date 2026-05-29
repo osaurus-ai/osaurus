@@ -39,6 +39,7 @@ CONCURRENCY_UI="$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/Concurr
 MTP_UI="$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/MTPSection.swift"
 STORE="$ROOT/Packages/OsaurusCore/Models/Configuration/ServerRuntimeSettingsStore.swift"
 RUNTIME="$ROOT/Packages/OsaurusCore/Services/ModelRuntime.swift"
+CONTROLLER="$ROOT/Packages/OsaurusCore/Networking/ServerController.swift"
 FLAGS="$ROOT/Packages/OsaurusCore/Services/ModelRuntime/InferenceFeatureFlags.swift"
 ADAPTER="$ROOT/Packages/OsaurusCore/Services/ModelRuntime/MLXBatchAdapter.swift"
 
@@ -48,6 +49,7 @@ for pair in \
   "$MTP_UI:MTPSection" \
   "$STORE:ServerRuntimeSettingsStore" \
   "$RUNTIME:ModelRuntime" \
+  "$CONTROLLER:ServerController" \
   "$FLAGS:InferenceFeatureFlags" \
   "$ADAPTER:MLXBatchAdapter"; do
   require_file "${pair%%:*}" "${pair#*:}"
@@ -108,8 +110,14 @@ require_text "$STORE" 'enableSSMReDerive: true' \
   "migration defaults SSM rederive on"
 require_text "$STORE" 'normalized\.mtp\.mode = \.auto' \
   "persisted old MTP-off defaults repair to auto"
+require_text "$STORE" 'updated\.genTopP = settings\.generation\.topP\.map\(Float\.init\)\n            \?\? ServerConfiguration\.default\.genTopP' \
+  "blank runtime top-p clears stale legacy top-p"
 
 echo "--- runtime consumption ---"
+require_text "$CONTROLLER" 'runtimeConfigInputsRequireInvalidate' \
+  "runtime settings save invalidates cached RuntimeConfig"
+require_text "$CONTROLLER" 'previous\.generation != next\.generation\n            \|\| previous\.concurrency != next\.concurrency' \
+  "generation and concurrency changes invalidate cached RuntimeConfig"
 require_text "$FLAGS" 'guard runtime\.concurrency\.continuousBatching else \{ return 1 \}' \
   "runtime gates batch slots on continuous batching"
 require_text "$FLAGS" 'runtime\.concurrency\.maxConcurrentSequences' \
