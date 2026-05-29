@@ -457,7 +457,9 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
 public final class OsaurusProviderUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     public let name = "osaurus_provider_update"
     public let description =
-        "Update non-secret fields of an existing provider. Requires `id`. To rotate the API key "
+        "Update non-secret fields of an existing provider. Requires `id`. Optional: `name`, `host`, "
+        + "`enabled`, `auto_connect`, `port`, `base_path`, `timeout` (seconds), and `manual_model_ids` "
+        + "(comma/newline-separated; for Azure these are deployment names). To rotate the API key "
         + "or OAuth tokens, call osaurus_provider_set_credentials instead."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -468,6 +470,24 @@ public final class OsaurusProviderUpdateTool: OsaurusTool, PermissionedTool, @un
             "host": .object(["type": .string("string")]),
             "enabled": .object(["type": .string("boolean")]),
             "auto_connect": .object(["type": .string("boolean")]),
+            "port": .object([
+                "type": .string("integer"),
+                "description": .string("Override port. Omit to keep the current value."),
+            ]),
+            "base_path": .object([
+                "type": .string("string"),
+                "description": .string("API base path (e.g. /v1). Omit to keep the current value."),
+            ]),
+            "timeout": .object([
+                "type": .string("integer"),
+                "description": .string("Request timeout in seconds."),
+            ]),
+            "manual_model_ids": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Comma/newline-separated model ids (Azure: deployment names). Replaces the existing list."
+                ),
+            ]),
         ]),
         "required": .array([.string("id")]),
     ])
@@ -507,6 +527,12 @@ public final class OsaurusProviderUpdateTool: OsaurusTool, PermissionedTool, @un
             if let v = args["host"] as? String { provider.host = v }
             if let b = self.coerceBool(args["enabled"]) { provider.enabled = b }
             if let b = self.coerceBool(args["auto_connect"]) { provider.autoConnect = b }
+            if let p = self.coerceInt(args["port"]) { provider.port = p }
+            if let v = args["base_path"] as? String { provider.basePath = v }
+            if let t = self.coerceInt(args["timeout"]) { provider.timeout = TimeInterval(t) }
+            if let raw = args["manual_model_ids"] as? String {
+                provider.manualModelIds = OsaurusProviderAddTool.parseManualModelIds(raw)
+            }
             mgr.updateProvider(provider, apiKey: nil, oauthTokens: nil)
             return ToolEnvelope.success(
                 tool: name,
@@ -626,7 +652,7 @@ public final class OsaurusProviderSetCredentialsTool: OsaurusTool, PermissionedT
         }
 
         let request = ProviderCredentialRequest(
-            providerType: provider.providerType,
+            provider: provider,
             providerName: displayName,
             mode: .rotate(existingId: id)
         )

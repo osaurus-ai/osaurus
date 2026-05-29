@@ -967,6 +967,7 @@ extension AgentManager {
             var config = DefaultAgentConfigurationStore.load()
             config.defaultModel = model
             DefaultAgentConfigurationStore.save(config)
+            NotificationCenter.default.post(name: .agentUpdated, object: agentId)
             return
         }
 

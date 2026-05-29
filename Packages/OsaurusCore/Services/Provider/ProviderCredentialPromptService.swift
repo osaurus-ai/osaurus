@@ -104,6 +104,43 @@ public struct ProviderCredentialRequest: Sendable {
         self.mode = mode
         self.instructions = ProviderCredentialInstructionsCatalog.entry(for: resolved)
     }
+
+    /// Provider-aware entry for the rotate path. Unlike the
+    /// `providerType`-only init, this disambiguates the shared
+    /// `.openaiLegacy` vendors (OpenRouter, DeepSeek, xAI, Venice, Ollama)
+    /// by matching the existing provider's host, so rotation shows the
+    /// correct preset card/fields instead of dropping to `.custom`.
+    public init(
+        provider: RemoteProvider,
+        providerName: String,
+        mode: ProviderCredentialPromptMode
+    ) {
+        if provider.providerType == .osaurus {
+            self.preset = nil
+            self.providerType = .osaurus
+            self.providerName = providerName
+            self.mode = mode
+            self.instructions = ProviderCredentialInstructionsCatalog.osaurusAgentEntry()
+            return
+        }
+        if provider.providerType == .openAICodex {
+            self.preset = .openai
+            self.providerType = .openAICodex
+            self.providerName = providerName
+            self.mode = mode
+            self.instructions = ProviderCredentialInstructionsCatalog.openAICodexEntry()
+            return
+        }
+        let resolved =
+            ProviderPreset.matching(provider: provider)
+            ?? ProviderPreset.preferred(for: provider.providerType)
+            ?? .custom
+        self.preset = resolved
+        self.providerType = provider.providerType
+        self.providerName = providerName
+        self.mode = mode
+        self.instructions = ProviderCredentialInstructionsCatalog.entry(for: resolved)
+    }
 }
 
 @MainActor
@@ -111,7 +148,11 @@ public enum ProviderCredentialPromptService {
     private static var window: NSPanel?
     private static var closeObserver: NSObjectProtocol?
     private static var localKeyMonitor: Any?
-    private static var globalKeyMonitor: Any?
+    /// Resolver for the prompt currently on screen. Captured so an
+    /// out-of-band `cancel()` (e.g. the chat turn that opened the sheet
+    /// was cancelled) can tear the panel down and resume the suspended
+    /// caller with `.cancelled` instead of leaving an orphaned window up.
+    private static var activeResolve: ((ProviderCredentialResult) -> Void)?
     /// Tail of the prompt chain. Each call replaces this with its own
     /// in-flight task, and the task's lifetime spans the *entire* prompt
     /// — including the user-facing wait on the sheet — so subsequent
@@ -152,7 +193,15 @@ public enum ProviderCredentialPromptService {
             }
         }
         pendingTask = job
-        let result = await job.value
+        // Bridge structured cancellation (the chat turn that called us was
+        // cancelled) into a panel dismissal. `job` is unstructured and does
+        // not inherit cancellation, so we explicitly tear the sheet down and
+        // let the continuation resume with `.cancelled`.
+        let result = await withTaskCancellationHandler {
+            await job.value
+        } onCancel: {
+            Task { @MainActor in cancel() }
+        }
 
         // Once we're the trailing prompt, clear the chain anchor so we
         // don't pin the task graph around for the rest of the process.
@@ -176,6 +225,7 @@ public enum ProviderCredentialPromptService {
             dismiss()
             continuation.resume(returning: result)
         }
+        activeResolve = resolve
 
         let themeManager = ThemeManager.shared
         let theme = themeManager.currentTheme
@@ -276,7 +326,14 @@ public enum ProviderCredentialPromptService {
         }
     }
 
+    /// Dismiss the active prompt (if any) and resume its caller with
+    /// `.cancelled`. Safe to call when nothing is on screen.
+    public static func cancel() {
+        activeResolve?(.cancelled)
+    }
+
     private static func dismiss() {
+        activeResolve = nil
         if let observer = closeObserver {
             NotificationCenter.default.removeObserver(observer)
             closeObserver = nil
@@ -284,10 +341,6 @@ public enum ProviderCredentialPromptService {
         if let monitor = localKeyMonitor {
             NSEvent.removeMonitor(monitor)
             localKeyMonitor = nil
-        }
-        if let monitor = globalKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalKeyMonitor = nil
         }
         window?.orderOut(nil)
         window = nil

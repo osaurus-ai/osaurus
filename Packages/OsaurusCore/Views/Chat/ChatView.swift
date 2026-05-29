@@ -3287,8 +3287,7 @@ struct ChatView: View {
                                 selectedModel: nil,
                                 agents: windowState.agents,
                                 activeAgentId: windowState.agentId,
-                                quickActions: windowState.activeAgent.chatQuickActions
-                                    ?? AgentQuickAction.defaultChatQuickActions,
+                                quickActions: emptyStateQuickActions,
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
@@ -3614,6 +3613,16 @@ struct ChatView: View {
     /// the budget — adding modifiers to the inline `ChatEmptyState(...)`
     /// here previously tipped the surrounding ZStack expression past the
     /// "unable to type-check in reasonable time" threshold.
+    /// Quick actions for the empty chat state: the active agent's own actions
+    /// if defined, else the built-in defaults (configure-oriented for the
+    /// default Osaurus agent, chat-oriented for everything else).
+    private var emptyStateQuickActions: [AgentQuickAction] {
+        windowState.activeAgent.chatQuickActions
+            ?? (windowState.agentId == Agent.defaultId
+                ? AgentQuickAction.defaultConfigurationQuickActions
+                : AgentQuickAction.defaultChatQuickActions)
+    }
+
     @ViewBuilder
     private var emptyStateView: some View {
         ChatEmptyState(
@@ -3621,8 +3630,7 @@ struct ChatView: View {
             selectedModel: session.selectedModel,
             agents: windowState.agents,
             activeAgentId: windowState.agentId,
-            quickActions: windowState.activeAgent.chatQuickActions
-                ?? AgentQuickAction.defaultChatQuickActions,
+            quickActions: emptyStateQuickActions,
             generativeGreetingState: session.generativeGreetingState,
             onOpenModelManager: {
                 AppDelegate.shared?.showManagementWindow(initialTab: .models)

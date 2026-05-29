@@ -30,6 +30,10 @@ struct ProviderCredentialPromptSheet: View {
     @State private var isSigningIn = false
     @State private var signInError: String?
     @State private var oauthTokens: RemoteProviderOAuthTokens?
+    /// User opted to paste an API key instead of running the OAuth flow.
+    /// Only meaningful when `supportsApiKeyAlternative` (today: OpenRouter,
+    /// whose OAuth merely mints a key we store as an API key).
+    @State private var preferApiKeyEntry = false
 
     /// Stable preset for branding/help. Falls back to `.custom` when
     /// the request didn't carry a preset (Osaurus peer agent path) —
@@ -54,7 +58,17 @@ struct ProviderCredentialPromptSheet: View {
     }
 
     private var isOAuthFlow: Bool {
+        request.instructions.authMethod == .oauth && !(supportsApiKeyAlternative && preferApiKeyEntry)
+    }
+
+    /// True when the provider authenticates via OAuth but ultimately stores
+    /// a plain API key (OpenRouter). For these, the user can skip the browser
+    /// dance and paste a key directly — matching the dual mode Settings
+    /// already offers. Codex (storageAuthType == .oauth) deliberately does
+    /// not qualify and stays OAuth-only.
+    private var supportsApiKeyAlternative: Bool {
         request.instructions.authMethod == .oauth
+            && request.instructions.storageAuthType == .apiKey
     }
 
     private var isCodexOAuth: Bool {
@@ -295,6 +309,18 @@ struct ProviderCredentialPromptSheet: View {
 
     private var apiKeyBody: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if supportsApiKeyAlternative && preferApiKeyEntry {
+                Button {
+                    preferApiKeyEntry = false
+                    testError = nil
+                    testSucceededModelCount = nil
+                } label: {
+                    Text(String(format: L("Sign in with %@ instead"), request.instructions.displayName))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
             ForEach(request.instructions.extraFields, id: \.key) { field in
                 VStack(alignment: .leading, spacing: 4) {
                     ProviderTextField(
@@ -340,6 +366,18 @@ struct ProviderCredentialPromptSheet: View {
                     .foregroundColor(theme.secondaryText)
 
                 oauthSignInButton
+
+                if supportsApiKeyAlternative {
+                    Button {
+                        preferApiKeyEntry = true
+                        signInError = nil
+                    } label: {
+                        Text(L("Paste an API key instead"))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
 
             if let error = signInError {
@@ -649,7 +687,16 @@ struct ProviderCredentialPromptSheet: View {
         let effectiveHost = host.isEmpty ? defaults.host : host
         let basePath: String = {
             guard providerType == .azureOpenAI, !deployment.isEmpty else { return defaults.basePath }
-            return "/openai/deployments/\(deployment)/v1"
+            // The deployment field accepts a comma/newline-separated list
+            // (persisted to `manualModelIds` on save). The inline connection
+            // test only needs one valid deployment in the path — embedding the
+            // whole raw string would corrupt it.
+            let first =
+                deployment
+                .split(whereSeparator: { $0 == "\n" || $0 == "," })
+                .first
+                .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+            return first.isEmpty ? defaults.basePath : "/openai/deployments/\(first)/v1"
         }()
 
         isTesting = true
@@ -659,6 +706,13 @@ struct ProviderCredentialPromptSheet: View {
         Task { @MainActor in
             defer { isTesting = false }
             do {
+                // Custom secret headers (legacy OpenAI-compatible servers) are
+                // collected as extra fields. `host` / `deployment` are reserved
+                // endpoint keys, not headers, so exclude them — mirrors
+                // `ProviderConfigurationDomain.reservedExtraKeys`.
+                let testHeaders =
+                    collectedExtraHeaders()?
+                    .filter { !["host", "deployment"].contains($0.key) } ?? [:]
                 let models = try await RemoteProviderManager.shared.testConnection(
                     host: effectiveHost,
                     providerProtocol: defaults.providerProtocol,
@@ -667,7 +721,7 @@ struct ProviderCredentialPromptSheet: View {
                     authType: request.instructions.storageAuthType,
                     providerType: providerType,
                     apiKey: key,
-                    headers: [:]
+                    headers: testHeaders
                 )
                 testSucceededModelCount = models.count
             } catch {

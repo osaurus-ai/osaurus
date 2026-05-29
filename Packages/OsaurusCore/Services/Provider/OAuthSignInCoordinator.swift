@@ -96,9 +96,15 @@ public enum OAuthSignInCoordinatorError: LocalizedError, Sendable, Equatable {
     public var errorDescription: String? {
         switch self {
         case .unsupportedProvider(let providerType):
-            return "OAuth sign-in is not supported for provider type '\(providerType.rawValue)'."
+            return String(
+                format: L("OAuth sign-in is not supported for provider type '%@'."),
+                providerType.rawValue
+            )
         case .unsupportedPreset(let preset):
-            return "OAuth sign-in is not supported for provider '\(preset.rawValue)'."
+            return String(
+                format: L("OAuth sign-in is not supported for provider '%@'."),
+                preset.rawValue
+            )
         }
     }
 }

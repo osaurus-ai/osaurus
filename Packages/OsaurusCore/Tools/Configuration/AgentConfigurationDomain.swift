@@ -11,7 +11,7 @@
 //  The default agent itself is *not* self-mutable — those tools refuse
 //  every `id == Agent.defaultId` and every `agent.isBuiltIn == true`.
 //  The user edits the default agent's persona/model/temperature in
-//  Settings → Default Agent (Phase B).
+//  Settings → Chat (Phase B).
 //
 
 import Foundation
@@ -59,7 +59,7 @@ public final class OsaurusAgentCreateTool: OsaurusTool, PermissionedTool, @unche
     public let description =
         "Create a new custom agent (persona). Requires `name`. Optional `description`, `system_prompt`, "
         + "`default_model`, `temperature` (0..2), `max_tokens`. The default agent cannot be created — "
-        + "users edit it in Settings → Default Agent."
+        + "users edit it in Settings → Chat."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -204,7 +204,7 @@ public final class OsaurusAgentUpdateTool: OsaurusTool, PermissionedTool, @unche
             if id == Agent.defaultId || agent.isBuiltIn {
                 return ToolEnvelope.failure(
                     kind: .unavailable,
-                    message: "Default and built-in agents are edited in Settings → Default Agent, not via chat.",
+                    message: "Default and built-in agents are edited in Settings → Chat, not via chat.",
                     tool: name,
                     retryable: false
                 )

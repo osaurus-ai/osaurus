@@ -251,8 +251,8 @@ struct ConfigurationView: View {
                                     StyledSettingsTextArea(
                                         label: "System Prompt",
                                         text: $tempSystemPrompt,
-                                        placeholder: "Enter instructions for all chats...",
-                                        hint: "Optional. Shown as a system message for all chats."
+                                        placeholder: "Enter the default Osaurus agent's instructions...",
+                                        hint: "Optional. Persona for the built-in Osaurus agent."
                                     )
 
                                     // Generation Settings

@@ -9,7 +9,7 @@
 //    1. blurred the trust boundary for Phase A's external-surface
 //       lockdown (every reach into `ChatConfiguration` had to know
 //       which fields meant "global" vs "default-agent only"); and
-//    2. made the Settings UI dishonest — "Default Agent" tweaks
+//    2. made the Settings UI dishonest — default-agent tweaks
 //       were stored in `chat.json` next to "Global Chat" knobs.
 //
 //  The Default agent is in-memory only and never serialized to disk
@@ -19,7 +19,7 @@
 import Foundation
 
 /// Settings for the built-in Default agent. The Default agent is
-/// user-editable via the Settings UI's "Default Agent" tab and is
+/// user-editable via Settings → Chat and is
 /// never mutated through chat tools — `osaurus_*` write tools refuse
 /// to target it. See `AgentManager.effective*` for the routing of
 /// these values into the runtime.

@@ -85,17 +85,50 @@ public final class OsaurusPluginInstallTool: OsaurusTool, PermissionedTool, @unc
             )
         }
 
-        return ToolEnvelope.success(
-            tool: name,
-            result: [
-                "plugin_id": pluginId,
-                "status": "installed",
-                "next_steps": [
-                    "If the plugin requires API keys or webhooks, direct the user to Settings → Plugins → Secrets.",
-                    "Use osaurus_describe({scope: 'plugins', id: '\(pluginId)'}) to inspect its tools.",
-                ],
+        // Inspect the freshly loaded manifest for required secrets the user
+        // hasn't supplied yet. Secrets never travel through chat — we only
+        // surface the signal + labels so the model can route the user to the
+        // Plugin Secrets sheet.
+        let missingSecretLabels: [String] = await MainActor.run {
+            guard
+                let loaded = PluginManager.shared.plugins
+                    .first(where: { $0.plugin.id == pluginId }),
+                let secrets = loaded.plugin.manifest.secrets
+            else {
+                return []
+            }
+            return
+                secrets
+                .filter { spec in
+                    spec.required
+                        && !ToolSecretsKeychain.hasSecret(
+                            id: spec.id,
+                            for: pluginId,
+                            agentId: Agent.defaultId
+                        )
+                }
+                .map { $0.label }
+        }
+
+        let needsSecrets = !missingSecretLabels.isEmpty
+        var result: [String: Any] = [
+            "plugin_id": pluginId,
+            "status": "installed",
+            "needs_secrets": needsSecrets,
+        ]
+        if needsSecrets {
+            result["missing_secrets"] = missingSecretLabels
+            result["next_steps"] = [
+                "This plugin needs secrets (\(missingSecretLabels.joined(separator: ", "))). "
+                    + "Direct the user to Settings → Plugins → Secrets; never accept secrets as tool arguments.",
+                "Use osaurus_describe({scope: 'plugins', id: '\(pluginId)'}) to inspect its tools.",
             ]
-        )
+        } else {
+            result["next_steps"] = [
+                "Use osaurus_describe({scope: 'plugins', id: '\(pluginId)'}) to inspect its tools."
+            ]
+        }
+        return ToolEnvelope.success(tool: name, result: result)
     }
 }
 

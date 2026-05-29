@@ -128,6 +128,38 @@ struct ConfigurationToolsGateContractTests {
         #expect(result.contains("Default agent"))
     }
 
+    // MARK: - osaurus_mcp_add
+
+    @Test
+    func mcpAdd_refusesWithoutAgentContext() async throws {
+        let result = try await executeWithoutAgentContext(OsaurusMCPAddTool())
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("chat session context"))
+    }
+
+    @Test
+    func mcpAdd_refusesFromCustomAgent() async throws {
+        let result = try await executeAsCustomAgent(OsaurusMCPAddTool())
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("Default agent"))
+    }
+
+    // MARK: - osaurus_mcp_remove / osaurus_mcp_enable
+
+    @Test
+    func mcpRemove_refusesFromCustomAgent() async throws {
+        let result = try await executeAsCustomAgent(OsaurusMCPRemoveTool())
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("Default agent"))
+    }
+
+    @Test
+    func mcpEnable_refusesWithoutAgentContext() async throws {
+        let result = try await executeWithoutAgentContext(OsaurusMCPEnableTool())
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("chat session context"))
+    }
+
     // MARK: - osaurus_status (read tool — same gate applies)
 
     @Test

@@ -82,6 +82,10 @@ public enum DefaultAgentConfigurationStore {
             // explicit no-implicit-save warning in
             // `AppConfiguration.loadFromDisk`.
             print("[Osaurus] Failed to decode default-agent.json — using defaults (file preserved)")
+            ToastManager.shared.warning(
+                L("Default agent settings unreadable"),
+                message: L("Using defaults; your saved file was left untouched.")
+            )
             return DefaultAgentConfiguration.default
         }
 
@@ -112,6 +116,10 @@ public enum DefaultAgentConfigurationStore {
             try encoder.encode(configuration).write(to: url, options: .atomic)
         } catch {
             print("[Osaurus] Failed to save default-agent.json: \(error)")
+            ToastManager.shared.error(
+                L("Couldn't save default agent settings"),
+                message: error.localizedDescription
+            )
         }
     }
 

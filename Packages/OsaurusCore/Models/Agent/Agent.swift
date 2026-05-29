@@ -40,6 +40,34 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
         ]
     }
 
+    /// Setup-oriented quick actions for the built-in Osaurus configuration
+    /// agent (`Agent.defaultId`). These nudge the user toward the configure
+    /// flow that's unique to this agent instead of the generic chat prompts.
+    public static var defaultConfigurationQuickActions: [AgentQuickAction] {
+        [
+            AgentQuickAction(
+                icon: "checklist",
+                text: L("What's configured?"),
+                prompt: L("What's currently configured in Osaurus?")
+            ),
+            AgentQuickAction(
+                icon: "arrow.down.circle",
+                text: L("Download a model"),
+                prompt: L("Help me download a local model.")
+            ),
+            AgentQuickAction(
+                icon: "cloud",
+                text: L("Add a provider"),
+                prompt: L("Help me add a cloud AI provider.")
+            ),
+            AgentQuickAction(
+                icon: "puzzlepiece.extension",
+                text: L("Install a plugin"),
+                prompt: L("Help me install a plugin.")
+            ),
+        ]
+    }
+
 }
 
 /// Controls whether tools are selected automatically via RAG or manually by the user
@@ -220,7 +248,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public static let defaultId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
     /// Check whether an agent ID string refers to the default (built-in) agent.
-    /// The default agent operates in read-only memory mode.
+    /// The default agent is in-memory only and is never persisted as an
+    /// `Agent.json`; its user-editable settings live in
+    /// `DefaultAgentConfiguration` (Settings → Chat).
     public static func isDefaultAgentId(_ id: String) -> Bool {
         id == defaultId.uuidString
     }
@@ -234,7 +264,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         Agent(
             id: defaultId,
             name: "Osaurus",
-            description: "Configure Osaurus & answer questions",
+            description: "Configuration helper",
             systemPrompt: "",
             themeId: nil,
             defaultModel: nil,
