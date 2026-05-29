@@ -13,21 +13,23 @@ repo-local live-gate artifacts. The user's requested VL/cache/UI/API/parser/
 defaults/carryover proof still requires real Osaurus app/API evidence before a
 row is production-clear.
 
-## 2026-05-29 LFM2.5 JANG_2L required-tool and hybrid topology pass
+## 2026-05-29 LFM2.5 JANG_2L current-head cold pass and warm-cache partial
 
-- Osaurus PR head at check: `8fcbf80c5ad4370f51b6f4019861ac6994caf558`.
-- vMLX main / Osaurus pin: `6a7b291709f6cf1b6db17928e1096c9007fbd1d0`.
-- No-sign app path: `build/DerivedData-pr1268-lfs25-nosign-8fcbf80c/Build/Products/Release/osaurus.app`.
-- Launch boundary: app was launched keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, `OSAURUS_TEST_ROOT=/tmp/osaurus-pr1268-8fcbf80c-lfm25-ui-root-mlxstudio`, and `OSU_MODELS_DIR=/Users/eric/.mlxstudio/models`.
-- Artifact: `/tmp/osaurus-pr1268-8fcbf80c-lfm25-jang2l-tool-cache-20260529-043254`.
+- Osaurus PR head at check: `662de08d1bc52bd7d5ae91ab6d8a1d6e246fb062`.
+- vMLX main / Osaurus pin: `1c6a5c5f2707f0260211db9aa9cd7c91911ca81f`.
+- No-sign app path: `build/DerivedData-pr1268-lfm25-nosign-662de08d/Build/Products/Release/osaurus.app`.
+- Launch boundary: app was launched keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, `OSAURUS_TEST_ROOT=/tmp/osaurus-pr1268-662de08d-lfm25-ui-root-mlxstudio`, and `OSU_MODELS_DIR=/Users/eric/.mlxstudio/models`.
+- Cold artifact: `/tmp/osaurus-pr1268-662de08d-lfm25-jang2l-tool-cache-cold-20260529-121517`.
+- Warm artifact: `/tmp/osaurus-pr1268-662de08d-lfm25-jang2l-tool-cache-warm-20260529-121535`.
 - Model: `lfm2.5-8b-a1b-jang_2l`.
-- Result: the strict three-turn required/none/required harness passed. Turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered visibly with `The tool counted 3 lines.` and no tool call; turn 3 produced exact structured `line_count` args `one\ntwo`. No protocol marker leaked, tool-call turns had no visible content, no length-stop fake pass occurred, and the app remained healthy with no in-flight request after the row.
-- Topology/cache result: 24 layers, 6 KV layers, 18 Mamba/SSM companion layers, `companion=ssm`, disk-backed restore required, SSM companion state required, paged-cache incompatible, block disk L2 enabled, and TurboQuant KV layer count 0. This row proves cache topology and disk-backed restore, not warm reuse; it recorded `disk_l2_misses 2`, `disk_l2_stores 4`, `disk_l2_hits 0`, `ssm_companion_hits 0`, and `companion_hits 0`.
-- Token/s: visible follow-up emitted 144 completion tokens at 182.81 tok/s; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
-- Guard refresh: `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening`, `ModelRuntimeIsHybridTests/lfm2_isHybrid`, `assert-tool-choice-required-routing.sh`, `assert-server-settings-runtime-wiring.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-no-forced-behavior-pr.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, `assert-osaurus-pr-hygiene.sh`, and `git diff --check` passed against the `6a7b291709f6cf1b6db17928e1096c9007fbd1d0` vMLX pin before this live run.
-- Verdict: LFM2.5 JANG_2L is green for this selected Osaurus no-sign app row: required-tool parsing, assistant/tool history replay, visible tool-result finalization, reasoning/parser non-leakage, and hybrid topology detection. Warm disk-L2/SSM companion hit reuse, MXFP4/MXFP8 live rows, broader tools, and broader prompt contexts remain follow-up coverage.
+- Cold result: the strict three-turn required/none/required harness passed. Turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered visibly with `There were 3 lines counted.` and no tool call; turn 3 produced exact structured `line_count` args `one\ntwo`. No protocol marker leaked, tool-call turns had no visible content, no length-stop fake pass occurred, and the app remained healthy with no in-flight request after the row. The plain answer turn still carried separate `reasoning_content`, but visible content was clean.
+- Cold topology/cache result: 24 layers, 6 KV layers, 18 Mamba/SSM companion layers, `companion=ssm`, disk-backed restore required, SSM companion state required, paged-cache incompatible, block disk L2 enabled, and TurboQuant KV layer count 0. This row proves cache topology and disk-backed restore, not warm reuse; it recorded `disk_l2_misses 2`, `disk_l2_stores 4`, `disk_l2_hits 0`, `ssm_companion_hits 0`, and `companion_hits 0`.
+- Cold token/s: visible follow-up emitted 164 completion tokens at 183.81 tok/s; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
+- Warm result: cache reuse was proven with `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1` on the same LFM hybrid topology. Turn 1 remained exact, turn 2 answered visibly, and turn 3 still returned a structured `line_count` call with no visible/protocol leak, but `turn3_args_exact` failed because the `text` argument included extra native-call reasoning text after `one\ntwo`.
+- Guard refresh: `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening`, `SwiftTransformersTokenizerLoaderTests/lfm2LocalTokenizerUsesStrictRequiredToolFallback`, `assert-tool-choice-required-routing.sh`, `assert-server-settings-runtime-wiring.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-no-forced-behavior-pr.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, `assert-osaurus-pr-hygiene.sh`, and `git diff --check` passed against the `1c6a5c5f2707f0260211db9aa9cd7c91911ca81f` vMLX pin before this live run. vMLX focused tests also passed for the LFM stale reasoning stamp, LFM2 parser escaped newlines, and LFM2 required-template fallback.
+- Verdict: LFM2.5 JANG_2L is green for the current-head cold Osaurus no-sign app row and green for warm L2/SSM companion cache-hit evidence, but partial for warm repeat exact argument fidelity. MXFP4/MXFP8 live rows, broader tools, and broader prompt contexts remain follow-up coverage.
 
-## 2026-05-29 LFM2.5 JANG_2L repeat required-tool red rows
+## 2026-05-29 LFM2.5 JANG_2L superseded repeat required-tool red rows
 
 - Osaurus PR head at check: `5535b681c939aba0b96b717c424243f60fc305b2`.
 - vMLX main / Osaurus pin: `6a7b291709f6cf1b6db17928e1096c9007fbd1d0`.
@@ -37,7 +39,7 @@ row is production-clear.
 - 2048 result: turn 1 ended `finish_reason: "stop"` but produced visible native-looking text `[ line_count("red\ngreen\nb\nblue") ]` instead of an API `tool_calls` object. It leaked protocol-shaped text into visible content, omitted the required `text=` keyword argument, and corrupted the exact text argument. Turn 2 and turn 3 were skipped.
 - Cache/topology result: both red rows still showed the 24-layer LFM hybrid topology with 6 KV layers, 18 Mamba/SSM companion layers, disk-backed restore required, and TurboQuant KV layer count 0. They did not prove warm disk L2 or SSM companion hits (`disk_l2_hits 0`, `ssm_companion_hits 0`, `companion_hits 0`).
 - Caller-control check: a manual repeat request with explicit `enable_thinking:false` still produced untagged reasoning and `finish_reason: "length"`, so this is not cleared by a caller-side thinking disable.
-- Verdict: LFM2.5 is not production-clear for required-tool repeat behavior. The earlier selected green row remains useful evidence for architecture/topology and one successful tool path, but broad LFM2.5 tool/parser/cache readiness is red/partial until vMLX fixes the LFM reasoning/tool contract and a repeat row passes.
+- Verdict: these red rows are superseded for the length-stop/no-tool-call failure mode by the later `1c6a5c5f2707f0260211db9aa9cd7c91911ca81f` vMLX pin and current-head cold pass, but they remain useful regression evidence. LFM2.5 is still not production-clear globally because the current-head warm cache row proves L2/SSM hits but still fails exact turn 3 argument fidelity, and MXFP4/MXFP8 live rows remain unproven.
 
 ## 2026-05-28 Nemotron Omni MXFP4 repeat required-tool red row
 
