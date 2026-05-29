@@ -167,6 +167,35 @@ struct RuntimePolicySourceTests {
         #expect(source.contains("Scheduler disabled: storage key is not already unlocked"))
     }
 
+    @Test("storage key fails closed instead of minting a replacement over existing encrypted data")
+    func storageKeyFailsClosedWhenEncryptedDataExists() throws {
+        let source = try Self.source("Identity/StorageKeyManager.swift")
+
+        // The fail-closed guard and its error must exist.
+        #expect(source.contains("case keyUnavailableForExistingData"))
+        #expect(source.contains("encryptedStorageExists()"))
+
+        // The guard must sit *between* a missed key read and the
+        // generate-and-persist fallback so a populated install can never re-key
+        // itself and orphan the user's encrypted data.
+        let readBranch = try #require(source.range(of: "let existing = try readKeychainKey()"))
+        let failClosed = try #require(
+            source.range(of: "throw StorageKeyError.keyUnavailableForExistingData")
+        )
+        let generate = try #require(source.range(of: "key = try generateAndPersistKey()"))
+        #expect(readBranch.lowerBound < failClosed.lowerBound)
+        #expect(failClosed.lowerBound < generate.lowerBound)
+
+        // Migration must keep the legacy copy as a recovery fallback rather than
+        // deleting it, so a later loss of data-protection access cannot brick the
+        // database.
+        #expect(source.contains("removeStaleLegacyCopy: false"))
+
+        // Existence is judged from real encrypted artifacts, not a single DB.
+        #expect(source.contains("OsaurusPaths.chatHistoryDatabaseFile()"))
+        #expect(source.contains("OsaurusPaths.memoryDatabaseFile()"))
+    }
+
     @Test("startup avoids storage-key reads and background Keychain queries skip authentication UI")
     func startupAvoidsStorageKeyReadsAndBackgroundKeychainsSkipAuthenticationUI() throws {
         let storageKey = try Self.source("Identity/StorageKeyManager.swift")
