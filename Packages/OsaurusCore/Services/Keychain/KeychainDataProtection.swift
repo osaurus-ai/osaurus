@@ -7,6 +7,7 @@
 
 import Foundation
 import Security
+import os
 
 /// Generic-password (`kSecClassGenericPassword`) CRUD that targets the macOS
 /// data-protection keychain (`kSecUseDataProtectionKeychain`) with a transparent
@@ -24,6 +25,8 @@ import Security
 /// Callers are expected to apply their own `disablesKeychainForProcess` /
 /// in-memory test short-circuits *before* calling these methods.
 enum KeychainDataProtection {
+    private static let log = Logger(subsystem: "ai.osaurus", category: "keychain.dp")
+
     private static func baseQuery(service: String, account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
@@ -91,11 +94,26 @@ enum KeychainDataProtection {
         query[kSecUseAuthenticationContext as String] = KeychainQueryHelpers.nonInteractiveContext()
 
         var result: AnyObject?
-        if SecItemCopyMatching(KeychainQueryHelpers.dataProtection(query) as CFDictionary, &result) == errSecSuccess {
-            return result as? Data
+        let dpStatus = SecItemCopyMatching(
+            KeychainQueryHelpers.dataProtection(query) as CFDictionary, &result)
+        if dpStatus == errSecSuccess { return result as? Data }
+
+        // Only fall back to the legacy keychain when the data-protection item is
+        // genuinely absent (never written there) or this host can't use the
+        // data-protection keychain at all. Any other status — e.g.
+        // `errSecInteractionNotAllowed` / `errSecAuthFailed` — means a
+        // data-protection item *exists* but is intentionally inaccessible right
+        // now; querying the legacy keychain there would risk a login-keychain
+        // prompt and could return a stale value that shadows the real item. Fail
+        // closed instead.
+        guard dpStatus == errSecItemNotFound || KeychainQueryHelpers.isMissingEntitlement(dpStatus)
+        else {
+            log.error(
+                "data-protection read for \(service, privacy: .public) failed (status \(dpStatus)); not falling back to legacy keychain"
+            )
+            return nil
         }
 
-        // Legacy fallback (may prompt once on signature-mismatched machines).
         var legacyResult: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &legacyResult) == errSecSuccess,
             let data = legacyResult as? Data
