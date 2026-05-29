@@ -45,12 +45,6 @@ struct ConfigurationView: View {
     /// overrides live on `AgentSettings.greetingPersona`.
     @State private var tempGreetingPersona: String = ""
 
-    // Work generation settings state
-    @State private var tempAgentTemperature: String = ""
-    @State private var tempAgentMaxTokens: String = ""
-    @State private var tempAgentTopP: String = ""
-    @State private var tempAgentMaxIterations: String = ""
-
     // Server / Local Inference settings now live in the Server →
     // Settings tab. Their state was deleted with the inline UI.
 
@@ -417,30 +411,20 @@ struct ConfigurationView: View {
                             }
                         }
 
-                        // MARK: - Work Section
+                        // MARK: - Tool Permissions Section
                         if matchesSearch(
-                            "Work",
-                            "Work Generation",
-                            "Temperature",
-                            "Max Tokens",
-                            "Top P",
-                            "Max Iterations",
+                            "Tool Permissions",
+                            "Permissions",
                             "Folder",
                             "File",
                             "Shell",
                             "Git",
-                            "Permissions",
                             "Write",
                             "Delete",
                             "Move",
                             "Copy"
                         ) {
-                            AgentSettingsSection(
-                                workTemperature: $tempAgentTemperature,
-                                workMaxTokens: $tempAgentMaxTokens,
-                                agentTopP: $tempAgentTopP,
-                                workMaxIterations: $tempAgentMaxIterations
-                            )
+                            ToolPermissionsSection()
                         }
 
                         // MARK: - Server settings moved
@@ -815,11 +799,6 @@ struct ConfigurationView: View {
             ? GenerativeGreetingService.defaultPersonaInstruction
             : chat.greetingPersona
 
-        tempAgentTemperature = chat.workTemperature.map { String($0) } ?? ""
-        tempAgentMaxTokens = chat.workMaxTokens.map(String.init) ?? ""
-        tempAgentTopP = chat.workTopPOverride.map { String($0) } ?? ""
-        tempAgentMaxIterations = chat.workMaxIterations.map(String.init) ?? ""
-
         let toastConfig = snapshot.toast
         tempToastPosition = toastConfig.position
         tempToastEnabled = toastConfig.enabled
@@ -863,10 +842,6 @@ struct ConfigurationView: View {
         // this exact text collapses back to "" so future default
         // updates still flow through.
         tempGreetingPersona = GenerativeGreetingService.defaultPersonaInstruction
-        tempAgentTemperature = ""
-        tempAgentMaxTokens = ""
-        tempAgentTopP = ""
-        tempAgentMaxIterations = ""
 
         showSuccess("Settings restored to defaults")
     }
@@ -942,30 +917,6 @@ struct ConfigurationView: View {
             return max(1, min(50, v))
         }()
 
-        let parsedAgentTemp: Float? = {
-            let s = tempAgentTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !s.isEmpty, let v = Float(s) else { return nil }
-            return max(0.0, min(2.0, v))
-        }()
-
-        let parsedAgentMax: Int? = {
-            let s = tempAgentMaxTokens.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !s.isEmpty, let v = Int(s) else { return nil }
-            return max(1, v)
-        }()
-
-        let parsedAgentTopP: Float? = {
-            let s = tempAgentTopP.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !s.isEmpty, let v = Float(s) else { return nil }
-            return max(0.0, min(1.0, v))
-        }()
-
-        let parsedAgentMaxIterations: Int? = {
-            let s = tempAgentMaxIterations.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !s.isEmpty, let v = Int(s) else { return nil }
-            return max(1, min(100, v))
-        }()
-
         let existingDefaultModel = previousChatCfg.defaultModel
         let chatCfg = ChatConfiguration(
             hotkey: tempChatHotkey,
@@ -983,10 +934,6 @@ struct ConfigurationView: View {
             defaultModel: existingDefaultModel,
             coreModelProvider: tempCoreModelProvider.isEmpty ? nil : tempCoreModelProvider,
             coreModelName: tempCoreModelName.isEmpty ? nil : tempCoreModelName,
-            workTemperature: parsedAgentTemp,
-            workMaxTokens: parsedAgentMax,
-            workTopPOverride: parsedAgentTopP,
-            workMaxIterations: parsedAgentMaxIterations,
             preflightSearchMode: tempPreflightSearchMode,
             disableTools: false,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
@@ -1552,16 +1499,11 @@ private struct VoiceSettingsSection: View {
 
 }
 
-// MARK: - Work Settings Section
+// MARK: - Tool Permissions Section
 
-private struct AgentSettingsSection: View {
+private struct ToolPermissionsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @State private var refreshId = UUID()
-
-    @Binding var workTemperature: String
-    @Binding var workMaxTokens: String
-    @Binding var agentTopP: String
-    @Binding var workMaxIterations: String
 
     // (name, display, desc, destructive, defaultPolicy)
     //
@@ -1580,57 +1522,8 @@ private struct AgentSettingsSection: View {
         ]
 
     var body: some View {
-        SettingsSection(title: "Work", icon: "cpu") {
+        SettingsSection(title: "Tool Permissions", icon: "lock.shield") {
             VStack(alignment: .leading, spacing: 16) {
-                // Generation Settings
-                SettingsSubsection(label: "Generation") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(
-                            "Controls how the AI reasons and calls tools. Lower temperature improves reliability.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 12))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                        SettingsSliderField(
-                            label: "Temperature",
-                            help: "Lower = more reliable tool use",
-                            text: $workTemperature,
-                            range: 0 ... 2,
-                            step: 0.1,
-                            defaultValue: 0.3,
-                            formatString: "%.1f"
-                        )
-                        SettingsStepperField(
-                            label: "Max Tokens",
-                            help: "Tokens per work iteration",
-                            text: $workMaxTokens,
-                            range: 1 ... 65536,
-                            step: 512,
-                            defaultValue: 4096
-                        )
-                        SettingsSliderField(
-                            label: "Top P Override",
-                            help: "Sampling diversity (0–1)",
-                            text: $agentTopP,
-                            range: 0 ... 1,
-                            step: 0.05,
-                            defaultValue: 1.0,
-                            formatString: "%.2f"
-                        )
-                        SettingsStepperField(
-                            label: "Max Iterations",
-                            help: "Max reasoning loop iterations",
-                            text: $workMaxIterations,
-                            range: 1 ... 100,
-                            step: 5,
-                            defaultValue: 50
-                        )
-                    }
-                }
-
-                SettingsDivider()
-
                 // Permissions
                 SettingsSubsection(label: "Permissions") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -1643,7 +1536,7 @@ private struct AgentSettingsSection: View {
 
                         VStack(spacing: 0) {
                             ForEach(Self.folderTools, id: \.name) { tool in
-                                AgentToolPermissionRow(
+                                ToolPermissionRow(
                                     name: tool.name,
                                     displayName: tool.display,
                                     description: tool.desc,
@@ -1674,7 +1567,7 @@ private struct AgentSettingsSection: View {
                                 }
                             }
                             .buttonStyle(SettingsButtonStyle())
-                            .localizedHelp("Reset all work tool permissions to default")
+                            .localizedHelp("Reset all tool permissions to default")
                         }
                     }
                 }
@@ -1690,9 +1583,9 @@ private struct AgentSettingsSection: View {
     }
 }
 
-// MARK: - Work Tool Permission Row
+// MARK: - Tool Permission Row
 
-private struct AgentToolPermissionRow: View {
+private struct ToolPermissionRow: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     /// Observing `ToolRegistry` here is what lets us read the configured
     /// policy from memory instead of doing a synchronous `tools.json`

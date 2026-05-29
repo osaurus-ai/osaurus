@@ -95,7 +95,9 @@ enum KeychainDataProtection {
 
         var result: AnyObject?
         let dpStatus = SecItemCopyMatching(
-            KeychainQueryHelpers.dataProtection(query) as CFDictionary, &result)
+            KeychainQueryHelpers.dataProtection(query) as CFDictionary,
+            &result
+        )
         if dpStatus == errSecSuccess { return result as? Data }
 
         // Only fall back to the legacy keychain when the data-protection item is
