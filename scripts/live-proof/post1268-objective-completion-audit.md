@@ -1,19 +1,21 @@
 # PR 1268 objective completion audit
 
-Checked at: 2026-05-28 14:31 PDT
+Checked at: 2026-05-28 17:28 PDT
 
 Evidence boundary:
 
 - Osaurus PR: `#1268`
-- Runtime/app proof head before this documentation update: `722f138ff933a93fae226e6fb687c648fd3419a1`
-- Last green Osaurus head before this documentation update: `722f138ff933a93fae226e6fb687c648fd3419a1`
+- Current Osaurus PR head: `2e48e1e7c14cd73b67a83aa70c3af0276ae75c29`
+- Runtime/app proof heads: selected live artifacts below span the current #1268 proof lane; the latest no-sign app health and source/readiness guards were refreshed at current head `2e48e1e7c14cd73b67a83aa70c3af0276ae75c29`.
+- Last green Osaurus head checked: `2e48e1e7c14cd73b67a83aa70c3af0276ae75c29`
 - vMLX main / Osaurus pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`
 - Osaurus merge policy: do not merge by agent
 - vMLX merge policy: vMLX is agent-managed and is already on main
-- CI boundary before this documentation update: `722f138ff933a93fae226e6fb687c648fd3419a1` is green for `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft`.
-- Merge boundary: after this documentation-only update is pushed, CI must be green again on the new PR head before merge.
-- No-sign app proof boundary: exact-head build from `722f138ff933a93fae226e6fb687c648fd3419a1`
-- Current app observation at this audit refresh: no-sign build `build/DerivedData/Build/Products/Release/osaurus.app` is healthy when launched keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`; initial `/health` showed no loaded model and no in-flight requests.
+- CI boundary: `2e48e1e7c14cd73b67a83aa70c3af0276ae75c29` is green for `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and `update_release_draft`.
+- Merge boundary: #1268 is open, non-draft, mergeable, and intentionally unmerged by agents; human merge remains the next state transition.
+- No-sign app proof boundary: keychain-free no-sign build from the #1268 proof lane at `build/DerivedData/Build/Products/Release/osaurus.app`.
+- Current app observation at this audit refresh: no-sign build `build/DerivedData/Build/Products/Release/osaurus.app` is healthy when launched keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`; `/health` shows no loaded model and no in-flight requests.
+- Source/readiness guards refreshed at this audit boundary: `assert-osaurus-no-forced-behavior-pr.sh`, `assert-no-hidden-local-sampler-defaults.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-pr-hygiene.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, and `assert-server-settings-runtime-wiring.sh` all pass.
 - Fresh Nemotron Omni MXFP4 rows are green for text tool/cache proof on exact head `10df987c`: cold artifact `/tmp/osaurus-pr1268-10df987c-nemotron-omni-mxfp4-required-cache-20260528-131529` proves structured `line_count` calls before and after tool-result history, exact multiline args, visible tool-result answer, no protocol leakage, healthy resident model state, 29-layer topology with 6 KV and 23 Mamba/SSM layers, SSM companion topology, disk-backed restore requirement, and disk L2 stores. Warm artifact `/tmp/osaurus-pr1268-10df987c-nemotron-omni-mxfp4-required-cache-warm-20260528-131559` proves the same multi-turn behavior plus `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`. This supersedes the earlier MXFP4 red repeat artifacts `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-20260528-102745` and `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-repeat-20260528-102806` for the text required-tool/cache row. Audio/video/resume rows remain unproven.
 - Fresh Nemotron Omni JANGTQ4 selected text/tool row is green for parser/history but cache-partial: `/tmp/osaurus-pr1268-nemotron-jangtq4-required-tool-repeat-20260528-123917` proves exact structured `line_count` calls before and after tool-result history, visible answer `The count is 3.`, no protocol leakage, and healthy resident model state after the run. Cache proof remained partial with `disk_l2_misses +2`, `disk_l2_stores +3`, `disk_l2_hits 0`, and SSM companion hits/rederives `0`; media/audio/video behavior remains unproven, and this does not clear the MXFP4 repeat-required-tool red row.
 - Fresh ZAYA text JANGTQ4 rows are green for required-tool/history and disk L2, with CCA companion-depth still partial: cold artifact `/tmp/osaurus-pr1268-04dbc2cd-zaya-text-jangtq4-required-cache-cold-20260528-134803` and warm artifact `/tmp/osaurus-pr1268-04dbc2cd-zaya-text-jangtq4-required-cache-warm-20260528-135005` prove exact structured `line_count` calls before and after tool-result history, visible follow-up answer, no protocol leakage, 80-layer topology with 40 KV and 40 ZAYA CCA layers, disk-backed restore requirement, and warm `disk_l2_hits +1`. The warm row still records `zaya_cca_companion_hits 0` and `zaya_cca_companion_misses +1`, so do not claim CCA companion-hit reuse yet. This supersedes the older argument-fidelity red artifact `/tmp/osaurus-pr1268-c9fdc4c3-zaya-text-jangtq4-tool-cache-20260528-103322`.
