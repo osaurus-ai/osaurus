@@ -1134,10 +1134,13 @@ public actor ModelRuntime {
         ) != nil {
             return true
         }
-        // LFM2 / LFM2-MoE (lfm2 / lfm2_moe model_types) — Liquid Foundation
-        // Mamba hybrids. vmlx `Models/LFM2.swift` + `LFM2MoE.swift`.
+        // LFM2 / LFM2.5 / LFM2-MoE (lfm2 / lfm2_moe model_types) —
+        // Liquid Foundation Mamba hybrids. vmlx `Models/LFM2.swift` +
+        // `LFM2MoE.swift`. Accept dot-versioned bundle ids such as
+        // `LFM2.5-8B-A1B-JANG_2L` without opening the matcher to adjacent
+        // sibling strings like `lfm21` or `lfm2x`.
         if lower.range(
-            of: #"(^|/)lfm2([\-_].*)?$"#,
+            of: #"(^|/)lfm2(([\._-]?5)?([\-_].*)?)?$"#,
             options: .regularExpression
         ) != nil {
             return true

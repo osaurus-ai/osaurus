@@ -362,11 +362,11 @@ struct ModelRuntimeIsHybridTests {
         }
     }
 
-    /// LFM2 / LFM2-MoE (`model_type=lfm2` / `lfm2_moe`) — Liquid Foundation
-    /// Mamba hybrid. Boundary regex `(^|/)lfm2([\-_].*)?$` matches both the
-    /// bare model id `lfm2` and any `lfm2-*` / `lfm2_*` variant, but
-    /// rejects `lfm21` / `lfm22` (next-gen would need its own entry) and
-    /// `lfm2x` (no separator).
+    /// LFM2 / LFM2.5 / LFM2-MoE (`model_type=lfm2` / `lfm2_moe`) —
+    /// Liquid Foundation Mamba hybrid. Boundary regex matches the bare
+    /// model id `lfm2`, `lfm2-*` / `lfm2_*`, and dot-versioned LFM2.5
+    /// bundle ids like `LFM2.5-8B-A1B-JANG_2L`, but rejects `lfm21` /
+    /// `lfm22` (next-gen would need its own entry) and `lfm2x`.
     @Test("LFM2 hybrid family — eager setHybrid + boundary guard")
     func lfm2_isHybrid() {
         for id in [
@@ -374,6 +374,12 @@ struct ModelRuntimeIsHybridTests {
             "lfm2-7b",
             "lfm2_moe",
             "lfm2-moe-7b",
+            "lfm2.5",
+            "lfm2_5",
+            "lfm25",
+            "LiquidAI/LFM2.5-8B-A1B",
+            "JANGQ-AI/LFM2.5-8B-A1B-JANG_2L",
+            "JANGQ-AI/LFM2.5-8B-A1B-MXFP4",
             "lfm2",  // bare base name
         ] {
             #expect(
@@ -385,6 +391,7 @@ struct ModelRuntimeIsHybridTests {
             "lfm21",  // next-gen, would need own entry
             "lfm22",
             "lfm2x",  // adjacent letter, not a separator
+            "lfm2alpha",
             "data/lfm22-foo",
         ] {
             #expect(
