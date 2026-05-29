@@ -37,7 +37,16 @@ struct KeychainDataProtectionTests {
     func writeDoesNotDelete() throws {
         let source = try Self.source("Services/Keychain/KeychainDataProtection.swift")
         let body = try Self.writeFunctionBody(in: source)
-        #expect(!body.contains("SecItemDelete"))
+        // Strip line comments so prose that mentions the call (e.g. the comment
+        // explaining why it must not happen) doesn't trip the check.
+        let code = body
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> Substring in
+                guard let comment = line.range(of: "//") else { return line }
+                return line[line.startIndex ..< comment.lowerBound]
+            }
+            .joined(separator: "\n")
+        #expect(!code.contains("SecItemDelete"))
     }
 
     // Behavioral guard: a value written through the helper must read back

@@ -66,9 +66,13 @@ enum KeychainDataProtection {
         add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let addStatus = SecItemAdd(add as CFDictionary, nil)
         guard addStatus == errSecSuccess else {
-            // `errSecMissingEntitlement` (un-entitled hosts) and friends: the
-            // data-protection keychain simply isn't available here.
-            log.error("data-protection keychain unavailable (probe add status \(addStatus)); using legacy keychain")
+            // `errSecMissingEntitlement` is the expected status on un-entitled
+            // hosts (e.g. `swift test` binaries); anything else is unexpected.
+            if KeychainQueryHelpers.isMissingEntitlement(addStatus) {
+                log.debug("data-protection keychain unavailable (missing entitlement); using legacy keychain")
+            } else {
+                log.error("data-protection keychain probe add failed (status \(addStatus)); using legacy keychain")
+            }
             return false
         }
 
@@ -167,11 +171,15 @@ enum KeychainDataProtection {
         // ACL "wants to use your confidential information" password prompt would
         // appear, and `kSecUseAuthenticationUISkip` + a non-interactive
         // `LAContext` suppress it (the read simply fails instead of prompting).
-        var legacyQuery = base
-        legacyQuery[kSecReturnData as String] = true
-        legacyQuery[kSecMatchLimit as String] = kSecMatchLimitOne
-        legacyQuery[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
-        legacyQuery[kSecUseAuthenticationContext as String] = KeychainQueryHelpers.nonInteractiveContext()
+        let legacyQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
+        ]
         var legacyResult: AnyObject?
         guard SecItemCopyMatching(legacyQuery as CFDictionary, &legacyResult) == errSecSuccess,
             let data = legacyResult as? Data
@@ -209,9 +217,15 @@ enum KeychainDataProtection {
         // The legacy query keeps the non-interactive auth params to suppress the
         // login-keychain password prompt; the data-protection query needs none.
         let dpQuery = KeychainQueryHelpers.dataProtection(base)
-        var legacyQuery = base
-        legacyQuery[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
-        legacyQuery[kSecUseAuthenticationContext as String] = KeychainQueryHelpers.nonInteractiveContext()
+        var legacyQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: true,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
+        ]
+        if returnData { legacyQuery[kSecReturnData as String] = true }
 
         // Legacy first so data-protection entries win on duplicate accounts.
         var merged: [String: [String: Any]] = [:]
