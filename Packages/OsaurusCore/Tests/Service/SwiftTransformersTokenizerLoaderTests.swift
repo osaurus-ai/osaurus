@@ -1113,10 +1113,12 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
-        #expect(decoded.contains("LFM tool call"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Required assistant message for this current request:"), "Decoded: \(decoded)")
         #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
         #expect(decoded.contains(#"[line_count(text="red\ngreen\nblue")]"#), "Decoded: \(decoded)")
-        #expect(decoded.contains(#"preserving every newline as \n and adding no spaces"#), "Decoded: \(decoded)")
+        #expect(decoded.contains("Do not output `line_count()`"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Do not omit `text`"), "Decoded: \(decoded)")
+        #expect(decoded.contains("No prose, no markdown, no JSON object, no reasoning text."), "Decoded: \(decoded)")
         #expect(!decoded.contains("Today's date:"), "Decoded: \(decoded)")
         #expect(!decoded.contains("<think>"), "Decoded: \(decoded)")
     }
