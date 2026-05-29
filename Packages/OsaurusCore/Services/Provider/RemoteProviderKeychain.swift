@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import Security
 
 public struct RemoteProviderOAuthTokens: Codable, Sendable, Equatable {
     public var accessToken: String
@@ -45,67 +44,22 @@ public enum RemoteProviderKeychain {
     /// Save an API key for a provider ID
     @discardableResult
     public static func saveAPIKey(_ apiKey: String, for providerId: UUID) -> Bool {
-        let account = "\(providerId.uuidString).apiKey"
         guard let keyData = apiKey.data(using: .utf8) else { return false }
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-
-        // Delete any existing key first
-        deleteAPIKey(for: providerId)
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: keyData,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        ]
-
-        let status = SecItemAdd(query as CFDictionary, nil)
-        return status == errSecSuccess
+        return setData(keyData, account: apiKeyAccount(for: providerId))
     }
 
     /// Retrieve an API key for a provider ID
     public static func getAPIKey(for providerId: UUID) -> String? {
-        let account = "\(providerId.uuidString).apiKey"
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-            let data = result as? Data,
-            let apiKey = String(data: data, encoding: .utf8)
-        else {
-            return nil
-        }
-
-        return apiKey
+        return getData(account: apiKeyAccount(for: providerId)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// Delete an API key for a provider ID
     @discardableResult
     public static func deleteAPIKey(for providerId: UUID) -> Bool {
-        let account = "\(providerId.uuidString).apiKey"
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-
-        let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        return deleteItem(account: apiKeyAccount(for: providerId))
     }
 
     /// Check if an API key exists for a provider ID
@@ -117,22 +71,9 @@ public enum RemoteProviderKeychain {
 
     @discardableResult
     public static func saveOAuthTokens(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID) -> Bool {
-        let account = "\(providerId.uuidString).oauth.tokens"
         guard let tokenData = try? JSONEncoder().encode(tokens) else { return false }
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-
-        deleteOAuthTokens(for: providerId)
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: tokenData,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        ]
-
-        let status = SecItemAdd(query as CFDictionary, nil)
-        return status == errSecSuccess
+        return setData(tokenData, account: oauthAccount(for: providerId))
     }
 
     @discardableResult
@@ -145,45 +86,15 @@ public enum RemoteProviderKeychain {
     }
 
     public static func getOAuthTokens(for providerId: UUID) -> RemoteProviderOAuthTokens? {
-        let account = "\(providerId.uuidString).oauth.tokens"
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-            let data = result as? Data,
-            let tokens = try? JSONDecoder().decode(RemoteProviderOAuthTokens.self, from: data)
-        else {
-            return nil
-        }
-
-        return tokens
+        return getData(account: oauthAccount(for: providerId))
+            .flatMap { try? JSONDecoder().decode(RemoteProviderOAuthTokens.self, from: $0) }
     }
 
     @discardableResult
     public static func deleteOAuthTokens(for providerId: UUID) -> Bool {
-        let account = "\(providerId.uuidString).oauth.tokens"
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-
-        let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        return deleteItem(account: oauthAccount(for: providerId))
     }
 
     public static func hasOAuthTokens(for providerId: UUID) -> Bool {
@@ -195,108 +106,74 @@ public enum RemoteProviderKeychain {
     /// Save a secret header value for a provider
     @discardableResult
     public static func saveHeaderSecret(_ value: String, key: String, for providerId: UUID) -> Bool {
-        let account = "\(providerId.uuidString).header.\(key)"
         guard let valueData = value.data(using: .utf8) else { return false }
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-
-        // Delete any existing value first
-        deleteHeaderSecret(key: key, for: providerId)
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: valueData,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        ]
-
-        let status = SecItemAdd(query as CFDictionary, nil)
-        return status == errSecSuccess
+        return setData(valueData, account: headerAccount(key: key, for: providerId))
     }
 
     /// Retrieve a secret header value for a provider
     public static func getHeaderSecret(key: String, for providerId: UUID) -> String? {
-        let account = "\(providerId.uuidString).header.\(key)"
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-            let data = result as? Data,
-            let value = String(data: data, encoding: .utf8)
-        else {
-            return nil
-        }
-
-        return value
+        return getData(account: headerAccount(key: key, for: providerId)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// Delete a secret header value for a provider
     @discardableResult
     public static func deleteHeaderSecret(key: String, for providerId: UUID) -> Bool {
-        let account = "\(providerId.uuidString).header.\(key)"
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-
-        let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        return deleteItem(account: headerAccount(key: key, for: providerId))
     }
 
     /// Delete all secrets for a provider (API key + all header secrets)
     public static func deleteAllSecrets(for providerId: UUID) {
         if KeychainQueryHelpers.disablesKeychainForProcess { return }
-        // Delete API key
         deleteAPIKey(for: providerId)
         deleteOAuthTokens(for: providerId)
 
-        // Delete all header secrets by querying with prefix
+        // Sweep any remaining `<uuid>.*` accounts (header secrets) across both
+        // the data-protection and legacy keychains.
         let accountPrefix = "\(providerId.uuidString)."
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-            kSecReturnAttributes as String: true,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-            let items = result as? [[String: Any]]
-        else {
-            return
+        for account in allAccounts() where account.hasPrefix(accountPrefix) {
+            deleteItem(account: account)
         }
+    }
 
-        for item in items {
-            if let account = item[kSecAttrAccount as String] as? String,
-                account.hasPrefix(accountPrefix)
-            {
-                let deleteQuery: [String: Any] = [
-                    kSecClass as String: kSecClassGenericPassword,
-                    kSecAttrService as String: service,
-                    kSecAttrAccount as String: account,
-                ]
-                SecItemDelete(deleteQuery as CFDictionary)
-            }
-        }
+    // MARK: - Account naming
+
+    private static func apiKeyAccount(for providerId: UUID) -> String {
+        "\(providerId.uuidString).apiKey"
+    }
+
+    private static func oauthAccount(for providerId: UUID) -> String {
+        "\(providerId.uuidString).oauth.tokens"
+    }
+
+    private static func headerAccount(key: String, for providerId: UUID) -> String {
+        "\(providerId.uuidString).header.\(key)"
+    }
+
+    // MARK: - Generic CRUD
+    //
+    // All items route through `KeychainDataProtection`, which prefers the
+    // data-protection keychain (so the legacy login-keychain ACL password
+    // prompt never fires) and transparently falls back to / migrates from the
+    // legacy keychain.
+
+    @discardableResult
+    private static func setData(_ data: Data, account: String) -> Bool {
+        KeychainDataProtection.write(service: service, account: account, data: data)
+    }
+
+    private static func getData(account: String) -> Data? {
+        KeychainDataProtection.read(service: service, account: account)
+    }
+
+    @discardableResult
+    private static func deleteItem(account: String) -> Bool {
+        KeychainDataProtection.delete(service: service, account: account)
+    }
+
+    private static func allAccounts() -> [String] {
+        KeychainDataProtection.allAccounts(service: service)
     }
 }

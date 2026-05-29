@@ -422,9 +422,9 @@ private struct ChatEmptyStateNoModels: View {
             let minutes = Int(eta) / 60
             let seconds = Int(eta) % 60
             if minutes > 0 {
-                parts.append("\(minutes)m \(seconds)s left")
+                parts.append(String(format: L("%dm %ds left"), minutes, seconds))
             } else {
-                parts.append("\(seconds)s left")
+                parts.append(String(format: L("%ds left"), seconds))
             }
         }
 

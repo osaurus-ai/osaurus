@@ -77,6 +77,36 @@ struct DocumentParserShimTests {
         #expect(attachments.first?.documentContent == "legacy path still works")
     }
 
+    @Test func parseAll_timesOutSlowRegistryAdapter() throws {
+        DocumentFormatRegistry.shared.register(
+            adapter: SlowFixtureAdapter(
+                formatId: Self.fixtureFormatId,
+                extensions: [Self.fixtureExtension],
+                sleepNanoseconds: 2_000_000_000
+            )
+        )
+        defer { cleanUp() }
+
+        let url = try writeFile(content: "ignored", ext: Self.fixtureExtension)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let start = Date()
+        do {
+            try DocumentParser.withRegistryAdapterTimeoutForTesting(0.05) {
+                _ = try DocumentParser.parseAll(url: url)
+            }
+            Issue.record("Expected slow adapter to time out")
+        } catch let error as DocumentParser.ParseError {
+            guard case .readFailed(let reason) = error else {
+                Issue.record("Expected readFailed timeout, got \(error)")
+                return
+            }
+            #expect(reason.contains("timed out"))
+        }
+
+        #expect(Date().timeIntervalSince(start) < 1.0)
+    }
+
     // MARK: - Bootstrap
 
     @Test func bootstrap_registersExpectedBuiltInsOnIsolatedRegistry() {
@@ -142,6 +172,30 @@ struct DocumentParserShimTests {
                     underlying: PlainTextRepresentation(text: produce)
                 ),
                 textFallback: produce
+            )
+        }
+    }
+
+    private struct SlowFixtureAdapter: DocumentFormatAdapter {
+        let formatId: String
+        let extensions: Set<String>
+        let sleepNanoseconds: UInt64
+
+        func canHandle(url: URL, uti: String?) -> Bool {
+            extensions.contains(url.pathExtension.lowercased())
+        }
+
+        func parse(url: URL, sizeLimit: Int64) async throws -> StructuredDocument {
+            try await Task.sleep(nanoseconds: sleepNanoseconds)
+            return StructuredDocument(
+                formatId: formatId,
+                filename: url.lastPathComponent,
+                fileSize: 0,
+                representation: AnyStructuredRepresentation(
+                    formatId: formatId,
+                    underlying: PlainTextRepresentation(text: "late")
+                ),
+                textFallback: "late"
             )
         }
     }

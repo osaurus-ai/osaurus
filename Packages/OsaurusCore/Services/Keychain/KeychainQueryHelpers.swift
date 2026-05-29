@@ -7,6 +7,7 @@
 
 import Foundation
 import LocalAuthentication
+import Security
 
 enum KeychainQueryHelpers {
     /// Live proof/test launches set this to guarantee wrappers do not touch the
@@ -37,5 +38,43 @@ enum KeychainQueryHelpers {
         let context = LAContext()
         context.interactionNotAllowed = true
         return context
+    }
+
+    // MARK: - Data-protection keychain
+
+    /// Why we route every item through the data-protection keychain:
+    ///
+    /// On the legacy (file-based login) keychain, macOS authorizes reads of a
+    /// generic-password item against a per-item ACL bound to the *exact* code
+    /// signature of the binary that created it. Whenever the running binary's
+    /// signature differs from the one that saved the item (a routine occurrence
+    /// across rebuilds, re-signs, and app updates), macOS shows the
+    /// "<app> wants to use your confidential information stored in
+    /// '<service>' in your keychain" password prompt — once per item.
+    /// `kSecUseAuthenticationUISkip` does *not* suppress that prompt; it only
+    /// governs the data-protection keychain's biometric/passcode UI.
+    ///
+    /// The data-protection keychain (`kSecUseDataProtectionKeychain`) instead
+    /// authorizes access by the app's keychain access group, which is derived
+    /// from the `keychain-access-groups` entitlement / signing identity. Reads
+    /// by the same app then never trigger the password prompt regardless of
+    /// signature churn. We omit an explicit `kSecAttrAccessGroup`, so the
+    /// system uses the app's single entitled group as the default.
+    ///
+    /// Unsigned / un-entitled hosts (e.g. `swift test` binaries) can't use the
+    /// data-protection keychain and return `errSecMissingEntitlement`; callers
+    /// fall back to the legacy keychain in that case so behavior is unchanged
+    /// there.
+    static func dataProtection(_ query: [String: Any]) -> [String: Any] {
+        var q = query
+        q[kSecUseDataProtectionKeychain as String] = true
+        return q
+    }
+
+    /// `errSecMissingEntitlement` means the data-protection keychain is
+    /// unavailable for this process; callers should retry against the legacy
+    /// keychain.
+    static func isMissingEntitlement(_ status: OSStatus) -> Bool {
+        status == errSecMissingEntitlement
     }
 }

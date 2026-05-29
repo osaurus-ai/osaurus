@@ -3,6 +3,41 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.2</title>
+            <pubDate>Thu, 28 May 2026 16:12:35 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.2</sparkle:version>
+            <sparkle:shortVersionString>0.19.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.2/Osaurus-0.19.2.dmg" length="50194198" type="application/octet-stream" sparkle:edSignature="Cs5+YSXuskmo/hIB4XP+RuqcJyKVp5cO+Gk6VQbMTktlzUCldiNjg1ZP74nqucLFdgu7XION1420xrTOrJoSCw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- chat polish with smoother streaming, stable tool call animations and scroll cache fixes (#1283) by @RaajeevChandran
+- [codex] Harden StatsPack schema metadata (#1280) by @mimeding
+- [codex] Harden PPTX ingress metadata (#1279) by @mimeding
+- [codex] Harden generated XLSX cell output (#1278) by @mimeding
+- [codex] Preview XLSX workbooks through file\_read (#1277) by @mimeding
+- [codex] Harden MCP OAuth metadata redirects (#1276) by @mimeding
+- [codex] Contain skill file paths (#1275) by @mimeding
+- [codex] Contain Hugging Face download paths (#1274) by @mimeding
+- [codex] Bound document parser adapter bridge (#1273) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fix MCP OAuth discovery for servers that publish path scoped PRM (#1285) by @RaajeevChandran
+- fixed scroll to bottom lag \& mid stream jumps during streaming (#1272) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- update hubspot oauth to use client id and secret (#1284) by @tpae
+- remove restrictive instructions on AGENTS.md (#1281) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.1...0.19.2
+]]></description>
+        </item>
+        <item>
             <title>0.19.1</title>
             <pubDate>Thu, 28 May 2026 03:16:37 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

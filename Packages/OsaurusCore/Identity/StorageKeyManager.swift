@@ -38,6 +38,10 @@ public enum StorageKeyError: LocalizedError {
     case derivationFailed
     case randomFailed
     case rotationFailed(String)
+    /// The DEK could not be read, yet encrypted artifacts already exist on disk.
+    /// Minting a fresh key here would permanently brick the user's data, so we
+    /// fail closed and let the caller surface a recoverable error instead.
+    case keyUnavailableForExistingData
 
     public var errorDescription: String? {
         switch self {
@@ -46,6 +50,9 @@ public enum StorageKeyError: LocalizedError {
         case .derivationFailed: return "Failed to derive storage key from master key"
         case .randomFailed: return "Failed to generate cryptographically secure random bytes"
         case .rotationFailed(let m): return "Storage key rotation failed: \(m)"
+        case .keyUnavailableForExistingData:
+            return
+                "Storage encryption key is unavailable but encrypted data already exists. Refusing to create a replacement key to avoid data loss."
         }
     }
 }
@@ -71,6 +78,12 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// artifacts so it travels with `~/.osaurus/`). Without the master
     /// key in Keychain the salt is useless.
     private static let saltFilename = ".storage-key.salt"
+
+    /// Non-secret marker written once a DEK has been provisioned for this
+    /// install. Its presence (or the presence of any encrypted artifact) means
+    /// a key already exists, so a failed key read must *never* mint a fresh key
+    /// over data the old key still protects. Cleared by `resetForWipe()`.
+    private static let provisionedMarkerFilename = ".storage-key.provisioned"
 
     private let log = Logger(subsystem: "ai.osaurus", category: "storage.key")
 
@@ -120,8 +133,21 @@ public final class StorageKeyManager: @unchecked Sendable {
                 key = try generateInMemoryKey()
             } else if let existing = try readKeychainKey() {
                 key = SymmetricKey(data: existing)
+                markProvisioned()
+            } else if encryptedStorageExists() {
+                // Fail closed. The DEK is unreadable (both keychains missed) but
+                // encrypted artifacts already exist on disk. Generating a fresh
+                // key would re-key over data the old key still protects and
+                // permanently destroy it. Surface a recoverable error instead so
+                // the real key can be restored (e.g. a signing/entitlement fix,
+                // a retry once the keychain is unlocked) without data loss.
+                log.error(
+                    "Storage DEK is unreadable but encrypted storage already exists; refusing to mint a replacement key"
+                )
+                throw StorageKeyError.keyUnavailableForExistingData
             } else {
                 key = try generateAndPersistKey()
+                markProvisioned()
             }
 
             os_unfair_lock_lock(&lock)
@@ -168,14 +194,17 @@ public final class StorageKeyManager: @unchecked Sendable {
         if Self.disablesKeychainForProcess {
             return hasCachedKey
         }
-        let query: [String: Any] = [
+        let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: Self.keyAccount,
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
-        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+        if SecItemCopyMatching(KeychainQueryHelpers.dataProtection(base) as CFDictionary, nil) == errSecSuccess {
+            return true
+        }
+        return SecItemCopyMatching(base as CFDictionary, nil) == errSecSuccess
     }
 
     /// Generate a new key, replacing the existing one. Caller is
@@ -267,6 +296,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     public func resetForWipe() {
         if Self.disablesKeychainForProcess {
             try? FileManager.default.removeItem(at: saltFile())
+            try? FileManager.default.removeItem(at: provisionedMarkerFile())
             wipeCache()
             return
         }
@@ -283,9 +313,11 @@ public final class StorageKeyManager: @unchecked Sendable {
             ],
         ]
         for q in queries {
+            _ = SecItemDelete(KeychainQueryHelpers.dataProtection(q) as CFDictionary)
             _ = SecItemDelete(q as CFDictionary)
         }
         try? FileManager.default.removeItem(at: saltFile())
+        try? FileManager.default.removeItem(at: provisionedMarkerFile())
         wipeCache()
     }
 
@@ -302,6 +334,43 @@ public final class StorageKeyManager: @unchecked Sendable {
         os_unfair_lock_lock(&lock)
         cachedReadFailureStatus = status
         os_unfair_lock_unlock(&lock)
+    }
+
+    // MARK: - Fail-closed provisioning guard
+
+    private func provisionedMarkerFile() -> URL {
+        OsaurusPaths.root().appendingPathComponent(Self.provisionedMarkerFilename)
+    }
+
+    /// Record that a DEK exists for this install. Best-effort and idempotent;
+    /// failure to write the marker is non-fatal because `encryptedStorageExists()`
+    /// also treats on-disk encrypted artifacts as proof of prior provisioning.
+    private func markProvisioned() {
+        let url = provisionedMarkerFile()
+        if FileManager.default.fileExists(atPath: url.path) { return }
+        OsaurusPaths.ensureExistsSilent(OsaurusPaths.root())
+        try? Data([0x01]).write(to: url, options: [.atomic])
+    }
+
+    /// True when there is evidence a DEK was already provisioned: either the
+    /// marker file or any SQLCipher-encrypted database. When this is true and the
+    /// key read fails, we must fail closed rather than re-key over existing data.
+    private func encryptedStorageExists() -> Bool {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: provisionedMarkerFile().path) { return true }
+        let encryptedArtifacts = [
+            OsaurusPaths.chatHistoryDatabaseFile(),
+            OsaurusPaths.memoryDatabaseFile(),
+            OsaurusPaths.methodsDatabaseFile(),
+            OsaurusPaths.toolIndexDatabaseFile(),
+            OsaurusPaths.workDatabaseFile(),
+        ]
+        for url in encryptedArtifacts {
+            if let size = try? fm.attributesOfItem(atPath: url.path)[.size] as? Int, size > 0 {
+                return true
+            }
+        }
+        return false
     }
 
     private func generateAndPersistKey(forceFresh: Bool = false) throws -> SymmetricKey {
@@ -382,23 +451,90 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     private func persistKeychain(data: Data) throws {
         if Self.disablesKeychainForProcess { return }
+        try persistItem(account: Self.keyAccount, data: data, label: "Osaurus Storage Encryption Key")
+    }
+
+    private func readKeychainKey() throws -> Data? {
+        if Self.disablesKeychainForProcess { return nil }
+        return try readItem(account: Self.keyAccount, label: "Osaurus Storage Encryption Key")
+    }
+
+    // MARK: - Keychain (salt)
+
+    private func persistKeychainSalt(_ data: Data) throws {
+        if Self.disablesKeychainForProcess { return }
+        try persistItem(account: Self.saltAccount, data: data, label: "Osaurus Storage Key Derivation Salt")
+    }
+
+    private func readKeychainSalt() throws -> Data? {
+        if Self.disablesKeychainForProcess { return nil }
+        return try readItem(account: Self.saltAccount, label: "Osaurus Storage Key Derivation Salt")
+    }
+
+    // MARK: - Data-protection keychain (with legacy fallback)
+    //
+    // The DEK + salt are written to the data-protection keychain so launching a
+    // re-signed build never raises the legacy login-keychain ACL password
+    // prompt. Items written by older builds are read from the legacy keychain
+    // and migrated forward on first read. See `KeychainQueryHelpers.dataProtection`.
+
+    /// Write `attributes` for `account` to the data-protection keychain,
+    /// falling back to the legacy keychain when the entitlement is unavailable.
+    /// On a successful data-protection write the stale legacy copy is removed so
+    /// a later read can never return an outdated key.
+    /// - Parameter removeStaleLegacyCopy: When `true` (authoritative re-keys:
+    ///   first-run, rotate, install, derive) the legacy login-keychain copy is
+    ///   deleted after a successful data-protection write so a later read can
+    ///   never return an outdated key. When `false` (a migration that simply
+    ///   copies an existing key forward) the legacy copy is **kept** as a
+    ///   disaster-recovery fallback: reads still prefer the data-protection
+    ///   keychain (no prompt), but if that ever becomes unreadable the legacy
+    ///   copy still opens the user's data instead of bricking it.
+    private func persistItem(
+        account: String,
+        data: Data,
+        label: String,
+        removeStaleLegacyCopy: Bool = true
+    ) throws {
         let baseQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.keyAccount,
+            kSecAttrAccount as String: account,
         ]
         let attributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            kSecAttrLabel as String: "Osaurus Storage Encryption Key",
+            kSecAttrLabel as String: label,
         ]
 
-        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess { return }
-        if updateStatus != errSecItemNotFound {
-            log.error("Storage key SecItemUpdate failed: \(updateStatus)")
+        // Data-protection keychain first.
+        let dpQuery = KeychainQueryHelpers.dataProtection(baseQuery)
+        let dpUpdate = SecItemUpdate(dpQuery as CFDictionary, attributes as CFDictionary)
+        if dpUpdate == errSecSuccess {
+            if removeStaleLegacyCopy { _ = SecItemDelete(baseQuery as CFDictionary) }
+            return
+        }
+        if dpUpdate == errSecItemNotFound {
+            var add = dpQuery
+            add.merge(attributes) { _, new in new }
+            let dpAdd = SecItemAdd(add as CFDictionary, nil)
+            if dpAdd == errSecSuccess {
+                if removeStaleLegacyCopy { _ = SecItemDelete(baseQuery as CFDictionary) }
+                return
+            }
+            if !KeychainQueryHelpers.isMissingEntitlement(dpAdd) {
+                throw StorageKeyError.keychainWriteFailed(dpAdd)
+            }
+        } else if !KeychainQueryHelpers.isMissingEntitlement(dpUpdate) {
+            log.error("Storage item SecItemUpdate(data-protection) failed: \(dpUpdate)")
         }
 
+        // Legacy fallback (data-protection keychain unavailable on this host).
+        let legacyUpdate = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+        if legacyUpdate == errSecSuccess { return }
+        if legacyUpdate != errSecItemNotFound {
+            log.error("Storage item SecItemUpdate(legacy) failed: \(legacyUpdate)")
+        }
         var addQuery = baseQuery
         addQuery.merge(attributes) { _, new in new }
         let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
@@ -407,68 +543,40 @@ public final class StorageKeyManager: @unchecked Sendable {
         }
     }
 
-    private func readKeychainKey() throws -> Data? {
-        if Self.disablesKeychainForProcess { return nil }
-        let query: [String: Any] = [
+    /// Read `account` from the data-protection keychain, falling back to the
+    /// legacy keychain (and migrating the value forward) when absent there.
+    private func readItem(account: String, label: String) throws -> Data? {
+        let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.keyAccount,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
+
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        if status != errSecSuccess {
+        let status = SecItemCopyMatching(KeychainQueryHelpers.dataProtection(base) as CFDictionary, &result)
+        if status == errSecSuccess { return result as? Data }
+        if status != errSecItemNotFound && !KeychainQueryHelpers.isMissingEntitlement(status) {
             cacheReadFailureIfNonInteractiveBlocked(status)
             throw StorageKeyError.keychainReadFailed(status)
         }
-        return result as? Data
-    }
 
-    // MARK: - Keychain (salt)
-
-    private func persistKeychainSalt(_ data: Data) throws {
-        if Self.disablesKeychainForProcess { return }
-        let baseQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.saltAccount,
-        ]
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            kSecAttrLabel as String: "Osaurus Storage Key Derivation Salt",
-        ]
-        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess { return }
-        var addQuery = baseQuery
-        addQuery.merge(attributes) { _, new in new }
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw StorageKeyError.keychainWriteFailed(status)
+        var legacyResult: AnyObject?
+        let legacyStatus = SecItemCopyMatching(base as CFDictionary, &legacyResult)
+        if legacyStatus == errSecItemNotFound { return nil }
+        if legacyStatus != errSecSuccess {
+            cacheReadFailureIfNonInteractiveBlocked(legacyStatus)
+            throw StorageKeyError.keychainReadFailed(legacyStatus)
         }
-    }
-
-    private func readKeychainSalt() throws -> Data? {
-        if Self.disablesKeychainForProcess { return nil }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.saltAccount,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        if status != errSecSuccess {
-            cacheReadFailureIfNonInteractiveBlocked(status)
-            throw StorageKeyError.keychainReadFailed(status)
-        }
-        return result as? Data
+        guard let data = legacyResult as? Data else { return nil }
+        // Migrate forward so subsequent reads use the data-protection keychain,
+        // but keep the legacy copy as a recovery fallback. The happy path still
+        // reads the data-protection keychain first (no prompt); the legacy copy
+        // only matters if data-protection access is ever lost on a later build.
+        try? persistItem(account: account, data: data, label: label, removeStaleLegacyCopy: false)
+        return data
     }
 }
 

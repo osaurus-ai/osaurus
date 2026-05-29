@@ -73,8 +73,26 @@ chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus"
 
 # Re-sign the modified app bundle inside the archive
 # (Use --deep to sign the nested CLI binary as well, but explicitly re-apply entitlements)
+#
+# IMPORTANT: codesign does NOT expand Xcode build variables. The source
+# entitlements use `$(AppIdentifierPrefix)` for the keychain-access-groups value,
+# which only Xcode resolves during its own packaging phase. Signing with the raw
+# file here would embed the literal `$(AppIdentifierPrefix)com.dinoki.osaurus`,
+# producing an invalid access group. The data-protection keychain would then
+# return errSecMissingEntitlement at runtime and silently fall back to the legacy
+# login keychain — reintroducing the "wants to use your confidential information"
+# password prompt in production while working fine in local Xcode builds.
+# Resolve the prefix (`$(AppIdentifierPrefix)` == "<TeamID>.") before re-signing.
+echo "Resolving entitlements (AppIdentifierPrefix -> ${DEVELOPMENT_TEAM}.)..."
+RESOLVED_ENTITLEMENTS="build/osaurus.resolved.entitlements"
+sed "s|\$(AppIdentifierPrefix)|${DEVELOPMENT_TEAM}.|g" "App/osaurus/osaurus.entitlements" > "$RESOLVED_ENTITLEMENTS"
+if grep -q 'AppIdentifierPrefix' "$RESOLVED_ENTITLEMENTS"; then
+  echo "Error: failed to resolve \$(AppIdentifierPrefix) in entitlements" >&2
+  exit 1
+fi
+
 echo "Re-signing modified app bundle..."
-codesign --force --deep --options runtime --entitlements "App/osaurus/osaurus.entitlements" --sign "${CODE_SIGN_IDENTITY_VALUE}" "$ARCHIVE_APP"
+codesign --force --deep --options runtime --entitlements "$RESOLVED_ENTITLEMENTS" --sign "${CODE_SIGN_IDENTITY_VALUE}" "$ARCHIVE_APP"
 
 cat > ExportOptions.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

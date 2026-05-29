@@ -3,38 +3,36 @@
 See `~/AGENTS.md` for the global Codex environment, wiki protocol, hard rules,
 machine context, and useful commands.
 
-## Keychain-Free Validation Gate
+## Build & Test
 
-For Osaurus validation tied to vMLX, model runtime, parser/template, cache,
-reasoning/tool, cancellation, or server-panel work:
+Running tests and builds is encouraged — they're how we keep quality high. The
+canonical lanes live in `Makefile`:
 
-- Do not run validation, build, signing, notarization, certificate, or
-  `security` paths that trigger macOS Keychain or
-  "wants to use your confidential information" prompts.
-- Do not use app-launch or proof commands that can read the user's login
-  Keychain unless Eric explicitly asks for that exact lane.
-- Live app probes must use the keychain-disabled test mode:
-  `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1` and an isolated
-  `OSAURUS_TEST_ROOT=/tmp/...` path.
-- In keychain-disabled test mode, Osaurus Keychain wrappers must not perform
-  `SecItemCopyMatching`, `SecItemAdd`, `SecItemUpdate`, or `SecItemDelete`.
-  Reads must return nil or an in-memory test key, writes must fail/no-op, and
-  deletes must no-op without touching the login Keychain.
-- Prefer source-only tests/audits and runtime probes that do not require
-  signing or user authentication. If a prompt appears, stop the lane, document
-  the artifact as blocked, and switch to a keychain-free proof path.
-- Do not treat an unsigned Xcode build flag as sufficient proof of
-  keychain-safety. If Xcode, codesign, CodeSigningHelper, or Keychain UI
-  appears in the lane, stop.
-- Do not run Osaurus SwiftPM/Xcode validation lanes (`swift test`,
-  `swift build`, `xcrun swift`, `xcodebuild`, `swift-driver`,
-  `swift-frontend`, package plugin builds, or Cmlx compile jobs) unless Eric
-  explicitly approves that exact lane. These paths can still invoke Apple
-  signing, package, or keychain-adjacent services even when the test itself
-  looks source-only.
-- Shell-only guards, `rg` audits, direct script checks, and direct execution of
-  an already-built app through `scripts/live-proof/launch-keychain-free-osaurus.sh`
-  are the default validation routes while this gate is active.
+- `make test` — `swift test --package-path Packages/OsaurusCore` (fast unit
+  loop).
+- `make ci-test` — mirrors the CI `test-core` xcodebuild job (`xcbeautify`
+  output, xcresult bundle at `build/Tests.xcresult`).
+- `make cli` / `make app` — build the CLI and the embedded app via
+  `xcodebuild` against `osaurus.xcworkspace`.
+- `make evals` / `make evals-all` — run OsaurusEvals suites under
+  `Packages/OsaurusEvals/Suites/*`.
+- Live-app smoke: `scripts/live-proof/launch-keychain-free-osaurus.sh`.
+
+### Keychain tip (optional)
+
+Some tests touch Osaurus Keychain wrappers. If a test doesn't need real
+Keychain access, prefer running it in keychain-disabled mode to avoid
+unrelated "wants to use your confidential information" prompts:
+
+```bash
+OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
+OSAURUS_TEST_ROOT=/tmp/osaurus-test \
+make test
+```
+
+In that mode, Keychain wrappers should return nil / no-op on reads, writes,
+and deletes rather than calling `SecItemCopyMatching` / `SecItemAdd` /
+`SecItemUpdate` / `SecItemDelete` against the login Keychain.
 
 ## Model Runtime Non-Negotiables
 

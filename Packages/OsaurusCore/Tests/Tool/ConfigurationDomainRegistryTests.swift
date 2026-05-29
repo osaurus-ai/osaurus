@@ -96,11 +96,12 @@ struct ConfigurationDomainRegistryTests {
         ConfigurationDomainBootstrap.registerBuiltIns()
 
         let configureWrites = ToolRegistry.configureWriteToolNames
-        // Provider, model, plugin, schedule, agent domains all
+        // Provider, model, MCP, plugin, schedule, agent domains all
         // contribute. Snapshot a couple of representative tools — one
         // per domain — to lock the surface contract.
         #expect(configureWrites.contains("osaurus_provider_add"))
         #expect(configureWrites.contains("osaurus_model_download"))
+        #expect(configureWrites.contains("osaurus_mcp_add"))
         #expect(configureWrites.contains("osaurus_plugin_install"))
         #expect(configureWrites.contains("osaurus_schedule_create"))
         #expect(configureWrites.contains("osaurus_agent_create"))

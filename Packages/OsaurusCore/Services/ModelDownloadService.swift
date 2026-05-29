@@ -282,7 +282,14 @@ final class ModelDownloadService: ObservableObject {
 
                 var filesToDownload: [HuggingFaceService.MatchedFile] = []
                 for file in files {
-                    let dest = model.localDirectory.appendingPathComponent(file.path)
+                    guard
+                        let dest = HuggingFaceService.destinationURL(
+                            forRemotePath: file.path,
+                            under: model.localDirectory
+                        )
+                    else {
+                        continue
+                    }
                     let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
                     let existingSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
                     if existingSize == file.size {
@@ -332,9 +339,16 @@ final class ModelDownloadService: ObservableObject {
                 for file in filesToDownload {
                     try Task.checkCancellation()
 
+                    guard
+                        let destination = HuggingFaceService.destinationURL(
+                            forRemotePath: file.path,
+                            under: model.localDirectory
+                        )
+                    else {
+                        continue
+                    }
                     guard let downloadURL = Self.resolveURL(repoId: model.id, path: file.path)
                     else { continue }
-                    let destination = model.localDirectory.appendingPathComponent(file.path)
 
                     let baseCompleted = completedFileBytes
                     inFlightFilePath = file.path
@@ -378,7 +392,14 @@ final class ModelDownloadService: ObservableObject {
                 // disk at its expected size and report which are missing
                 let fm = FileManager.default
                 let missing: [String] = files.compactMap { file in
-                    let dest = model.localDirectory.appendingPathComponent(file.path)
+                    guard
+                        let dest = HuggingFaceService.destinationURL(
+                            forRemotePath: file.path,
+                            under: model.localDirectory
+                        )
+                    else {
+                        return file.path
+                    }
                     let attrs = try? fm.attributesOfItem(atPath: dest.path)
                     let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
                     return size == file.size ? nil : file.path
@@ -677,8 +698,12 @@ final class ModelDownloadService: ObservableObject {
     }
 
     nonisolated static func resolveURL(repoId: String, path: String) -> URL? {
-        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
-        return URL(string: "https://huggingface.co/\(repoId)/resolve/main/\(encoded)")
+        guard let safePath = HuggingFaceService.normalizedRemoteFilePath(path) else { return nil }
+        var comps = URLComponents()
+        comps.scheme = "https"
+        comps.host = "huggingface.co"
+        comps.path = "/\(repoId)/resolve/main/\(safePath)"
+        return comps.url
     }
 
     // MARK: - Disk-space preflight
@@ -820,7 +845,14 @@ final class ModelDownloadService: ObservableObject {
 
         let fm = FileManager.default
         let missing = remoteFiles.filter { file in
-            let local = directory.appendingPathComponent(file.path)
+            guard
+                let local = HuggingFaceService.destinationURL(
+                    forRemotePath: file.path,
+                    under: directory
+                )
+            else {
+                return true
+            }
             guard let attrs = try? fm.attributesOfItem(atPath: local.path),
                 let localSize = (attrs[.size] as? NSNumber)?.int64Value
             else { return true }
@@ -832,8 +864,16 @@ final class ModelDownloadService: ObservableObject {
         defer { downloader.invalidate() }
         var allSucceeded = true
         for file in missing {
-            guard let url = resolveURL(repoId: model.id, path: file.path) else { continue }
-            let dest = directory.appendingPathComponent(file.path)
+            guard
+                let url = resolveURL(repoId: model.id, path: file.path),
+                let dest = HuggingFaceService.destinationURL(
+                    forRemotePath: file.path,
+                    under: directory
+                )
+            else {
+                allSucceeded = false
+                continue
+            }
             do {
                 try await downloader.download(
                     from: url,

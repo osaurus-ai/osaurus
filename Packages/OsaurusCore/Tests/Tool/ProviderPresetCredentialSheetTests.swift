@@ -160,6 +160,62 @@ struct ProviderPresetCredentialSheetTests {
         #expect(hostField != nil)
     }
 
+    // MARK: - Provider-aware rotate init
+
+    @Test
+    func rotateInit_openrouterByHost_resolvesOpenrouterPreset() {
+        // The shared `.openaiLegacy` type can't be disambiguated by type
+        // alone, but the existing provider's host can. Rotating OpenRouter
+        // must show the OpenRouter preset (OAuth-minted key), not `.custom`.
+        let provider = RemoteProvider(
+            name: "OpenRouter",
+            host: "openrouter.ai",
+            providerType: .openaiLegacy
+        )
+        let request = ProviderCredentialRequest(
+            provider: provider,
+            providerName: provider.name,
+            mode: .rotate(existingId: provider.id)
+        )
+        #expect(request.preset == .openrouter)
+        #expect(request.instructions.presetId == "openrouter")
+    }
+
+    @Test
+    func rotateInit_unknownLegacyHost_fallsBackToCustom() {
+        // A custom OpenAI-compatible proxy with no matching stock host can't
+        // be identified, so rotate still falls back to `.custom` and renders
+        // the host field.
+        let provider = RemoteProvider(
+            name: "Self-hosted",
+            host: "proxy.internal.example",
+            providerType: .openaiLegacy
+        )
+        let request = ProviderCredentialRequest(
+            provider: provider,
+            providerName: provider.name,
+            mode: .rotate(existingId: provider.id)
+        )
+        #expect(request.preset == .custom)
+    }
+
+    @Test
+    func rotateInit_codexProvider_keepsOAuthEntry() {
+        let provider = RemoteProvider(
+            name: "Codex",
+            host: "chatgpt.com",
+            providerType: .openAICodex
+        )
+        let request = ProviderCredentialRequest(
+            provider: provider,
+            providerName: provider.name,
+            mode: .rotate(existingId: provider.id)
+        )
+        #expect(request.preset == .openai)
+        #expect(request.providerType == .openAICodex)
+        #expect(request.instructions.authMethod == .oauth)
+    }
+
     // MARK: - OAuth coordinator dispatch
 
     @Test

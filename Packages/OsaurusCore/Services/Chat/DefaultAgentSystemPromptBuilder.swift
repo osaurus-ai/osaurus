@@ -92,7 +92,7 @@ public enum DefaultAgentSystemPromptBuilder {
             "- Secrets (API keys, OAuth tokens) NEVER appear in your messages or tool args. They flow through a native sheet directly to Keychain."
         )
         lines.append(
-            "- You cannot self-configure. Default-agent settings (persona, model, temperature) are user-edited in Settings → Default Agent."
+            "- You cannot self-configure. Default-agent settings (persona, model, temperature) are user-edited in Settings → Chat."
         )
         lines.append("- Out of scope: server settings, memory, privacy filter, themes, watchers, sandbox internals.")
         lines.append("- Never invent tool names — `osaurus_*_<verb>` writes only come from `capabilities_search`.")

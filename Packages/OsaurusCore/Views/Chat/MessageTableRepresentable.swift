@@ -218,7 +218,25 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onDelete: onDelete,
             onSpeak: onSpeak,
             onUserImagePreview: onUserImagePreview,
-            sessionRedactions: sessionRedactions
+            sessionRedactions: sessionRedactions,
+            hasChartBeenDrawn: { [weak coordinator] id in
+                coordinator?.drawnChartBlockIds.contains(id) ?? false
+            },
+            markChartDrawn: { [weak coordinator] id in
+                coordinator?.drawnChartBlockIds.insert(id)
+            },
+            cachedChartView: { [weak coordinator] id in
+                coordinator?.chartViewCache[id]
+            },
+            cacheChartView: { [weak coordinator] id, view in
+                coordinator?.chartViewCache[id] = view
+            },
+            cachedToolGroupView: { [weak coordinator] id in
+                coordinator?.toolGroupViewCache[id]
+            },
+            cacheToolGroupView: { [weak coordinator] id, view in
+                coordinator?.toolGroupViewCache[id] = view
+            }
         )
     }
 
@@ -393,6 +411,29 @@ extension MessageTableRepresentable {
         private var lastEmittedUserTurnId: UUID?
         /// Tracks the last observed scroll-to-turn trigger from the view.
         var lastScrollToTurnTrigger: Int = 0
+
+        // MARK: Chart Animation Tracking
+
+        /// Block ids of charts already drawn at least once in this chat.
+        /// Used to suppress the entry animation when NSTableView recycles
+        /// a cell back into view (each scroll-in otherwise spins up a
+        /// fresh `NativeChartView` with `hasDrawn = false`). Pruned to the
+        /// current `newIds` on each `applyBlocks` so loading a different
+        /// chat clears the set.
+        var drawnChartBlockIds: Set<String> = []
+
+        /// Cache of `NativeChartView` instances keyed by chart block id.
+        /// Holds a strong reference across cell recycles so the embedded
+        /// `AAChartView` (WKWebView) keeps its rendered contents — scrolling
+        /// a chart out and back in reparents the same view instead of
+        /// rebuilding it. Pruned to `newIds` on each `applyBlocks`.
+        var chartViewCache: [String: NativeChartView] = [:]
+
+        /// Same pattern as `chartViewCache`, for tool-call group blocks.
+        /// Keeps the rendered ring/icon/title across cell recycles so the
+        /// appearance animation only ever plays once per call.
+        var toolGroupViewCache: [String: NativeToolCallGroupView] = [:]
+
         private var minimapUpdateWork: DispatchWorkItem?
         private let minimapUpdateInterval: TimeInterval = 0.05
         nonisolated(unsafe) private var minimapBoundsObserver: NSObjectProtocol?
@@ -625,6 +666,24 @@ extension MessageTableRepresentable {
             }
 
             let newIds = blocks.map(\.id)
+            // Drop chart "already animated" entries that are no longer in
+            // the thread (covers chat switch / session reload).
+            if newIds != blockIds {
+                if !drawnChartBlockIds.isEmpty {
+                    drawnChartBlockIds.formIntersection(newIds)
+                }
+                if !chartViewCache.isEmpty || !toolGroupViewCache.isEmpty {
+                    let newIdSet = Set(newIds)
+                    for key in chartViewCache.keys where !newIdSet.contains(key) {
+                        chartViewCache[key]?.removeFromSuperview()
+                        chartViewCache.removeValue(forKey: key)
+                    }
+                    for key in toolGroupViewCache.keys where !newIdSet.contains(key) {
+                        toolGroupViewCache[key]?.removeFromSuperview()
+                        toolGroupViewCache.removeValue(forKey: key)
+                    }
+                }
+            }
             // Use uniquingKeysWith instead of uniqueKeysWithValues to avoid a
             // precondition crash if block IDs collide (e.g. stale memoizer cache
             // during session restore). Last-write-wins preserves correct behavior.

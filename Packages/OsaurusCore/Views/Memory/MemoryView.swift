@@ -447,7 +447,7 @@ struct MemoryView: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Uses your global chat settings", bundle: .module)
+                    Text("Uses your global memory settings", bundle: .module)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(1)

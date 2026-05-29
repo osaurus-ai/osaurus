@@ -71,15 +71,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         return name
     }
 
-    // MARK: - Work Generation Settings
-    /// Work-specific temperature override (nil uses default 0.3)
-    public var workTemperature: Float?
-    /// Work-specific max tokens override (nil uses default 4096)
-    public var workMaxTokens: Int?
-    /// Work-specific top_p override (nil uses server default)
-    public var workTopPOverride: Float?
-    /// Work-specific max reasoning loop iterations (nil uses default 50)
-    public var workMaxIterations: Int?
     /// Global sandbox execution config used by the built-in Default agent.
     public var defaultAutonomousExec: AutonomousExecConfig?
 
@@ -131,10 +122,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel: String? = nil,
         coreModelProvider: String? = nil,
         coreModelName: String? = nil,
-        workTemperature: Float? = nil,
-        workMaxTokens: Int? = nil,
-        workTopPOverride: Float? = nil,
-        workMaxIterations: Int? = nil,
         defaultAutonomousExec: AutonomousExecConfig? = nil,
         preflightSearchMode: PreflightSearchMode? = nil,
         disableTools: Bool = false,
@@ -155,10 +142,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.defaultModel = defaultModel
         self.coreModelProvider = coreModelProvider
         self.coreModelName = coreModelName
-        self.workTemperature = workTemperature
-        self.workMaxTokens = workMaxTokens
-        self.workTopPOverride = workTopPOverride
-        self.workMaxIterations = workMaxIterations
         self.defaultAutonomousExec = defaultAutonomousExec
         self.preflightSearchMode = preflightSearchMode
         self.disableTools = disableTools
@@ -182,10 +165,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
         coreModelProvider = try container.decodeIfPresent(String.self, forKey: .coreModelProvider)
         coreModelName = try container.decodeIfPresent(String.self, forKey: .coreModelName)
-        workTemperature = try container.decodeIfPresent(Float.self, forKey: .workTemperature)
-        workMaxTokens = try container.decodeIfPresent(Int.self, forKey: .workMaxTokens)
-        workTopPOverride = try container.decodeIfPresent(Float.self, forKey: .workTopPOverride)
-        workMaxIterations = try container.decodeIfPresent(Int.self, forKey: .workMaxIterations)
         defaultAutonomousExec = try container.decodeIfPresent(
             AutonomousExecConfig.self,
             forKey: .defaultAutonomousExec
@@ -240,10 +219,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             // `AppConfiguration` picks exactly the same value.
             coreModelProvider: nil,
             coreModelName: defaultCoreModelNameIfAvailable,
-            workTemperature: 0.3,
-            workMaxTokens: 4096,
-            workTopPOverride: nil,
-            workMaxIterations: 50,
             defaultAutonomousExec: nil,
             preflightSearchMode: .balanced,
             enableClipboardMonitoring: true,

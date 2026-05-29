@@ -51,6 +51,10 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
             let providerConnected = RemoteProviderManager.shared.providerStates.values
                 .filter { $0.isConnected }.count
 
+            let mcpProviders = MCPProviderManager.shared.configuration.providers
+            let mcpConnected = MCPProviderManager.shared.providerStates.values
+                .filter { $0.isConnected }.count
+
             let plugins = PluginRepositoryService.shared.plugins
             let installedPlugins = plugins.filter { $0.installedVersion != nil }
             let failedPlugins = installedPlugins.filter { $0.loadError != nil }
@@ -111,6 +115,10 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
                     "configured": providerCount,
                     "connected": providerConnected,
                 ],
+                "mcp": [
+                    "configured": mcpProviders.count,
+                    "connected": mcpConnected,
+                ],
                 "plugins": [
                     "installed": installedPlugins.count,
                     "failed": failedPlugins.count,
@@ -133,15 +141,17 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
     public let name = "osaurus_list"
     public let description =
         "List items in a configuration scope. `scope` ∈ "
-        + "{agents, models, providers, plugins, schedules}. "
-        + "Optional `filter` is scope-specific (e.g. models: installed|downloading|recommended|all)."
+        + "{agents, models, providers, mcp, plugins, schedules}. "
+        + "Optional `filter` is scope-specific: models: installed|downloading|recommended|all; "
+        + "providers/mcp: enabled|disabled|connected|all; plugins: installed|available|failed; "
+        + "schedules: enabled|disabled."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
             "scope": .object([
                 "type": .string("string"),
-                "description": .string("One of: agents, models, providers, plugins, schedules."),
+                "description": .string("One of: agents, models, providers, mcp, plugins, schedules."),
             ]),
             "filter": .object([
                 "type": .string("string"),
@@ -152,6 +162,21 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
     ])
 
     public init() {}
+
+    /// Shared `enabled | disabled | connected` filter for item rows that
+    /// carry `enabled` / `connected` booleans (providers, MCP providers).
+    /// Unknown filters pass everything through.
+    private static func filterByEnabledConnected(
+        _ items: [[String: Any]],
+        filter: String
+    ) -> [[String: Any]] {
+        switch filter {
+        case "enabled": return items.filter { ($0["enabled"] as? Bool) == true }
+        case "disabled": return items.filter { ($0["enabled"] as? Bool) == false }
+        case "connected": return items.filter { ($0["connected"] as? Bool) == true }
+        default: return items
+        }
+    }
 
     public func execute(argumentsJSON: String) async throws -> String {
         if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
@@ -215,9 +240,33 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
                         "provider_type": p.providerType.rawValue,
                         "enabled": p.enabled,
                         "connected": state?.isConnected ?? false,
+                        "has_api_key": p.hasAPIKey,
+                        "has_oauth": p.hasOAuthTokens,
                     ]
                 }
-                payload = ["scope": "providers", "items": items]
+                payload = [
+                    "scope": "providers", "filter": filter,
+                    "items": Self.filterByEnabledConnected(items, filter: filter),
+                ]
+            case "mcp", "mcp_providers":
+                let providers = MCPProviderManager.shared.configuration.providers
+                let items = providers.map { p -> [String: Any] in
+                    let state = MCPProviderManager.shared.providerStates[p.id]
+                    return [
+                        "id": p.id.uuidString,
+                        "name": p.name,
+                        "url": p.url,
+                        "auth": p.authType.rawValue,
+                        "enabled": p.enabled,
+                        "connected": state?.isConnected ?? false,
+                        "has_token": p.hasToken,
+                        "has_oauth": p.hasOAuthTokens,
+                    ]
+                }
+                payload = [
+                    "scope": "mcp", "filter": filter,
+                    "items": Self.filterByEnabledConnected(items, filter: filter),
+                ]
             case "plugins":
                 let plugins = PluginRepositoryService.shared.plugins
                 let items = plugins.map { state -> [String: Any] in
@@ -259,7 +308,7 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
             default:
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
-                    message: "Unknown scope `\(scope)`. Valid: agents, models, providers, plugins, schedules.",
+                    message: "Unknown scope `\(scope)`. Valid: agents, models, providers, mcp, plugins, schedules.",
                     field: "scope",
                     tool: name
                 )
@@ -350,8 +399,33 @@ public final class OsaurusDescribeTool: OsaurusTool, @unchecked Sendable {
                         "enabled": p.enabled,
                         "auto_connect": p.autoConnect,
                         "connected": state?.isConnected ?? false,
+                        "has_api_key": p.hasAPIKey,
+                        "has_oauth": p.hasOAuthTokens,
                         "last_error": state?.lastError ?? "",
                         "discovered_models": state?.discoveredModels ?? [],
+                    ]
+                } else {
+                    payload = nil
+                }
+            case "mcp", "mcp_providers":
+                if let uuid = UUID(uuidString: idStr),
+                    let p = MCPProviderManager.shared.configuration.provider(id: uuid)
+                {
+                    let state = MCPProviderManager.shared.providerStates[uuid]
+                    payload = [
+                        "id": p.id.uuidString,
+                        "name": p.name,
+                        "url": p.url,
+                        "auth": p.authType.rawValue,
+                        "transport": p.transport.rawValue,
+                        "enabled": p.enabled,
+                        "auto_connect": p.autoConnect,
+                        "connected": state?.isConnected ?? false,
+                        "has_token": p.hasToken,
+                        "has_oauth": p.hasOAuthTokens,
+                        "requires_auth": state?.requiresAuth ?? false,
+                        "last_error": state?.lastError ?? "",
+                        "discovered_tools": state?.discoveredToolNames ?? [],
                     ]
                 } else {
                     payload = nil

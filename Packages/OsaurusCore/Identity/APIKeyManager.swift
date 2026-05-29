@@ -9,7 +9,6 @@
 
 import Foundation
 import LocalAuthentication
-import Security
 
 public final class APIKeyManager: @unchecked Sendable {
     public static let shared = APIKeyManager()
@@ -207,46 +206,20 @@ public final class APIKeyManager: @unchecked Sendable {
 
     // MARK: - Keychain Persistence
 
+    // The access-key metadata blob is read/written through
+    // `KeychainDataProtection`, which prefers the data-protection keychain (so a
+    // re-signed build never raises the legacy login-keychain ACL password
+    // prompt) and falls back to / migrates from the legacy keychain.
     private static func saveToKeychain(_ keys: [AccessKeyInfo]) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(keys) else { return }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-        ]
-
-        let existing = SecItemCopyMatching(query as CFDictionary, nil)
-        if existing == errSecSuccess {
-            let update: [String: Any] = [kSecValueData as String: data]
-            SecItemUpdate(query as CFDictionary, update as CFDictionary)
-        } else {
-            var add = query
-            add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-            SecItemAdd(add as CFDictionary, nil)
-        }
+        KeychainDataProtection.write(service: keychainService, account: keychainAccount, data: data)
     }
 
     private static func loadFromKeychain() -> [AccessKeyInfo] {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-            kSecReturnData as String: true,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-        ]
-
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-            let data = result as? Data
-        else {
-            return []
-        }
-
+        guard let data = KeychainDataProtection.read(service: keychainService, account: keychainAccount)
+        else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return (try? decoder.decode([AccessKeyInfo].self, from: data)) ?? []

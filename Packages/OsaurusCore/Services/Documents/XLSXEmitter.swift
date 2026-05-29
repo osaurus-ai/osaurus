@@ -274,6 +274,7 @@ public struct XLSXEmitter: DocumentFormatEmitter {
 
     private static let maxRows = 1_048_576
     private static let maxColumns = 16_384
+    private static let maxCellTextUTF16Units = 32_767
     private static let invalidSheetNameCharacters = CharacterSet(charactersIn: "[]:*?/\\")
 
     private static func validatedSheets(_ sheets: [Workbook.Sheet]) throws -> [Workbook.Sheet] {
@@ -328,11 +329,22 @@ public struct XLSXEmitter: DocumentFormatEmitter {
                 guard cell.rowNumber >= 1, cell.rowNumber <= maxRows else {
                     throw writeFailed("\(sheetName)!\(cell.reference) is outside XLSX row bounds")
                 }
+                if case .string(let value) = cell.value {
+                    try validateCellText(value, reference: "\(sheetName)!\(cell.reference)")
+                }
                 let normalizedReference = cell.reference.uppercased()
                 guard cellReferences.insert(normalizedReference).inserted else {
                     throw writeFailed("\(sheetName) contains duplicate cell \(cell.reference)")
                 }
             }
+        }
+    }
+
+    private static func validateCellText(_ value: String, reference: String) throws {
+        guard value.utf16.count <= maxCellTextUTF16Units else {
+            throw writeFailed(
+                "\(reference) text exceeds Excel's \(maxCellTextUTF16Units)-character cell limit"
+            )
         }
     }
 

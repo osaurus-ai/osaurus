@@ -1812,12 +1812,12 @@ final class ChatSession: ObservableObject {
         do {
             for try await delta in stream {
                 if !isRunActive(runId) {
-                    processor.finalize()
+                    await processor.finalize()
                     return ([], currentTurn)
                 }
                 // Server-side tool call complete: add the call card + result turn to the chat log
                 if let done = StreamingToolHint.decodeDone(delta) {
-                    processor.finalize()
+                    await processor.finalize()
                     let call = ToolCall(
                         id: done.callId,
                         type: "function",
@@ -1942,8 +1942,12 @@ final class ChatSession: ObservableObject {
             capturedInvocations = [inv]
         }
 
-        // Flush any remaining buffered content (including partial tags)
-        processor.finalize()
+        // Flush any remaining buffered content (including partial tags).
+        // In smooth-streaming mode this awaits until the pacing tail
+        // finishes typing out — keeping the processor alive past
+        // `send()`'s return so the residual buffer is rendered, not
+        // dropped on dealloc.
+        await processor.finalize()
 
         if let first = firstDeltaTime {
             currentTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
@@ -2848,7 +2852,7 @@ final class ChatSession: ObservableObject {
                                 if !isRunActive(runId) { break }
                                 if !delta.isEmpty { processor.receiveDelta(delta) }
                             }
-                            processor.finalize()
+                            await processor.finalize()
                         } catch {
                             debugLog("send: final wrap-up call failed: \(error.localizedDescription)")
                         }
@@ -3283,8 +3287,7 @@ struct ChatView: View {
                                 selectedModel: nil,
                                 agents: windowState.agents,
                                 activeAgentId: windowState.agentId,
-                                quickActions: windowState.activeAgent.chatQuickActions
-                                    ?? AgentQuickAction.defaultChatQuickActions,
+                                quickActions: emptyStateQuickActions,
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
@@ -3610,6 +3613,16 @@ struct ChatView: View {
     /// the budget — adding modifiers to the inline `ChatEmptyState(...)`
     /// here previously tipped the surrounding ZStack expression past the
     /// "unable to type-check in reasonable time" threshold.
+    /// Quick actions for the empty chat state: the active agent's own actions
+    /// if defined, else the built-in defaults (configure-oriented for the
+    /// default Osaurus agent, chat-oriented for everything else).
+    private var emptyStateQuickActions: [AgentQuickAction] {
+        windowState.activeAgent.chatQuickActions
+            ?? (windowState.agentId == Agent.defaultId
+                ? AgentQuickAction.defaultConfigurationQuickActions
+                : AgentQuickAction.defaultChatQuickActions)
+    }
+
     @ViewBuilder
     private var emptyStateView: some View {
         ChatEmptyState(
@@ -3617,8 +3630,7 @@ struct ChatView: View {
             selectedModel: session.selectedModel,
             agents: windowState.agents,
             activeAgentId: windowState.agentId,
-            quickActions: windowState.activeAgent.chatQuickActions
-                ?? AgentQuickAction.defaultChatQuickActions,
+            quickActions: emptyStateQuickActions,
             generativeGreetingState: session.generativeGreetingState,
             onOpenModelManager: {
                 AppDelegate.shared?.showManagementWindow(initialTab: .models)

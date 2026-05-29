@@ -4776,6 +4776,26 @@ struct AgentDetailView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
 
+        // The built-in Osaurus agent is in-memory only — `AgentManager.update`
+        // refuses it, so the generic `Agent`-shaped save below would be a
+        // silent no-op. Its user-editable fields live in
+        // `DefaultAgentConfiguration` (Settings → Chat); route them there so
+        // edits made from this detail view actually persist. Identity fields
+        // (name / description / avatar) are fixed for the built-in and are
+        // intentionally not persisted here.
+        if agent.id == Agent.defaultId {
+            var cfg = DefaultAgentConfigurationStore.load()
+            cfg.systemPrompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            cfg.defaultModel = selectedModel
+            cfg.temperature = Float(temperature)
+            cfg.maxTokens = Int(maxTokens)
+            cfg.disableTools = disableTools
+            DefaultAgentConfigurationStore.save(cfg)
+            NotificationCenter.default.post(name: .agentUpdated, object: agent.id)
+            showSaveIndicator()
+            return
+        }
+
         let effectivePluginInstructions: [String: String]? = {
             let overrides = pluginInstructionsMap.filter { pid, text in
                 let manifest = PluginManager.shared.loadedPlugin(for: pid)?.plugin.manifest.instructions ?? ""

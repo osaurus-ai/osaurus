@@ -26,19 +26,7 @@ public enum ToolSecretsKeychain {
         }
         guard let valueData = value.data(using: .utf8) else { return false }
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-
-        deleteSecret(id: id, for: pluginId, agentId: agentId)
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: valueData,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        ]
-
-        let status = SecItemAdd(query as CFDictionary, nil)
-        return status == errSecSuccess
+        return KeychainDataProtection.write(service: service, account: account, data: valueData)
     }
 
     public static func getSecret(id: String, for pluginId: String, agentId: UUID) -> String? {
@@ -47,28 +35,8 @@ public enum ToolSecretsKeychain {
             return testStoreLock.withLock { testStore[account] }
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-            let data = result as? Data,
-            let value = String(data: data, encoding: .utf8)
-        else {
-            return nil
-        }
-
-        return value
+        return KeychainDataProtection.read(service: service, account: account)
+            .flatMap { String(data: $0, encoding: .utf8) }
     }
 
     public static func hasSecret(id: String, for pluginId: String, agentId: UUID) -> Bool {
@@ -83,15 +51,7 @@ public enum ToolSecretsKeychain {
             return true
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-
-        let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        return KeychainDataProtection.delete(service: service, account: account)
     }
 
     public static func deleteAllSecrets(for pluginId: String, agentId: UUID) {
@@ -108,12 +68,7 @@ public enum ToolSecretsKeychain {
             guard let account = item[kSecAttrAccount as String] as? String,
                 account.contains(suffix)
             else { continue }
-            let deleteQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
-            ]
-            SecItemDelete(deleteQuery as CFDictionary)
+            KeychainDataProtection.delete(service: service, account: account)
         }
     }
 
@@ -223,12 +178,7 @@ public enum ToolSecretsKeychain {
                 !isAgentScopedAccount(account)
             else { continue }
 
-            let deleteQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
-            ]
-            SecItemDelete(deleteQuery as CFDictionary)
+            KeychainDataProtection.delete(service: service, account: account)
         }
     }
 
@@ -265,25 +215,7 @@ public enum ToolSecretsKeychain {
             }
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-            kSecReturnAttributes as String: true,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
-            kSecUseAuthenticationContext as String: KeychainQueryHelpers.nonInteractiveContext(),
-        ]
-        if !attributesOnly {
-            query[kSecReturnData as String] = true
-        }
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess, let items = result as? [[String: Any]] else {
-            return []
-        }
-        return items
+        return KeychainDataProtection.fetchAll(service: service, returnData: !attributesOnly)
     }
 
     private static func deleteAllMatchingPrefix(_ prefix: String) {
@@ -302,12 +234,7 @@ public enum ToolSecretsKeychain {
             guard let account = item[kSecAttrAccount as String] as? String,
                 account.hasPrefix(prefix)
             else { continue }
-            let deleteQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
-            ]
-            SecItemDelete(deleteQuery as CFDictionary)
+            KeychainDataProtection.delete(service: service, account: account)
         }
     }
 }

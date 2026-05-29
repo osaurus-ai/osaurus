@@ -8,7 +8,11 @@ First-party statistics/data-science format pack for the in-process v1
 - CSV with an optional JSON `.csvschema` sidecar. The sidecar may be either
   `data.csvschema` or `data.csv.csvschema`, and should contain
   `{ "columns": [{ "name": "field", "type": "string" }] }`.
-- TSV as UTF-8 tab-delimited rows.
+- TSV as UTF-8 tab-delimited rows, with the same optional schema behavior via
+  `.tsvschema` sidecars.
+- Delimited rows stream without buffering the full file. Records include
+  path-free metadata for delimiter, schema columns, header rows, line number,
+  and column count.
 - JSONL as one JSON value per line. Object records stream fields in sorted-key
   order; arrays and scalars stream positionally.
 - SQLite read-only for `.sqlite`, `.sqlite3`, and `.db` files. The adapter uses
