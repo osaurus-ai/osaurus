@@ -5086,6 +5086,7 @@
       }
     },
     "Controls how the AI reasons and calls tools. Lower temperature improves reliability." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -18254,18 +18255,18 @@
         }
       }
     },
-    "Reset all work tool permissions to default" : {
+    "Reset all tool permissions to default" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Alle Arbeits-Tool-Berechtigungen auf Standard zurücksetzen"
+            "value" : "Alle Tool-Berechtigungen auf Standard zurücksetzen"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将所有作业工具权限重置为默认值"
+            "value" : "将所有工具权限重置为默认值"
           }
         }
       }
