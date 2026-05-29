@@ -1072,6 +1072,54 @@ struct SwiftTransformersTokenizerLoaderTests {
             "Every available downloaded tokenizer family should render. Available: \(availableRows.map(\.family)); rendered: \(renderedFamilies)"
         )
     }
+
+    @Test func lfm2LocalTokenizerUsesStrictRequiredToolFallback() async throws {
+        let defaultPath = "/Users/eric/.mlxstudio/models/JANGQ-AI/LFM2.5-8B-A1B-JANG_2L"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_LFM2_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                ["role": "user", "content": "Use the line_count tool on this exact text: red\ngreen\nblue"]
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("LFM tool call"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
+        #expect(decoded.contains(#"[line_count(text="red\ngreen\nblue")]"#), "Decoded: \(decoded)")
+        #expect(decoded.contains(#"preserving every newline as \n and adding no spaces"#), "Decoded: \(decoded)")
+        #expect(!decoded.contains("Today's date:"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<think>"), "Decoded: \(decoded)")
+    }
 }
 
 private struct LocalTokenizerRow {

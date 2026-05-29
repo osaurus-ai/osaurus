@@ -225,6 +225,11 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         let modelTypeIsZayaText =
             normalizedModelType == "zaya"
             || normalizedModelType == "zaya1"
+        let modelTypeIsLFM2 =
+            normalizedModelType == "lfm2"
+            || normalizedModelType == "lfm2_moe"
+            || normalizedModelType == "lfm2-vl"
+            || normalizedModelType == "lfm2_vl"
         let hasZayaChatTokens =
             upstream.bosToken == "<bos>"
             && upstream.convertTokenToId("<|im_start|>") != nil
@@ -285,6 +290,19 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         }
 
         var adjustedContext = additionalContext
+        if modelTypeIsLFM2,
+            !(chatTemplateTools?.isEmpty ?? true),
+            (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
+            return try fallback(
+                label: "LFM2ToolMinimal",
+                template: MLXLMCommon.ChatTemplateFallbacks.lfm2ToolMinimal,
+                messages: messages,
+                tools: chatTemplateTools,
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
+            )
+        }
         if hasZayaToolChatSentinel,
             (Self.messagesContainImageContent(messages) || !(chatTemplateTools?.isEmpty ?? true)),
             (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
