@@ -27,6 +27,18 @@ row is production-clear.
 - Guard refresh: `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening`, `ModelRuntimeIsHybridTests/lfm2_isHybrid`, `assert-tool-choice-required-routing.sh`, `assert-server-settings-runtime-wiring.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-no-forced-behavior-pr.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, `assert-osaurus-pr-hygiene.sh`, and `git diff --check` passed against the `6a7b291709f6cf1b6db17928e1096c9007fbd1d0` vMLX pin before this live run.
 - Verdict: LFM2.5 JANG_2L is green for this selected Osaurus no-sign app row: required-tool parsing, assistant/tool history replay, visible tool-result finalization, reasoning/parser non-leakage, and hybrid topology detection. Warm disk-L2/SSM companion hit reuse, MXFP4/MXFP8 live rows, broader tools, and broader prompt contexts remain follow-up coverage.
 
+## 2026-05-29 LFM2.5 JANG_2L repeat required-tool red rows
+
+- Osaurus PR head at check: `5535b681c939aba0b96b717c424243f60fc305b2`.
+- vMLX main / Osaurus pin: `6a7b291709f6cf1b6db17928e1096c9007fbd1d0`.
+- Red repeat artifact at `max_tokens: 768`: `/tmp/osaurus-pr1268-5535b681-lfm25-jang2l-tool-cache-warm-20260529-105641`.
+- Red larger-budget artifact at `max_tokens: 2048`: `/tmp/osaurus-pr1268-5535b681-lfm25-jang2l-tool-cache-2048-20260529-105717`.
+- 768 result: turn 1 ended `finish_reason: "length"` with no structured tool call and no visible content. The response spent the budget in untagged `reasoning_content`, reasoning about the tool-call format. Turn 2 and turn 3 were skipped because no valid tool call existed.
+- 2048 result: turn 1 ended `finish_reason: "stop"` but produced visible native-looking text `[ line_count("red\ngreen\nb\nblue") ]` instead of an API `tool_calls` object. It leaked protocol-shaped text into visible content, omitted the required `text=` keyword argument, and corrupted the exact text argument. Turn 2 and turn 3 were skipped.
+- Cache/topology result: both red rows still showed the 24-layer LFM hybrid topology with 6 KV layers, 18 Mamba/SSM companion layers, disk-backed restore required, and TurboQuant KV layer count 0. They did not prove warm disk L2 or SSM companion hits (`disk_l2_hits 0`, `ssm_companion_hits 0`, `companion_hits 0`).
+- Caller-control check: a manual repeat request with explicit `enable_thinking:false` still produced untagged reasoning and `finish_reason: "length"`, so this is not cleared by a caller-side thinking disable.
+- Verdict: LFM2.5 is not production-clear for required-tool repeat behavior. The earlier selected green row remains useful evidence for architecture/topology and one successful tool path, but broad LFM2.5 tool/parser/cache readiness is red/partial until vMLX fixes the LFM reasoning/tool contract and a repeat row passes.
+
 ## 2026-05-28 Nemotron Omni MXFP4 repeat required-tool red row
 
 - Osaurus head at check: `a1d101d6f22dfff41052c1af33975c25663175cd`.
