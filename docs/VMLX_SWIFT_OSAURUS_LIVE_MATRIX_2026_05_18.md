@@ -16,7 +16,7 @@ row is production-clear.
 ## 2026-05-29 LFM2.5 JANG_2L current-head cold pass and warm-cache partial
 
 - Osaurus PR head at check: `662de08d1bc52bd7d5ae91ab6d8a1d6e246fb062`.
-- vMLX main / Osaurus pin: `1c6a5c5f2707f0260211db9aa9cd7c91911ca81f`.
+- vMLX main / Osaurus pin: `5035d62454531c7d9bdbdbbd4b3cdc54077470e8`.
 - No-sign app path: `build/DerivedData-pr1268-lfm25-nosign-662de08d/Build/Products/Release/osaurus.app`.
 - Launch boundary: app was launched keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, `OSAURUS_TEST_ROOT=/tmp/osaurus-pr1268-662de08d-lfm25-ui-root-mlxstudio`, and `OSU_MODELS_DIR=/Users/eric/.mlxstudio/models`.
 - Cold artifact: `/tmp/osaurus-pr1268-662de08d-lfm25-jang2l-tool-cache-cold-20260529-121517`.
@@ -26,7 +26,7 @@ row is production-clear.
 - Cold topology/cache result: 24 layers, 6 KV layers, 18 Mamba/SSM companion layers, `companion=ssm`, disk-backed restore required, SSM companion state required, paged-cache incompatible, block disk L2 enabled, and TurboQuant KV layer count 0. This row proves cache topology and disk-backed restore, not warm reuse; it recorded `disk_l2_misses 2`, `disk_l2_stores 4`, `disk_l2_hits 0`, `ssm_companion_hits 0`, and `companion_hits 0`.
 - Cold token/s: visible follow-up emitted 164 completion tokens at 183.81 tok/s; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
 - Warm result: cache reuse was proven with `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1` on the same LFM hybrid topology. Turn 1 remained exact, turn 2 answered visibly, and turn 3 still returned a structured `line_count` call with no visible/protocol leak, but `turn3_args_exact` failed because the `text` argument included extra native-call reasoning text after `one\ntwo`.
-- Guard refresh: `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening`, `SwiftTransformersTokenizerLoaderTests/lfm2LocalTokenizerUsesStrictRequiredToolFallback`, `assert-tool-choice-required-routing.sh`, `assert-server-settings-runtime-wiring.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-no-forced-behavior-pr.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, `assert-osaurus-pr-hygiene.sh`, and `git diff --check` passed against the `1c6a5c5f2707f0260211db9aa9cd7c91911ca81f` vMLX pin before this live run. vMLX focused tests also passed for the LFM stale reasoning stamp, LFM2 parser escaped newlines, and LFM2 required-template fallback.
+- Guard refresh: `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening`, `SwiftTransformersTokenizerLoaderTests/lfm2LocalTokenizerUsesStrictRequiredToolFallback`, `assert-tool-choice-required-routing.sh`, `assert-server-settings-runtime-wiring.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-no-forced-behavior-pr.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, `assert-osaurus-pr-hygiene.sh`, and `git diff --check` passed against the `5035d62454531c7d9bdbdbbd4b3cdc54077470e8` vMLX pin before this live run. vMLX focused tests also passed for the LFM stale reasoning stamp, LFM2 parser escaped newlines, and LFM2 required-template fallback.
 - Verdict: LFM2.5 JANG_2L is green for the current-head cold Osaurus no-sign app row and green for warm L2/SSM companion cache-hit evidence, but partial for warm repeat exact argument fidelity. MXFP4/MXFP8 live rows, broader tools, and broader prompt contexts remain follow-up coverage.
 
 ## 2026-05-29 LFM2.5 JANG_2L superseded repeat required-tool red rows
@@ -39,7 +39,7 @@ row is production-clear.
 - 2048 result: turn 1 ended `finish_reason: "stop"` but produced visible native-looking text `[ line_count("red\ngreen\nb\nblue") ]` instead of an API `tool_calls` object. It leaked protocol-shaped text into visible content, omitted the required `text=` keyword argument, and corrupted the exact text argument. Turn 2 and turn 3 were skipped.
 - Cache/topology result: both red rows still showed the 24-layer LFM hybrid topology with 6 KV layers, 18 Mamba/SSM companion layers, disk-backed restore required, and TurboQuant KV layer count 0. They did not prove warm disk L2 or SSM companion hits (`disk_l2_hits 0`, `ssm_companion_hits 0`, `companion_hits 0`).
 - Caller-control check: a manual repeat request with explicit `enable_thinking:false` still produced untagged reasoning and `finish_reason: "length"`, so this is not cleared by a caller-side thinking disable.
-- Verdict: these red rows are superseded for the length-stop/no-tool-call failure mode by the later `1c6a5c5f2707f0260211db9aa9cd7c91911ca81f` vMLX pin and current-head cold pass, but they remain useful regression evidence. LFM2.5 is still not production-clear globally because the current-head warm cache row proves L2/SSM hits but still fails exact turn 3 argument fidelity, and MXFP4/MXFP8 live rows remain unproven.
+- Verdict: these red rows are superseded for the length-stop/no-tool-call failure mode by the later `5035d62454531c7d9bdbdbbd4b3cdc54077470e8` vMLX pin and current-head cold pass, but they remain useful regression evidence. LFM2.5 is still not production-clear globally because the current-head warm cache row proves L2/SSM hits but still fails exact turn 3 argument fidelity, and MXFP4/MXFP8 live rows remain unproven.
 
 ## 2026-05-28 Nemotron Omni MXFP4 repeat required-tool red row
 
