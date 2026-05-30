@@ -84,7 +84,7 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-        return KeychainDataProtection.write(service: service, account: account, data: valueData)
+        return Keychain.write(service: service, account: account, data: valueData)
     }
 
     public static func getSecret(id: String, agentId: UUID) -> String? {
@@ -97,7 +97,7 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
-        return KeychainDataProtection.read(service: service, account: account)
+        return Keychain.read(service: service, account: account)
             .flatMap { String(data: $0, encoding: .utf8) }
     }
 
@@ -112,7 +112,7 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-        return KeychainDataProtection.delete(service: service, account: account)
+        return Keychain.delete(service: service, account: account)
     }
 
     /// Enumerates accounts then fetches each value individually.
@@ -146,7 +146,7 @@ public enum AgentSecretsKeychain {
         if KeychainQueryHelpers.disablesKeychainForProcess { return }
         let prefix = "\(agentId.uuidString)."
         for account in allAccounts() where account.hasPrefix(prefix) {
-            KeychainDataProtection.delete(service: service, account: account)
+            Keychain.delete(service: service, account: account)
         }
     }
 
@@ -185,6 +185,6 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
-        return KeychainDataProtection.allAccounts(service: service)
+        return Keychain.allAccounts(service: service)
     }
 }

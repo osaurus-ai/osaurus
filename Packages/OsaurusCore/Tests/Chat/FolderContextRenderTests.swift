@@ -115,6 +115,14 @@ struct FolderContextRenderTests {
         #expect(!guide.contains("instead of"))
     }
 
+    @Test("artifact reminder names write, edit, and share tools")
+    func artifactReminderNamesArtifactSurfaceTools() {
+        let rendered = SystemPromptTemplates.folderContext(from: ctx())
+        #expect(rendered.contains("`file_write`"))
+        #expect(rendered.contains("`file_edit`"))
+        #expect(rendered.contains("`share_artifact`"))
+    }
+
     // MARK: - Subsection ordering
 
     /// The rendered folder section should land subsections in this order:

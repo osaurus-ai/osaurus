@@ -76,21 +76,18 @@ public final class RevocationStore: @unchecked Sendable {
         var counterThresholds: [String: UInt64]
     }
 
-    // The revocation blob is read/written through `KeychainDataProtection`, which
-    // prefers the data-protection keychain (so a re-signed build never raises the
-    // legacy login-keychain ACL password prompt) and falls back to / migrates
-    // from the legacy keychain.
+    // The revocation blob is read/written through the shared `Keychain` helper.
     private func save() {
         let model = StorageModel(
             revokedKeys: Array(revokedKeys),
             counterThresholds: counterThresholds
         )
         guard let data = try? JSONEncoder().encode(model) else { return }
-        KeychainDataProtection.write(service: Self.keychainService, account: Self.keychainAccount, data: data)
+        Keychain.write(service: Self.keychainService, account: Self.keychainAccount, data: data)
     }
 
     private func load() {
-        guard let data = KeychainDataProtection.read(service: Self.keychainService, account: Self.keychainAccount),
+        guard let data = Keychain.read(service: Self.keychainService, account: Self.keychainAccount),
             let model = try? JSONDecoder().decode(StorageModel.self, from: data)
         else { return }
 

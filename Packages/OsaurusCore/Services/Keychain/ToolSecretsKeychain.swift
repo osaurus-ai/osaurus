@@ -26,7 +26,7 @@ public enum ToolSecretsKeychain {
         }
         guard let valueData = value.data(using: .utf8) else { return false }
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-        return KeychainDataProtection.write(service: service, account: account, data: valueData)
+        return Keychain.write(service: service, account: account, data: valueData)
     }
 
     public static func getSecret(id: String, for pluginId: String, agentId: UUID) -> String? {
@@ -35,7 +35,7 @@ public enum ToolSecretsKeychain {
             return testStoreLock.withLock { testStore[account] }
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
-        return KeychainDataProtection.read(service: service, account: account)
+        return Keychain.read(service: service, account: account)
             .flatMap { String(data: $0, encoding: .utf8) }
     }
 
@@ -51,7 +51,7 @@ public enum ToolSecretsKeychain {
             return true
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-        return KeychainDataProtection.delete(service: service, account: account)
+        return Keychain.delete(service: service, account: account)
     }
 
     public static func deleteAllSecrets(for pluginId: String, agentId: UUID) {
@@ -68,7 +68,7 @@ public enum ToolSecretsKeychain {
             guard let account = item[kSecAttrAccount as String] as? String,
                 account.contains(suffix)
             else { continue }
-            KeychainDataProtection.delete(service: service, account: account)
+            Keychain.delete(service: service, account: account)
         }
     }
 
@@ -178,7 +178,7 @@ public enum ToolSecretsKeychain {
                 !isAgentScopedAccount(account)
             else { continue }
 
-            KeychainDataProtection.delete(service: service, account: account)
+            Keychain.delete(service: service, account: account)
         }
     }
 
@@ -215,7 +215,7 @@ public enum ToolSecretsKeychain {
             }
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
-        return KeychainDataProtection.fetchAll(service: service, returnData: !attributesOnly)
+        return Keychain.fetchAll(service: service, returnData: !attributesOnly)
     }
 
     private static func deleteAllMatchingPrefix(_ prefix: String) {
@@ -234,7 +234,7 @@ public enum ToolSecretsKeychain {
             guard let account = item[kSecAttrAccount as String] as? String,
                 account.hasPrefix(prefix)
             else { continue }
-            KeychainDataProtection.delete(service: service, account: account)
+            Keychain.delete(service: service, account: account)
         }
     }
 }

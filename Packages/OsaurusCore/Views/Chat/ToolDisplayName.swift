@@ -35,7 +35,14 @@ enum ToolDisplayName {
     /// Friendly label for the chip. `running` selects present-continuous
     /// ("Inserting…") vs past ("Inserted…"). Falls back to a humanized form of
     /// `rawName` for tools without a curated entry.
-    static func friendly(for rawName: String, running: Bool) -> String {
+    ///
+    /// `arguments` (the raw tool-call JSON) lets search-style tools hoist their
+    /// query into the title — "Searching “foo”" / "Searched for “foo”" — so a
+    /// column of otherwise identical "Search" rows stays distinguishable.
+    static func friendly(for rawName: String, running: Bool, arguments: String? = nil) -> String {
+        if isSearchTool(rawName) {
+            return searchLabel(rawName, running: running, arguments: arguments)
+        }
         if let label = curated[rawName] {
             return label.text(running: running)
         }
@@ -45,6 +52,42 @@ enum ToolDisplayName {
             return humanize(String(rawName.dropFirst("sandbox_".count))) + L(" in sandbox")
         }
         return humanize(rawName)
+    }
+
+    /// Whether `rawName` is a search tool whose title should embed its query.
+    static func isSearchTool(_ rawName: String) -> Bool {
+        rawName == "search" || rawName == "web_search"
+    }
+
+    private static func searchLabel(_ rawName: String, running: Bool, arguments: String?) -> String {
+        let onWeb = rawName == "web_search"
+        guard let query = searchQuery(from: arguments) else {
+            // No query parsed yet (e.g. arguments still streaming) — fall back
+            // to a clean verb-only form rather than a dangling "Searched for".
+            if running { return onWeb ? L("Searching the web") : L("Searching") }
+            return onWeb ? L("Searched the web") : L("Searched")
+        }
+        let verb: String
+        if running {
+            verb = onWeb ? L("Searching the web for") : L("Searching")
+        } else {
+            verb = onWeb ? L("Searched the web for") : L("Searched for")
+        }
+        return "\(verb) “\(query)”"
+    }
+
+    /// Extract a non-empty, length-capped `query` string from a tool call's raw
+    /// JSON arguments for use in the title. Returns nil when absent/blank.
+    private static func searchQuery(from arguments: String?) -> String? {
+        guard let arguments,
+            let data = arguments.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let raw = json["query"] as? String
+        else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let maxLen = 64
+        return trimmed.count > maxLen ? String(trimmed.prefix(maxLen - 1)) + "…" : trimmed
     }
 
     /// Generic fallback: underscores/dashes → spaces, sentence-cased.

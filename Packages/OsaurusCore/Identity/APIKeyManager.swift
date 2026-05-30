@@ -206,19 +206,17 @@ public final class APIKeyManager: @unchecked Sendable {
 
     // MARK: - Keychain Persistence
 
-    // The access-key metadata blob is read/written through
-    // `KeychainDataProtection`, which prefers the data-protection keychain (so a
-    // re-signed build never raises the legacy login-keychain ACL password
-    // prompt) and falls back to / migrates from the legacy keychain.
+    // The access-key metadata blob is read/written through the shared
+    // `Keychain` helper.
     private static func saveToKeychain(_ keys: [AccessKeyInfo]) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(keys) else { return }
-        KeychainDataProtection.write(service: keychainService, account: keychainAccount, data: data)
+        Keychain.write(service: keychainService, account: keychainAccount, data: data)
     }
 
     private static func loadFromKeychain() -> [AccessKeyInfo] {
-        guard let data = KeychainDataProtection.read(service: keychainService, account: keychainAccount)
+        guard let data = Keychain.read(service: keychainService, account: keychainAccount)
         else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

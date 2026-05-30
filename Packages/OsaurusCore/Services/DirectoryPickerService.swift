@@ -229,6 +229,21 @@ final class DirectoryPickerService: ObservableObject {
         return Self.effectiveModelsDirectory()
     }
 
+    /// Whether a directory exists and holds at least one visible entry.
+    /// Hidden bookkeeping files (`.DS_Store`, etc.) don't count, so a
+    /// folder that only ever held a `.DS_Store` reads as empty. Used to
+    /// prefer a populated models location over an empty one.
+    nonisolated private static func directoryHasVisibleContents(_ url: URL) -> Bool {
+        guard
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        else { return false }
+        return !entries.isEmpty
+    }
+
     /// Get the default models directory (without user bookmark)
     nonisolated static func defaultModelsDirectory() -> URL {
         let fileManager = FileManager.default
@@ -240,6 +255,16 @@ final class DirectoryPickerService: ObservableObject {
         let newDefault = homeURL.appendingPathComponent("MLXModels")
         let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
         let oldDefault = documentsPath.appendingPathComponent("MLXModels")
+
+        // Prefer a location that actually holds models. A newer build (or
+        // the directory picker) can leave an empty `~/MLXModels` behind,
+        // which used to shadow a populated legacy `~/Documents/MLXModels`
+        // and make already-downloaded models look missing after an update.
+        if directoryHasVisibleContents(newDefault) { return newDefault }
+        if directoryHasVisibleContents(oldDefault) { return oldDefault }
+
+        // Neither holds models — keep the historical preference order:
+        // an existing (if empty) new default, then legacy, then new default.
         if fileManager.fileExists(atPath: newDefault.path) { return newDefault }
         if fileManager.fileExists(atPath: oldDefault.path) { return oldDefault }
         return newDefault

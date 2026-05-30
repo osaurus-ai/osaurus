@@ -279,10 +279,11 @@ public final class RemoteProviderManager: ObservableObject {
             notifyModelsChanged()
 
         } catch {
+            let errorMessage = userFacingErrorMessage(error, for: provider)
             // Update state with error
             state.isConnecting = false
             state.isConnected = false
-            state.lastError = error.localizedDescription
+            state.lastError = errorMessage
             state.discoveredModels = []
             providerStates[providerId] = state
 
@@ -291,7 +292,7 @@ public final class RemoteProviderManager: ObservableObject {
                 Task { await service.invalidateSession() }
             }
 
-            print("[Osaurus] Remote Provider '\(provider.name)': Connection failed - \(error)")
+            print("[Osaurus] Remote Provider '\(provider.name)': Connection failed - \(errorMessage)")
 
             notifyStatusChanged()
             throw error
@@ -667,6 +668,13 @@ public final class RemoteProviderManager: ObservableObject {
 
     private func notifyModelsChanged() {
         NotificationCenter.default.post(name: .remoteProviderModelsChanged, object: nil)
+    }
+
+    private func userFacingErrorMessage(_ error: Error, for provider: RemoteProvider) -> String {
+        guard provider.authType == .openAICodexOAuth || provider.providerType == .openAICodex else {
+            return error.localizedDescription
+        }
+        return OpenAICodexOAuthService.diagnosticMessage(for: error)
     }
 
     // MARK: - Test Helpers

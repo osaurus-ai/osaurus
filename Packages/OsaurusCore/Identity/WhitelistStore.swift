@@ -96,21 +96,18 @@ public final class WhitelistStore: @unchecked Sendable {
         var agents: [String: [String]]
     }
 
-    // The whitelist blob is read/written through `KeychainDataProtection`, which
-    // prefers the data-protection keychain (so a re-signed build never raises the
-    // legacy login-keychain ACL password prompt) and falls back to / migrates
-    // from the legacy keychain.
+    // The whitelist blob is read/written through the shared `Keychain` helper.
     private func save() {
         let model = StorageModel(
             master: Array(masterAddresses),
             agents: agentAddresses.mapValues { Array($0) }
         )
         guard let data = try? JSONEncoder().encode(model) else { return }
-        KeychainDataProtection.write(service: Self.keychainService, account: Self.keychainAccount, data: data)
+        Keychain.write(service: Self.keychainService, account: Self.keychainAccount, data: data)
     }
 
     private func load() {
-        guard let data = KeychainDataProtection.read(service: Self.keychainService, account: Self.keychainAccount),
+        guard let data = Keychain.read(service: Self.keychainService, account: Self.keychainAccount),
             let model = try? JSONDecoder().decode(StorageModel.self, from: data)
         else { return }
 

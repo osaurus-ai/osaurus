@@ -6,10 +6,28 @@
 //
 
 import AppKit
+import Foundation
 import OsaurusCore
 import SwiftUI
 
+/// Process entry point.
+///
+/// `OSAURUS_SPAWN_CHECK=1` makes the binary print a sentinel and exit before any
+/// app singleton initializes. CI's launch gate (`scripts/build/verify_launch.sh`)
+/// relies on this: a signed-but-unspawnable build (e.g. AMFI rejecting a
+/// restricted entitlement, the failure that bricked 0.19.3) produces no sentinel
+/// and a nonzero exit, so the release fails instead of shipping a dead app.
 @main
+enum OsaurusMain {
+    static func main() {
+        if ProcessInfo.processInfo.environment["OSAURUS_SPAWN_CHECK"] == "1" {
+            print("OSAURUS_SPAWN_OK")
+            exit(0)
+        }
+        osaurusApp.main()
+    }
+}
+
 struct osaurusApp: SwiftUI.App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @ObservedObject private var themeManager = ThemeManager.shared

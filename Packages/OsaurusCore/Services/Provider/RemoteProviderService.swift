@@ -1893,7 +1893,7 @@ public actor RemoteProviderService: ToolCapableService {
     private func refreshCodexOAuthIfNeeded() async throws {
         guard provider.authType == .openAICodexOAuth else { return }
         guard let tokens = cachedOAuthTokens else {
-            throw RemoteProviderServiceError.requestFailed("Missing ChatGPT/Codex sign-in tokens")
+            throw OpenAICodexOAuthError.missingSignInTokens
         }
         guard tokens.isExpired else { return }
 
@@ -1904,7 +1904,7 @@ public actor RemoteProviderService: ToolCapableService {
 
     private func codexOAuthHeaders() throws -> [String: String] {
         guard let tokens = cachedOAuthTokens else {
-            throw RemoteProviderServiceError.requestFailed("Missing ChatGPT/Codex sign-in tokens")
+            throw OpenAICodexOAuthError.missingSignInTokens
         }
         return [
             "Authorization": "Bearer \(tokens.accessToken)",
@@ -3142,7 +3142,7 @@ extension RemoteProviderService {
     public static func fetchModels(from provider: RemoteProvider) async throws -> [String] {
         if provider.providerType == .openAICodex {
             guard var tokens = await provider.getOAuthTokensOffMainActor() else {
-                throw RemoteProviderServiceError.requestFailed("Missing ChatGPT/Codex sign-in tokens")
+                throw OpenAICodexOAuthError.missingSignInTokens
             }
             if tokens.isExpired {
                 let refreshed = try await OpenAICodexOAuthService.refresh(tokens)

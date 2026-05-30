@@ -204,10 +204,10 @@ public actor MCPOAuthDiscovery {
         }
 
         var seen = Set<URL>()
-        return
-            candidates
-            .filter { seen.insert($0).inserted }
-            .filter { MCPOAuthURLPolicy.allowsDiscoveredURL($0, from: serverURL) }
+        let uniqueCandidates = candidates.filter { seen.insert($0).inserted }
+        return uniqueCandidates.filter {
+            MCPOAuthURLPolicy.allowsDiscoveredURL($0, from: serverURL)
+        }
     }
 
     /// Fetch (and cache) the PRM document for an MCP server.
