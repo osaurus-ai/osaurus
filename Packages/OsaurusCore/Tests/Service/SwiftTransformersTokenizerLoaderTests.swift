@@ -1119,14 +1119,15 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("Function name: line_count"), "Decoded: \(decoded)")
         #expect(decoded.contains("Required arguments: text"), "Decoded: \(decoded)")
         #expect(decoded.contains("Respond with exactly this one assistant message and nothing else:"), "Decoded: \(decoded)")
-        #expect(decoded.contains("[line_count(text='red\ngreen\nblue')]"), "Decoded: \(decoded)")
+        #expect(decoded.contains(#"[line_count(text='red\ngreen\nblue')]"#), "Decoded: \(decoded)")
         #expect(decoded.contains("Copy the `text` value exactly from the current user request."), "Decoded: \(decoded)")
         #expect(decoded.contains("This value contains exactly 2 line break(s) and 0 blank lines."), "Decoded: \(decoded)")
+        #expect(decoded.contains(#"each line break is represented by the two characters \n"#), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not double any line break."), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not add a blank line, leading space, trailing newline, or any other character to the copied value."), "Decoded: \(decoded)")
-        #expect(decoded.contains("Do not output JSON, an empty `line_count()`, or prose."), "Decoded: \(decoded)")
+        #expect(!decoded.contains("Do not output JSON"), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not omit `text`"), "Decoded: \(decoded)")
-        #expect(decoded.contains("Do not write reasoning, XML-style tool tags, JSON, markdown, or prose."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Do not write reasoning, XML-style tool tags, markdown, or prose."), "Decoded: \(decoded)")
         #expect(!decoded.contains("List of tools:"), "Decoded: \(decoded)")
         #expect(!decoded.contains(#""name":"line_count""#), "Decoded: \(decoded)")
         #expect(!decoded.contains("<tools>"), "Decoded: \(decoded)")
@@ -1140,7 +1141,7 @@ struct SwiftTransformersTokenizerLoaderTests {
                 "Required-tool instruction must trail the latest LFM user turn instead of preceding it. Decoded: \(decoded)"
             )
             #expect(
-                afterUser.contains("[line_count(text='red\ngreen\nblue')]"),
+                afterUser.contains(#"[line_count(text='red\ngreen\nblue')]"#),
                 "Required-tool instruction must keep the exact multiline value after the latest LFM user turn. Decoded: \(decoded)"
             )
         }
