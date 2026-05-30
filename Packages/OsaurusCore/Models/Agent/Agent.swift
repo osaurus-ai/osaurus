@@ -330,24 +330,58 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
     public var maxCommandsPerTurn: Int
     public var commandTimeout: Int
     public var pluginCreate: Bool
+    /// Combined sandbox + host-read mode: allow the host read tools to
+    /// read secret files (`.env`, keys, credentials) inside the read-only
+    /// workspace. Defaults `false` (refuse) — the user opts in explicitly,
+    /// trading the exfiltration protection for convenience.
+    public var allowHostSecretReads: Bool
+    /// Whether the sandbox VM gets outbound network. Defaults `true`
+    /// (egress on, current behavior). Set `false` to cut the network leg
+    /// of the agent-as-bridge exfiltration path — pairs naturally with
+    /// combined mode (read-only host + no egress). Honored at VM boot.
+    public var sandboxNetworkEnabled: Bool
 
     public static let `default` = AutonomousExecConfig(
         enabled: false,
         maxCommandsPerTurn: 10,
         commandTimeout: 30,
-        pluginCreate: true
+        pluginCreate: true,
+        allowHostSecretReads: false,
+        sandboxNetworkEnabled: true
     )
 
     public init(
         enabled: Bool = false,
         maxCommandsPerTurn: Int = 10,
         commandTimeout: Int = 30,
-        pluginCreate: Bool = true
+        pluginCreate: Bool = true,
+        allowHostSecretReads: Bool = false,
+        sandboxNetworkEnabled: Bool = true
     ) {
         self.enabled = enabled
         self.maxCommandsPerTurn = maxCommandsPerTurn
         self.commandTimeout = commandTimeout
         self.pluginCreate = pluginCreate
+        self.allowHostSecretReads = allowHostSecretReads
+        self.sandboxNetworkEnabled = sandboxNetworkEnabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, maxCommandsPerTurn, commandTimeout, pluginCreate
+        case allowHostSecretReads, sandboxNetworkEnabled
+    }
+
+    // Custom decode so agents persisted before these fields existed keep
+    // loading: missing keys fall back to the safe defaults (secrets
+    // refused, egress on) rather than failing the whole agent decode.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        maxCommandsPerTurn = try c.decodeIfPresent(Int.self, forKey: .maxCommandsPerTurn) ?? 10
+        commandTimeout = try c.decodeIfPresent(Int.self, forKey: .commandTimeout) ?? 30
+        pluginCreate = try c.decodeIfPresent(Bool.self, forKey: .pluginCreate) ?? true
+        allowHostSecretReads = try c.decodeIfPresent(Bool.self, forKey: .allowHostSecretReads) ?? false
+        sandboxNetworkEnabled = try c.decodeIfPresent(Bool.self, forKey: .sandboxNetworkEnabled) ?? true
     }
 }
 

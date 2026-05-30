@@ -318,7 +318,10 @@ public enum SystemPromptTemplates {
     /// read-only, lists only the read tools, and appends the
     /// two-filesystem block. Returns "" when no host-read folder is
     /// attached so the composer can append unconditionally.
-    public static func combinedHostRead(from folderContext: FolderContext?) -> String {
+    public static func combinedHostRead(
+        from folderContext: FolderContext?,
+        allowSecretReads: Bool = false
+    ) -> String {
         guard let folder = folderContext else { return "" }
 
         var lines: [String] = ["## Host Workspace (read-only)"]
@@ -341,7 +344,7 @@ public enum SystemPromptTemplates {
 
         section += """
 
-            \(combinedHostReadGuide)
+            \(combinedHostReadGuide(allowSecretReads: allowSecretReads))
 
             \(twoFilesystemBlock)
 
@@ -367,14 +370,22 @@ public enum SystemPromptTemplates {
     /// Read-only dispatch table for the host workspace in combined mode.
     /// Lists only the read tools and states the host is read-only — no
     /// `file_write` / `file_edit` / `shell_run`, those are hidden in
-    /// this mode because exec is confined to the sandbox.
-    static let combinedHostReadGuide = """
-        This is your read-only host workspace. Tool paths are relative to it; absolute paths are rejected.
-        - Layout: `file_tree` to list the workspace structure.
-        - Search: `file_search` for content (case-insensitive substring match).
-        - Read: `file_read` to inspect a file (optional line range).
-        You cannot write, edit, or run commands against the host workspace — it is read-only. Secret files (`.env`, keys, credentials) are refused even inside the workspace.
-        """
+    /// this mode because exec is confined to the sandbox. The final
+    /// sentence reflects the per-agent secret-read setting so the agent
+    /// isn't told secrets are blocked when the user has opted in.
+    static func combinedHostReadGuide(allowSecretReads: Bool) -> String {
+        let secretLine =
+            allowSecretReads
+            ? "Secret files (`.env`, keys, credentials) are readable because the user enabled secret reads for this agent — handle them carefully and never write them into the sandbox or send them off-host."
+            : "Secret files (`.env`, keys, credentials) are refused even inside the workspace."
+        return """
+            This is your read-only host workspace. Tool paths are relative to it; absolute paths are rejected.
+            - Layout: `file_tree` to list the workspace structure.
+            - Search: `file_search` for content (case-insensitive substring match).
+            - Read: `file_read` to inspect a file (optional line range).
+            You cannot write, edit, or run commands against the host workspace — it is read-only. \(secretLine)
+            """
+    }
 
     /// The load-bearing mental model for combined mode. Short and
     /// concrete, leading with the failure weaker models hit: the sandbox

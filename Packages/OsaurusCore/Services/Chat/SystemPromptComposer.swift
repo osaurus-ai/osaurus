@@ -764,7 +764,10 @@ public struct SystemPromptComposer: Sendable {
                     .static(
                         id: "combinedHostRead",
                         label: "Host Workspace (read-only)",
-                        content: SystemPromptTemplates.combinedHostRead(from: hostRead)
+                        content: SystemPromptTemplates.combinedHostRead(
+                            from: hostRead,
+                            allowSecretReads: snapshot.autonomousConfig?.allowHostSecretReads ?? false
+                        )
                     )
                 )
             }

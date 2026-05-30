@@ -72,6 +72,24 @@ struct SandboxExecuteCodeBridgeTests {
         }
     }
 
+    /// Combined-mode boundary regression: the host read tools are the
+    /// trusted, host-side read channel. They must NEVER be reachable from
+    /// inside a sandbox script via the bridge — that would let untrusted
+    /// code read the host workspace directly, collapsing the no-mount
+    /// invariant the whole mode rests on. The secret denylist lives in
+    /// these tools, but the bridge allow-list is the structural guard:
+    /// keep them out of it.
+    @Test
+    func allowList_excludesHostFileTools() {
+        let hostFileTools = ["file_read", "file_search", "file_tree", "file_write", "file_edit"]
+        for name in hostFileTools {
+            #expect(
+                !BuiltinSandboxTools.executeCodeBridgeAllowedTools.contains(name),
+                "`\(name)` MUST NOT be reachable from sandbox_execute_code — host file tools are host-side only; the sandbox has no mount of the workspace."
+            )
+        }
+    }
+
     /// Recursion guard: a Python script must not be able to relaunch
     /// `sandbox_execute_code` via the bridge. The per-turn limiter would
     /// bound the damage but the right place to reject is before dispatch.

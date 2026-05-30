@@ -1945,7 +1945,7 @@ private struct ProviderEditSheet: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.accentColor)
                 Text(
-                    "Runs in an isolated Linux VM. Outbound network is allowed; no access to host files or credentials.",
+                    "Runs in an isolated Linux VM with no access to host files or credentials. Outbound network is on by default and can be turned off per agent in the agent's Sandbox settings.",
                     bundle: .module
                 )
                 .font(.system(size: 11))

@@ -3786,6 +3786,24 @@ struct AgentDetailView: View {
                 ) { create in
                     updateAutonomousExec(from: execConfig) { $0.pluginCreate = create }
                 }
+
+                sandboxToggleRow(
+                    title: "Sandbox Network",
+                    subtitle:
+                        "Allow outbound network from the sandbox. Turn off to cut data exfiltration (takes effect on next sandbox start).",
+                    isOn: execConfig?.sandboxNetworkEnabled ?? true
+                ) { networkOn in
+                    updateAutonomousExec(from: execConfig) { $0.sandboxNetworkEnabled = networkOn }
+                }
+
+                sandboxToggleRow(
+                    title: "Read Secret Files",
+                    subtitle:
+                        "With a working folder, allow reading .env / keys / credentials. Off by default to keep secrets out of the sandbox.",
+                    isOn: execConfig?.allowHostSecretReads ?? false
+                ) { allow in
+                    updateAutonomousExec(from: execConfig) { $0.allowHostSecretReads = allow }
+                }
             }
         }
     }

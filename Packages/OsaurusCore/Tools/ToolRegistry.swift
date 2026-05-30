@@ -447,18 +447,54 @@ final class ToolRegistry: ObservableObject {
             // 30+ minutes — and rely on the user's `[Terminate]` button
             // + container resource limits + their own optional inactivity
             // timeout as the safety net.
-            if tool.bypassRegistryTimeout {
-                return try await Self.runToolBodyUntimed(
-                    tool,
-                    argumentsJSON: effectiveArgumentsJSON
-                )
+            //
+            // Bind the combined-mode host-read policy HERE — the one
+            // chokepoint every execute entrypoint (chat, plugin host,
+            // `/v1`, MCP, bridge) funnels through — so the host read
+            // tools enforce the secret denylist uniformly instead of
+            // relying on each caller to remember. Inert outside combined
+            // mode, leaving plain folder + plain sandbox modes untouched.
+            let policy = combinedHostReadPolicy
+            return try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
+                try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
+                    if tool.bypassRegistryTimeout {
+                        return try await Self.runToolBodyUntimed(
+                            tool,
+                            argumentsJSON: effectiveArgumentsJSON
+                        )
+                    }
+                    return try await Self.runToolBody(
+                        tool,
+                        argumentsJSON: effectiveArgumentsJSON,
+                        timeoutSeconds: Self.defaultToolTimeoutSeconds
+                    )
+                }
             }
-            return try await Self.runToolBody(
-                tool,
-                argumentsJSON: effectiveArgumentsJSON,
-                timeoutSeconds: Self.defaultToolTimeoutSeconds
-            )
         }
+    }
+
+    /// Combined sandbox + host-read policy bound around every tool body:
+    /// the read-only host workspace `scope` (or `nil` outside combined
+    /// mode) and whether the active agent opted into reading secret files
+    /// within it. Combined mode is the registered sandbox exec tool
+    /// (present only when autonomous sandbox is active) plus an active
+    /// folder root — exactly the condition `resolveExecutionMode` maps to
+    /// `.sandbox(hostRead: ctx)`. Resolved once per call so the two
+    /// task-locals stay consistent, and inert (`nil` / `false`) in plain
+    /// folder and plain sandbox modes.
+    private var combinedHostReadPolicy: (scope: URL?, allowSecretReads: Bool) {
+        guard toolsByName.keys.contains("sandbox_exec"),
+            let root = FolderContextService.cachedRootPath
+        else { return (nil, false) }
+        return (root, resolvedAutonomousExecConfig?.allowHostSecretReads ?? false)
+    }
+
+    /// The effective autonomous-exec config for the agent driving the
+    /// current tool call, resolved via the execution context's agent id.
+    /// `nil` when there's no agent in context (e.g. a bare test call).
+    private var resolvedAutonomousExecConfig: AutonomousExecConfig? {
+        guard let agentId = ChatExecutionContext.currentAgentId else { return nil }
+        return AgentManager.shared.effectiveAutonomousExec(for: agentId)
     }
 
     private static func invalidToolArgumentsEnvelope(

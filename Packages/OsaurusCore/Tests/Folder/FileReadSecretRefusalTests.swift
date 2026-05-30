@@ -21,7 +21,7 @@ struct FileReadSecretRefusalTests {
     private func isSecret(_ relativePath: String) -> Bool {
         let root = URL(fileURLWithPath: "/tmp/osaurus-secret-test")
         let fileURL = root.appendingPathComponent(relativePath)
-        return FileReadTool.isSecretPath(fileURL: fileURL)
+        return FolderToolHelpers.isSecretPath(fileURL: fileURL)
     }
 
     @Test func refusesEnvAndKeysAndCredentials() {

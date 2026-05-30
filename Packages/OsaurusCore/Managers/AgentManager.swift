@@ -597,6 +597,21 @@ extension AgentManager {
             // attempt isn't suppressed.
             SandboxToolRegistrar.shared.resetStartupFailures()
         }
+
+        // Mirror the per-agent egress choice onto the shared sandbox config
+        // so the next VM (re)boot honors it. The sandbox VM is shared across
+        // agents and network is a boot-time property, so this is
+        // last-writer-wins: the agent that (re)provisions the VM sets its
+        // egress, and switching to an agent with a different preference takes
+        // effect on the next provision, not mid-session.
+        if let config {
+            var sandboxConfig = SandboxConfigurationStore.load()
+            let desired = config.sandboxNetworkEnabled ? "outbound" : "none"
+            if sandboxConfig.network != desired {
+                sandboxConfig.network = desired
+                SandboxConfigurationStore.save(sandboxConfig)
+            }
+        }
     }
 
     /// Get the effective system prompt for an agent (combining with global if needed)

@@ -111,6 +111,25 @@ enum FolderToolHelpers {
         guard isWithinRoot else {
             throw FolderToolError.pathOutsideRoot(relativePath)
         }
+
+        // Symlink-safe containment: the lexical check above only resolves
+        // `..` / `.`, so a symlink *inside* the root (e.g. `notes.txt ->
+        // ~/.ssh/id_rsa`) would pass it and then be followed out of scope
+        // on read. Resolve symlinks on both the target and the root and
+        // re-check. `resolvingSymlinksInPath()` resolves existing
+        // components (and macOS firmlinks like `/tmp` -> `/private/tmp`),
+        // leaving not-yet-created trailing components intact — so a new
+        // file under a real directory still passes, while a symlink whose
+        // real target escapes the root is rejected. Both sides are
+        // resolved so the firmlink rewrite can't cause a false mismatch.
+        let realRoot = rootPath.resolvingSymlinksInPath().standardized.path
+        let realResolved = resolvedURL.resolvingSymlinksInPath().standardized.path
+        let isWithinRealRoot =
+            realResolved == realRoot
+            || realResolved.hasPrefix(realRoot + "/")
+        guard isWithinRealRoot else {
+            throw FolderToolError.pathOutsideRoot(relativePath)
+        }
         return resolvedURL
     }
 
@@ -201,6 +220,97 @@ enum FolderToolHelpers {
         let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         return (output, process.terminationStatus)
+    }
+
+    // MARK: - Combined-mode secret denylist
+
+    /// Extensions whose files are treated as secret material (private
+    /// keys, certs with keys, keystores). Lowercased, no leading dot.
+    private static let secretExtensions: Set<String> = [
+        "pem", "key", "p12", "pfx", "keystore", "jks",
+    ]
+
+    /// Exact basenames that are secret regardless of extension.
+    private static let secretBasenames: Set<String> = [
+        ".npmrc", ".netrc", "credentials", ".pypirc", ".dockercfg",
+    ]
+
+    /// Suffixes on a `.env` family file that are conventionally NON-secret
+    /// (templates / samples) and therefore allowed even under refusal.
+    private static let envAllowedSuffixes: [String] = [
+        ".example", ".sample", ".template", ".dist",
+    ]
+
+    /// True when the current execution is combined sandbox + host-read
+    /// mode (`ChatExecutionContext.hostReadOnlyScope` set) and secret
+    /// reads are not explicitly allowed for the session. Plain folder
+    /// mode (scope `nil`) is always `false`, so its behavior is unchanged.
+    private static var secretRefusalActive: Bool {
+        ChatExecutionContext.hostReadOnlyScope != nil
+            && !ChatExecutionContext.allowHostSecretReads
+    }
+
+    /// Whether `fileURL` points at a file that should be refused in
+    /// combined read-only mode. Checks the basename, extension, and the
+    /// path components so a key under `.ssh/` or `.aws/` is caught even
+    /// when its own name looks innocuous. Single source of truth shared
+    /// by `file_read`, `file_search`, and `file_tree`.
+    static func isSecretPath(fileURL: URL) -> Bool {
+        let lowerName = fileURL.lastPathComponent.lowercased()
+        let ext = fileURL.pathExtension.lowercased()
+
+        // `.git/config` and `.aws/`, `.ssh/`, `.gnupg/` directory contents
+        // routinely carry tokens / private keys.
+        let components = fileURL.pathComponents
+        let secretDirs: Set<String> = [".aws", ".ssh", ".gnupg"]
+        if !secretDirs.isDisjoint(with: Set(components.map { $0.lowercased() })) {
+            return true
+        }
+        if components.count >= 2 {
+            let tail = components.suffix(2).map { $0.lowercased() }
+            if tail == [".git", "config"] { return true }
+        }
+
+        if secretBasenames.contains(lowerName) { return true }
+
+        // SSH/GPG private keys: `id_rsa`, `id_ed25519`, etc. — but allow
+        // the matching `.pub` public keys.
+        if lowerName.hasPrefix("id_"), ext != "pub" { return true }
+
+        // `.env` family: refuse `.env` and `.env.<anything>` except
+        // template/sample suffixes.
+        if lowerName == ".env" { return true }
+        if lowerName.hasPrefix(".env.") {
+            return !envAllowedSuffixes.contains { lowerName.hasSuffix($0) }
+        }
+
+        // Public keys (`*.pub`) are safe; secret extensions otherwise.
+        if ext == "pub" { return false }
+        if secretExtensions.contains(ext) { return true }
+
+        return false
+    }
+
+    /// True when `fileURL` must be refused for the current execution
+    /// because the combined-mode secret denylist is active and the file
+    /// is classified secret. Convenience combiner used by the read tools.
+    static func shouldRefuseSecret(fileURL: URL) -> Bool {
+        secretRefusalActive && isSecretPath(fileURL: fileURL)
+    }
+
+    /// The shared `rejected` envelope returned when a read tool refuses a
+    /// secret file in combined mode. `tool` names the refusing tool so
+    /// the model-facing message is attributed correctly.
+    static func secretRefusalEnvelope(relativePath: String, tool: String) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "Refused to read '\(relativePath)': secret files (.env, private keys, "
+                + "credentials) are blocked in read-only sandbox mode to prevent leaking "
+                + "secrets into the sandbox. This is not retryable.",
+            tool: tool,
+            retryable: false
+        )
     }
 }
 
@@ -294,6 +404,12 @@ struct FileTreeTool: OsaurusTool {
                 let name = item.lastPathComponent
                 if FolderToolHelpers.shouldIgnore(name, patterns: ignorePatterns) { continue }
 
+                // Combined-mode secret denylist: don't even disclose the
+                // names of secret files in the tree. Inert in plain folder
+                // mode. Directories are never classified secret, so this
+                // only prunes individual files.
+                if FolderToolHelpers.shouldRefuseSecret(fileURL: item) { continue }
+
                 let isLast = index == sorted.count - 1
                 let connector = isLast ? "└── " : "├── "
                 let childPrefix = isLast ? "    " : "│   "
@@ -376,63 +492,6 @@ struct FileReadTool: OsaurusTool {
     /// heuristic.
     private static let binarySniffBytes = 4096
 
-    /// Extensions whose files are treated as secret material (private
-    /// keys, certs with keys, keystores). Lowercased, no leading dot.
-    private static let secretExtensions: Set<String> = [
-        "pem", "key", "p12", "pfx", "keystore", "jks",
-    ]
-
-    /// Exact basenames that are secret regardless of extension.
-    private static let secretBasenames: Set<String> = [
-        ".npmrc", ".netrc", "credentials", ".pypirc", ".dockercfg",
-    ]
-
-    /// Suffixes on a `.env` family file that are conventionally NON-secret
-    /// (templates / samples) and therefore allowed even under refusal.
-    private static let envAllowedSuffixes: [String] = [
-        ".example", ".sample", ".template", ".dist",
-    ]
-
-    /// Whether `fileURL` points at a file that should be refused in
-    /// combined read-only mode. Checks the basename, extension, and the
-    /// path components so a key under `.ssh/` or `.aws/` is caught even
-    /// when its own name looks innocuous.
-    static func isSecretPath(fileURL: URL) -> Bool {
-        let lowerName = fileURL.lastPathComponent.lowercased()
-        let ext = fileURL.pathExtension.lowercased()
-
-        // `.git/config` and `.aws/`, `.ssh/`, `.gnupg/` directory contents
-        // routinely carry tokens / private keys.
-        let components = fileURL.pathComponents
-        let secretDirs: Set<String> = [".aws", ".ssh", ".gnupg"]
-        if !secretDirs.isDisjoint(with: Set(components.map { $0.lowercased() })) {
-            return true
-        }
-        if components.count >= 2 {
-            let tail = components.suffix(2).map { $0.lowercased() }
-            if tail == [".git", "config"] { return true }
-        }
-
-        if secretBasenames.contains(lowerName) { return true }
-
-        // SSH/GPG private keys: `id_rsa`, `id_ed25519`, etc. — but allow
-        // the matching `.pub` public keys.
-        if lowerName.hasPrefix("id_"), ext != "pub" { return true }
-
-        // `.env` family: refuse `.env` and `.env.<anything>` except
-        // template/sample suffixes.
-        if lowerName == ".env" { return true }
-        if lowerName.hasPrefix(".env.") {
-            return !envAllowedSuffixes.contains { lowerName.hasSuffix($0) }
-        }
-
-        // Public keys (`*.pub`) are safe; secret extensions otherwise.
-        if ext == "pub" { return false }
-        if secretExtensions.contains(ext) { return true }
-
-        return false
-    }
-
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
@@ -449,27 +508,17 @@ struct FileReadTool: OsaurusTool {
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
-        // Combined sandbox + host-read mode (`hostReadOnlyScope` set):
-        // refuse secret files even though they live inside the scoped
-        // workspace. The read channel is the agent-as-bridge surface, so
-        // a poisoned README or a steered instruction shouldn't be able to
-        // pull `.env` / private keys / credentials into context and
-        // exfiltrate them via the sandbox. Plain folder mode
-        // (`hostReadOnlyScope == nil`) is unaffected. Overridable per
-        // session via `allowHostSecretReads`.
-        if ChatExecutionContext.hostReadOnlyScope != nil,
-            !ChatExecutionContext.allowHostSecretReads,
-            Self.isSecretPath(fileURL: fileURL)
-        {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message:
-                    "Refused to read '\(relativePath)': secret files (.env, private keys, "
-                    + "credentials) are blocked in read-only sandbox mode to prevent leaking "
-                    + "secrets into the sandbox. This is not retryable.",
-                tool: name,
-                retryable: false
-            )
+        // Combined sandbox + host-read mode: refuse secret files even
+        // though they live inside the scoped workspace. The read channel
+        // is the agent-as-bridge surface, so a poisoned README or a
+        // steered instruction shouldn't be able to pull `.env` / private
+        // keys / credentials into context and exfiltrate them via the
+        // sandbox. Plain folder mode is unaffected (the gate is inert
+        // when no read-only host scope is bound). Shared with
+        // `file_search` / `file_tree` so the denylist can't be bypassed
+        // by switching tools.
+        if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
+            return FolderToolHelpers.secretRefusalEnvelope(relativePath: relativePath, tool: name)
         }
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
@@ -1174,6 +1223,16 @@ struct FileSearchTool: OsaurusTool {
             throw FolderToolError.fileNotFound(searchPath)
         }
 
+        // Combined-mode secret denylist (shared with `file_read`). A
+        // single-file search targeting a secret (`path:".env"`) would
+        // otherwise leak its contents line-by-line and bypass both the
+        // `file_read` refusal and the directory hidden-file filter, so
+        // refuse it outright. Directory searches skip secret files
+        // per-entry below instead of failing the whole call.
+        if !isDirectory.boolValue, FolderToolHelpers.shouldRefuseSecret(fileURL: searchURL) {
+            return FolderToolHelpers.secretRefusalEnvelope(relativePath: searchPath, tool: name)
+        }
+
         if isDirectory.boolValue {
             // Search directory recursively
             let enumerator = FileManager.default.enumerator(
@@ -1190,6 +1249,14 @@ struct FileSearchTool: OsaurusTool {
                     let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
                     resourceValues.isRegularFile == true
                 else { continue }
+
+                // Combined-mode secret denylist: never return contents of
+                // a non-hidden secret (`server.pem`, `id_rsa`, …). `.env`
+                // and other dotfiles are already excluded by
+                // `.skipsHiddenFiles`; this catches the rest.
+                if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
+                    continue
+                }
 
                 // Check file pattern
                 if let pattern = filePattern {

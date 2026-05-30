@@ -2626,19 +2626,14 @@ final class ChatSession: ObservableObject {
                                 ) {
                                     try await ChatExecutionContext.$currentAssistantTurnId.withValue(assistantTurn.id) {
                                         try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
-                                            // Combined sandbox + host-read mode:
-                                            // expose the read-only host workspace
-                                            // root so the host read tools enforce
-                                            // combined-mode-only policy (secret
-                                            // refusal). `nil` in every other mode.
-                                            try await ChatExecutionContext.$hostReadOnlyScope.withValue(
-                                                executionMode.hostReadContext?.rootPath
-                                            ) {
-                                                try await ToolRegistry.shared.execute(
-                                                    name: inv.toolName,
-                                                    argumentsJSON: inv.jsonArguments
-                                                )
-                                            }
+                                            // The combined-mode host-read scope +
+                                            // secret-read policy are bound centrally
+                                            // inside ToolRegistry.execute, so every
+                                            // entrypoint inherits them uniformly.
+                                            try await ToolRegistry.shared.execute(
+                                                name: inv.toolName,
+                                                argumentsJSON: inv.jsonArguments
+                                            )
                                         }
                                     }
                                 }

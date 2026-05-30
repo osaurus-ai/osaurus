@@ -1285,21 +1285,18 @@ final class PluginHostContext: @unchecked Sendable {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
 
-        let hostReadScope = executionMode.hostReadContext?.rootPath
         return await withTaskGroup(of: String?.self) { group in
             group.addTask {
                 do {
                     return try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
-                        // Combined sandbox + host-read mode: surface the
-                        // read-only host workspace root so the host read
-                        // tools enforce combined-mode-only policy (secret
-                        // refusal). `nil` in every other mode.
-                        try await ChatExecutionContext.$hostReadOnlyScope.withValue(hostReadScope) {
-                            try await ToolRegistry.shared.execute(
-                                name: name,
-                                argumentsJSON: argumentsJSON
-                            )
-                        }
+                        // The combined-mode host-read scope + secret-read
+                        // policy are bound centrally inside
+                        // ToolRegistry.execute (keyed off the agent in
+                        // context), so this path inherits them uniformly.
+                        try await ToolRegistry.shared.execute(
+                            name: name,
+                            argumentsJSON: argumentsJSON
+                        )
                     }
                 } catch {
                     return ToolEnvelope.fromError(error, tool: name)

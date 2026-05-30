@@ -279,6 +279,12 @@
             let guestBridgeSocketPath: String
             let cpus: Int
             let memoryGB: Int
+            /// Whether the container attaches to the host network. Maps from
+            /// `SandboxConfiguration.network` ("none" => no egress), which in
+            /// turn mirrors the provisioning agent's
+            /// `AutonomousExecConfig.sandboxNetworkEnabled`. Cutting egress
+            /// is the network leg of the combined-mode exfiltration defense.
+            let networkEnabled: Bool
         }
 
         /// The single host directory mounted into the sandbox at
@@ -305,6 +311,18 @@
                 )
             }
             return workspace
+        }
+
+        /// Resolve the boot-time egress decision from the shared sandbox
+        /// config. `SandboxConfiguration.network` is the single VM-wide
+        /// switch (the VM is shared across agents); it mirrors the
+        /// provisioning agent's `AutonomousExecConfig.sandboxNetworkEnabled`
+        /// via `AgentManager.updateAutonomousExec`. Anything other than the
+        /// explicit "none" sentinel keeps egress on (default "outbound"),
+        /// so existing installs are unaffected. `nonisolated` + pure so the
+        /// regression test can exercise it without booting a VM.
+        nonisolated static func networkEnabled(from config: SandboxConfiguration) -> Bool {
+            config.network != "none"
         }
 
         /// Build the `LinuxContainer.Configuration` closure that's shared
@@ -352,7 +370,7 @@
                 Self.containerID,
                 image: image,
                 rootfs: rootfs,
-                networking: true,
+                networking: inputs.networkEnabled,
                 configuration: Self.makeContainerConfig(inputs: inputs)
             )
         }
@@ -378,7 +396,7 @@
                     Self.containerID,
                     reference: Self.containerImage,
                     rootfsSizeInBytes: 8.gib(),
-                    networking: true,
+                    networking: inputs.networkEnabled,
                     progress: progressTracker,
                     configuration: Self.makeContainerConfig(inputs: inputs)
                 )
@@ -518,7 +536,8 @@
                         bridgeSocketPath: Self.bridgeSocketPath,
                         guestBridgeSocketPath: Self.guestBridgeSocketPath,
                         cpus: config.cpus,
-                        memoryGB: config.memoryGB
+                        memoryGB: config.memoryGB,
+                        networkEnabled: Self.networkEnabled(from: config)
                     )
 
                     let container: LinuxContainer
