@@ -621,19 +621,63 @@ struct MLXBatchAdapterTests {
         var settings = VMLXServerRuntimeSettings()
 
         settings.cache.liveKVCodec = .engineSelected
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "engine-selected")
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "MiniMax-M2.7-JANG_K-CRACK"
+            ) == "turbo(3,3)"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "DeepSeek-V4-Flash-JANGTQ2"
+            ) == "fp16"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "ZAYA1-VL-8B-JANGTQ4"
+            ) == "fp16"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "Qwen3.6-35B-A3B-MXFP4-CRACK-MTP"
+            ) == "fp16"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "Gemma-4-26B-A4B-it-JANG_4M-CRACK"
+            ) == "fp16"
+        )
 
         settings.cache.liveKVCodec = .native
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "MiniMax-M2.7-JANG_K-CRACK"
+            ) == "fp16"
+        )
 
         settings.cache.liveKVCodec = .turboQuant
         settings.cache.turboQuantKeyBits = nil
         settings.cache.turboQuantValueBits = nil
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "fp16")
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "DeepSeek-V4-Flash-JANGTQ2"
+            ) == "fp16"
+        )
 
         settings.cache.turboQuantKeyBits = 4
         settings.cache.turboQuantValueBits = 3
-        #expect(ModelRuntime.cacheKVModeTag(for: settings.cache) == "turbo(4,3)")
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "DeepSeek-V4-Flash-JANGTQ2"
+            ) == "turbo(4,3)"
+        )
     }
 
     @Test func cacheCoordinatorModelKey_alignsWithKnownHybridFamilies() {
@@ -901,7 +945,16 @@ struct MLXBatchAdapterTests {
         )
         #expect(
             MLXBatchAdapter.additionalContext(for: unspecified, modelName: modelName)["enable_thinking"] as? Bool
-                == nil
+                == false
+        )
+
+        let zayaUnspecified = MLXBatchAdapter.additionalContext(
+            for: unspecified,
+            modelName: "zaya1-8b-jangtq_k"
+        )
+        #expect(
+            zayaUnspecified["enable_thinking"] as? Bool == false,
+            "ZAYA text bundles default to closed/no-thinking prompts; omitting enable_thinking must not route direct answers into reasoning-only output."
         )
 
         let staleOffEffort = MLXBatchAdapter.additionalContext(
@@ -1078,9 +1131,11 @@ struct MLXBatchAdapterTests {
                     type: "function",
                     function: ToolChoiceOption.Name(name: "file_read")
                 )
-            )
+            ),
+            toolChoiceName: "file_read"
         )
         #expect(namedFunction["tool_choice"] as? String == "required")
+        #expect(namedFunction["tool_choice_name"] as? String == "file_read")
 
         let auto = MLXBatchAdapter.additionalContext(
             for: generation,
@@ -1162,11 +1217,86 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    /// ZAYA1 (Zyphra; `model_type=zaya`) is reasoning-capable but defaults
-    /// thinking off (`think_in_template=false`). When no request option is
-    /// present, preserve the bundle/template default by sending no synthetic
-    /// thinking kwarg; when the user/API explicitly opts in via
-    /// `disableThinking=false`, pass `enable_thinking=true`.
+    /// Qwen 3.5/3.6 reasoning-capable bundles expose an `enable_thinking`
+    /// template branch. Live Qwen 27B MXFP4 MTP tool-history proof showed the
+    /// default thinking rail can spend the whole response budget in
+    /// `reasoning_content` after a tool result, while the explicit
+    /// no-thinking rail returns the visible answer immediately. Keep ordinary
+    /// local chat on the closed/no-thinking rail by default, while preserving
+    /// explicit user/API opt-in for thinking.
+    @Test func additionalContext_defaultsQwenThinkingOffButHonorsExplicitOptIn() {
+        let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
+        let userEnabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(false)]
+        )
+
+        for modelName in [
+            "qwen3.6-27b-mxfp4-crack-mtp",
+            "Qwen3.6-35B-A3B-MXFP4",
+            "OsaurusAI/Qwen3.5-35B-A3B-JANGTQ-CRACK",
+            "dealign.ai/Qwen3.6-27B-JANG_4M-CRACK",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == false,
+                "Qwen local chat should default to the closed/no-thinking rail: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userEnabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "Qwen must honor explicit thinking opt-in: \(modelName)"
+            )
+
+            let directOff = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("no_think")]
+                ),
+                modelName: modelName
+            )
+            #expect(directOff["enable_thinking"] as? Bool == false)
+            #expect(directOff["reasoning_effort"] == nil)
+
+            let apiReasoning = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("high")]
+                ),
+                modelName: modelName
+            )
+            #expect(apiReasoning["enable_thinking"] as? Bool == true)
+            #expect(apiReasoning["reasoning_effort"] as? String == "high")
+        }
+
+        for modelName in [
+            "notqwen-7b",
+            "dataset/antiqwen",
+            "quwen3.6-typo",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] == nil,
+                "non-Qwen substring match must not synthesize a thinking kwarg: \(modelName)"
+            )
+        }
+    }
+
+    /// ZAYA1 text bundles (Zyphra; `model_type=zaya`) are reasoning-capable,
+    /// but their stable chat rail is the closed/no-thinking path. When no
+    /// request option is present, pass `enable_thinking=false` explicitly so a
+    /// direct follow-up does not decode into hidden reasoning-only output.
+    /// Explicit user/API opt-in via `disableThinking=false` still passes
+    /// `enable_thinking=true`.
     @Test func additionalContext_defaultsZayaThinkingOffButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
@@ -1187,8 +1317,8 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] == nil,
-                "ZAYA should preserve its bundle/template thinking default: \(modelName)"
+                )["enable_thinking"] as? Bool == false,
+                "ZAYA text bundles should default to the closed/no-thinking rail: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -1239,10 +1369,117 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    /// Nemotron Omni call/audio workloads should default to visible assistant
-    /// content according to their bundle/template defaults. Osaurus must not
-    /// synthesize hidden reasoning defaults; explicit user/API opt-in still
-    /// enables thinking and explicit direct/off efforts still disable it.
+    /// LFM2.5 JANG tool rows use the explicit required-tool rail when
+    /// `tool_choice` requires a local call. Live strict rows showed the
+    /// ordinary reasoning-capable rail can spend the whole budget thinking
+    /// about the correct call after tool-result history without emitting it.
+    /// Keep this scoped to required/named tool turns; ordinary follow-up chat
+    /// keeps the bundle's default behavior unless the request opts in/out.
+    @Test func additionalContext_closesLFMThinkingOnlyForRequiredToolTurns() {
+        let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
+        let userDisabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(true)]
+        )
+        let userEnabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(false)]
+        )
+        let userReasoning = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["reasoningEffort": .string("high")]
+        )
+
+        for modelName in [
+            "LiquidAI/LFM2-7B",
+            "LiquidAI/LFM2.5-8B-A1B",
+            "JANGQ-AI/LFM2.5-8B-A1B-JANG_2L",
+            "lfm2.5-8b-a1b-jang_2l",
+            "lfm2_moe",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] == nil,
+                "ordinary LFM chat must not get a hidden no-thinking default: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName,
+                    toolChoice: .required
+                )["enable_thinking"] as? Bool == false,
+                "required LFM tool turns must use the closed tool rail: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName,
+                    toolChoice: .function(
+                        ToolChoiceOption.FunctionName(
+                            type: "function",
+                            function: ToolChoiceOption.Name(name: "line_count")
+                        )
+                    )
+                )["enable_thinking"] as? Bool == false,
+                "named LFM tool turns must use the closed tool rail: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName,
+                    toolChoice: ToolChoiceOption.none
+                )["enable_thinking"] == nil,
+                "explicit tool_choice none must not close ordinary LFM chat: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userDisabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == false,
+                "explicit LFM thinking-off must still be honored: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userEnabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "explicit LFM thinking opt-in must still be honored: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userReasoning,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "explicit LFM reasoning effort must still be honored for ordinary chat: \(modelName)"
+            )
+        }
+
+        for modelName in [
+            "lfm21",
+            "lfm2x",
+            "dataset/alfm2",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName,
+                    toolChoice: .required
+                )["enable_thinking"] == nil,
+                "non-LFM boundary names must not get LFM required-tool behavior: \(modelName)"
+            )
+        }
+    }
+
+    /// Nemotron Omni call/audio workloads default to the closed/no-thinking
+    /// rail for ordinary chat. Live JANGTQ rows otherwise stream only hidden
+    /// reasoning_content and length-stop with empty visible content. Explicit
+    /// user/API opt-in still enables thinking and explicit direct/off efforts
+    /// still disable it.
     @Test func additionalContext_defaultsNemotronOmniThinkingOffButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
@@ -1260,8 +1497,8 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] == nil,
-                "Nemotron Omni should preserve its bundle/template thinking default: \(modelName)"
+                )["enable_thinking"] as? Bool == false,
+                "Nemotron Omni should default to the closed/no-thinking rail: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -1269,6 +1506,119 @@ struct MLXBatchAdapterTests {
                     modelName: modelName
                 )["enable_thinking"] as? Bool == true,
                 "Nemotron Omni must honor explicit thinking opt-in: \(modelName)"
+            )
+
+            let directOff = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("no_think")]
+                ),
+                modelName: modelName
+            )
+            #expect(directOff["enable_thinking"] as? Bool == false)
+            #expect(directOff["reasoning_effort"] == nil)
+
+            let apiReasoning = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("high")]
+                ),
+                modelName: modelName
+            )
+            #expect(apiReasoning["enable_thinking"] as? Bool == true)
+            #expect(apiReasoning["reasoning_effort"] as? String == "high")
+        }
+    }
+
+    /// MiniMax M2/M2.7 bundles are reasoning-capable. Live post-tool proof on
+    /// `minimax-m2.7-jang_k-crack` showed the omitted-template-default path can
+    /// spend the whole response in hidden reasoning after a tool result. Keep
+    /// ordinary local chat on the closed/no-thinking rail by default, matching
+    /// the other reasoning-capable local families while preserving explicit
+    /// thinking opt-in.
+    @Test func additionalContext_defaultsMiniMaxThinkingOffButHonorsExplicitOptIn() {
+        let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
+        let userEnabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(false)]
+        )
+
+        for modelName in [
+            "JANGQ-AI/MiniMax-M2.7-JANGTQ",
+            "minimax-m2.7-jang_k-crack",
+            "OsaurusAI/MiniMax-M2.7-JANGTQ4",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == false,
+                "MiniMax should default to the closed/no-thinking rail: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userEnabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "MiniMax must honor explicit thinking opt-in: \(modelName)"
+            )
+
+            let directOff = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("no_think")]
+                ),
+                modelName: modelName
+            )
+            #expect(directOff["enable_thinking"] as? Bool == false)
+            #expect(directOff["reasoning_effort"] == nil)
+
+            let apiReasoning = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("high")]
+                ),
+                modelName: modelName
+            )
+            #expect(apiReasoning["enable_thinking"] as? Bool == true)
+            #expect(apiReasoning["reasoning_effort"] as? String == "high")
+        }
+    }
+
+    /// Gemma4 defaults to the closed/no-thinking rail for ordinary local API
+    /// requests, matching the UI profile default. This is model-option wiring,
+    /// not output repair: explicit thinking opt-in still reaches the template.
+    @Test func additionalContext_defaultsGemma4ThinkingOffButHonorsExplicitOptIn() {
+        let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
+        let userEnabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(false)]
+        )
+
+        for modelName in [
+            "gemma-4-26b-a4b-it-jang_4m-crack",
+            "dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK",
+            "OsaurusAI/gemma4-it-26b-a4b",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == false,
+                "Gemma4 should default to the closed/no-thinking rail: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userEnabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "Gemma4 must honor explicit thinking opt-in: \(modelName)"
             )
 
             let directOff = MLXBatchAdapter.additionalContext(

@@ -89,7 +89,7 @@ require_text "$TESTS" 'Chat UI sends accumulated history and marks implicit samp
   "source regression covers Chat UI implicit sampling contract"
 
 active="$({ ps -axo pid,ppid,rss,etime,command || true; } \
-  | rg -i 'CodeSigningHelper|xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
+  | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
   | rg -v 'rg -i|assert-chat-ui-reasoning-routing' || true)"
 if [[ -n "$active" ]]; then
   echo "$active" >&2

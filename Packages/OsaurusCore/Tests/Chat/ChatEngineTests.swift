@@ -158,6 +158,93 @@ struct ChatEngineTests {
         #expect(args == #"{"path":"/Users/eric/Desktop/testmandel/mandelbrot.py"}"#)
     }
 
+    @Test func toolCallResponse_marksMissingRequiredArgumentsInvalid() throws {
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated lines in a local text file.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "path": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("path")]),
+                    "additionalProperties": .bool(false),
+                ])
+            )
+        )
+
+        let response = ChatEngine.makeToolCallResponse(
+            invocations: [
+                ServiceToolInvocation(
+                    toolName: "line_count",
+                    jsonArguments: #"{}"#
+                )
+            ],
+            responseId: "chatcmpl-test",
+            created: 1,
+            effectiveModel: "fake",
+            inputTokens: 10,
+            startTime: Date(timeIntervalSince1970: 1),
+            inferenceSource: .httpAPI,
+            temperature: nil,
+            maxTokens: 128,
+            tools: [tool]
+        )
+
+        let args = try #require(response.choices.first?.message.tool_calls?.first?.function.arguments)
+        let data = try #require(args.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect(object["_error"] as? String == "invalid_tool_arguments")
+        #expect(object["_field"] as? String == "path")
+        #expect(object["_tool"] as? String == "line_count")
+    }
+
+    @Test func singleToolRequiredChoiceDispatchesAsNamedFunction() throws {
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+
+        let resolved = ChatEngine.localToolChoiceForDispatch(.required, tools: [tool])
+
+        guard case .function(let target) = resolved else {
+            Issue.record("single required tool should dispatch as a named function selector")
+            return
+        }
+        #expect(target.function.name == "line_count")
+    }
+
+    @Test func multiToolRequiredChoiceStaysRequired() throws {
+        let first = Tool(
+            type: "function",
+            function: ToolFunction(name: "line_count", description: nil, parameters: nil)
+        )
+        let second = Tool(
+            type: "function",
+            function: ToolFunction(name: "file_read", description: nil, parameters: nil)
+        )
+
+        let resolved = ChatEngine.localToolChoiceForDispatch(.required, tools: [first, second])
+
+        guard case .required = resolved else {
+            Issue.record("multi-tool required choice must remain required")
+            return
+        }
+    }
+
     @Test func streamChat_yields_deltas_success() async throws {
         let svc = FakeModelService(deltas: ["a", "b", "c"])
         let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
@@ -234,6 +321,37 @@ struct ChatEngineTests {
         #expect(resp.choices.count == 1)
         #expect(resp.choices.first?.finish_reason == "stop")
         #expect(resp.choices.first?.message.content == "hello")
+    }
+
+    @Test func completeChat_preservesReasoningContentForPlainNonStreamingCompletion() async throws {
+        let svc = FakeModelService(
+            deltas: [
+                StreamingReasoningHint.encode("first thought. "),
+                StreamingReasoningHint.encode("second thought."),
+                "visible answer",
+            ]
+        )
+        let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: nil,
+            max_tokens: 32,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+
+        let resp = try await engine.completeChat(request: req)
+
+        #expect(resp.choices.first?.message.content == "visible answer")
+        #expect(resp.choices.first?.message.reasoning_content == "first thought. second thought.")
     }
 
     @Test func completeChat_usesStreamingStatsForPlainNonStreamingCompletion() async throws {
@@ -959,6 +1077,74 @@ struct ChatEngineTests {
         let resp = try await engine.completeChat(request: req)
         #expect(resp.choices.first?.message.content == "truncated")
         #expect(resp.choices.first?.finish_reason == "length")
+    }
+
+    @Test func completeChat_preservesReasoningContentForToolCapableNonStreamingCompletion() async throws {
+        struct FakeReasoningToolService: ToolCapableService {
+            var id: String { "fake" }
+            func isAvailable() -> Bool { true }
+            func handles(requestedModel: String?) -> Bool { (requestedModel ?? "") == "fake" }
+            func streamDeltas(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?,
+                stopSequences: [String]
+            ) async throws -> AsyncThrowingStream<String, Error> { AsyncThrowingStream { $0.finish() } }
+            func generateOneShot(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                requestedModel: String?
+            ) async throws -> String { "" }
+            func respondWithTools(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                stopSequences: [String],
+                tools: [Tool],
+                toolChoice: ToolChoiceOption?,
+                requestedModel: String?
+            ) async throws -> String { "unused" }
+            func streamWithTools(
+                messages: [ChatMessage],
+                parameters: GenerationParameters,
+                stopSequences: [String],
+                tools: [Tool],
+                toolChoice: ToolChoiceOption?,
+                requestedModel: String?
+            ) async throws -> AsyncThrowingStream<String, Error> {
+                AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingReasoningHint.encode("tool reasoning"))
+                    continuation.yield("tool-visible answer")
+                    continuation.finish()
+                }
+            }
+        }
+
+        let engine = ChatEngine(services: [FakeReasoningToolService()], installedModelsProvider: { [] })
+        let req = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: nil,
+            max_tokens: 32,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: [
+                Tool(
+                    type: "function",
+                    function: ToolFunction(name: "lookup", description: nil, parameters: .object([:]))
+                )
+            ],
+            tool_choice: .auto,
+            session_id: nil
+        )
+
+        let resp = try await engine.completeChat(request: req)
+
+        #expect(resp.choices.first?.message.content == "tool-visible answer")
+        #expect(resp.choices.first?.message.reasoning_content == "tool reasoning")
     }
 
     @Test func streamChat_throws_when_no_route() async throws {

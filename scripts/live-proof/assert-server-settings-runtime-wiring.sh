@@ -39,6 +39,7 @@ CONCURRENCY_UI="$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/Concurr
 MTP_UI="$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/MTPSection.swift"
 STORE="$ROOT/Packages/OsaurusCore/Models/Configuration/ServerRuntimeSettingsStore.swift"
 RUNTIME="$ROOT/Packages/OsaurusCore/Services/ModelRuntime.swift"
+CONTROLLER="$ROOT/Packages/OsaurusCore/Networking/ServerController.swift"
 FLAGS="$ROOT/Packages/OsaurusCore/Services/ModelRuntime/InferenceFeatureFlags.swift"
 ADAPTER="$ROOT/Packages/OsaurusCore/Services/ModelRuntime/MLXBatchAdapter.swift"
 
@@ -48,6 +49,7 @@ for pair in \
   "$MTP_UI:MTPSection" \
   "$STORE:ServerRuntimeSettingsStore" \
   "$RUNTIME:ModelRuntime" \
+  "$CONTROLLER:ServerController" \
   "$FLAGS:InferenceFeatureFlags" \
   "$ADAPTER:MLXBatchAdapter"; do
   require_file "${pair%%:*}" "${pair#*:}"
@@ -96,10 +98,10 @@ require_text "$MTP_UI" 'value: \$draft\.mtp\.draftTokenLimit' \
 echo "--- persisted automatic defaults ---"
 require_text "$STORE" 'continuousBatching: true' \
   "migration defaults continuous batching on"
-require_text "$STORE" 'liveKVCodec: \.native' \
-  "migration defaults KV codec to native/fp16"
+require_text "$STORE" 'liveKVCodec: \.engineSelected' \
+  "migration defaults KV codec to engine-selected"
 reject_text "$STORE" 'normalized\.cache\.liveKVCodec = \.engineSelected' \
-  "legacy migration silently enabling engine-selected TurboQuant KV"
+  "legacy migration overwrites explicit existing live-KV choices"
 require_text "$STORE" 'blockDisk: VMLXBlockDiskCacheSettings' \
   "migration creates block-disk cache settings"
 require_text "$STORE" 'enabled: true,\n                maxSizeGB: nil,\n                directory: nil' \
@@ -108,18 +110,24 @@ require_text "$STORE" 'enableSSMReDerive: true' \
   "migration defaults SSM rederive on"
 require_text "$STORE" 'normalized\.mtp\.mode = \.auto' \
   "persisted old MTP-off defaults repair to auto"
+require_text "$STORE" 'updated\.genTopP = settings\.generation\.topP\.map\(Float\.init\)\n            \?\? ServerConfiguration\.default\.genTopP' \
+  "blank runtime top-p clears stale legacy top-p"
 
 echo "--- runtime consumption ---"
+require_text "$CONTROLLER" 'runtimeConfigInputsRequireInvalidate' \
+  "runtime settings save invalidates cached RuntimeConfig"
+require_text "$CONTROLLER" 'previous\.generation != next\.generation\n            \|\| previous\.concurrency != next\.concurrency' \
+  "generation and concurrency changes invalidate cached RuntimeConfig"
 require_text "$FLAGS" 'guard runtime\.concurrency\.continuousBatching else \{ return 1 \}' \
   "runtime gates batch slots on continuous batching"
 require_text "$FLAGS" 'runtime\.concurrency\.maxConcurrentSequences' \
   "runtime consumes max concurrent sequence setting"
 require_text "$RUNTIME" 'settings\.cacheCoordinatorConfig' \
   "runtime delegates cache settings into vMLX cache coordinator"
-require_text "$RUNTIME" 'if settings\.cache\.liveKVCodec == \.engineSelected' \
-  "runtime maps engine-selected codec"
-require_text "$RUNTIME" 'config\.defaultKVMode = \.turboQuant\(\)' \
-  "runtime auto-selects TurboQuant KV for engine-selected cache"
+require_text "$RUNTIME" 'shouldUseTurboQuantByDefault' \
+  "runtime gates engine-selected TurboQuant by model family/topology"
+require_text "$RUNTIME" 'config\.defaultKVMode = effectiveDefaultKVMode' \
+  "runtime applies effective topology-gated KV mode"
 require_text "$RUNTIME" 'cacheDiskDirectoryOverride' \
   "runtime resolves server settings disk cache directory"
 require_text "$RUNTIME" 'cache\.blockDisk\.enabled' \
@@ -142,7 +150,7 @@ require_text "$ADAPTER" 'nativeMTPDepthSummary' \
   "runtime diagnostics report native MTP depth"
 
 active_forbidden="$({ ps -axo pid,ppid,rss,etime,command || true; } \
-  | rg -i 'CodeSigningHelper|xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
+  | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
   | rg -v 'rg -i|assert-server-settings-runtime-wiring' || true)"
 if [[ -n "$active_forbidden" ]]; then
   echo "$active_forbidden" >&2

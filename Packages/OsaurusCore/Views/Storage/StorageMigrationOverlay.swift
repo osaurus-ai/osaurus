@@ -168,6 +168,14 @@ public final class StorageMigrationCoordinator: ObservableObject {
     /// semaphore + runloop spin so the migration overlay can
     /// paint and accept events while we wait.
     nonisolated public static func blockingAwaitReady() {
+        if StorageKeyManager.disablesKeychainForProcess {
+            // Keychain-free live proof launches run against OSAURUS_TEST_ROOT
+            // with an in-memory storage key. They must bind the local HTTP
+            // server without touching the user's at-rest migration/keychain
+            // path; otherwise a headless dev build can stall before /health.
+            return
+        }
+
         if RuntimeEnvironment.isUnderTests {
             // Tests use isolated temporary databases and don't need the global
             // UI migration gate. Tests that specifically test the migrator

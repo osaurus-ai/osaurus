@@ -13,6 +13,257 @@ repo-local live-gate artifacts. The user's requested VL/cache/UI/API/parser/
 defaults/carryover proof still requires real Osaurus app/API evidence before a
 row is production-clear.
 
+## 2026-05-30 LFM2.5 JANG_2L final required-tool and warm cache pass
+
+- Osaurus PR head at check: `ccc57314f928801ded7d7fe6f0affcb758ee6432`.
+- vMLX main / Osaurus pin: `84c8bb653a50cd48b4af7f5cdce04d3f16e6ed95`.
+- No-sign app path: `build/DerivedData-pr1268-lfm25-final-nosign-ccc57314/Build/Products/Release/osaurus.app`.
+- Launch boundary: app was launched keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, `OSAURUS_TEST_ROOT=/tmp/osaurus-pr1268-ccc57314-lfm25-final-ui-root`, and `OSU_MODELS_DIR=/Users/eric/.mlxstudio/models`.
+- Cold artifact: `/tmp/osaurus-pr1268-ccc57314-lfm25-final-cold-20260530-010521`.
+- Warm artifact: `/tmp/osaurus-pr1268-ccc57314-lfm25-final-warm-20260530-010538`.
+- Model: `lfm2.5-8b-a1b-jang_2l`.
+- Result: cold and warm strict three-turn required/none/required rows passed. Turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 produced a visible answer and no tool call; turn 3 produced exact structured `line_count` args `one\ntwo`. Tool-call turns had no visible content, no protocol marker leaked, no visible `<think>` block leaked, no incoherent loop occurred, no length-stop fake pass occurred, and `/health` stayed healthy with no in-flight request after each row.
+- Topology/cache result: 24 layers, 6 KV layers, 18 Mamba/SSM companion layers, `companion=ssm`, disk-backed restore required, SSM companion state required, paged-cache incompatible, block disk L2 enabled, and TurboQuant KV layer count 0. Cold proved topology and disk-backed restore with `disk_l2_misses 2` and `disk_l2_stores 4`. Warm proved actual reuse with `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`.
+- Token/s: cold visible follow-up emitted 287 completion tokens at 249.27 tok/s; warm visible follow-up emitted 126 completion tokens at 228.25 tok/s. OpenAI-compatible structured tool-call turns emitted zero completion tokens.
+- Source/guard boundary: vMLX focused tests passed for the LFM content-mode closed-thinking parser, LFM2 escaped required-tool fallback, and LFM2 parser JSON shape before the Osaurus repin. Osaurus `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening`, `SwiftTransformersTokenizerLoaderTests/lfm2LocalTokenizerUsesStrictRequiredToolFallback`, `assert-tool-choice-required-routing.sh`, `assert-server-settings-runtime-wiring.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-no-forced-behavior-pr.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, `assert-osaurus-pr-hygiene.sh`, and `git diff --check` passed against the `84c8bb653a50cd48b4af7f5cdce04d3f16e6ed95` vMLX pin before this app build.
+- Verdict: LFM2.5 JANG_2L is green for the current PR-head no-sign Osaurus app row: multi-turn required-tool behavior, reasoning separation, parser leak prevention, hybrid SSM topology, disk L2 reuse, and SSM companion cache reuse. This does not promote LFM MXFP4/MXFP8 siblings or broad prompt contexts.
+
+## 2026-05-29 LFM2.5 JANG_2L current-head cold pass and warm-cache partial
+
+- Osaurus PR head at check: `662de08d1bc52bd7d5ae91ab6d8a1d6e246fb062`.
+- vMLX main / Osaurus pin: `5035d62454531c7d9bdbdbbd4b3cdc54077470e8`.
+- No-sign app path: `build/DerivedData-pr1268-lfm25-nosign-662de08d/Build/Products/Release/osaurus.app`.
+- Launch boundary: app was launched keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, `OSAURUS_TEST_ROOT=/tmp/osaurus-pr1268-662de08d-lfm25-ui-root-mlxstudio`, and `OSU_MODELS_DIR=/Users/eric/.mlxstudio/models`.
+- Cold artifact: `/tmp/osaurus-pr1268-662de08d-lfm25-jang2l-tool-cache-cold-20260529-121517`.
+- Warm artifact: `/tmp/osaurus-pr1268-662de08d-lfm25-jang2l-tool-cache-warm-20260529-121535`.
+- Model: `lfm2.5-8b-a1b-jang_2l`.
+- Cold result: the strict three-turn required/none/required harness passed. Turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered visibly with `There were 3 lines counted.` and no tool call; turn 3 produced exact structured `line_count` args `one\ntwo`. No protocol marker leaked, tool-call turns had no visible content, no length-stop fake pass occurred, and the app remained healthy with no in-flight request after the row. The plain answer turn still carried separate `reasoning_content`, but visible content was clean.
+- Cold topology/cache result: 24 layers, 6 KV layers, 18 Mamba/SSM companion layers, `companion=ssm`, disk-backed restore required, SSM companion state required, paged-cache incompatible, block disk L2 enabled, and TurboQuant KV layer count 0. This row proves cache topology and disk-backed restore, not warm reuse; it recorded `disk_l2_misses 2`, `disk_l2_stores 4`, `disk_l2_hits 0`, `ssm_companion_hits 0`, and `companion_hits 0`.
+- Cold token/s: visible follow-up emitted 164 completion tokens at 183.81 tok/s; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
+- Warm result: cache reuse was proven with `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1` on the same LFM hybrid topology. Turn 1 remained exact, turn 2 answered visibly, and turn 3 still returned a structured `line_count` call with no visible/protocol leak, but `turn3_args_exact` failed because the `text` argument included extra native-call reasoning text after `one\ntwo`.
+- Guard refresh: `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening`, `SwiftTransformersTokenizerLoaderTests/lfm2LocalTokenizerUsesStrictRequiredToolFallback`, `assert-tool-choice-required-routing.sh`, `assert-server-settings-runtime-wiring.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-no-forced-behavior-pr.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, `assert-osaurus-pr-hygiene.sh`, and `git diff --check` passed against the `5035d62454531c7d9bdbdbbd4b3cdc54077470e8` vMLX pin before this live run. vMLX focused tests also passed for the LFM stale reasoning stamp, LFM2 parser escaped newlines, and LFM2 required-template fallback.
+- Verdict: LFM2.5 JANG_2L is green for the current-head cold Osaurus no-sign app row and green for warm L2/SSM companion cache-hit evidence, but partial for warm repeat exact argument fidelity. MXFP4/MXFP8 live rows, broader tools, and broader prompt contexts remain follow-up coverage.
+
+## 2026-05-29 LFM2.5 JANG_2L superseded repeat required-tool red rows
+
+- Osaurus PR head at check: `5535b681c939aba0b96b717c424243f60fc305b2`.
+- vMLX main / Osaurus pin: `6a7b291709f6cf1b6db17928e1096c9007fbd1d0`.
+- Red repeat artifact at `max_tokens: 768`: `/tmp/osaurus-pr1268-5535b681-lfm25-jang2l-tool-cache-warm-20260529-105641`.
+- Red larger-budget artifact at `max_tokens: 2048`: `/tmp/osaurus-pr1268-5535b681-lfm25-jang2l-tool-cache-2048-20260529-105717`.
+- 768 result: turn 1 ended `finish_reason: "length"` with no structured tool call and no visible content. The response spent the budget in untagged `reasoning_content`, reasoning about the tool-call format. Turn 2 and turn 3 were skipped because no valid tool call existed.
+- 2048 result: turn 1 ended `finish_reason: "stop"` but produced visible native-looking text `[ line_count("red\ngreen\nb\nblue") ]` instead of an API `tool_calls` object. It leaked protocol-shaped text into visible content, omitted the required `text=` keyword argument, and corrupted the exact text argument. Turn 2 and turn 3 were skipped.
+- Cache/topology result: both red rows still showed the 24-layer LFM hybrid topology with 6 KV layers, 18 Mamba/SSM companion layers, disk-backed restore required, and TurboQuant KV layer count 0. They did not prove warm disk L2 or SSM companion hits (`disk_l2_hits 0`, `ssm_companion_hits 0`, `companion_hits 0`).
+- Caller-control check: a manual repeat request with explicit `enable_thinking:false` still produced untagged reasoning and `finish_reason: "length"`, so this is not cleared by a caller-side thinking disable.
+- Verdict: these red rows are superseded for the length-stop/no-tool-call failure mode by the later `5035d62454531c7d9bdbdbbd4b3cdc54077470e8` vMLX pin and current-head cold pass, but they remain useful regression evidence. LFM2.5 is still not production-clear globally because the current-head warm cache row proves L2/SSM hits but still fails exact turn 3 argument fidelity, and MXFP4/MXFP8 live rows remain unproven.
+
+## 2026-05-28 Nemotron Omni MXFP4 repeat required-tool red row
+
+- Osaurus head at check: `a1d101d6f22dfff41052c1af33975c25663175cd`.
+- vMLX main / Osaurus pin: `76e55f59935f22c3bb2f28055ae8ecebd2e7a355`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Cold artifact: `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-20260528-102745`.
+- Repeat artifact: `/tmp/osaurus-pr1268-a1d101d6-nemotron-omni-mxfp4-tool-cache-repeat-20260528-102806`.
+- Cold result: first required `line_count` call, tool-result follow-up answer, and second required `line_count` call were structured and leak-free; topology showed 29 layers with 23 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, and TurboQuant KV layer count 0.
+- Repeat result: turn 3 failed because `tool_choice: "required"` produced visible text `Two lines were counted.` with `finish_reason: "stop"` instead of a structured tool call; all three repeat responses reported the same `prefix_hash`, and the after-snapshot no longer had Nemotron resident.
+- Verdict: Nemotron Omni MXFP4 remains red/partial for repeat required-tool/cache behavior. This must not be hidden with prompt coercion or parser repair.
+
+## 2026-05-28 Nemotron Omni MXFP4 repeat required-tool and warm cache proof
+
+- Osaurus head at check: `10df987c5d58518a3be4d589ae5d1d942d59a9ce`.
+- vMLX main / Osaurus pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- Initial selected-row artifact: `/tmp/osaurus-pr1268-10df987c-nemotron-mxfp4-required-tool-repeat-20260528-131627`.
+- Cold strict artifact: `/tmp/osaurus-pr1268-10df987c-nemotron-omni-mxfp4-required-cache-20260528-131529`.
+- Warm strict artifact: `/tmp/osaurus-pr1268-10df987c-nemotron-omni-mxfp4-required-cache-warm-20260528-131559`.
+- Model: `nemotron-omni-nano-mxfp4-crack`.
+- Result: turn 1 produced a structured `line_count` call with exact `red\ngreen\nblue`; turn 2 answered visibly with `The count is 3.`; turn 3 repeated `tool_choice: "required"` and produced a structured `line_count` call with exact `one\ntwo`; no protocol markers leaked into visible content.
+- Warm cache result: `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`; topology remains 29 layers with 6 KV and 23 Mamba/SSM layers, SSM companion state, disk-backed restore required, and TurboQuant KV 0.
+- Verdict: the vMLX `d83b22b3` repin clears the previous MXFP4 repeat-required-tool behavior and the warm strict row proves text-path disk/SSM companion cache reuse. Media/audio/video rows remain unproven.
+
+## 2026-05-28 Nemotron Omni JANGTQ4 required-tool repeat green, cache partial row
+
+- Osaurus head at check: `7fa73661b1651a8ec26e49a529b386a9552bfb8d`.
+- Artifact: `/tmp/osaurus-pr1268-nemotron-jangtq4-required-tool-repeat-20260528-123917`.
+- Model: `nemotron-omni-nano-jangtq4-crack`.
+- Result: turn 1 produced a structured `line_count` call with exact `red\ngreen\nblue`; turn 2 answered visibly with `The count is 3.`; turn 3 produced a structured `line_count` call with exact `one\ntwo`; no protocol markers leaked into visible content.
+- Cache boundary: `disk_l2_misses +2` and `disk_l2_stores +3`, but `disk_l2_hits`, SSM companion hits, and SSM companion rederives stayed 0.
+- Verdict: Nemotron Omni JANGTQ4 is green for this selected text/tool/history row, but cache reuse and media/audio/video behavior remain partial. This does not clear the separate MXFP4 repeat-required-tool red row.
+
+## 2026-05-28 ZAYA text JANGTQ4 required-tool red row
+
+- Osaurus head at check: `c9fdc4c38ee53f748805d89c0312a9c61ecf1662`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-c9fdc4c3-zaya-text-jangtq4-tool-cache-20260528-103322`.
+- Result: turn 1 produced a structured `line_count` call with exact `red\ngreen\nblue`; turn 2 answered `3 lines were counted.`; turn 3 produced a structured `line_count` call but with argument ` ... ` instead of exact `one\ntwo`.
+- Topology: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: ZAYA text JANGTQ4 remains red/partial for multi-turn required-tool argument fidelity and repeat L2 reuse. This must not be hidden with parser repair.
+
+## 2026-05-28 ZAYA text JANGTQ4 current-head confidence flake and rerun
+
+- Osaurus PR head at check: `2e48e1e7c14cd73b67a83aa70c3af0276ae75c29`.
+- vMLX main / Osaurus pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- Failed confidence artifact: `/tmp/osaurus-pr1268-2e48e1e7-confidence-zaya-ling-20260528-172807`.
+- Passing rerun artifact: `/tmp/osaurus-pr1268-2e48e1e7-confidence-zaya-rerun-20260528-173145`.
+- Model: `zaya1-8b-jangtq4`.
+- Failed-row result: the same strict three-turn required/none/required harness produced exact turn 1 `line_count` args `red\ngreen\nblue`, visible turn 2 answer `There were 3 lines counted.`, and one structured turn 3 `line_count` call, but turn 3 args were `{"text":"..."}` instead of exact `one\ntwo`. The failure was `turn3_args_exact` only.
+- Failed-row parser/leak result: no protocol marker leaked, no incoherent visible loop occurred, no hidden visible content appeared on tool-call turns, and the parser still returned structured `tool_calls`.
+- Passing rerun result: immediate single-model rerun with the same harness produced exact turn 1 args `red\ngreen\nblue`, visible turn 2 answer `Three lines were counted.`, exact turn 3 args `one\ntwo`, no protocol leak, no visible loop, and healthy app state after the run.
+- Topology/cache result: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, and TurboQuant KV layer count 0. The rerun proves CCA topology and disk-backed restore; it does not prove CCA companion-hit reuse.
+- Token/s: failed-row visible follow-up emitted 7 completion tokens at 10.34 tok/s; passing rerun visible follow-up emitted 5 completion tokens at 10.31 tok/s. Tool-call turns emitted zero completion tokens.
+- Source boundary: the pinned vMLX checkout at `d83b22b3d0350aa45b5b853dd4838ea34af47497` includes explicit required/named tool-choice handling in `ChatTemplateFallbacks.zayaVLVisionToolMinimal`. This aligns ZAYA fallback behavior with the existing DSV4/Nemotron required-tool template contract; it is not parser output repair, prompt-history mutation, hidden sampling, or close-token biasing. Osaurus guard `scripts/live-proof/assert-tool-choice-required-routing.sh` requires the ZAYA text, ZAYA-VL multi-turn, and named `line_count` tokenizer regressions to stay present.
+- Validation boundary: fresh vMLX focused tests on `d83b22b3d0350aa45b5b853dd4838ea34af47497` passed for `DeepseekV4ChatTemplateFallbackFocusedTests/zayaVLFallbackPreservesVisionAndTools` and `DeepseekV4ChatTemplateFallbackFocusedTests/zayaVLRequiredToolChoiceRepeatsAfterNoToolHistory` using scratch path `/tmp/vmlx-zaya-required-tool-proof-2`.
+- Verdict: ZAYA text JANGTQ4 is functional and not showing the user-feared loop/leak failure in this current-head confidence pass, but it is not deterministic production-clear. Keep it partial/flaky until stronger live proof clears the argument-fidelity flake. Do not hide this with parser repair, prompt coercion, or hidden sampler/default changes.
+
+## 2026-05-28 ZAYA text and Ling JANGTQ current PR-head confidence pass
+
+- Osaurus PR head at check: `939c275563c841939bc34f36619d8aeb532ed56c`.
+- vMLX main / Osaurus pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- Artifact: `/tmp/osaurus-pr1268-939c2755-confidence-zaya-ling-20260528-232831`.
+- Models: `zaya1-8b-jangtq4` and `ling-2.6-flash-jangtq2-crack`.
+- ZAYA result: the strict three-turn required/none/required harness passed. Turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered visibly with `Three lines were counted.` and no tool call; turn 3 produced exact structured `line_count` args `one\ntwo`. No protocol marker leaked, no incoherent visible loop occurred, no hidden visible content appeared on tool-call turns, and the app remained healthy with no in-flight request after the row.
+- ZAYA topology/cache result: 80 layers, 40 KV layers, 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, and TurboQuant KV layer count 0. This row proves topology and disk-backed restore but not CCA companion-hit reuse; it recorded disk L2 misses/stores with `disk_l2_hits 0`.
+- ZAYA token/s: visible follow-up emitted 5 completion tokens at 8.64 tok/s; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
+- Ling result: the same harness passed with exact `red\ngreen\nblue` and `one\ntwo` structured `line_count` arguments, visible turn 2 answer, no protocol leak, no length stop, and healthy app state after the row.
+- Ling topology/cache result: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, and TurboQuant KV layer count 0. This row proves topology and disk-backed restore; earlier warm rows remain the cache-hit proof for Ling because this short row recorded `disk_l2_hits 0`.
+- Guard refresh: `assert-tool-choice-required-routing.sh`, `assert-server-settings-runtime-wiring.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-no-forced-behavior-pr.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, and `assert-osaurus-pr-hygiene.sh` passed on this PR head. These cover ZAYA required/named tokenizer regressions, server settings UI/runtime wiring, keychain-free proof paths, no hidden sampler/default/forced-behavior repairs, vMLX pin/checkout readiness, Responses/cache source wiring, chat reasoning/UI routing, HTTP cancellation, model tool/capability surfaces, and PR hygiene.
+- UI visual boundary: the no-sign app at `build/DerivedData/Build/Products/Release/osaurus.app` was running and `/health` was healthy, but Computer Use UI inspection failed before reading the app with tool configuration error `unknown variant default, expected fast or flex in service_tier`. This row therefore has live API/app proof plus source UI guards, not a fresh visual screenshot.
+- Verdict: ZAYA text and Ling JANGTQ2 are green for this current PR-head focused multi-turn required-tool/parser/topology confidence row. ZAYA CCA companion-hit depth, broader direct-mode/statistical repeat confidence, and broader media/video/UI visual proof remain separate partial rows.
+
+## 2026-05-28 Ling JANGTQ2 required-tool and SSM cache green row
+
+- Osaurus head at check: `722f138ff933a93fae226e6fb687c648fd3419a1`.
+- vMLX pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- No-sign app path: `/Users/eric/osaurus-pr1268-live/build/DerivedData/Build/Products/Release/osaurus.app`.
+- Cold artifact: `/tmp/osaurus-pr1268-722f138f-ling-jangtq2-required-cache-cold-20260528-142834`.
+- Warm artifact: `/tmp/osaurus-pr1268-722f138f-ling-jangtq2-required-cache-warm-20260528-142907`.
+- Result: cold and warm rows produced exact structured `line_count` args `red\ngreen\nblue` on turn 1 and exact structured `line_count` args `one\ntwo` on turn 3 after assistant/tool history; both tool turns returned `content=null` with no visible protocol leakage, and both tool-result follow-ups returned visible line-count answers with `finish_reason: "stop"`.
+- Cache result: warm row proved `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`; cold row proved stores/topology without falsely claiming hits.
+- Topology: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
+- Token/s: visible follow-up emitted 10 completion tokens at 11.14 tok/s cold and 5 completion tokens at 7.43 tok/s warm; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
+- Verdict: Ling JANGTQ2 is green for required-tool parsing, assistant/tool history replay, visible tool-result finalization, disk L2 reuse, and SSM companion cache reuse. The older cache-partial artifact `/tmp/osaurus-pr1268-3a46be1f-ling-jangtq2-tool-cache-20260528-103538` is superseded. Ling MXFP4 remains a separate blocked/red row below.
+
+## 2026-05-28 Ling JANGTQ2 current-head confidence row
+
+- Osaurus PR head at check: `2e48e1e7c14cd73b67a83aa70c3af0276ae75c29`.
+- vMLX main / Osaurus pin: `d83b22b3d0350aa45b5b853dd4838ea34af47497`.
+- Artifact: `/tmp/osaurus-pr1268-2e48e1e7-confidence-zaya-ling-20260528-172807`.
+- Model: `ling-2.6-flash-jangtq2-crack`.
+- Result: the strict three-turn required/none/required harness passed on current head. Turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered visibly with `Three lines were counted.` and no tool call; turn 3 produced exact structured `line_count` args `one\ntwo`.
+- Parser/leak result: no protocol marker leaked, no hidden reasoning-only visible output occurred, and all tool-call turns stayed structured with `finish_reason: "tool_calls"`.
+- Topology/cache result: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, and TurboQuant KV layer count 0. The current-head confidence row proves topology and disk-backed restore, but does not replace the earlier warm row for actual `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`.
+- Token/s: visible follow-up emitted 5 completion tokens at 6.96 tok/s; OpenAI-compatible structured tool-call turns emitted zero completion tokens.
+- Verdict: Ling JANGTQ2 remains green for current-head required-tool/history/parser behavior without prompt coercion, parser repair, or hidden sampler defaults.
+
+## 2026-05-28 Ling MXFP4 current-head timeout/app-exit blocked row
+
+- Osaurus head at check: `270300f70e9eacc95aa4204ea8cfeead53ca3a46`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-270300f7-ling-mxfp4-tool-cache-20260528-111408`.
+- Result: first required `line_count` request timed out client-side before a response artifact was written. Immediately after, `/health` showed `ling-2.6-flash-mxfp4-crack` loaded with one in-flight request and zero cache movement; a later health check found port `1337` unavailable and no `osaurus` process remained for that app path.
+- Topology before the app disappeared: 32 layers, 4 KV layers, 28 arrays/SSM companion layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: Ling MXFP4 is blocked/red for this current-head proof attempt. The artifact proves timeout/app-exit behavior, not model correctness; do not promote Ling MXFP4 until a clean no-sign app repeat produces structured tools, visible tool-result answer, no leaks, and SSM/L2 cache evidence.
+
+## 2026-05-28 MiniMax M2.7 small JANGTQ required-tool green row
+
+- Osaurus head at check: `0bba84c9bc8d1b60a872d29bd28e9af3aee586dd`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-0bba84c9-minimax-small-jangtq-tool-cache-20260528-103659`.
+- Result: turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered `There were three lines counted.`; turn 3 produced exact structured `line_count` args `one\ntwo`; no protocol leakage appeared.
+- Topology: 62 full-KV layers, no SSM/CCA companion requirement, disk L2 hit `+1`, TurboQuant KV layer count 0.
+- Verdict: MiniMax M2.7 small JANGTQ is green for this parser/tool/history/cache row. Sibling JANG/JANGTQ-K, speed, RAM, and MiMo-adjacent rows remain separate.
+
+## 2026-05-28 Gemma4 JANG_4M required-tool red row
+
+- Osaurus head at check: `213d0ffd823a4c61181b308aa6b5c24a2fd4b194`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-213d0ffd-gemma4-jang4m-tool-cache-20260528-103834`.
+- Result: turn 1 failed required-tool behavior with `finish_reason: "stop"`, empty visible content, and `reasoning_content: "thought<tool_call|>"` instead of a structured `tool_calls` response.
+- Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: Gemma4 JANG_4M is red for required-tool parser/output behavior on this row. This must not be hidden with reasoning parser output repair or forced close-token biasing.
+
+## 2026-05-28 Gemma4 JANG_4M no-thinking default required-tool green row
+
+- Osaurus worktree state: dirty follow-up patch on top of `270300f70e9eacc95aa4204ea8cfeead53ca3a46`, adding Gemma-family `enable_thinking=false` default for ordinary local API requests while preserving explicit thinking opt-in.
+- No-sign app path: `build/DerivedData-pr1268-gemma-default-nosign/Build/Products/Release/osaurus.app`.
+- Primary artifacts: `/tmp/osaurus-pr1268-gemma-default-gemma4-jang4m-tool-cache-20260528-112756`, `/tmp/osaurus-pr1268-gemma-default-gemma4-jang4m-tool-cache-repeat-20260528-112822`, and focused check `/tmp/osaurus-pr1268-dirty-gemma-default-gemma4-tool-cache-20260528-112946`.
+- Result: required `line_count` calls before and after tool-result history were structured with exact multiline args; the tool-result follow-up answered visibly with no extra tool call; no Harmony/Gemma/tool markers leaked.
+- Topology: 30 layers, 5 KV layers, 25 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0; warm proof records `disk_l2_hits +1`, and the focused check stayed healthy with no in-flight request after the proof.
+- Verdict: Gemma4 JANG_4M is green for this required-tool/history row when ordinary local API requests default to the closed/no-thinking rail. This is model-option/template wiring, not parser output repair; explicit thinking mode, media/video, Gemma3n, and unrelated Gemma siblings remain separate.
+
+## 2026-05-28 Qwen 27B MXFP4 CRACK MTP required-tool parser green, cache partial row
+
+- Osaurus head at check: `2ac8d31f87f4d82ab9de9f8e4188bdab8800bb71`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-2ac8d31f-qwen27-mxfp4-crack-mtp-tool-cache-20260528-103947`.
+- Result: turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 answered `3 lines were counted.`; turn 3 produced exact structured `line_count` args `one\ntwo`; no protocol leakage appeared.
+- Topology: 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: Qwen 27B MXFP4 CRACK MTP is green for this parser/tool/history row, but cache proof remains partial because disk L2 hits stayed 0 while misses/stores moved.
+
+## 2026-05-28 Qwen 27B MXFP4 thinking/tool screenshot repro boundary
+
+- User screenshot: Qwen3.6 27B MXFP4 with Thinking enabled, repeated file tools, large visible context (`~54k / 262k tokens`), and a later thinking-channel `!!!!!!!!` loop.
+- Two-tool artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-tool-repro-20260528-114825`.
+  - Model: `qwen3.6-27b-mxfp4-crack`.
+  - Request shape: OpenAI chat completions, `enable_thinking=true`, `reasoning_effort=high`, required `line_count`, then tool result history, then final answer.
+  - Result: two structured required tool calls, coherent final answer, no `!!!!!!!!` loop, no parser/tool marker leak.
+  - Topology: 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0; disk L2 stores moved but hits stayed 0.
+- Five-tool artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-5tool-repro-20260528-114944`.
+  - Result: five structured required tool calls and a coherent final answer; no `!!!!!!!!` loop and no parser/tool marker leak.
+  - Boundary: turn 1 argument became `red\n\ngreen\nblue` instead of exact `red\ngreen\nblue`, so this row is not an exact-argument promotion even though the line count stayed correct.
+  - Cache boundary: `disk_l2_stores +10`, but `disk_l2_hits`, SSM companion hits, and companion rederives stayed 0.
+- File-tool artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-filetool-repro-20260528-120924`.
+  - Request shape: Thinking enabled, five sequential file-tool turns (`file_tree`, repeated `file_read`), then a final answer over the gathered project fixture.
+  - Result: five structured tool-call turns and one coherent final answer; no `!!!!!!!!` loop and no raw tool-envelope marker leaked into ordinary assistant text.
+  - Boundary: absolute `file_read` paths returned not found until the model switched to the relative `docs/runtime.md` path, so this row is not a file-tool fidelity promotion.
+  - Boundary: the artifact summary flags `DSML` in the final visible answer, but that is fixture content (`DSV4 uses DSML tools`), not a DSV4 parser/protocol leak.
+  - Cache boundary: `disk_l2_stores +6`, but `disk_l2_hits`, SSM companion hits, and SSM companion rederives stayed 0.
+- Warm repeat artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-filetool-repeat-cache-20260528-122054`.
+  - Request shape: exact repeat of the file-tool fixture final request against the resident warm Qwen model.
+  - Result: no `!!!!!!!!` loop and no protocol marker leak, but the response stopped with `finish_reason: "length"`, empty visible content, and reasoning-only text instead of the coherent final answer from the cold row.
+  - Cache boundary: repeat still produced `disk_l2_stores +1` with `disk_l2_hits 0`, SSM companion hits `0`, and SSM companion rederives `0`.
+- Corrected named file-tool artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-filetool-named-repro-20260528-121522`.
+  - Request shape: Thinking enabled, named `tool_choice` sequence over `file_tree`, `file_read`, `file_read`, `line_count`, then final no-tool answer over the same tool history.
+  - Result: all four named tool turns returned exactly one structured tool call with the expected tool name, exact readable file paths, no raw tool envelope leak, and no `!!!!!!!!` loop.
+  - Boundary: the final no-tool answer with `max_tokens: 1024` consumed the entire completion budget in `reasoning_content`, returned `content: ""`, and ended with `finish_reason: "length"`.
+  - Cache boundary: Qwen topology was 64 layers / 16 KV / 48 Mamba, `companion=ssm`, disk-backed restore required, TurboQuant KV 0; cache counters were already warm from prior rows and the row did not prove a new disk L2 or SSM companion hit.
+- Final-answer budget artifact: `/tmp/osaurus-pr1268-qwen27-mxfp4-thinking-final-budget-check-20260528-121810`.
+  - Result: the same tool-result history with Thinking enabled and `max_tokens: 2048` returned visible content, no extra tool calls, and `finish_reason: "stop"`.
+  - Boundary: this clears the small-budget final-answer failure as an output-budget/thinking-budget interaction, not as a parser leak or tool-history corruption.
+- Exact-head final-answer repeat/cache artifact: `/tmp/osaurus-pr1268-380e7f96-qwen27-mxfp4-thinking-filetool-final-cache-2048-20260528-151216`.
+  - Request shape: handcrafted file/tool history equivalent to the corrected named-tool row, Thinking enabled with `enable_thinking=true` / `reasoning_effort=high`, `tool_choice: "none"`, and explicit `max_tokens: 2048`; the same final no-tool request was sent twice against the no-sign app.
+  - Result: both final-answer turns ended `finish_reason: "stop"` with visible content, no tool calls, no protocol marker leakage, and no `!!!!!!!!` loop.
+  - Cache result: the warm repeat produced `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`.
+  - Topology: 64 layers, 16 KV layers, 48 Mamba/SSM layers, `companion=ssm`, disk-backed restore required, TurboQuant KV layer count 0.
+  - Token/s: first final answer emitted 537 completion tokens in 32.72s (`16.41 tok/s`); warm repeat emitted 327 completion tokens in 18.43s (`17.74 tok/s`).
+- Verdict: the screenshot loop is not reproduced by the small two-tool, five-tool synthetic, corrected named file-tool, or exact-head final-answer repeat/cache rows. Qwen 27B MXFP4 Thinking+tools is green for structured named tool calls and for repeated 2048-token final answers over file/tool history with disk L2 plus SSM companion reuse. It remains partial for the original large real UI context (`~54k / 262k tokens`) and product handling of too-small thinking output budgets. Do not add hidden repetition penalties, synthetic max-token clamps, or parser repair for this.
+
+## 2026-05-28 ZAYA-VL JANGTQ4 red image media/cache green row
+
+- Osaurus head at check: `b780e33737cbf51d3045c97c694a8ee7104caebb`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-b780e337-zaya-vl-jangtq4-red-media-cache-20260528-104101`.
+- Payload: generated 64x64 red PNG sent as an OpenAI-compatible image content part.
+- Result: first response `Red`, repeat response `Red`, stable `prefix_hash`, no protocol leakage, repeat disk L2 hit `+1`.
+- Topology: 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: ZAYA-VL JANGTQ4 is green for this image/media repeat-cache row; CCA companion-hit depth, sibling variants, and video rows remain partial.
+
+## 2026-05-28 DSV4 JANGTQ-K required-tool red row
+
+- Osaurus head at check: `50b38bc8b2b4b4ee8b639d16c798de19782cc75d`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-50b38bc8-dsv4-jangtq-k-tool-cache-20260528-104417`.
+- Result: turn 1 took 517.5 seconds and ended with `finish_reason: "length"` instead of a structured tool call; visible content was empty and reasoning text looped over interpreting `red\ngreen\nblue`.
+- Topology: 43 layers, 41 hybrid-pool layers, 2 rotating KV layers, disk-backed restore required, TurboQuant KV layer count 0.
+- Verdict: DSV4 JANGTQ-K is red under the generic required-tool harness. Do not infer readiness from the JANGTQ2 proof row.
+
+## 2026-05-28 DSV4 JANGTQ-K explicit-control required-tool green row
+
+- Osaurus head at check: `be665ebf425104bd52e5b02cbe823080f7bf64ed`.
+- No-sign app path: `build/DerivedData-pr1268-release-nosign-695d5869/Build/Products/Release/osaurus.app`.
+- Artifact: `/tmp/osaurus-pr1268-be665ebf-dsv4-jangtq-k-explicit-instruct-tool-20260528-105634`.
+- Request: `/v1/chat/completions` with model `deepseek-v4-flash-jangtq-k`, `reasoning_effort: "instruct"`, `max_tokens: 256`, `tool_choice: "required"`, and the `line_count` schema.
+- Result: one structured `line_count` tool call with exact `red\ngreen\nblue` arguments, `finish_reason: "tool_calls"`, no visible content, and no DSML/protocol leak.
+- Verdict: DSV4 JANGTQ-K is green for a single explicit-control required-tool call. The generic harness remains red, and JANGTQ-K multi-turn/tool-result/cache-repeat proof remains incomplete.
+
 ## Evidence Standard
 
 Each live row needs an artifact folder with:
@@ -263,12 +514,12 @@ These are explicit inverse rows, not nice-to-have manual notes:
 
 | Model path or family | Runtime class/topology | Current evidence | Required before production-clear |
 |---|---|---|---|
-| `/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K` | DSV4 Flash, SWA+CSA+HSA `DeepseekV4Cache`, DSML tools | vmlx live DSV4 tool-call and growing-cache artifacts; Osaurus docs/tests lock no app-side DSV4 cache forcing. | Final Osaurus UI renderer screenshot/log, API chat/responses rows, DSV4 settings CLI preview, cache stats, and `reasoning_effort=max` app proof. |
+| `/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K` | DSV4 Flash, SWA+CSA+HSA `DeepseekV4Cache`, DSML tools | vMLX main `76e55f59935f22c3bb2f28055ae8ecebd2e7a355` skips disk-backed path-dependent cache restore for active tool requests. Osaurus #1268 code-equivalent app build `695d5869` proof artifact `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603`: 5/5 DSV4 JANGTQ2 required `line_count` repeats passed with explicit `reasoning_effort: "instruct"` and `max_tokens: 256`; each turn produced one structured tool call, exact `red\\ngreen\\nblue` args, no visible DSML leak, no reasoning leakage, no `_error`; topology showed 43 layers, 41 hybrid pool, 2 rotating, TurboQuant KV 0, disk L2 stores. Exact-head #1268 artifacts `/tmp/osaurus-pr1268-2455c4ce-dsv4-jangtq2-required-cache-cold-20260528-131817` and `/tmp/osaurus-pr1268-2455c4ce-dsv4-jangtq2-required-cache-warm-20260528-133223` prove JANGTQ2 multi-turn `line_count` exact args after tool history, no DSML/protocol leak, 43-layer hybrid-pool/rotating topology, and warm `disk_l2_hits +1`; timings remain slow. JANGTQ-K generic required-tool artifact `/tmp/osaurus-pr1268-50b38bc8-dsv4-jangtq-k-tool-cache-20260528-104417` is red with a length-stop reasoning loop and no DSML call. JANGTQ-K explicit-control artifact `/tmp/osaurus-pr1268-be665ebf-dsv4-jangtq-k-explicit-instruct-tool-20260528-105634` is green for one required `line_count` call with exact args and no DSML leak. Omitted max-token / omitted reasoning-control rows are documented as not green. | Final Osaurus UI renderer screenshot/log, `/v1/responses` and `/v1/messages` rows if mapped, DSV4 settings CLI preview, `reasoning_effort=max` app proof, JANGTQ-K multi-turn/cache repeat proof, speed work, and a decision/fix for omitted DSV4 reasoning controls. |
 | `/Users/eric/models/dealign.ai/Qwen3.6-35B-A3B-JANGTQ-CRACK` | Qwen3.6 MoE VL, Qwen3VLProcessor, path-dependent cache | vmlx live prod/cache/VL/media-salt artifacts exist. | Osaurus app chat + API rows for image/text/video, reasoning on/off, generation defaults, saved settings, and cache stats. |
-| `/Users/eric/models/JANGQ/Qwen3.6-27B-MXFP4-MTP` and MXFP8/35B variants | Qwen MTP/VL only when tensors plus `vmlx_mtp_tuning.json` are valid | vmlx source/tests require tuning and fail closed without it; fresh census proves 27B MXFP4 selects D2, 27B MXFP8/35B variants select D3, all from tensor/tuning evidence. | Osaurus status UI/API must show MTP off/on reason, use `vmlx_mtp_tuning.json`, and prove MTP on/off speed/coherence/cache rows. |
+| `/Users/eric/models/JANGQ/Qwen3.6-27B-MXFP4-MTP` and MXFP8/35B variants | Qwen MTP/VL only when tensors plus `vmlx_mtp_tuning.json` are valid | vmlx source/tests require tuning and fail closed without it; fresh census proves 27B MXFP4 selects D2, 27B MXFP8/35B variants select D3, all from tensor/tuning evidence. Exact-head Osaurus artifacts `/tmp/osaurus-pr1268-d7b700ca-qwen27-mxfp4-crack-mtp-required-cache-cold-20260528-134548` and `/tmp/osaurus-pr1268-d7b700ca-qwen27-mxfp4-crack-mtp-required-cache-warm-20260528-134614` prove Qwen 27B MXFP4 CRACK MTP required multi-turn `line_count`, exact args, no protocol leak, 64-layer topology with 48 Mamba/SSM and 16 KV layers, and warm `disk_l2_hits +1`, `ssm_companion_hits +1`, `companion_hits +1`. Exact-head artifact `/tmp/osaurus-pr1268-380e7f96-qwen27-mxfp4-thinking-filetool-final-cache-2048-20260528-151216` proves Qwen Thinking final answers over file/tool history at explicit 2048 output budget with visible `stop` answers, no loop/leak/tool calls, and warm disk/SSM companion hits. | Osaurus status UI/API must show MTP off/on reason, use `vmlx_mtp_tuning.json`, and prove MTP on/off speed/coherence/cache rows. Original large-context UI screenshot behavior remains separate partial coverage. |
 | `/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK` | Gemma4 VLM/Harmony reasoning/tool parser | vmlx parser/source contracts exist. | Live Osaurus image/text/video rows, Harmony no-leak API rows, Gemma settings defaults, and cache stats. |
 | `/Users/eric/models/mlx-community/gemma-3n-E2B-it-4bit` | Gemma3n text row in current artifacts | vmlx production BatchEngine probe is partial: math/reasoning-on/off/cache rows are coherent at about 120 tok/s and ~2.7 GiB RSS with disk L2 hits/stores, but the UTF literal row fails at bundle defaults and greedy diagnostics. | Do not call Gemma3n production-clear until the UTF drift is root-caused. If exposed as VL/audio, add media rows first; otherwise UI must not overclaim media capability. |
-| `/Users/eric/models/JANGQ/ZAYA1-VL-8B-JANGTQ4` and `/Users/eric/models/Osaurus/ZAYA1-VL-8B-MXFP4` | ZAYA-VL CCA/path-dependent cache | Source profiles default thinking off; ZAYA text direct-mode is currently not production-clear. | Separate ZAYA-VL media rows, CCA cache stats, no stale thinking setting, speed target, and no sampler workaround. |
+| `/Users/eric/models/JANGQ/ZAYA1-VL-8B-JANGTQ4` and `/Users/eric/models/Osaurus/ZAYA1-VL-8B-MXFP4` | ZAYA-VL CCA/path-dependent cache | Source profiles default thinking off; ZAYA text direct-mode is currently not production-clear. Exact-head ZAYA text artifacts `/tmp/osaurus-pr1268-04dbc2cd-zaya-text-jangtq4-required-cache-cold-20260528-134803` and `/tmp/osaurus-pr1268-04dbc2cd-zaya-text-jangtq4-required-cache-warm-20260528-135005` prove required multi-turn `line_count`, exact args, no protocol leak, 80-layer topology with 40 KV and 40 CCA layers, and warm `disk_l2_hits +1`; CCA companion hits remain 0. | Separate ZAYA-VL media rows, CCA companion-hit depth, no stale thinking setting, speed target, and no sampler workaround. |
 | `/Users/eric/models/dealign.ai/Nemotron-Omni-Nano-*` | Nemotron Omni text/image/audio/video, Parakeet/RADIO, media placeholders | Prior PR docs and vmlx artifacts cover structural paths with caveats. | Final Osaurus app/API audio/video/image/text-only resume rows, live voice resident pre-encode, repeated-video cache alias, and no reasoning-only short-budget false pass. |
 | `/Users/eric/models/dealign.ai/MiniMax-M2.7-*` | MiniMax reasoning/tool parser, JANG/JANGTQ | vmlx fresh rows pass for some bundles; MTP must not be assumed from name. | Osaurus API tool result row, UI reasoning behavior, cache stats, and no visible reasoning leak. |
 | `/Users/eric/models/dealign.ai/Ling-2.6-flash-*` | Bailing/Ling hybrid linear attention, GLM-style tools | vmlx fresh no-guard row passes; Osaurus source now defaults thinking off but honors explicit opt-in and keeps reasoning separate. | Osaurus UI/API no-thinking and opt-in rows, long-prompt TTFT/cache stats, and stale settings isolation. |
@@ -299,6 +550,15 @@ Kimi is intentionally excluded from this matrix for now per current scope.
 
 ## Open Items
 
+- Current #1268 boundary: the branch is pinned to vMLX main
+  `d83b22b3d0350aa45b5b853dd4838ea34af47497`, open, not draft,
+  mergeable, and not merged by agent. The live GitHub PR head can advance by
+  documentation-only commits; always verify the current PR head and CI before
+  merge instead of embedding a moving head SHA as final proof. Current-head
+  proof artifacts are listed in the family rows above, including Nemotron
+  MXFP4, DSV4 JANGTQ2, Qwen 27B MXFP4 CRACK MTP, and ZAYA text JANGTQ4. This
+  is a consolidation boundary, not a blanket production-clear claim for every
+  architecture row.
 - The final Osaurus app has not yet run the full UI/API matrix for Qwen-VL,
   Gemma VLM, ZAYA-VL, Nemotron Omni, DSV4, MiniMax, Ling, Hy3, and the parser
   families listed above.
@@ -306,11 +566,71 @@ Kimi is intentionally excluded from this matrix for now per current scope.
   math/cache turns, but a UTF literal prompt drifts into unrelated Chinese
   text. Treat it as an open runtime/tokenizer/template investigation, not a
   sampler-default workaround.
-- DSV4 has live vmlx tool/cache proof, but the final settings renderer still
-  needs visible UI/CLI evidence.
+- DSV4 now has live Osaurus required-tool repeat proof from #1268 head
+  `ad233f70` / code-equivalent app build `695d5869` with explicit
+  `reasoning_effort: "instruct"` and `max_tokens: 256`:
+  `/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-instruct-max256-20260528-085603`.
+  Five turns passed with exact multiline args, no visible DSML leak, no
+  reasoning leakage, and resident DSV4 cache topology showing disk L2 stores.
+  `/v1/responses` now has a focused non-streaming route proof at
+  `/tmp/osaurus-pr1268-5f358de5-dsv4-responses-required-20260528-091946`:
+  explicit `reasoning.effort: "instruct"`, explicit `max_output_tokens: 256`,
+  one `function_call` output item for `line_count`, exact multiline args, and no
+  visible DSML/tool-marker leak. Cache counters stayed zero in that row, so this
+  proves Responses tool-parser parity only, not DSV4 disk-hit reuse.
+  Streaming `/v1/responses` also has a focused route proof at
+  `/tmp/osaurus-pr1268-7a7d2273-dsv4-responses-stream-required-20260528-093541`:
+  reasoning summary events arrived before the final structured `function_call`,
+  the final `line_count` arguments were exact, no DSML/tool-marker leak was
+  visible, DSV4 topology stayed 43 layers / 41 hybrid-pool / 2 rotating /
+  TurboQuant KV 0, and disk L2 stores moved `+1`. This proves streaming
+  Responses event/tool parity and store behavior, not repeat disk-hit reuse.
+  Responses tool-result follow-up repeat-cache proof is green at
+  `/tmp/osaurus-pr1268-a1d101d6-dsv4-responses-tool-result-repeat-cache-clean-20260528-102858`:
+  with DSV4 already resident, two identical `/v1/responses` tool-result
+  follow-ups returned visible line-count answers, no extra function/tool item,
+  no DSML/tool-marker leak, and each repeat produced `disk_l2_hits +1` with no
+  new misses. This is a repeat disk-hit proof for the Responses tool-result
+  follow-up surface only.
+  `/v1/messages` now has a focused Anthropic-compatible route proof at
+  `/tmp/osaurus-pr1268-7a7d2273-dsv4-messages-required-20260528-093706`:
+  explicit `max_tokens: 256`, required `line_count` tool choice, HTTP 200, one
+  `tool_use` content item, exact multiline args, `stop_reason: "tool_use"`, no
+  visible DSML/tool-marker leak, and healthy resident DSV4 after the request.
+  This proves Messages tool-parser parity only; disk L2 stores moved but this is
+  not a repeat disk-hit proof.
+  `/v1/messages` tool-result follow-up is also green at
+  `/tmp/osaurus-pr1268-f7343290-dsv4-messages-tool-result-20260528-095315`:
+  prior assistant `tool_use` plus user `tool_result` rendered correctly, the
+  model answered `The line count is 3.`, `stop_reason: "end_turn"`, no extra
+  tool call, no DSML/tool-marker leak, and resident DSV4 stayed healthy with
+  the same 43-layer hybrid topology. This proves Messages tool-result follow-up
+  parity, not repeat disk-hit reuse.
+  Immediate repeat of the same Messages tool-result follow-up is green at
+  `/tmp/osaurus-pr1268-80e87491-dsv4-messages-tool-result-repeat-cache-20260528-100913`:
+  both turns answered `The line count is 3.`, no extra tool calls, no
+  DSML/tool-marker leak, and turn 2 produced `disk_l2_hits +1` with no new
+  misses. This is a repeat disk-hit proof for the Messages tool-result follow-up
+  surface only.
+  Two broader rows are explicitly not green: omitted `max_tokens` timed out and
+  left lingering inflight requests
+  (`/tmp/osaurus-pr1268-695d5869-dsv4-required-repeat-20260528-084132`), and
+  omitted DSV4 reasoning controls produced one whitespace-drift tool argument
+  plus one reasoning-to-length turn
+  (`/tmp/osaurus-pr1268-ad233f70-dsv4-required-repeat-max256-20260528-085227`).
+  The active tool path intentionally produced disk stores but no disk hits after
+  vMLX `76e55f5`, because disk-backed path-dependent restore is skipped for
+  active tool requests. The final settings renderer still needs visible UI/CLI
+  evidence and `reasoning_effort=max` app proof.
 - ZAYA text direct mode remains a real red row. Do not call ZAYA production
   clear until the prompt/runtime issue is root-caused or the product explicitly
   defaults to a proven coherent mode without a hidden sampler/parser fix.
+- Gemma4 JANG_4M has a follow-up green required-tool/history row via the
+  Gemma-family `enable_thinking=false` local API default:
+  `/tmp/osaurus-pr1268-gemma-default-gemma4-jang4m-tool-cache-repeat-20260528-112822`.
+  This fixes the prior `thought<tool_call|>` row without parser output repair,
+  but explicit thinking mode, media/video, Gemma3n, and sibling coverage remain
+  separate.
 - Nemotron Omni video/audio cache behavior has focused and live vmlx evidence,
   but Osaurus app/API rows still need to prove the same path through ChatView,
   HTTP adapters, saved settings, and cache stats.

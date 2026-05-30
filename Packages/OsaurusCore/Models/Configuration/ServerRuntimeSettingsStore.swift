@@ -144,11 +144,11 @@ public enum ServerRuntimeSettingsStore {
             normalized.mtp.mode = .auto
         }
         if shouldRepairLegacyCacheDefaults(normalized.cache) {
-            // Keep live KV codec conservative on upgrade. Engine-selected
-            // TurboQuant stays available as an explicit Server Settings
-            // choice, but it is not promoted globally until the Qwen/Gemma/
-            // DSV4 cross-family proof matrix covers the historical failure
-            // modes.
+            // Keep companion-cache repair independent from the live KV codec.
+            // Engine-selected is the default policy now, but ModelRuntime
+            // only resolves it to TurboQuant for proven full-KV rows and
+            // leaves hybrid/rotating/CCA/DSV4 rows on fp16 unless explicitly
+            // overridden.
             normalized.cache.enableSSMReDerive = true
             writeCacheDefaultsMigrationMarker()
         }
@@ -246,10 +246,12 @@ public enum ServerRuntimeSettingsStore {
             smeltMode: .engineSelected
         )
 
-        // Cache: seed the engine-owned topology conservatively. Prefix,
-        // paged KV, block-disk L2, and SSM rederive are on by default, but
-        // live KV codec stays native/fp16 unless the user explicitly opts
-        // into engine-selected TurboQuant in Server Settings.
+        // Cache: seed the engine-owned topology with automatic policy.
+        // Prefix, paged KV, block-disk L2, and SSM rederive are on by
+        // default. Engine-selected live KV is resolved by ModelRuntime per
+        // model family/topology: proven full-KV rows get TurboQuant, while
+        // hybrid/rotating/CCA/DSV4 rows stay native/fp16 unless explicitly
+        // overridden.
         settings.cache = VMLXServerCacheSettings(
             prefix: VMLXPrefixCacheSettings(
                 enabled: true,
@@ -263,7 +265,7 @@ public enum ServerRuntimeSettingsStore {
                 blockSize: nil,
                 maxBlocks: nil
             ),
-            liveKVCodec: .native,
+            liveKVCodec: .engineSelected,
             turboQuantKeyBits: nil,
             turboQuantValueBits: nil,
             defaultMaxKVSize: 65536,
@@ -317,9 +319,8 @@ public enum ServerRuntimeSettingsStore {
         let projectedOrigins = settings.network.corsOrigins
             .filter { $0 != "*" }
         updated.allowedOrigins = projectedOrigins
-        if let topP = settings.generation.topP {
-            updated.genTopP = Float(topP)
-        }
+        updated.genTopP = settings.generation.topP.map(Float.init)
+            ?? ServerConfiguration.default.genTopP
         return updated
     }
 

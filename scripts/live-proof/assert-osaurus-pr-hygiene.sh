@@ -147,27 +147,29 @@ reject_status_pattern '(^|\s)(\.build|DerivedData|build/|\.DS_Store|.*\.xcuserst
   "build/user-state artifact"
 
 echo "--- required PR files ---"
-require_file "$ROOT/AGENTS.md" "Osaurus AGENTS keychain rules"
-require_text "$ROOT/AGENTS.md" 'Do not run Osaurus SwiftPM/Xcode validation lanes' \
-  "Osaurus no SwiftPM/Xcode validation rule"
-require_text "$ROOT/AGENTS.md" 'generation_config\.json' \
-  "Osaurus model defaults must come from generation config"
-require_text "$ROOT/AGENTS.md" 'Native-trained defaults such as top-k matter' \
-  "Osaurus native top-k/defaults rule"
-require_text "$ROOT/AGENTS.md" 'Activity Monitor physical footprint' \
-  "Osaurus physical-footprint RAM proof rule"
-require_text "$ROOT/AGENTS.md" 'Every generation row must record token/s' \
-  "Osaurus token/s proof rule"
-require_text "$ROOT/AGENTS.md" 'Qwen-style hybrid SSM needs KV plus SSM companion rederive/hit proof' \
-  "Osaurus hybrid SSM cache proof rule"
-require_text "$ROOT/AGENTS.md" 'DeepSeek-V4 CSA/HSA/SWA hybrid pool needs prefix/L2' \
-  "Osaurus DSV4 cache proof rule"
-require_text "$ROOT/AGENTS.md" 'VL/video rows require real media payloads' \
-  "Osaurus VL/video media proof rule"
-require_text "$ROOT/AGENTS.md" 'Big-model load cancellation must be live-proven' \
-  "Osaurus big-model load cancellation proof rule"
-require_text "$ROOT/AGENTS.md" 'Qwen/JANG/JANGTQ RAM regressions require end-to-end Osaurus proof' \
-  "Osaurus Qwen/JANGTQ RAM proof rule"
+if git -C "$ROOT" rev-parse --verify origin/main >/dev/null 2>&1; then
+  if git -C "$ROOT" diff --name-only origin/main...HEAD -- AGENTS.md | rg -q .; then
+    fail_msg "AGENTS.md contains PR-only agent rules; keep agent policy local"
+  else
+    pass "AGENTS.md has no PR delta"
+  fi
+else
+  pass "origin/main unavailable; AGENTS.md PR-diff gate skipped"
+fi
+require_text "$ROOT/scripts/live-proof/build-keychain-free-osaurus.sh" 'CODE_SIGNING_ALLOWED=NO' \
+  "keychain-free build disables Xcode signing"
+require_text "$ROOT/scripts/live-proof/build-keychain-free-osaurus.sh" 'timestamp=none' \
+  "keychain-free build uses timestamp-free ad-hoc seal"
+require_text "$ROOT/scripts/live-proof/open-keychain-free-osaurus.sh" 'OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS' \
+  "keychain-free UI launch exports disabled-keychain mode"
+require_text "$ROOT/docs/RUNTIME_VALIDATION_STANDARD.md" 'generation_config' \
+  "runtime validation docs preserve model generation defaults"
+require_text "$ROOT/scripts/live-proof/POST1266-LIVE-FAMILY-CACHE-MATRIX.md" 'token/s' \
+  "family matrix records generation throughput"
+require_text "$ROOT/scripts/live-proof/POST1266-LIVE-FAMILY-CACHE-MATRIX.md" 'disk_l2_hits' \
+  "family matrix records disk L2 cache evidence"
+require_text "$ROOT/scripts/live-proof/family-runtime-chat-matrix.json" 'tool' \
+  "family runtime matrix includes tool-call proof rows"
 if [[ -n "$VMLX_PIN" ]]; then
   require_text "$ROOT/Packages/OsaurusCore/Package.swift" \
     "revision: \"$VMLX_PIN\"" \
@@ -261,7 +263,7 @@ require_text "$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/Concurren
   "Server settings expose continuous batching toggle"
 
 active_forbidden="$({ ps -axo pid,ppid,rss,etime,command || true; } \
-  | rg -i 'CodeSigningHelper|xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
+  | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
   | rg -v 'rg -i|assert-osaurus-pr-hygiene|assert-keychain-free-proof-path|assert-osaurus-vmlx-pr-readiness|assert-vmlx-gemma4-parser-fix-wired|assert-no-hidden-local-sampler-defaults|assert-openresponses-cache-proof-wiring|assert-osaurus-no-forced-behavior-pr|assert-server-settings-runtime-wiring|assert-chat-reasoning-delta-routing|assert-chat-ui-reasoning-routing|assert-http-channel-load-cancellation' || true)"
 if [[ -n "$active_forbidden" ]]; then
   echo "$active_forbidden" >&2

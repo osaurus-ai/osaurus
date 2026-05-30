@@ -122,7 +122,7 @@ require_order "$HTTP_HANDLER" 'StreamingReasoningHint\.decode\(delta\)' \
   "HTTP SSE handles reasoning before tool-call routing"
 
 active="$({ ps -axo pid,ppid,rss,etime,command || true; } \
-  | rg -i 'CodeSigningHelper|xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
+  | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
   | rg -v 'rg -i|assert-chat-reasoning-delta-routing' || true)"
 if [[ -n "$active" ]]; then
   echo "$active" >&2

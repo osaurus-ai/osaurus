@@ -643,9 +643,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "disk_l2_hits": 0,
                 "disk_l2_misses": 0,
                 "disk_l2_stores": 0,
+                "companion_hits": 0,
+                "companion_misses": 0,
+                "companion_rederives": 0,
                 "ssm_companion_hits": 0,
                 "ssm_companion_misses": 0,
                 "ssm_companion_rederives": 0,
+                "zaya_cca_companion_hits": 0,
+                "zaya_cca_companion_misses": 0,
+                "zaya_cca_companion_rederives": 0,
             ]
 
             let models: [[String: Any]] = cached.map { summary in
@@ -738,14 +744,45 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["block_disk_store"] = disk
 
                 let ssm = stats.ssmStats
-                row["ssm_companion_cache"] = [
+                let companionKinds = summary.cacheTopology?.topologyTags.filter {
+                    $0.hasPrefix("companion=")
+                } ?? []
+                let hasSSMCompanion = companionKinds.contains("companion=ssm")
+                let hasZayaCCACompanion =
+                    (summary.cacheTopology?.zayaCCALayerCount ?? 0) > 0
+                row["companion_cache"] = [
                     "hits": ssm.hits,
                     "misses": ssm.misses,
                     "rederives": ssm.reDerives,
+                    "kinds": companionKinds,
                 ]
-                aggregate["ssm_companion_hits", default: 0] += ssm.hits
-                aggregate["ssm_companion_misses", default: 0] += ssm.misses
-                aggregate["ssm_companion_rederives", default: 0] += ssm.reDerives
+                if hasSSMCompanion {
+                    row["ssm_companion_cache"] = [
+                        "hits": ssm.hits,
+                        "misses": ssm.misses,
+                        "rederives": ssm.reDerives,
+                    ]
+                }
+                if hasZayaCCACompanion {
+                    row["zaya_cca_companion_cache"] = [
+                        "hits": ssm.hits,
+                        "misses": ssm.misses,
+                        "rederives": ssm.reDerives,
+                    ]
+                }
+                aggregate["companion_hits", default: 0] += ssm.hits
+                aggregate["companion_misses", default: 0] += ssm.misses
+                aggregate["companion_rederives", default: 0] += ssm.reDerives
+                if hasSSMCompanion {
+                    aggregate["ssm_companion_hits", default: 0] += ssm.hits
+                    aggregate["ssm_companion_misses", default: 0] += ssm.misses
+                    aggregate["ssm_companion_rederives", default: 0] += ssm.reDerives
+                }
+                if hasZayaCCACompanion {
+                    aggregate["zaya_cca_companion_hits", default: 0] += ssm.hits
+                    aggregate["zaya_cca_companion_misses", default: 0] += ssm.misses
+                    aggregate["zaya_cca_companion_rederives", default: 0] += ssm.reDerives
+                }
                 return row
             }
 
@@ -3214,7 +3251,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // the actual on-wire status (200) so dashboards don't
                     // mis-attribute a delivered stream as a 500.
                     hop {
-                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
+                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
                     }
                     logSelf.logRequest(
@@ -3963,10 +4000,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let writerBound = NIOLoopBound(writer, eventLoop: loop)
             hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
             let keepaliveTask = Self.startSSEKeepalive(
-                writer: writerBound,
-                channel: context.channel,
-                loop: loop,
-                ctx: ctx
+                writer: writerBound, channel: context.channel, loop: loop, ctx: ctx
             )
             runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
@@ -3987,10 +4021,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if delta.isEmpty { continue }
                         accumulated += delta
                         let chunk = CompletionResponseDTO(
-                            id: responseId,
-                            object: "text_completion",
-                            created: created,
-                            model: model,
+                            id: responseId, object: "text_completion", created: created, model: model,
                             choices: [CompletionChoiceDTO(text: delta, index: 0, finish_reason: nil)],
                             usage: nil
                         )
@@ -4002,10 +4033,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     hop { writerBound.value.writeError(error.localizedDescription, context: ctx.value) }
                 }
                 let final = CompletionResponseDTO(
-                    id: responseId,
-                    object: "text_completion",
-                    created: created,
-                    model: model,
+                    id: responseId, object: "text_completion", created: created, model: model,
                     choices: [CompletionChoiceDTO(text: "", index: 0, finish_reason: finishReason)],
                     usage: nil
                 )
@@ -4016,17 +4044,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
-                    method: "POST",
-                    path: "/completions",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: startTime,
-                    model: model,
-                    tokensInput: promptTokens,
+                    method: "POST", path: "/completions", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseStatus: 200, startTime: startTime,
+                    model: model, tokensInput: promptTokens,
                     tokensOutput: TokenEstimator.estimate(accumulated),
-                    temperature: req.temperature,
-                    maxTokens: req.resolvedMaxTokens
+                    temperature: req.temperature, maxTokens: req.resolvedMaxTokens
                 )
             }
             return
@@ -4047,10 +4069,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 let completionTokens = TokenEstimator.estimate(text)
                 let response = CompletionResponseDTO(
-                    id: responseId,
-                    object: "text_completion",
-                    created: created,
-                    model: model,
+                    id: responseId, object: "text_completion", created: created, model: model,
                     choices: [CompletionChoiceDTO(text: text, index: 0, finish_reason: "stop")],
                     usage: CompletionUsageDTO(
                         prompt_tokens: promptTokens,
@@ -4064,27 +4083,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let headersCopy = headers
                 hop {
                     Self.writeFullResponse(
-                        ctx: ctx,
-                        version: version,
-                        status: .ok,
-                        headers: headersCopy,
-                        body: body
+                        ctx: ctx, version: version, status: .ok, headers: headersCopy, body: body
                     )
                 }
                 logSelf.logRequest(
-                    method: "POST",
-                    path: "/completions",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: startTime,
-                    model: model,
-                    tokensInput: promptTokens,
-                    tokensOutput: completionTokens,
-                    temperature: req.temperature,
-                    maxTokens: req.resolvedMaxTokens,
-                    finishReason: .stop
+                    method: "POST", path: "/completions", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseBody: body, responseStatus: 200,
+                    startTime: startTime, model: model, tokensInput: promptTokens,
+                    tokensOutput: completionTokens, temperature: req.temperature,
+                    maxTokens: req.resolvedMaxTokens, finishReason: .stop
                 )
             } catch {
                 let message = error.localizedDescription
@@ -4093,22 +4100,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let body = Self.errorBody(.openai(type: "internal_error"), message: message)
                 hop {
                     Self.writeFullResponse(
-                        ctx: ctx,
-                        version: version,
-                        status: status,
-                        headers: [("Content-Type", "application/json; charset=utf-8")],
-                        body: body
+                        ctx: ctx, version: version, status: status,
+                        headers: [("Content-Type", "application/json; charset=utf-8")], body: body
                     )
                 }
                 logSelf.logRequest(
-                    method: "POST",
-                    path: "/completions",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: Int(status.code),
-                    startTime: startTime,
-                    model: model,
-                    errorMessage: message
+                    method: "POST", path: "/completions", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseStatus: Int(status.code),
+                    startTime: startTime, model: model, errorMessage: message
                 )
             }
         }
@@ -4269,7 +4268,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logRequestBody = requestBodyString
             let logModel = model
             let logTemperature = req.temperature
-            let logMaxTokens = req.resolvedMaxTokens ?? 1024
+            let logMaxTokens = req.resolvedMaxTokens
             let logSelf = self
             let disconnected = SendableBool(false)
             let channelClosed = SendableBool(false)
@@ -4593,7 +4592,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // the actual on-wire status (200) so dashboards don't
                     // mis-attribute a delivered stream as a 500.
                     hop {
-                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
+                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
                     }
                     httpTrace.mark("http_sse_error_written")
@@ -4628,17 +4627,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logRequestBody = requestBodyString
             let logModel = model
             let logTemperature = req.temperature
-            let logMaxTokens = req.resolvedMaxTokens ?? 1024
+            let logMaxTokens = req.resolvedMaxTokens
             let logSelf = self
+            let responseFinished = SendableBool(false)
+            let wasResidentBeforeComplete = SendableBool(false)
+            context.channel.closeFuture.whenComplete { _ in
+                guard !responseFinished.value else { return }
+                Task {
+                    await ModelRuntime.shared.cancelGeneration(name: model)
+                    if !wasResidentBeforeComplete.value {
+                        await ModelRuntime.shared.unload(name: model)
+                    }
+                }
+            }
             runRequestTask(priority: .userInitiated) {
                 do {
                     httpTrace.mark("http_task_start")
+                    wasResidentBeforeComplete.value = await ModelRuntime.shared.isResident(name: model)
                     let chatEngine = self.chatEngine
                     let enrichedReq = req
                     httpTrace.mark("http_context_passthrough_done")
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
                     httpTrace.mark("http_complete_chat_start")
+                    try Task.checkCancellation()
                     var resp = try await chatEngine.completeChat(request: enrichedReq)
+                    try Task.checkCancellation()
                     httpTrace.mark("http_complete_chat_done")
                     // Compute prefix evidence from the exact request sent to
                     // the OpenAI-compatible server path. Agent context is
@@ -4666,6 +4679,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     headers.append(contentsOf: cors)
                     let headersCopy = headers
                     hop {
+                        responseFinished.value = true
                         var responseHead = HTTPResponseHead(version: head.version, status: .ok)
                         var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
                         buffer.writeString(body)
@@ -4742,6 +4756,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let headers: [(String, String)] = [("Content-Type", "application/json; charset=utf-8")]
                     let headersCopy = headers
                     hop {
+                        responseFinished.value = true
                         var responseHead = HTTPResponseHead(version: head.version, status: status)
                         var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
                         buffer.writeString(body)
@@ -4845,7 +4860,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logRequestBody = requestBodyString
         let logModel = req.model
         let logTemperature = req.temperature
-        let logMaxTokens = req.resolvedMaxTokens ?? 1024
+        let logMaxTokens = req.resolvedMaxTokens
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
             let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: req.model)
@@ -4972,7 +4987,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // NDJSON response head was already 200 — surface as in-band
                 // NDJSON error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
+                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -5038,7 +5053,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     tokensInput: response.usage.prompt_tokens,
                     tokensOutput: response.usage.completion_tokens,
                     temperature: request.temperature,
-                    maxTokens: request.max_tokens ?? 1024,
+                    maxTokens: request.max_tokens,
                     finishReason: message?.tool_calls?.isEmpty == false ? .toolCalls : .stop
                 )
             } catch let invs as ServiceToolInvocations {
@@ -5067,7 +5082,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     toolCalls: toolLogs,
                     temperature: request.temperature,
-                    maxTokens: request.max_tokens ?? 1024,
+                    maxTokens: request.max_tokens,
                     finishReason: .toolCalls
                 )
             } catch let inv as ServiceToolInvocation {
@@ -5094,7 +5109,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     toolCalls: [toolLog],
                     temperature: request.temperature,
-                    maxTokens: request.max_tokens ?? 1024,
+                    maxTokens: request.max_tokens,
                     finishReason: .toolCalls
                 )
             } catch {
@@ -5241,7 +5256,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logRequestBody = requestBodyString
         let logModel = chatRequest.model
         let logTemperature = chatRequest.temperature
-        let logMaxTokens = chatRequest.max_tokens ?? 1024
+        let logMaxTokens = chatRequest.max_tokens
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
             do {
@@ -5297,7 +5312,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } catch {
                 hop {
-                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
+                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -5362,7 +5377,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     tokensInput: response.usage.prompt_tokens,
                     tokensOutput: response.usage.completion_tokens,
                     temperature: request.temperature,
-                    maxTokens: request.max_tokens ?? 1024,
+                    maxTokens: request.max_tokens,
                     finishReason: .stop
                 )
             } catch {
@@ -6667,7 +6682,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
+                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -7516,7 +7531,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
+                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(

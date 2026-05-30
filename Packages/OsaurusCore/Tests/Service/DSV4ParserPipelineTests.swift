@@ -168,6 +168,98 @@ struct DSV4ParserPipelineTests {
         #expect(call.function.arguments["text"] == .string("alpha\nbeta\ngamma"))
     }
 
+    @Test("ZAYA XML tool parser decodes live HTML line breaks")
+    func zayaXMLToolParserDecodesLiveHTMLLineBreaks() throws {
+        let toolCallProcessor = ToolCallProcessor(format: .zayaXml, tools: lineCountToolSchema())
+        var events: [Generation] = []
+        let output = #"""
+            <zyphra_tool_call>
+            <function=line_count>
+            <parameter=text>one<br>two</parameter>
+            </function>
+            </zyphra_tool_call>
+            """#
+
+        for ch in output {
+            events.append(
+                contentsOf: routeGenerationText(
+                    String(ch),
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        if let visible = toolCallProcessor.processEOS() {
+            events.append(
+                contentsOf: routeGenerationText(
+                    visible,
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        events.append(contentsOf: drainToolCallEvents(from: toolCallProcessor))
+
+        let visible = events.compactMap(\.chunk).joined()
+        let calls = events.compactMap(\.toolCall)
+
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(!visible.contains("zyphra_tool_call"))
+        #expect(calls.count == 1)
+        let call = try #require(calls.first)
+        #expect(call.function.name == "line_count")
+        #expect(call.function.arguments["text"] == .string("one\ntwo"))
+    }
+
+    @Test("Gemma4 parser routes live Zyphra multiline tool envelope without visible leakage")
+    func gemma4ParserRoutesLiveZyphraMultilineToolEnvelopeWithoutVisibleLeakage() throws {
+        let toolCallProcessor = ToolCallProcessor(format: .gemma4, tools: lineCountToolSchema())
+        var events: [Generation] = []
+        let output = #"""
+            <zyphra_tool_call>
+            <function=line_count
+            <parameter=text
+            >red
+            green
+            blue
+            </parameter>
+            </function>
+            </zyphra_tool_call>
+            """#
+
+        for ch in output {
+            events.append(
+                contentsOf: routeGenerationText(
+                    String(ch),
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        if let visible = toolCallProcessor.processEOS() {
+            events.append(
+                contentsOf: routeGenerationText(
+                    visible,
+                    channel: .content,
+                    through: toolCallProcessor
+                )
+            )
+        }
+        events.append(contentsOf: drainToolCallEvents(from: toolCallProcessor))
+
+        let visible = events.compactMap(\.chunk).joined()
+        let calls = events.compactMap(\.toolCall)
+
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(!visible.contains("zyphra_tool_call"))
+        #expect(!visible.contains("function=line_count"))
+        #expect(!visible.contains("parameter=text"))
+        #expect(calls.count == 1)
+        let call = try #require(calls.first)
+        #expect(call.function.name == "line_count")
+        #expect(call.function.arguments["text"] == .string("red\ngreen\nblue"))
+    }
+
     @Test("live DSV4 bare-name JSON split after tool marker routes to a tool call")
     func liveBareNameJSONAfterToolMarkerRoutesToToolCall() throws {
         let toolCallProcessor = ToolCallProcessor(format: .dsml, tools: lineCountToolSchema())

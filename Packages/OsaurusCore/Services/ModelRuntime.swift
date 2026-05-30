@@ -298,6 +298,15 @@ public actor ModelRuntime {
         activeGenerationTask = nil
     }
 
+    /// Cancel the active decode for `name` without evicting the loaded
+    /// container. HTTP non-streaming callers use this when the client drops
+    /// before any response body can be written; otherwise the server can keep
+    /// decoding for a request nobody is still reading.
+    func cancelGeneration(name: String) async {
+        await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
+        await cancelActiveGeneration(for: name)
+    }
+
     private func allocateLoadingTaskID() -> UInt64 {
         nextLoadingTaskID &+= 1
         return nextLoadingTaskID
@@ -821,7 +830,16 @@ public actor ModelRuntime {
         // for path-dependent caches such as DSV4's SWA+CSA+HSA pool and
         // ZAYA's CCA state: a content hash alone proves prompt identity, not
         // cache-layout compatibility.
-        let kvModeTag = cacheKVModeTag(for: settings.cache)
+        let effectiveDefaultKVMode = defaultKVMode(
+            for: settings.cache,
+            modelName: modelName,
+            cacheTopology: cacheTopology
+        )
+        let kvModeTag = cacheKVModeTag(
+            for: settings.cache,
+            modelName: modelName,
+            cacheTopology: cacheTopology
+        )
         let scopedKey = Self.cacheCoordinatorModelKey(
             modelName: modelName,
             kvModeTag: kvModeTag,
@@ -841,9 +859,7 @@ public actor ModelRuntime {
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
             ssmMaxEntries: 50
         )
-        if settings.cache.liveKVCodec == .engineSelected {
-            config.defaultKVMode = .turboQuant()
-        }
+        config.defaultKVMode = effectiveDefaultKVMode
         if diskCacheDir != nil, !diskDirUsable {
             config.enableDiskCache = false
             config.diskCacheDir = nil
@@ -886,20 +902,66 @@ public actor ModelRuntime {
     /// Stable fingerprint for the effective live KV codec. Appended to
     /// the L2 disk-cache model key so a mid-session change to the
     /// actual KV representation doesn't serve stale entries.
-    nonisolated static func cacheKVModeTag(
-        for cache: VMLXServerCacheSettings
-    ) -> String {
+    nonisolated static func defaultKVMode(
+        for cache: VMLXServerCacheSettings,
+        modelName: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> KVQuantizationMode {
         switch cache.liveKVCodec {
         case .engineSelected:
-            return "engine-selected"
+            return shouldUseTurboQuantByDefault(
+                modelName: modelName,
+                cacheTopology: cacheTopology
+            ) ? .turboQuant() : .none
         case .native, .none:
-            return "fp16"
+            return .none
         case .turboQuant:
-            guard case .turboQuant(let keyBits, let valueBits) = cache.defaultKVMode else {
-                return "fp16"
-            }
+            return cache.defaultKVMode
+        }
+    }
+
+    nonisolated static func cacheKVModeTag(
+        for cache: VMLXServerCacheSettings,
+        modelName: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> String {
+        switch defaultKVMode(for: cache, modelName: modelName, cacheTopology: cacheTopology) {
+        case .none:
+            return "fp16"
+        case .affine(let bits, let groupSize):
+            return "affine(\(bits),\(groupSize))"
+        case .turboQuant(let keyBits, let valueBits):
             return "turbo(\(keyBits),\(valueBits))"
         }
+    }
+
+    nonisolated static func shouldUseTurboQuantByDefault(
+        modelName: String,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> Bool {
+        // Hybrid and path-dependent caches keep fp16 live KV by default until
+        // a row proves TurboQuant for that exact topology. TurboQuant KV is
+        // not a substitute for SSM/CCA/CSA/HSA/SWA companion-state restore.
+        if ModelFamilyNames.isDSV4Family(modelName)
+            || ModelFamilyNames.isZayaFamily(modelName)
+            || ModelFamilyNames.isZayaVLFamily(modelName)
+            || ModelFamilyNames.isGemmaFamily(modelName)
+            || Self.isKnownHybridModel(name: modelName)
+        {
+            return false
+        }
+        if let cacheTopology {
+            if cacheTopology.mambaLayerCount > 0
+                || cacheTopology.arraysLayerCount > 0
+                || cacheTopology.hybridPoolLayerCount > 0
+                || cacheTopology.rotatingKVLayerCount > 0
+                || cacheTopology.rotatingWrapperLayerCount > 0
+            {
+                return false
+            }
+            return cacheTopology.kvLayerCount > 0
+        }
+        return ModelFamilyNames.isMiniMaxFamily(modelName)
     }
 
     nonisolated static func cacheCoordinatorModelKey(
@@ -1072,10 +1134,13 @@ public actor ModelRuntime {
         ) != nil {
             return true
         }
-        // LFM2 / LFM2-MoE (lfm2 / lfm2_moe model_types) — Liquid Foundation
-        // Mamba hybrids. vmlx `Models/LFM2.swift` + `LFM2MoE.swift`.
+        // LFM2 / LFM2.5 / LFM2-MoE (lfm2 / lfm2_moe model_types) —
+        // Liquid Foundation Mamba hybrids. vmlx `Models/LFM2.swift` +
+        // `LFM2MoE.swift`. Accept dot-versioned bundle ids such as
+        // `LFM2.5-8B-A1B-JANG_2L` without opening the matcher to adjacent
+        // sibling strings like `lfm21` or `lfm2x`.
         if lower.range(
-            of: #"(^|/)lfm2([\-_].*)?$"#,
+            of: #"(^|/)lfm2(([\._-]?5)?([\-_].*)?)?$"#,
             options: .regularExpression
         ) != nil {
             return true
@@ -1257,7 +1322,13 @@ public actor ModelRuntime {
         )
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
-            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented, trace: parameters.ttftTrace) },
+            chatBuilder: {
+                ModelRuntime.mapOpenAIChatToMLX(
+                    augmented,
+                    trace: parameters.ttftTrace,
+                    preserveStructuredToolHistory: !tools.isEmpty
+                )
+            },
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools,
@@ -1356,7 +1427,13 @@ public actor ModelRuntime {
         )
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
-            chatBuilder: { ModelRuntime.mapOpenAIChatToMLX(augmented, trace: parameters.ttftTrace) },
+            chatBuilder: {
+                ModelRuntime.mapOpenAIChatToMLX(
+                    augmented,
+                    trace: parameters.ttftTrace,
+                    preserveStructuredToolHistory: !tools.isEmpty
+                )
+            },
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools,
@@ -1647,7 +1724,8 @@ public actor ModelRuntime {
     /// previous assistant message with a tool call!"` on MiniMax).
     nonisolated static func mapOpenAIChatToMLX(
         _ msgs: [ChatMessage],
-        trace: TTFTTrace? = nil
+        trace: TTFTTrace? = nil,
+        preserveStructuredToolHistory: Bool = true
     ) -> [MLXLMCommon.Chat.Message] {
         var out: [MLXLMCommon.Chat.Message] = []
         out.reserveCapacity(max(6, msgs.count))
@@ -1680,7 +1758,7 @@ public actor ModelRuntime {
             case "assistant":
                 let content = (m.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 let reasoningContent = m.reasoning_content?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let toolCalls = toMLXToolCalls(m.tool_calls)
+                let toolCalls = preserveStructuredToolHistory ? toMLXToolCalls(m.tool_calls) : nil
                 // Skip fully-empty assistant turns. Reasoning-only assistant
                 // turns are NOT empty for local MLX templates: ZAYA,
                 // Nemotron-H/Omni, MiniMax and DSV4 read
@@ -1705,17 +1783,29 @@ public actor ModelRuntime {
                     )
                 )
             case "tool":
-                out.append(
-                    MLXLMCommon.Chat.Message(
-                        role: .tool,
-                        content: m.content ?? "",
-                        images: images,
-                        videos: videos,
-                        audios: audios,
-                        toolCalls: nil,
-                        toolCallId: m.tool_call_id
+                if preserveStructuredToolHistory {
+                    out.append(
+                        MLXLMCommon.Chat.Message(
+                            role: .tool,
+                            content: m.content ?? "",
+                            images: images,
+                            videos: videos,
+                            audios: audios,
+                            toolCalls: nil,
+                            toolCallId: m.tool_call_id
+                        )
                     )
-                )
+                } else if let content = m.content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    out.append(
+                        MLXLMCommon.Chat.Message(
+                            role: .user,
+                            content: "Tool result: \(content)",
+                            images: images,
+                            videos: videos,
+                            audios: audios
+                        )
+                    )
+                }
             default:
                 out.append(
                     MLXLMCommon.Chat.Message(
