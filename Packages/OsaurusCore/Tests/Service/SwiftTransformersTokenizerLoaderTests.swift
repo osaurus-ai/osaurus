@@ -1123,6 +1123,7 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("Copy the `text` value exactly from the current user request."), "Decoded: \(decoded)")
         #expect(decoded.contains("This value contains exactly 2 line break(s) and 0 blank lines."), "Decoded: \(decoded)")
         #expect(decoded.contains(#"each line break is represented by the two characters \n"#), "Decoded: \(decoded)")
+        #expect(decoded.contains(#"the exact `text` value encoded with \n escapes is: red\ngreen\nblue"#), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not double any line break."), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not add a blank line, leading space, trailing newline, or any other character to the copied value."), "Decoded: \(decoded)")
         #expect(!decoded.contains("Do not output JSON"), "Decoded: \(decoded)")
