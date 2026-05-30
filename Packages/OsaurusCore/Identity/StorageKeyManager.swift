@@ -201,9 +201,6 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
-        if SecItemCopyMatching(KeychainQueryHelpers.dataProtection(base) as CFDictionary, nil) == errSecSuccess {
-            return true
-        }
         return SecItemCopyMatching(base as CFDictionary, nil) == errSecSuccess
     }
 
@@ -313,7 +310,6 @@ public final class StorageKeyManager: @unchecked Sendable {
             ],
         ]
         for q in queries {
-            _ = SecItemDelete(KeychainQueryHelpers.dataProtection(q) as CFDictionary)
             _ = SecItemDelete(q as CFDictionary)
         }
         try? FileManager.default.removeItem(at: saltFile())
@@ -456,7 +452,7 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     private func readKeychainKey() throws -> Data? {
         if Self.disablesKeychainForProcess { return nil }
-        return try readItem(account: Self.keyAccount, label: "Osaurus Storage Encryption Key")
+        return try readItem(account: Self.keyAccount)
     }
 
     // MARK: - Keychain (salt)
@@ -468,34 +464,17 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     private func readKeychainSalt() throws -> Data? {
         if Self.disablesKeychainForProcess { return nil }
-        return try readItem(account: Self.saltAccount, label: "Osaurus Storage Key Derivation Salt")
+        return try readItem(account: Self.saltAccount)
     }
 
-    // MARK: - Data-protection keychain (with legacy fallback)
+    // MARK: - Keychain item persistence (legacy file-based keychain)
     //
-    // The DEK + salt are written to the data-protection keychain so launching a
-    // re-signed build never raises the legacy login-keychain ACL password
-    // prompt. Items written by older builds are read from the legacy keychain
-    // and migrated forward on first read. See `KeychainQueryHelpers.dataProtection`.
+    // The DEK + salt live in the login keychain. Release builds keep a stable
+    // Developer ID Designated Requirement, so an updated build reads back the
+    // items the previous build wrote without an ACL password prompt.
 
-    /// Write `attributes` for `account` to the data-protection keychain,
-    /// falling back to the legacy keychain when the entitlement is unavailable.
-    /// On a successful data-protection write the stale legacy copy is removed so
-    /// a later read can never return an outdated key.
-    /// - Parameter removeStaleLegacyCopy: When `true` (authoritative re-keys:
-    ///   first-run, rotate, install, derive) the legacy login-keychain copy is
-    ///   deleted after a successful data-protection write so a later read can
-    ///   never return an outdated key. When `false` (a migration that simply
-    ///   copies an existing key forward) the legacy copy is **kept** as a
-    ///   disaster-recovery fallback: reads still prefer the data-protection
-    ///   keychain (no prompt), but if that ever becomes unreadable the legacy
-    ///   copy still opens the user's data instead of bricking it.
-    private func persistItem(
-        account: String,
-        data: Data,
-        label: String,
-        removeStaleLegacyCopy: Bool = true
-    ) throws {
+    /// Write `attributes` for `account` to the keychain (update-or-add).
+    private func persistItem(account: String, data: Data, label: String) throws {
         let baseQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -507,33 +486,10 @@ public final class StorageKeyManager: @unchecked Sendable {
             kSecAttrLabel as String: label,
         ]
 
-        // Data-protection keychain first.
-        let dpQuery = KeychainQueryHelpers.dataProtection(baseQuery)
-        let dpUpdate = SecItemUpdate(dpQuery as CFDictionary, attributes as CFDictionary)
-        if dpUpdate == errSecSuccess {
-            if removeStaleLegacyCopy { _ = SecItemDelete(baseQuery as CFDictionary) }
-            return
-        }
-        if dpUpdate == errSecItemNotFound {
-            var add = dpQuery
-            add.merge(attributes) { _, new in new }
-            let dpAdd = SecItemAdd(add as CFDictionary, nil)
-            if dpAdd == errSecSuccess {
-                if removeStaleLegacyCopy { _ = SecItemDelete(baseQuery as CFDictionary) }
-                return
-            }
-            if !KeychainQueryHelpers.isMissingEntitlement(dpAdd) {
-                throw StorageKeyError.keychainWriteFailed(dpAdd)
-            }
-        } else if !KeychainQueryHelpers.isMissingEntitlement(dpUpdate) {
-            log.error("Storage item SecItemUpdate(data-protection) failed: \(dpUpdate)")
-        }
-
-        // Legacy fallback (data-protection keychain unavailable on this host).
-        let legacyUpdate = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
-        if legacyUpdate == errSecSuccess { return }
-        if legacyUpdate != errSecItemNotFound {
-            log.error("Storage item SecItemUpdate(legacy) failed: \(legacyUpdate)")
+        let update = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+        if update == errSecSuccess { return }
+        if update != errSecItemNotFound {
+            log.error("Storage item SecItemUpdate failed: \(update)")
         }
         var addQuery = baseQuery
         addQuery.merge(attributes) { _, new in new }
@@ -543,9 +499,8 @@ public final class StorageKeyManager: @unchecked Sendable {
         }
     }
 
-    /// Read `account` from the data-protection keychain, falling back to the
-    /// legacy keychain (and migrating the value forward) when absent there.
-    private func readItem(account: String, label: String) throws -> Data? {
+    /// Read `account` from the keychain.
+    private func readItem(account: String) throws -> Data? {
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -556,27 +511,13 @@ public final class StorageKeyManager: @unchecked Sendable {
         ]
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(KeychainQueryHelpers.dataProtection(base) as CFDictionary, &result)
-        if status == errSecSuccess { return result as? Data }
-        if status != errSecItemNotFound && !KeychainQueryHelpers.isMissingEntitlement(status) {
+        let status = SecItemCopyMatching(base as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        if status != errSecSuccess {
             cacheReadFailureIfNonInteractiveBlocked(status)
             throw StorageKeyError.keychainReadFailed(status)
         }
-
-        var legacyResult: AnyObject?
-        let legacyStatus = SecItemCopyMatching(base as CFDictionary, &legacyResult)
-        if legacyStatus == errSecItemNotFound { return nil }
-        if legacyStatus != errSecSuccess {
-            cacheReadFailureIfNonInteractiveBlocked(legacyStatus)
-            throw StorageKeyError.keychainReadFailed(legacyStatus)
-        }
-        guard let data = legacyResult as? Data else { return nil }
-        // Migrate forward so subsequent reads use the data-protection keychain,
-        // but keep the legacy copy as a recovery fallback. The happy path still
-        // reads the data-protection keychain first (no prompt); the legacy copy
-        // only matters if data-protection access is ever lost on a later build.
-        try? persistItem(account: account, data: data, label: label, removeStaleLegacyCopy: false)
-        return data
+        return result as? Data
     }
 }
 

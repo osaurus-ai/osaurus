@@ -38,41 +38,12 @@ xcodebuild -workspace osaurus.xcworkspace \
   CODE_SIGN_STYLE=Manual \
   clean build
 
-# 2. Archive the App (which doesn't have the CLI embedded yet via Xcode)
+# 2. Archive the App (which doesn't have the CLI embedded yet via Xcode).
 #
-# `keychain-access-groups` is a profile-managed entitlement: `xcodebuild`
-# refuses to sign it without a provisioning profile, even under manual Developer
-# ID signing. Osaurus ships Developer ID without a profile, so the archive and
-# export passes run against a copy of the entitlements with that key stripped;
-# the full set is re-applied to the shipped app by the post-export re-sign at
-# the bottom of this script, where `codesign` embeds the access group directly
-# with no profile required.
-#
-# osaurus.entitlements stays the single source of truth: the stripped file is
-# generated from it here, and local Xcode dev keeps using the full file via
-# automatic signing (which provisions the access group automatically).
-#
-# PROFILE_MANAGED_ENTITLEMENTS is a list (not a single key) so that adding
-# another profile-managed entitlement to osaurus.entitlements (e.g.
-# `aps-environment`, `application-identifier`, or a `com.apple.developer.*`
-# capability) doesn't silently reintroduce the "requires a provisioning profile"
-# archive/export failure. Add any such new key here too.
-echo "Generating profile-free archive entitlements..."
-mkdir -p build
-ARCHIVE_ENTITLEMENTS="${PWD}/build/osaurus.archive.entitlements"
-cp "App/osaurus/osaurus.entitlements" "$ARCHIVE_ENTITLEMENTS"
-
-PROFILE_MANAGED_ENTITLEMENTS=(
-  "keychain-access-groups"
-)
-for key in "${PROFILE_MANAGED_ENTITLEMENTS[@]}"; do
-  /usr/libexec/PlistBuddy -c "Delete :${key}" "$ARCHIVE_ENTITLEMENTS" >/dev/null 2>&1 || true
-  if /usr/libexec/PlistBuddy -c "Print :${key}" "$ARCHIVE_ENTITLEMENTS" >/dev/null 2>&1; then
-    echo "Error: failed to strip profile-managed entitlement '${key}' from archive entitlements" >&2
-    exit 1
-  fi
-done
-
+# osaurus.entitlements carries no profile-managed entitlements (the only one,
+# keychain-access-groups, was removed — it shipped without a provisioning
+# profile and made AMFI kill the app at launch). Manual Developer ID signing
+# therefore archives directly against the entitlements file with no profile.
 echo "Archiving App (osaurus)..."
 xcodebuild -workspace osaurus.xcworkspace \
   -scheme osaurus \
@@ -85,7 +56,7 @@ xcodebuild -workspace osaurus.xcworkspace \
   ONLY_ACTIVE_ARCH=NO \
   MARKETING_VERSION="${VERSION}" \
   CURRENT_PROJECT_VERSION="${VERSION}" \
-  CODE_SIGN_ENTITLEMENTS="$ARCHIVE_ENTITLEMENTS" \
+  CODE_SIGN_ENTITLEMENTS="App/osaurus/osaurus.entitlements" \
   CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY_VALUE}" \
   DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
   CODE_SIGN_STYLE=Manual \
@@ -106,35 +77,13 @@ mkdir -p "$ARCHIVE_APP/Contents/Helpers"
 cp "$CLI_SRC" "$ARCHIVE_APP/Contents/Helpers/osaurus"
 chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus"
 
-# Resolve `$(AppIdentifierPrefix)` for the POST-EXPORT re-sign at the bottom.
-#
-# codesign does NOT expand Xcode build variables. osaurus.entitlements uses
-# `$(AppIdentifierPrefix)` (== "<TeamID>.") for the keychain-access-groups value,
-# which only Xcode resolves during its packaging phase. Signing with the raw
-# file would embed the literal `$(AppIdentifierPrefix)com.dinoki.osaurus` — an
-# invalid access group that makes the data-protection keychain return
-# errSecMissingEntitlement at runtime and silently fall back to the legacy login
-# keychain, reintroducing the "wants to use your confidential information" prompt
-# in production while working fine in local Xcode builds.
-echo "Resolving entitlements (AppIdentifierPrefix -> ${DEVELOPMENT_TEAM}.)..."
-RESOLVED_ENTITLEMENTS="build/osaurus.resolved.entitlements"
-sed "s|\$(AppIdentifierPrefix)|${DEVELOPMENT_TEAM}.|g" "App/osaurus/osaurus.entitlements" > "$RESOLVED_ENTITLEMENTS"
-if grep -q 'AppIdentifierPrefix' "$RESOLVED_ENTITLEMENTS"; then
-  echo "Error: failed to resolve \$(AppIdentifierPrefix) in entitlements" >&2
-  exit 1
-fi
-
-# Re-sign the archived app (now carrying the embedded CLI) with the STRIPPED,
-# profile-free entitlements — NOT the resolved set. `--deep` also signs the
-# nested CLI binary. If this re-sign put keychain-access-groups back into the
-# archive (and its nested Sparkle Updater.app / Downloader.xpc / Installer.xpc),
-# the following `xcodebuild -exportArchive` would see the profile-managed
-# entitlement and fail every component with "requires a provisioning profile"
-# (** EXPORT FAILED **). Keeping the archive profile-free lets export succeed;
-# keychain-access-groups is restored on the shipped app by the post-export
-# re-sign below.
-echo "Re-signing modified app bundle (profile-free entitlements)..."
-codesign --force --deep --options runtime --entitlements "$ARCHIVE_ENTITLEMENTS" --sign "${CODE_SIGN_IDENTITY_VALUE}" "$ARCHIVE_APP"
+# Re-sign the archived app (now carrying the embedded CLI) with the same
+# entitlements used for the archive. `--deep` also signs the nested CLI binary
+# so Helpers/osaurus carries the hardened runtime before export seals the
+# bundle. The entitlements file has no profile-managed keys, so export succeeds
+# without a provisioning profile and no post-export re-sign is needed.
+echo "Re-signing modified app bundle..."
+codesign --force --deep --options runtime --entitlements "App/osaurus/osaurus.entitlements" --sign "${CODE_SIGN_IDENTITY_VALUE}" "$ARCHIVE_APP"
 
 cat > ExportOptions.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -158,28 +107,8 @@ xcodebuild -exportArchive \
   -exportPath build_output \
   -exportOptionsPlist ExportOptions.plist
 
-# Restore full entitlements (post-export)
-#
-# `xcodebuild -exportArchive` re-signs the app from the archive's captured
-# entitlements, which omit `keychain-access-groups` (stripped above so the
-# `archive` action wouldn't demand a provisioning profile). Re-apply the full
-# resolved entitlement set with a final TOP-LEVEL re-sign so the shipped binary
-# carries the data-protection keychain access group. `codesign` embeds the
-# team-prefixed group directly under Developer ID — no provisioning profile
-# required.
-#
-#  - No `--deep`: nested code (frameworks, embedded CLI) is already validly
-#    signed by export; only the outer bundle's entitlements/seal change here.
-#  - `--timestamp`: re-signing drops export's secure timestamp, which
-#    notarization requires; request a fresh one.
 EXPORTED_APP="build_output/Osaurus.app"
 if [[ ! -d "$EXPORTED_APP" ]]; then
   echo "Error: exported app not found at $EXPORTED_APP" >&2
   exit 1
 fi
-
-echo "Restoring full entitlements on exported app (post-export re-sign)..."
-codesign --force --timestamp --options runtime \
-  --entitlements "$RESOLVED_ENTITLEMENTS" \
-  --sign "${CODE_SIGN_IDENTITY_VALUE}" \
-  "$EXPORTED_APP"

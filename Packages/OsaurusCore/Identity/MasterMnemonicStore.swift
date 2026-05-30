@@ -50,12 +50,7 @@ public struct MasterMnemonicStore: Sendable {
         }
     }
 
-    // Mirrors `MasterKey`: a synchronizable iCloud Keychain item that already
-    // lives in the data-protection keychain backend. We pass
-    // `kSecUseDataProtectionKeychain` explicitly for consistent behavior, with a
-    // legacy fallback for un-entitled hosts. The entitled access group equals
-    // the implicit app-id default, so existing items remain accessible.
-    // See `KeychainQueryHelpers.dataProtection`.
+    // Mirrors `MasterKey`: a synchronizable iCloud Keychain item.
     private static func addToKeychain(data: Data, synchronizable: Bool) -> OSStatus {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -70,11 +65,7 @@ public struct MasterMnemonicStore: Sendable {
         } else {
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
-        let status = SecItemAdd(KeychainQueryHelpers.dataProtection(query) as CFDictionary, nil)
-        if KeychainQueryHelpers.isMissingEntitlement(status) {
-            return SecItemAdd(query as CFDictionary, nil)
-        }
-        return status
+        return SecItemAdd(query as CFDictionary, nil)
     }
 
     // MARK: - Existence
@@ -92,9 +83,6 @@ public struct MasterMnemonicStore: Sendable {
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
-        if SecItemCopyMatching(KeychainQueryHelpers.dataProtection(query) as CFDictionary, nil) == errSecSuccess {
-            return true
-        }
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
@@ -117,12 +105,7 @@ public struct MasterMnemonicStore: Sendable {
         }
 
         var result: AnyObject?
-        var status = SecItemCopyMatching(KeychainQueryHelpers.dataProtection(query) as CFDictionary, &result)
-        if status != errSecSuccess {
-            // Fallback for un-entitled hosts where the data-protection keychain
-            // is unavailable. A synchronizable miss does not prompt.
-            status = SecItemCopyMatching(query as CFDictionary, &result)
-        }
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess,
             let data = result as? Data,
             let phrase = String(data: data, encoding: .utf8)
@@ -152,9 +135,7 @@ public struct MasterMnemonicStore: Sendable {
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
         ]
-        let dp = SecItemDelete(KeychainQueryHelpers.dataProtection(query) as CFDictionary)
-        let legacy = SecItemDelete(query as CFDictionary)
-        let ok: (OSStatus) -> Bool = { $0 == errSecSuccess || $0 == errSecItemNotFound }
-        return ok(dp) && ok(legacy)
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 }

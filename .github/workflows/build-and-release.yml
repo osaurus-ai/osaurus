@@ -126,6 +126,9 @@ jobs:
       - name: Verify App Signing
         run: bash scripts/build/verify_signing.sh
 
+      - name: Verify App Launch (spawn gate)
+        run: bash scripts/build/verify_launch.sh
+
       - name: Create DMGs
         env:
           DEVELOPER_ID_NAME: ${{ secrets.DEVELOPER_ID_NAME }}

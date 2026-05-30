@@ -5,8 +5,8 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite("Keychain data-protection round-trip")
-struct KeychainDataProtectionTests {
+@Suite("Keychain round-trip")
+struct KeychainTests {
     private static func packageRoot() -> URL {
         let here = URL(fileURLWithPath: #filePath)
         var cursor = here.deletingLastPathComponent()  // Service/
@@ -27,18 +27,12 @@ struct KeychainDataProtectionTests {
         return String(source[start.lowerBound ..< nextFunc.lowerBound])
     }
 
-    // The regression: `write(...)` used to delete the legacy copy with a query
-    // that wasn't scoped to the legacy keychain. On an entitled app that delete
-    // matched and removed the data-protection item it had just written, so every
-    // later read returned errSecItemNotFound. The write path must therefore never
-    // issue a delete — a lingering legacy copy is harmless because `read` checks
-    // the data-protection keychain first and `delete` clears both keychains.
+    // `write` upserts (SecItemUpdate then SecItemAdd) and must never delete:
+    // a stray delete in the write path would wipe the value it just stored.
     @Test("write never deletes (so it cannot wipe the item it just wrote)")
     func writeDoesNotDelete() throws {
-        let source = try Self.source("Services/Keychain/KeychainDataProtection.swift")
+        let source = try Self.source("Services/Keychain/Keychain.swift")
         let body = try Self.writeFunctionBody(in: source)
-        // Strip line comments so prose that mentions the call (e.g. the comment
-        // explaining why it must not happen) doesn't trip the check.
         let code =
             body
             .split(separator: "\n", omittingEmptySubsequences: false)
@@ -50,22 +44,20 @@ struct KeychainDataProtectionTests {
         #expect(!code.contains("SecItemDelete"))
     }
 
-    // Behavioral guard: a value written through the helper must read back
-    // unchanged. This exercises whichever backend is active in this process
-    // (legacy when un-entitled, data-protection when entitled). When no keychain
-    // backend is writable — e.g. a barren CI runner — `write` returns false and
-    // the round-trip assertion is skipped rather than failing spuriously.
+    // A value written through the helper must read back unchanged. When no
+    // keychain backend is writable — e.g. a barren CI runner — `write` returns
+    // false and the round-trip assertion is skipped rather than failing.
     @Test("a written value survives and reads back")
     func valueSurvivesWrite() {
-        let service = "ai.osaurus.test.dp"
+        let service = "ai.osaurus.test.keychain"
         let account = "roundtrip-\(UUID().uuidString)"
         let secret = Data("s3cr3t-\(UUID().uuidString)".utf8)
-        defer { KeychainDataProtection.delete(service: service, account: account) }
+        defer { Keychain.delete(service: service, account: account) }
 
-        guard KeychainDataProtection.write(service: service, account: account, data: secret) else {
+        guard Keychain.write(service: service, account: account, data: secret) else {
             return  // No writable keychain backend in this environment.
         }
 
-        #expect(KeychainDataProtection.read(service: service, account: account) == secret)
+        #expect(Keychain.read(service: service, account: account) == secret)
     }
 }

@@ -20,17 +20,5 @@
 	<true/>
 	<key>com.apple.security.virtualization</key>
 	<true/>
-	<!-- keychain-access-groups is a PROFILE-MANAGED entitlement. Local Xcode dev
-	     provisions it automatically, but the Developer ID release build ships
-	     without a provisioning profile, so scripts/build/build_arm64.sh strips
-	     this key for the `archive`/`-exportArchive` passes and re-applies it via
-	     a post-export codesign. If you add another profile-managed entitlement
-	     here (aps-environment, application-identifier, com.apple.developer.*),
-	     add it to PROFILE_MANAGED_ENTITLEMENTS in that script too, or the
-	     release archive/export will fail with "requires a provisioning profile". -->
-	<key>keychain-access-groups</key>
-	<array>
-		<string>$(AppIdentifierPrefix)com.dinoki.osaurus</string>
-	</array>
 </dict>
 </plist>
