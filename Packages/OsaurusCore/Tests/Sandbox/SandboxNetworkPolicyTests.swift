@@ -52,7 +52,9 @@
                 {"enabled":true,"maxCommandsPerTurn":10,"commandTimeout":30,"pluginCreate":true}
                 """
             let decoded = try JSONDecoder().decode(
-                AutonomousExecConfig.self, from: Data(legacy.utf8))
+                AutonomousExecConfig.self,
+                from: Data(legacy.utf8)
+            )
             #expect(decoded.enabled == true)
             #expect(decoded.sandboxNetworkEnabled == true)
             #expect(decoded.allowHostSecretReads == false)

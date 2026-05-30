@@ -24,6 +24,11 @@ struct ComposeRequest: Sendable {
     let cachedPreflight: PreflightResult?
     let additionalToolNames: LoadedTools
     let frozenAlwaysLoadedNames: LoadedTools?
+    /// Turn-1 skill-suggestion selection echoed back on turn 2+ so the
+    /// query-driven instructions tail stays byte-stable across the session
+    /// (mirrors `cachedPreflight`). `nil` = recompute; non-nil (incl. empty)
+    /// = frozen.
+    let cachedSkillSuggestions: [SkillTeaser]?
     let trace: TTFTTrace?
 
     init(
@@ -36,6 +41,7 @@ struct ComposeRequest: Sendable {
         cachedPreflight: PreflightResult? = nil,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
+        cachedSkillSuggestions: [SkillTeaser]? = nil,
         trace: TTFTTrace? = nil
     ) {
         self.agentId = agentId
@@ -47,6 +53,7 @@ struct ComposeRequest: Sendable {
         self.cachedPreflight = cachedPreflight
         self.additionalToolNames = additionalToolNames
         self.frozenAlwaysLoadedNames = frozenAlwaysLoadedNames
+        self.cachedSkillSuggestions = cachedSkillSuggestions
         self.trace = trace
     }
 }

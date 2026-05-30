@@ -257,6 +257,29 @@ struct FolderToolsResilienceTests {
         #expect(after == "hello ")
     }
 
+    // MARK: - file_tree
+
+    /// A wide directory (many entries) must not dump the whole listing into
+    /// the retained context: the rendered tree is capped and ends with a
+    /// truncation hint so later requests stay lean.
+    @Test func fileTree_capsOversizedListing() async throws {
+        let root = tmpRoot()
+        // Create enough files to blow past both the file-count and char caps.
+        for i in 0 ..< 600 {
+            let name = "file_with_a_reasonably_long_name_\(i).txt"
+            FileManager.default.createFile(
+                atPath: root.appendingPathComponent(name).path,
+                contents: Data("x".utf8)
+            )
+        }
+        let tool = FileTreeTool(rootPath: root)
+        let result = try await tool.execute(argumentsJSON: "{}")
+        let text = EnvelopeAssertions.successText(result) ?? result
+        #expect(text.contains("(truncated"))
+        // The cap keeps the payload bounded well under the raw listing size.
+        #expect(text.count < 12000)
+    }
+
     // MARK: - file_search
 
     @Test func fileSearch_missingPattern() async throws {

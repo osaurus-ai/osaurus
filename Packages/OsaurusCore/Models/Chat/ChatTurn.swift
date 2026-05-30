@@ -175,6 +175,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     @Published var attachments: [Attachment] = []
     /// Assistant-issued tool calls attached to this turn (OpenAI compatible)
     @Published var toolCalls: [ToolCall]? = nil
+    /// OpenAI Responses reasoning item captured for this assistant turn: the
+    /// opaque `id` and `encrypted_content`. Re-emitted before the turn's
+    /// function_call(s) next request so a reasoning model resumes its chain.
+    /// Populated only on the Responses path; nil everywhere else.
+    var reasoningItemId: String? = nil
+    var reasoningEncrypted: String? = nil
     /// For role==.tool messages, associates this result with the originating call id
     var toolCallId: String? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn

@@ -79,8 +79,10 @@ public enum SystemPromptTemplates {
     public static let capabilityDiscoveryNudge = """
         ## Discovering more tools
 
-        Your current tool list is the relevant subset for this task. If you \
-        need a capability that is not listed, grow the list in two steps:
+        Your current tool list was pre-selected for this session from your \
+        request and the contents of your working directory. It is a starting \
+        set, not an exhaustive one. If you need a capability that is not \
+        listed, grow the list in two steps:
 
         1. `capabilities_search({"query": "<what you need>"})` — returns \
         IDs like `tool/sandbox_exec` or `skill/plot-data`.
@@ -133,17 +135,33 @@ public enum SystemPromptTemplates {
     /// renderer pure means PR2's bootstrap seed and PR3's advert can
     /// reuse `soulSection` without dragging in I/O.
     public static func soulSection(_ content: String) -> String {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = stripLeadingSoulHeading(content.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !trimmed.isEmpty else { return "" }
         return """
             ## SOUL
 
             The agent has recorded the following stable preferences and patterns \
             across prior sessions. These are the agent's own notes; the user's \
-            instructions in earlier sections take precedence.
+            instructions in earlier sections take precedence. Any plugin or tool \
+            named in these notes is NOT automatically callable — bring it into \
+            your schema with `capabilities_search` / `capabilities_load` before \
+            invoking it.
 
             \(trimmed)
             """
+    }
+
+    /// The seeded `~/SOUL.md` (and many hand-edited ones) begin with their own
+    /// `# SOUL` title. Since `soulSection` already emits a `## SOUL` heading,
+    /// keeping the file's title would render the heading twice. Strip a single
+    /// leading markdown heading whose text is exactly "SOUL" (any `#` depth).
+    private static func stripLeadingSoulHeading(_ content: String) -> String {
+        var lines = content.components(separatedBy: "\n")
+        guard let first = lines.first, first.hasPrefix("#") else { return content }
+        let headingText = first.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+        guard headingText.caseInsensitiveCompare("SOUL") == .orderedSame else { return content }
+        lines.removeFirst()
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Sandbox

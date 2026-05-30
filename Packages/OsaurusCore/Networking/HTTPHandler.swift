@@ -1964,7 +1964,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
         SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
-        let mergedTools = mergeAgentContextTools(composed.tools, clientTools: request.tools)
+        let mergedTools = await mergeAgentContextTools(composed.tools, clientTools: request.tools)
         let resolvedToolChoice: ToolChoiceOption? = {
             guard let mergedTools, !mergedTools.isEmpty else { return nil }
             return request.tool_choice ?? .auto
@@ -1979,12 +1979,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private static func mergeAgentContextTools(
         _ agentTools: [Tool],
         clientTools: [Tool]?
-    ) -> [Tool]? {
+    ) async -> [Tool]? {
         let clientTools = clientTools ?? []
         guard !agentTools.isEmpty || !clientTools.isEmpty else { return nil }
         let clientNames = Set(clientTools.map(\.function.name))
         let contextTools = agentTools.filter { !clientNames.contains($0.function.name) }
-        return contextTools + clientTools
+        // Sort the union into canonical order so appended client tools don't
+        // sit at the tail in a different slot than the next recompose would
+        // place them — keeps the `<tools>` block byte-stable for KV reuse.
+        return await SystemPromptComposer.canonicalToolOrder(contextTools + clientTools)
     }
 
     // MARK: - Memory Ingestion
@@ -7272,6 +7275,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             return acc + TokenEstimator.estimate(call.arguments)
                         case .functionCallOutput(let output):
                             return acc + TokenEstimator.estimate(output.output)
+                        case .reasoning(let reasoning):
+                            return acc + TokenEstimator.estimate(reasoning.encrypted_content ?? "")
                         }
                     }
                 }

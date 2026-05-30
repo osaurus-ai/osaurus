@@ -35,6 +35,11 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Seconds from request start to first visible token, for latency
     /// reporting. Nil when unknown.
     public var timeToFirstToken: TimeInterval?
+    /// OpenAI Responses reasoning item captured for an assistant turn (opaque
+    /// `id` + encrypted blob). Re-emitted for chain continuity. Nil for every
+    /// non-Responses turn.
+    public var reasoningItemId: String?
+    public var reasoningEncrypted: String?
 
     public init(
         id: UUID = UUID(),
@@ -50,7 +55,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         createdAt: Date? = nil,
         completedAt: Date? = nil,
         generationTokenCount: Int? = nil,
-        timeToFirstToken: TimeInterval? = nil
+        timeToFirstToken: TimeInterval? = nil,
+        reasoningItemId: String? = nil,
+        reasoningEncrypted: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -66,6 +73,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.completedAt = completedAt
         self.generationTokenCount = generationTokenCount
         self.timeToFirstToken = timeToFirstToken
+        self.reasoningItemId = reasoningItemId
+        self.reasoningEncrypted = reasoningEncrypted
     }
 
     // Backward-compatible decoder: migrates old `attachedImages` into unified `attachments`
@@ -85,6 +94,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
         generationTokenCount = try container.decodeIfPresent(Int.self, forKey: .generationTokenCount)
         timeToFirstToken = try container.decodeIfPresent(TimeInterval.self, forKey: .timeToFirstToken)
+        reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
+        reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
 
         if let unified = try container.decodeIfPresent([Attachment].self, forKey: .attachments) {
             attachments = unified
@@ -112,6 +123,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(completedAt, forKey: .completedAt)
         try container.encodeIfPresent(generationTokenCount, forKey: .generationTokenCount)
         try container.encodeIfPresent(timeToFirstToken, forKey: .timeToFirstToken)
+        try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
+        try container.encodeIfPresent(reasoningEncrypted, forKey: .reasoningEncrypted)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -120,6 +133,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case toolCalls, toolCallId, toolResults, toolCallDurations, thinking
         case thinkingDuration
         case createdAt, completedAt, generationTokenCount, timeToFirstToken
+        case reasoningItemId, reasoningEncrypted
     }
 }
 
@@ -143,6 +157,8 @@ extension ChatTurnData {
         self.completedAt = turn.completedAt
         self.generationTokenCount = turn.generationTokenCount
         self.timeToFirstToken = turn.timeToFirstToken
+        self.reasoningItemId = turn.reasoningItemId
+        self.reasoningEncrypted = turn.reasoningEncrypted
     }
 }
 
@@ -165,5 +181,7 @@ extension ChatTurn {
         self.completedAt = data.completedAt
         self.generationTokenCount = data.generationTokenCount
         self.timeToFirstToken = data.timeToFirstToken
+        self.reasoningItemId = data.reasoningItemId
+        self.reasoningEncrypted = data.reasoningEncrypted
     }
 }

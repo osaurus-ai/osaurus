@@ -1851,6 +1851,14 @@ final class ChatSession: ObservableObject {
                     rebuildVisibleBlocks()
                     continue
                 }
+                // Captured OpenAI Responses reasoning item (id + encrypted blob).
+                // Not visible text — stash it on the turn so the next request
+                // re-emits it before this turn's function_call(s).
+                if let reasoningItem = StreamingReasoningItemHint.decode(delta) {
+                    currentTurn.reasoningItemId = reasoningItem.id
+                    currentTurn.reasoningEncrypted = reasoningItem.encryptedContent
+                    continue
+                }
                 if let argFragment = StreamingToolHint.decodeArgs(delta) {
                     currentTurn.appendToolArgFragment(argFragment)
                     // Always rebuild for the first few fragments so the chip
@@ -2255,6 +2263,7 @@ final class ChatSession: ObservableObject {
                         cachedPreflight: cachedSession?.initialPreflight,
                         additionalToolNames: cachedSession?.loadedToolNames ?? [],
                         frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+                        cachedSkillSuggestions: cachedSession?.frozenSkillSuggestions,
                         trace: ttftTrace
                     )
                     guard isRunActive(runId) else { return }
@@ -2306,7 +2315,8 @@ final class ChatSession: ObservableObject {
                             sessionStateKey(sid),
                             preflight: context.preflight,
                             alwaysLoadedNames: context.alwaysLoadedNames,
-                            fingerprint: liveFingerprint
+                            fingerprint: liveFingerprint,
+                            skillSuggestions: context.skillSuggestions
                         )
                     }
 
@@ -2348,7 +2358,9 @@ final class ChatSession: ObservableObject {
                                 content: content,
                                 tool_calls: t.toolCalls,
                                 tool_call_id: nil,
-                                reasoning_content: reasoning
+                                reasoning_content: reasoning,
+                                reasoning_item_id: t.reasoningItemId,
+                                reasoning_encrypted: t.reasoningEncrypted
                             )
                         case .tool:
                             return ChatMessage(
@@ -2728,6 +2740,13 @@ final class ChatSession: ObservableObject {
                                         } else {
                                             toolSpecs.append(tool)
                                         }
+                                    }
+                                    // Re-sort into canonical order so a tool loaded
+                                    // mid-turn lands in the same slot it will occupy
+                                    // on the next recompose — appended tools would
+                                    // otherwise sit at the tail and bust the KV cache.
+                                    if !newTools.isEmpty {
+                                        toolSpecs = SystemPromptComposer.canonicalToolOrder(toolSpecs)
                                     }
                                     // Persist names into the session's tool union
                                     // so they survive the next compose call

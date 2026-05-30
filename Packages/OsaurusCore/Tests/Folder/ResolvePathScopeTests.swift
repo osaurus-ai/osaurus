@@ -30,7 +30,9 @@ struct ResolvePathScopeTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("src/app.swift")
         try FileManager.default.createDirectory(
-            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            at: file.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
         try "let x = 1".write(to: file, atomically: true, encoding: .utf8)
 
         let resolved = try FolderToolHelpers.resolvePath("src/app.swift", rootPath: root)
@@ -84,7 +86,9 @@ struct ResolvePathScopeTests {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(
-            at: root.appendingPathComponent("out"), withIntermediateDirectories: true)
+            at: root.appendingPathComponent("out"),
+            withIntermediateDirectories: true
+        )
 
         // Write/edit targets that don't exist yet must still resolve as long
         // as their existing parent is under the root.

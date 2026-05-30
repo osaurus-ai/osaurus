@@ -107,6 +107,29 @@ struct PromptWhitespaceTests {
         assertNoContinuationLeak(bare, label: "soulSection")
     }
 
+    /// The seeded `~/SOUL.md` begins with its own `# SOUL` title. The
+    /// wrapper already emits a `## SOUL` heading, so the file's title must
+    /// be stripped to avoid a doubled heading in the rendered prompt.
+    @Test("soul section strips the file's own SOUL heading")
+    func soulSectionDedupesHeading() {
+        let rendered = SystemPromptTemplates.soulSection("# SOUL\n\n- prefer Postgres")
+        // Exactly one heading line containing SOUL (the wrapper's `## SOUL`).
+        let soulHeadingLines =
+            rendered
+            .components(separatedBy: "\n")
+            .filter { $0.hasPrefix("#") && $0.localizedCaseInsensitiveContains("SOUL") }
+        #expect(soulHeadingLines == ["## SOUL"])
+        #expect(rendered.contains("- prefer Postgres"))
+    }
+
+    @Test("soul section keeps non-heading content intact")
+    func soulSectionKeepsBodyWhenNoHeading() {
+        let rendered = SystemPromptTemplates.soulSection("- prefer Postgres\n# Notes")
+        #expect(rendered.contains("- prefer Postgres"))
+        // A non-SOUL heading deeper in the body is preserved.
+        #expect(rendered.contains("# Notes"))
+    }
+
     /// Folder section runs through the same composition path. Pin both
     /// the bare guide and the fully-rendered section so a future
     /// `\` continuation regression in either surfaces immediately.

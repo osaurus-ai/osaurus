@@ -187,4 +187,9 @@ struct ComposedContext: Sendable {
     /// fired" (normal-class model). Callers surface this through
     /// `ContextBreakdown.disable` so the popover can render a notice.
     let contextDisable: ContextDisableInfo?
+    /// Standalone skill teasers this compose resolved. Callers stash this on
+    /// `SessionToolState.frozenSkillSuggestions` on first compose so turn 2+
+    /// can echo it back via `cachedSkillSuggestions`, keeping the dynamic
+    /// instructions tail byte-stable for prompt-cache reuse.
+    var skillSuggestions: [SkillTeaser] = []
 }

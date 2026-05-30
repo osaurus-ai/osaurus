@@ -370,14 +370,23 @@ struct FileTreeTool: OsaurusTool {
         return ToolEnvelope.success(tool: name, text: buildTree(targetURL, maxDepth: maxDepth))
     }
 
+    /// File-count ceiling — caps how many leaf files the tree enumerates.
+    private static let maxFiles = 300
+    /// Character ceiling for the rendered tree. A wide/deep layout (many
+    /// directories, which don't count toward `maxFiles`) can still bloat the
+    /// retained context across every later request, so cap the raw output too.
+    private static let maxOutputChars = 8000
+
     private func buildTree(_ url: URL, maxDepth: Int) -> String {
         var result = "./\n"
         var fileCount = 0
-        let maxFiles = 300
+        var truncated = false
+        let maxFiles = Self.maxFiles
+        let maxChars = Self.maxOutputChars
         let ignorePatterns = FolderToolHelpers.detectProjectType(rootPath).ignorePatterns
 
         func traverse(_ currentURL: URL, depth: Int, prefix: String) {
-            guard depth <= maxDepth, fileCount < maxFiles else { return }
+            guard depth <= maxDepth else { return }
 
             let fm = FileManager.default
             guard
@@ -396,8 +405,8 @@ struct FileTreeTool: OsaurusTool {
             }
 
             for (index, item) in sorted.enumerated() {
-                guard fileCount < maxFiles else {
-                    result += "\(prefix)... (truncated)\n"
+                guard fileCount < maxFiles, result.count < maxChars else {
+                    truncated = true
                     return
                 }
 
@@ -428,6 +437,11 @@ struct FileTreeTool: OsaurusTool {
         }
 
         traverse(url, depth: 1, prefix: "")
+        if truncated {
+            result +=
+                "... (truncated at \(maxFiles) files / \(maxChars) chars — "
+                + "narrow the view with `path` or a smaller `max_depth`)\n"
+        }
         return result
     }
 }

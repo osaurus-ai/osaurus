@@ -90,6 +90,7 @@ public struct SystemPromptComposer: Sendable {
         cachedPreflight: PreflightResult? = nil,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
+        cachedSkillSuggestions: [SkillTeaser]? = nil,
         trace: TTFTTrace? = nil
     ) async -> ComposedContext {
         await composeChatContext(
@@ -103,6 +104,7 @@ public struct SystemPromptComposer: Sendable {
                 cachedPreflight: cachedPreflight,
                 additionalToolNames: additionalToolNames,
                 frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
+                cachedSkillSuggestions: cachedSkillSuggestions,
                 trace: trace
             )
         )
@@ -146,6 +148,7 @@ public struct SystemPromptComposer: Sendable {
             cachedPreflight: request.cachedPreflight,
             additionalToolNames: request.additionalToolNames,
             frozenAlwaysLoadedNames: request.frozenAlwaysLoadedNames,
+            cachedSkillSuggestions: request.cachedSkillSuggestions,
             trace: trace
         )
         trace?.mark("compose_context_done")
@@ -208,6 +211,7 @@ public struct SystemPromptComposer: Sendable {
         cachedPreflight: PreflightResult? = nil,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
+        cachedSkillSuggestions: [SkillTeaser]? = nil,
         trace: TTFTTrace? = nil
     ) async -> ComposedContext {
         var comp = composer
@@ -237,6 +241,7 @@ public struct SystemPromptComposer: Sendable {
             cachedPreflight: cachedPreflight,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
+            cachedSkillSuggestions: cachedSkillSuggestions,
             trace: trace
         )
         appendGatedSections(
@@ -273,7 +278,8 @@ public struct SystemPromptComposer: Sendable {
             alwaysLoadedNames: toolset.alwaysLoadedNames,
             cacheHint: manifest.staticPrefixHash(tools: toolset.tools),
             staticPrefix: manifest.staticPrefixContent,
-            contextDisable: toolset.contextDisable
+            contextDisable: toolset.contextDisable,
+            skillSuggestions: toolset.skillSuggestions
         )
     }
 
@@ -395,6 +401,7 @@ public struct SystemPromptComposer: Sendable {
         cachedPreflight: PreflightResult?,
         additionalToolNames: LoadedTools,
         frozenAlwaysLoadedNames: LoadedTools?,
+        cachedSkillSuggestions: [SkillTeaser]? = nil,
         trace: TTFTTrace?
     ) async -> ResolvedToolset {
         // Auto-disable for small-context models (Foundation et al.).
@@ -468,6 +475,7 @@ public struct SystemPromptComposer: Sendable {
             additionalToolNames: additionalToolNames,
             effectiveToolsOff: effectiveToolsOff,
             isTrivialInput: isTrivialInput,
+            cachedSkillSuggestions: cachedSkillSuggestions,
             trace: trace
         )
 
@@ -565,12 +573,21 @@ public struct SystemPromptComposer: Sendable {
         additionalToolNames: LoadedTools,
         effectiveToolsOff: Bool,
         isTrivialInput: Bool,
+        cachedSkillSuggestions: [SkillTeaser]? = nil,
         trace: TTFTTrace?
     ) async -> [SkillTeaser] {
         guard snapshot.toolMode == .auto, !effectiveToolsOff, !query.isEmpty,
             !isTrivialInput,
             tools.contains(where: { $0.function.name == "capabilities_load" })
         else { return [] }
+        // Turn 2+: reuse the frozen turn-1 selection so the dynamic
+        // instructions tail stays byte-stable across the session (prompt
+        // cache). `nil` means "no frozen value yet" → derive fresh below.
+        if let cachedSkillSuggestions {
+            trace?.set("skillSuggestions", String(cachedSkillSuggestions.count))
+            trace?.set("skillSuggestionsSource", "frozen")
+            return cachedSkillSuggestions
+        }
         let alreadySurfaced = Set(preflight.companions.compactMap(\.skill?.name))
             .union(additionalToolNames)
         trace?.mark("skill_suggestions_start")
@@ -931,7 +948,9 @@ public struct SystemPromptComposer: Sendable {
     /// descriptions. Full schemas still enter via manual picks, preflight, or
     /// `capabilities_load`; this only shrinks the baseline every chat pays
     /// before the user has asked for a concrete capability.
-    private static func compactBootstrapSpec(_ tool: Tool) -> Tool {
+    /// Internal (not private) so the bootstrap-compaction invariants can be
+    /// unit-tested directly without standing up the full tool registry.
+    static func compactBootstrapSpec(_ tool: Tool) -> Tool {
         let name = tool.function.name
         guard !fullBootstrapToolNames.contains(name) else { return tool }
         return Tool(
@@ -947,6 +966,10 @@ public struct SystemPromptComposer: Sendable {
     /// Tool descriptions often carry examples and recovery prose that duplicate
     /// the full schema. The bootstrap keeps just the first sentence because
     /// the model only needs to decide whether to call or load the tool.
+    ///
+    /// A sentence ends only on `.`/`!`/`?` that is followed by whitespace or
+    /// the end of the string, so periods inside paths (`~/.venv/`) or
+    /// abbreviations (`e.g.`) don't truncate the description mid-token.
     private static func oneLineToolDescription(_ description: String?) -> String? {
         guard let description else { return nil }
         let collapsed =
@@ -954,10 +977,39 @@ public struct SystemPromptComposer: Sendable {
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
         guard !collapsed.isEmpty else { return nil }
-        let sentenceEnd = collapsed.firstIndex { ".!?".contains($0) }
-        let firstSentence = sentenceEnd.map { String(collapsed[...$0]) } ?? collapsed
+
+        let chars = Array(collapsed)
+        var sentenceEndOffset: Int?
+        for i in chars.indices where ".!?".contains(chars[i]) {
+            let isLast = i == chars.count - 1
+            // A period only ends a sentence when it's followed by whitespace
+            // or the end of the string. Periods inside a path (`~/.venv/`) are
+            // followed by a non-space character, so they never match.
+            guard isLast || chars[i + 1].isWhitespace else { continue }
+            // Don't break on a trailing period that belongs to a common
+            // abbreviation (`e.g.`, `i.e.`, `etc.`), which is mid-sentence.
+            if chars[i] == ".", Self.endsWithAbbreviation(chars, at: i) { continue }
+            sentenceEndOffset = i
+            break
+        }
+        let firstSentence =
+            sentenceEndOffset.map { String(chars[...$0]) } ?? collapsed
         if firstSentence.count <= 180 { return firstSentence }
         return String(firstSentence.prefix(177)) + "..."
+    }
+
+    /// Common abbreviations whose trailing period is not a sentence boundary.
+    private static let descriptionAbbreviations: Set<String> = [
+        "e.g.", "i.e.", "etc.", "vs.", "approx.", "incl.", "no.", "fig.",
+    ]
+
+    /// Returns true when the word ending at `index` (a `.`) is a known
+    /// abbreviation, so the caller keeps scanning for the real sentence end.
+    private static func endsWithAbbreviation(_ chars: [Character], at index: Int) -> Bool {
+        var start = index
+        while start > 0, !chars[start - 1].isWhitespace { start -= 1 }
+        let word = String(chars[start ... index]).lowercased()
+        return descriptionAbbreviations.contains(word)
     }
 
     /// Drop recursive `description` fields but preserve the schema's shape,
@@ -966,15 +1018,38 @@ public struct SystemPromptComposer: Sendable {
     /// dominates the first-turn `tools[]` token cost.
     private static func compactParameterSkeleton(_ value: JSONValue?) -> JSONValue? {
         guard let value else { return nil }
+        return compactSchema(value, keysArePropertyNames: false)
+    }
+
+    /// Recursive worker for `compactParameterSkeleton`. `keysArePropertyNames`
+    /// is true when walking the children of a `"properties"` object — those
+    /// keys are parameter NAMES (e.g. a parameter literally named
+    /// `description`) and must be preserved. Elsewhere `"description"` is a
+    /// JSON-Schema annotation and is dropped. Without this distinction the
+    /// compaction silently deletes a `description` parameter while leaving it
+    /// in `required`, producing an impossible schema (the `sandbox_secret_set`
+    /// bug).
+    private static func compactSchema(
+        _ value: JSONValue,
+        keysArePropertyNames: Bool
+    ) -> JSONValue {
         switch value {
         case .object(let object):
             var compact: [String: JSONValue] = [:]
-            for (key, nested) in object where key != "description" {
-                compact[key] = compactParameterSkeleton(nested)
+            for (key, nested) in object {
+                if keysArePropertyNames {
+                    // Parameter name: keep it, compact its schema.
+                    compact[key] = compactSchema(nested, keysArePropertyNames: false)
+                } else if key == "description" {
+                    // Schema annotation prose: drop.
+                    continue
+                } else {
+                    compact[key] = compactSchema(nested, keysArePropertyNames: key == "properties")
+                }
             }
             return .object(compact)
         case .array(let array):
-            return .array(array.compactMap { compactParameterSkeleton($0) })
+            return .array(array.map { compactSchema($0, keysArePropertyNames: false) })
         case .string, .number, .bool, .null:
             return value
         }

@@ -165,17 +165,24 @@ struct SessionToolState: Sendable {
     /// preflight cache cannot survive a flip back to auto. `nil` only for
     /// legacy entries created before this field existed.
     var sessionFingerprint: String?
+    /// Skill-suggestion teasers selected on the FIRST compose. Echoed back on
+    /// turn 2+ via `cachedSkillSuggestions` so the query-driven instructions
+    /// tail stays byte-stable across the session (prompt-cache reuse). `nil`
+    /// means "no snapshot yet"; an empty array is a valid frozen "no skills".
+    var frozenSkillSuggestions: [SkillTeaser]?
 
     init(
         initialPreflight: PreflightResult,
         loadedToolNames: LoadedTools = [],
         initialAlwaysLoadedNames: LoadedTools? = nil,
-        sessionFingerprint: String? = nil
+        sessionFingerprint: String? = nil,
+        frozenSkillSuggestions: [SkillTeaser]? = nil
     ) {
         self.initialPreflight = initialPreflight
         self.loadedToolNames = loadedToolNames
         self.initialAlwaysLoadedNames = initialAlwaysLoadedNames
         self.sessionFingerprint = sessionFingerprint
+        self.frozenSkillSuggestions = frozenSkillSuggestions
     }
 
     /// Canonical fingerprint string for a (mode, toolSelectionMode) pair.

@@ -1259,16 +1259,31 @@ public actor RemoteProviderService: ToolCapableService {
         case "response.output_item.done":
             // Final confirmed item — extract args from the completed function_call
             // when no `.delta` events landed first (common for short calls).
-            if let doneEvent = try? JSONDecoder().decode(OutputItemDoneEvent.self, from: jsonData),
-                case .functionCall(let funcCall) = doneEvent.item
-            {
-                let idx = doneEvent.output_index
-                var current =
-                    state.accumulatedToolCalls[idx] ?? (
-                        id: funcCall.call_id, name: funcCall.name, args: "", thoughtSignature: nil
-                    )
-                if current.args.isEmpty { current.args = funcCall.arguments }
-                state.accumulatedToolCalls[idx] = current
+            if let doneEvent = try? JSONDecoder().decode(OutputItemDoneEvent.self, from: jsonData) {
+                switch doneEvent.item {
+                case .functionCall(let funcCall):
+                    let idx = doneEvent.output_index
+                    var current =
+                        state.accumulatedToolCalls[idx] ?? (
+                            id: funcCall.call_id, name: funcCall.name, args: "", thoughtSignature: nil
+                        )
+                    if current.args.isEmpty { current.args = funcCall.arguments }
+                    state.accumulatedToolCalls[idx] = current
+                case .reasoning(let reasoning):
+                    // Capture the encrypted reasoning item so the client can
+                    // re-emit it next turn (chain continuity). The encrypted
+                    // blob is only present with store:false + include.
+                    if let encrypted = reasoning.encrypted_content, !encrypted.isEmpty {
+                        yield(
+                            StreamingReasoningItemHint.encode(
+                                id: reasoning.id,
+                                encryptedContent: encrypted
+                            )
+                        )
+                    }
+                case .message:
+                    break
+                }
             }
 
         case "response.completed":
@@ -2177,7 +2192,9 @@ public actor RemoteProviderService: ToolCapableService {
                 content: msg.content,
                 tool_calls: msg.tool_calls,
                 tool_call_id: msg.tool_call_id,
-                reasoning_content: nil
+                reasoning_content: nil,
+                reasoning_item_id: msg.reasoning_item_id,
+                reasoning_encrypted: msg.reasoning_encrypted
             )
         }
     }
@@ -3013,6 +3030,20 @@ struct RemoteChatRequest: Encodable {
                     if let content = msg.content, !content.isEmpty {
                         let msgContent = OpenResponsesMessageContent.text(content)
                         inputItems.append(.message(OpenResponsesMessageItem(role: "assistant", content: msgContent)))
+                    }
+                    // Re-emit the captured reasoning item immediately before its
+                    // function_call(s) so a reasoning model resumes its chain
+                    // instead of re-deriving it. Only populated on the Responses
+                    // path (store:false + include reasoning.encrypted_content).
+                    if let itemId = msg.reasoning_item_id, let encrypted = msg.reasoning_encrypted {
+                        inputItems.append(
+                            .reasoning(
+                                OpenResponsesReasoningInputItem(
+                                    id: itemId,
+                                    encryptedContent: encrypted
+                                )
+                            )
+                        )
                     }
                     // Each tool call becomes a function_call input item so the following
                     // function_call_output items have a matching call_id to reference.

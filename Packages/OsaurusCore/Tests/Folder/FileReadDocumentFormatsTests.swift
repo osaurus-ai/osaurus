@@ -105,7 +105,8 @@ struct FileReadDocumentFormatsTests {
 /// the ZIP container itself is built by the shared `OpenXMLZipFixture`.
 private enum PPTXFixture {
     static func write(slideText: String, to url: URL) throws {
-        let escaped = slideText
+        let escaped =
+            slideText
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")

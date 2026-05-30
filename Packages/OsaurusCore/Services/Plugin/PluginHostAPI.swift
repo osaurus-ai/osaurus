@@ -1038,7 +1038,7 @@ final class PluginHostContext: @unchecked Sendable {
                 return (base, manual)
             }
             let empty = PreflightResult(toolSpecs: manualSpecs, items: [])
-            return applyPreflightResult(empty, to: inference, builtInTools: builtInTools)
+            return await applyPreflightResult(empty, to: inference, builtInTools: builtInTools)
         }
 
         // Auto mode: RAG-based preflight
@@ -1066,7 +1066,7 @@ final class PluginHostContext: @unchecked Sendable {
                 let extraSpecs = await MainActor.run {
                     ToolRegistry.shared.specs(forTools: Array(cached.loadedToolNames))
                 }
-                return applyPreflightResult(
+                return await applyPreflightResult(
                     cached.initialPreflight,
                     to: inference,
                     builtInTools: builtInTools,
@@ -1111,7 +1111,7 @@ final class PluginHostContext: @unchecked Sendable {
             )
         }
 
-        return applyPreflightResult(preflight, to: inference, builtInTools: builtInTools)
+        return await applyPreflightResult(preflight, to: inference, builtInTools: builtInTools)
     }
 
     /// Merges a cached `PreflightResult` (and any session-loaded tool specs)
@@ -1121,7 +1121,7 @@ final class PluginHostContext: @unchecked Sendable {
         to inference: EnrichedInference,
         builtInTools: [Tool],
         additionalToolSpecs: [Tool] = []
-    ) -> EnrichedInference {
+    ) async -> EnrichedInference {
         var tools = inference.tools ?? []
         for spec in builtInTools + preflight.toolSpecs + additionalToolSpecs {
             if let index = tools.firstIndex(where: { $0.function.name == spec.function.name }) {
@@ -1129,6 +1129,12 @@ final class PluginHostContext: @unchecked Sendable {
             } else {
                 tools.append(spec)
             }
+        }
+        // Sort into canonical order so the plugin path produces the same
+        // `<tools>` layout the chat composer would — appended specs would
+        // otherwise drift relative to the next recompose and bust the cache.
+        if !tools.isEmpty {
+            tools = await SystemPromptComposer.canonicalToolOrder(tools)
         }
 
         let messages = inference.request.messages
@@ -1212,7 +1218,9 @@ final class PluginHostContext: @unchecked Sendable {
                         merged.append(tool)
                     }
                 }
-                toolSpecs = merged
+                // Keep the same canonical layout the chat composer emits so a
+                // mid-dispatch load doesn't reorder the schema vs. recompose.
+                toolSpecs = await SystemPromptComposer.canonicalToolOrder(merged)
                 // Persist additions to the per-session cache so subsequent
                 // requests with the same `session_id` continue to see these
                 // tools without the model having to re-discover them.

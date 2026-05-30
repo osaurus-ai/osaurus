@@ -50,13 +50,15 @@ actor SessionToolStateStore {
         _ sessionId: String,
         preflight: PreflightResult,
         alwaysLoadedNames: LoadedTools?,
-        fingerprint: String? = nil
+        fingerprint: String? = nil,
+        skillSuggestions: [SkillTeaser]? = nil
     ) {
         guard states[sessionId] == nil else { return }
         states[sessionId] = SessionToolState(
             initialPreflight: preflight,
             initialAlwaysLoadedNames: alwaysLoadedNames,
-            sessionFingerprint: fingerprint
+            sessionFingerprint: fingerprint,
+            frozenSkillSuggestions: skillSuggestions
         )
     }
 

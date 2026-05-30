@@ -198,6 +198,40 @@ enum StreamingReasoningHint: Sendable {
     }
 }
 
+/// In-band signaling for an OpenAI Responses reasoning *item* — the opaque
+/// `id` + `encrypted_content` pair captured when the request opts into
+/// `store:false` + `include:["reasoning.encrypted_content"]`. Unlike
+/// `StreamingReasoningHint` (visible reasoning text), this carries the
+/// encrypted blob the client must echo back next turn for chain continuity.
+/// Shares the `\u{FFFE}` sentinel so existing filters drop it from visible
+/// output; ChatView decodes it and stores it on the assistant turn.
+enum StreamingReasoningItemHint: Sendable {
+    private static let prefix = "\u{FFFE}reasoning_item:"
+
+    struct Item: Sendable, Equatable {
+        let id: String
+        let encryptedContent: String
+    }
+
+    static func encode(id: String, encryptedContent: String) -> String {
+        struct Payload: Encodable { let id, encrypted: String }
+        let json =
+            (try? JSONEncoder().encode(Payload(id: id, encrypted: encryptedContent)))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return prefix + json
+    }
+
+    static func decode(_ delta: String) -> Item? {
+        guard delta.hasPrefix(prefix) else { return nil }
+        let json = String(delta.dropFirst(prefix.count))
+        struct Payload: Decodable { let id, encrypted: String }
+        guard let data = json.data(using: .utf8),
+            let p = try? JSONDecoder().decode(Payload.self, from: data)
+        else { return nil }
+        return Item(id: p.id, encryptedContent: p.encrypted)
+    }
+}
+
 /// In-band signaling for generation benchmarks (tok/s, token count).
 /// Uses the same `\u{FFFE}` sentinel pattern as `StreamingToolHint`.
 ///

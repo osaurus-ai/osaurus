@@ -997,9 +997,15 @@ final class NativeToolCallRowView: NSView {
             let titleFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
             nameLabel.font = titleFont
             let past = ToolDisplayName.friendly(
-                for: item.call.function.name, running: false, arguments: item.call.function.arguments)
+                for: item.call.function.name,
+                running: false,
+                arguments: item.call.function.arguments
+            )
             runningTitle = ToolDisplayName.friendly(
-                for: item.call.function.name, running: true, arguments: item.call.function.arguments)
+                for: item.call.function.name,
+                running: true,
+                arguments: item.call.function.arguments
+            )
             // Append the recorded duration after an interpunct, dimmed.
             if let elapsed = item.duration {
                 let s = NSMutableAttributedString(

@@ -1859,7 +1859,8 @@ extension FloatingInputCard {
     private func folderChipHelp(hasFolder: Bool) -> Text {
         if hasFolder && isSandboxEnabled {
             return Text(
-                localized: "Working folder is read-only in sandbox mode — code runs in the sandbox")
+                localized: "Working folder is read-only in sandbox mode — code runs in the sandbox"
+            )
         }
         return hasFolder
             ? Text(localized: "Change working folder")

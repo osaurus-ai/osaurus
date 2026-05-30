@@ -455,4 +455,3 @@ private struct RelationshipFixture {
         return #"<Relationship Id="\#(id)" Type="\#(type)" Target="\#(target)"\#(mode)/>"#
     }
 }
-

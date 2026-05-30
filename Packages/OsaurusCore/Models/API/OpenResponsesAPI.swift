@@ -84,6 +84,12 @@ public enum OpenResponsesInputItem: Codable, Sendable {
     /// back as input items alongside the matching `function_call_output` result.
     case functionCall(OpenResponsesFunctionCall)
     case functionCallOutput(OpenResponsesFunctionCallOutputItem)
+    /// A prior reasoning item echoed back so a reasoning model can resume its
+    /// chain instead of re-deriving it. Carries the opaque `id` +
+    /// `encrypted_content` returned with `store:false` +
+    /// `include:["reasoning.encrypted_content"]`. Must appear immediately
+    /// before the `function_call`(s) it produced.
+    case reasoning(OpenResponsesReasoningInputItem)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -105,6 +111,8 @@ public enum OpenResponsesInputItem: Codable, Sendable {
             self = .functionCall(try OpenResponsesFunctionCall(from: decoder))
         case "function_call_output":
             self = .functionCallOutput(try OpenResponsesFunctionCallOutputItem(from: decoder))
+        case "reasoning":
+            self = .reasoning(try OpenResponsesReasoningInputItem(from: decoder))
         case nil:
             // OpenAI Responses clients omit this discriminator for plain message input items.
             self = .message(try OpenResponsesMessageItem(from: decoder))
@@ -125,7 +133,30 @@ public enum OpenResponsesInputItem: Codable, Sendable {
             try item.encode(to: encoder)
         case .functionCallOutput(let item):
             try item.encode(to: encoder)
+        case .reasoning(let item):
+            try item.encode(to: encoder)
         }
+    }
+}
+
+/// Reasoning item re-emitted as input for multi-turn continuity. The Responses
+/// API accepts `{ "type": "reasoning", "id": ..., "summary": [],
+/// "encrypted_content": ... }` and matches it to the model's prior turn.
+public struct OpenResponsesReasoningInputItem: Codable, Sendable {
+    public let type: String
+    public let id: String
+    public let summary: [OpenResponsesReasoningSummaryText]
+    public let encrypted_content: String?
+
+    public init(
+        id: String,
+        encryptedContent: String?,
+        summary: [OpenResponsesReasoningSummaryText] = []
+    ) {
+        self.type = "reasoning"
+        self.id = id
+        self.summary = summary
+        self.encrypted_content = encryptedContent
     }
 }
 
@@ -500,12 +531,22 @@ public struct OpenResponsesReasoningItem: Codable, Sendable {
     public let id: String
     public let status: OpenResponsesItemStatus
     public let summary: [OpenResponsesReasoningSummaryText]
+    /// Opaque, server-encrypted reasoning blob delivered only when the request
+    /// sets `store:false` + `include:["reasoning.encrypted_content"]`. Echoed
+    /// back verbatim on the next turn to resume the chain.
+    public let encrypted_content: String?
 
-    public init(id: String, status: OpenResponsesItemStatus, summary: [OpenResponsesReasoningSummaryText]) {
+    public init(
+        id: String,
+        status: OpenResponsesItemStatus,
+        summary: [OpenResponsesReasoningSummaryText],
+        encryptedContent: String? = nil
+    ) {
         self.type = "reasoning"
         self.id = id
         self.status = status
         self.summary = summary
+        self.encrypted_content = encryptedContent
     }
 }
 
@@ -922,6 +963,13 @@ extension OpenResponsesRequest {
                             tool_call_id: outputItem.call_id
                         )
                     )
+                case .reasoning:
+                    // Reasoning input items are a Responses-native continuity
+                    // mechanism (opaque encrypted blob). The internal Chat
+                    // Completions path has no equivalent, so skip them here;
+                    // the assistant tool_calls / outputs that follow carry the
+                    // actionable history.
+                    continue
                 }
             }
         }

@@ -322,6 +322,13 @@ struct ChatMessage: Codable, Sendable {
     /// for providers that require it (issue #959); `RemoteProviderService`
     /// strips it on the wire for everyone else.
     let reasoning_content: String?
+    /// Opaque OpenAI Responses reasoning-item identifier (`rs_…`) captured from
+    /// the prior turn. In-memory only — NOT part of the OpenAI chat-completions
+    /// JSON. `toOpenResponsesRequest` re-emits it as a `reasoning` input item.
+    let reasoning_item_id: String?
+    /// Server-encrypted reasoning blob paired with `reasoning_item_id`. In-memory
+    /// only; re-sent verbatim on the Responses path for chain continuity.
+    let reasoning_encrypted: String?
 
     /// Extract image URLs from content parts (supports both data URLs and http URLs)
     var imageUrls: [String] {
@@ -394,6 +401,9 @@ extension ChatMessage {
         self.tool_calls = try? container.decode([ToolCall].self, forKey: .tool_calls)
         self.tool_call_id = try? container.decode(String.self, forKey: .tool_call_id)
         self.reasoning_content = try? container.decode(String.self, forKey: .reasoning_content)
+        // Responses-only carriers; never present in OpenAI chat-completions JSON.
+        self.reasoning_item_id = nil
+        self.reasoning_encrypted = nil
         self.localAudioSamples = []
 
         if let stringContent = try? container.decode(String.self, forKey: .content) {
@@ -453,17 +463,23 @@ extension ChatMessage {
         self.tool_calls = nil
         self.tool_call_id = nil
         self.reasoning_content = nil
+        self.reasoning_item_id = nil
+        self.reasoning_encrypted = nil
     }
 
     /// Initialize with optional tool calls, tool call id, and reasoning content.
     /// `reasoning_content` is echoed back to thinking-capable providers
-    /// (e.g. DeepSeek) on multi-turn follow-ups.
+    /// (e.g. DeepSeek) on multi-turn follow-ups. `reasoning_item_id` /
+    /// `reasoning_encrypted` carry the OpenAI Responses reasoning item for
+    /// round-trip continuity (re-emitted by `toOpenResponsesRequest`).
     init(
         role: String,
         content: String?,
         tool_calls: [ToolCall]?,
         tool_call_id: String?,
-        reasoning_content: String? = nil
+        reasoning_content: String? = nil,
+        reasoning_item_id: String? = nil,
+        reasoning_encrypted: String? = nil
     ) {
         self.role = role
         self.content = content
@@ -472,6 +488,8 @@ extension ChatMessage {
         self.tool_calls = tool_calls
         self.tool_call_id = tool_call_id
         self.reasoning_content = reasoning_content
+        self.reasoning_item_id = reasoning_item_id
+        self.reasoning_encrypted = reasoning_encrypted
     }
 
     /// Initialize from a route adapter that already normalized OpenAI-style
@@ -485,6 +503,8 @@ extension ChatMessage {
         self.tool_calls = nil
         self.tool_call_id = nil
         self.reasoning_content = nil
+        self.reasoning_item_id = nil
+        self.reasoning_encrypted = nil
     }
 
     /// Initialize with multimodal content (text and images)
@@ -510,6 +530,8 @@ extension ChatMessage {
         self.tool_calls = nil
         self.tool_call_id = nil
         self.reasoning_content = nil
+        self.reasoning_item_id = nil
+        self.reasoning_encrypted = nil
     }
 
     /// Multimodal init covering image + audio + video. Used by the
@@ -564,6 +586,8 @@ extension ChatMessage {
         self.tool_calls = nil
         self.tool_call_id = nil
         self.reasoning_content = nil
+        self.reasoning_item_id = nil
+        self.reasoning_encrypted = nil
     }
 }
 

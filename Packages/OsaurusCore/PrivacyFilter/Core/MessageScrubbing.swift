@@ -209,7 +209,9 @@ extension ChatMessage {
                 content: newContent,
                 tool_calls: newToolCalls,
                 tool_call_id: tool_call_id,
-                reasoning_content: newReasoning
+                reasoning_content: newReasoning,
+                reasoning_item_id: reasoning_item_id,
+                reasoning_encrypted: reasoning_encrypted
             )
         }
         if newParts != nil {
@@ -220,7 +222,9 @@ extension ChatMessage {
             content: newContent,
             tool_calls: newToolCalls,
             tool_call_id: tool_call_id,
-            reasoning_content: newReasoning
+            reasoning_content: newReasoning,
+            reasoning_item_id: reasoning_item_id,
+            reasoning_encrypted: reasoning_encrypted
         )
     }
 
