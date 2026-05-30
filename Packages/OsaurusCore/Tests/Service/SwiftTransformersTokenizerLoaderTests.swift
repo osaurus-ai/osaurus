@@ -1119,9 +1119,8 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("Function name: line_count"), "Decoded: \(decoded)")
         #expect(decoded.contains("Required arguments: text"), "Decoded: \(decoded)")
         #expect(decoded.contains("Respond with exactly this one assistant message and nothing else:"), "Decoded: \(decoded)")
-        #expect(decoded.contains(#"[line_count(text='red\ngreen\nblue')]"#), "Decoded: \(decoded)")
+        #expect(decoded.contains("[line_count(text='red\ngreen\nblue')]"), "Decoded: \(decoded)")
         #expect(decoded.contains("Copy the `text` value exactly from the current user request, including newlines and spacing inside the quotes."), "Decoded: \(decoded)")
-        #expect(decoded.contains("Render newline characters inside the quoted argument as literal \\n escape sequences, not as physical line breaks."), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not add a blank line, leading space, trailing newline, or any other character to the copied value."), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not output JSON, an empty `line_count()`, or prose."), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not omit `text`"), "Decoded: \(decoded)")
@@ -1135,8 +1134,12 @@ struct SwiftTransformersTokenizerLoaderTests {
         ) {
             let afterUser = decoded[userRange.upperBound...]
             #expect(
-                !afterUser.contains("The API requires a tool call for the next assistant turn."),
-                "Required-tool instruction must not be appended to exact user text. Decoded: \(decoded)"
+                afterUser.contains("The API requires a tool call for the next assistant turn."),
+                "Required-tool instruction must trail the latest LFM user turn instead of preceding it. Decoded: \(decoded)"
+            )
+            #expect(
+                afterUser.contains("[line_count(text='red\ngreen\nblue')]"),
+                "Required-tool instruction must keep the exact multiline value after the latest LFM user turn. Decoded: \(decoded)"
             )
         }
         #expect(!decoded.contains("Today's date:"), "Decoded: \(decoded)")
