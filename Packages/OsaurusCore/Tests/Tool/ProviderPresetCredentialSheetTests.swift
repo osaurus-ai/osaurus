@@ -61,6 +61,28 @@ struct ProviderPresetCredentialSheetTests {
     }
 
     @Test
+    func atlasCloudPreset_usesApiKeyAndVendorHost() {
+        let request = ProviderCredentialRequest(
+            preset: .atlasCloud,
+            providerName: "AtlasCloud",
+            mode: .addNew
+        )
+        #expect(request.preset == .atlasCloud)
+        #expect(request.providerType == .openaiLegacy)
+        #expect(request.instructions.authMethod == .apiKey)
+        #expect(request.instructions.presetId == "atlasCloud")
+        #expect(ProviderPreset.atlasCloud.configuration.host == "api.atlascloud.ai")
+    }
+
+    @Test
+    func atlasCloudCatalogEntry_usesApiKeyStorageAuth() {
+        let entry = ProviderCredentialInstructionsCatalog.entry(for: .atlasCloud)
+        #expect(entry.storageAuthType == .apiKey)
+        #expect(entry.authMethod == .apiKey)
+        #expect(entry.getKeyURL?.absoluteString == "https://www.atlascloud.ai/console/api-keys")
+    }
+
+    @Test
     func customPreset_requiresHostExtraField() {
         let request = ProviderCredentialRequest(
             preset: .custom,

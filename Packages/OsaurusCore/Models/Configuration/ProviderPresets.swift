@@ -390,7 +390,27 @@ struct ProviderPresetConfiguration {
     let basePath: String
     let authType: RemoteProviderAuthType
     let providerType: RemoteProviderType
-    let defaultManualModelIds: [String] = []
+    let defaultManualModelIds: [String]
+
+    init(
+        name: String,
+        host: String,
+        providerProtocol: RemoteProviderProtocol,
+        port: Int?,
+        basePath: String,
+        authType: RemoteProviderAuthType,
+        providerType: RemoteProviderType,
+        defaultManualModelIds: [String] = []
+    ) {
+        self.name = name
+        self.host = host
+        self.providerProtocol = providerProtocol
+        self.port = port
+        self.basePath = basePath
+        self.authType = authType
+        self.providerType = providerType
+        self.defaultManualModelIds = defaultManualModelIds
+    }
 }
 
 enum OpenAIProviderCredentialMode {
