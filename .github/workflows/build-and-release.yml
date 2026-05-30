@@ -18,26 +18,91 @@ permissions:
   pull-requests: write
   issues: write
 
+env:
+  # Single source of truth for the Xcode pin in this workflow. Keep this in
+  # sync with `XCODE_VERSION` in .github/workflows/ci.yml — both files must
+  # build against the same toolchain. Bump intentionally; never drift.
+  XCODE_VERSION: "26.4.1"
+
 jobs:
+  verify_ci:
+    # Gate: only publish a release from a commit whose CI (ci.yml) is green.
+    # A tag push points at a commit that already ran CI on `main`, so this cheap
+    # ubuntu job confirms the required checks passed BEFORE the ~37m macOS build
+    # starts — no point burning a release runner on a red commit. Manual
+    # workflow_dispatch runs skip this gate (maintainer override / off-main
+    # validation builds), which is why `build` below tolerates a skipped result.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - name: Require green CI on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # These must match the job names in .github/workflows/ci.yml.
+          REQUIRED="test-core test-cli swiftlint shellcheck"
+          echo "Checking CI check-runs for commit $SHA ..."
+          RUNS="$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs" \
+            -q '.check_runs[] | "\(.name)\t\(.status)\t\(.conclusion)"')"
+          printf '%s\n' "$RUNS"
+          FAIL=0
+          for name in $REQUIRED; do
+            # Most recent check-run with this name (last line wins).
+            line="$(printf '%s\n' "$RUNS" | awk -F'\t' -v n="$name" '$1==n' | tail -1)"
+            if [ -z "$line" ]; then
+              echo "::error title=CI gate::No CI check named '$name' found for $SHA. Refusing to release an unverified commit."
+              FAIL=1
+              continue
+            fi
+            status="$(printf '%s' "$line" | cut -f2)"
+            conclusion="$(printf '%s' "$line" | cut -f3)"
+            if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+              echo "::error title=CI gate::CI check '$name' is status=$status conclusion=$conclusion (need completed/success)."
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" -ne 0 ]; then
+            echo "Release blocked: required CI checks are not all green on this commit." >&2
+            exit 1
+          fi
+          echo "All required CI checks are green; proceeding to build."
+
   build:
+    # Gate on CI for tag pushes; allow manual workflow_dispatch runs where
+    # verify_ci is skipped. `always()` lets this job evaluate even when a needed
+    # job was skipped, and the result check blocks it when the gate actually
+    # failed.
+    needs: verify_ci
+    if: ${{ always() && (needs.verify_ci.result == 'success' || needs.verify_ci.result == 'skipped') }}
     # Pin to a specific runner image (was `macos-latest`) so a runner image
     # bump can't silently change the build environment. macos-26 is required
     # because Containerization needs the macOS 26 SDK.
     runs-on: macos-26
+    # Release builds are intentionally cache-free (fresh cold compile of
+    # mlx-swift Cmlx + SQLCipher), so worst-case is ~37m. Cap at 60m so a hung
+    # build (e.g. a stuck notarization upload) can't run to GitHub's 6h default.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0 # Fetch all history for changelog generation
 
-      - name: Set up Xcode
+      - name: Set up Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          # Pin to a specific Xcode (was `latest-stable`) so the same
-          # commit always builds against the same toolchain. Bump
-          # intentionally — never let `latest-stable` drift in CI.
-          xcode-version: "26.4.1"
+          # Pinned via the workflow-level XCODE_VERSION env (kept in sync with
+          # ci.yml) so the same commit always builds against the same toolchain.
+          # Bump intentionally — never let `latest-stable` drift in CI.
+          xcode-version: ${{ env.XCODE_VERSION }}
 
       - name: Install Metal Toolchain
         run: xcodebuild -downloadComponent MetalToolchain
@@ -60,6 +125,9 @@ jobs:
 
       - name: Verify App Signing
         run: bash scripts/build/verify_signing.sh
+
+      - name: Verify App Launch (spawn gate)
+        run: bash scripts/build/verify_launch.sh
 
       - name: Create DMGs
         env:
@@ -107,7 +175,7 @@ jobs:
         run: bash scripts/release/generate_and_deploy_appcast.sh
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: osaurus-release-${{ env.VERSION }}
           path: |
@@ -134,7 +202,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 

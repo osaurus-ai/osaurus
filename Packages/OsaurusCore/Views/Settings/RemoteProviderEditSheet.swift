@@ -1294,9 +1294,13 @@ private struct AddProviderFlow: View {
                     }
                 }
             } catch {
+                let message =
+                    preset == .openai && openAIAuthMode == .chatGPTSubscription
+                    ? OpenAICodexOAuthService.diagnosticMessage(for: error)
+                    : error.localizedDescription
                 await MainActor.run {
                     withAnimation {
-                        testResult = .failure(error.localizedDescription); isTesting = false
+                        testResult = .failure(message); isTesting = false
                     }
                 }
             }
@@ -2274,8 +2278,12 @@ private struct EditProviderFlow: View {
                     isTesting = false
                 }
             } catch {
+                let message =
+                    authType == .openAICodexOAuth || providerType == .openAICodex
+                    ? OpenAICodexOAuthService.diagnosticMessage(for: error)
+                    : error.localizedDescription
                 await MainActor.run {
-                    testResult = .failure(error.localizedDescription)
+                    testResult = .failure(message)
                     isTesting = false
                 }
             }

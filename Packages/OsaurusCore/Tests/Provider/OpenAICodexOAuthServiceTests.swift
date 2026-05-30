@@ -91,6 +91,61 @@ struct OpenAICodexOAuthServiceTests {
         }
     }
 
+    @Test func diagnostics_redactOAuthSecretsFromPasteableMessages() {
+        let raw = """
+            Authorization: Bearer access.secret
+            {"access_token":"token-123","refresh_token":"refresh-456","code":"auth-code"}
+            code_verifier=verifier-789
+            eyJheader.eyJpayload.signature
+            """
+
+        let sanitized = OpenAICodexOAuthService.safeDiagnosticFragment(raw, maxLength: 500)
+
+        for secret in ["access.secret", "token-123", "refresh-456", "auth-code", "verifier-789"] {
+            #expect(!sanitized.contains(secret), "diagnostic leaked \(secret)")
+        }
+        #expect(sanitized.range(of: "Authorization", options: .caseInsensitive) == nil)
+        #expect(sanitized.range(of: "Bearer", options: .caseInsensitive) == nil)
+        #expect(sanitized.contains("***"))
+    }
+
+    @Test func diagnostics_explainLoopbackPortCollision() {
+        let error = OpenAICodexOAuthError.loopbackBindFailed("Address already in use")
+        let message = OpenAICodexOAuthService.diagnosticMessage(for: error)
+
+        #expect(message.contains("localhost:1455"))
+        #expect(message.contains("Close any other in-progress sign-in"))
+        #expect(message.contains("Address already in use"))
+    }
+
+    @Test func diagnostics_distinguishCallbackRejectionAndMissingTokens() {
+        let callback = OpenAICodexOAuthService.diagnosticMessage(
+            for: OpenAICodexOAuthError.authorizationCallbackRejected("state mismatch from browser callback")
+        )
+        let missing = OpenAICodexOAuthService.diagnosticMessage(for: OpenAICodexOAuthError.missingSignInTokens)
+
+        #expect(callback.contains("rejected the sign-in callback"))
+        #expect(callback.contains("state mismatch"))
+        #expect(missing.contains("Missing ChatGPT/Codex sign-in tokens"))
+        #expect(missing.contains("Sign in with ChatGPT again"))
+    }
+
+    @Test func diagnostics_distinguishModelCatalogHTTPAndDecodeFailures() {
+        let http = OpenAICodexOAuthService.diagnosticMessage(
+            for: OpenAICodexOAuthError.modelCatalogRequestFailed(
+                #"HTTP 401: {"error":"bad","access_token":"secret-token"}"#
+            )
+        )
+        let decode = OpenAICodexOAuthService.diagnosticMessage(
+            for: OpenAICodexOAuthError.modelCatalogDecodeFailed(#"{"models":"unexpected"}"#)
+        )
+
+        #expect(http.contains("model catalog request failed"))
+        #expect(http.contains("HTTP 401"))
+        #expect(!http.contains("secret-token"))
+        #expect(decode.contains("unreadable Codex model catalog"))
+    }
+
     private static func makeJWT(payload: [String: Any]) throws -> String {
         let headerData = try JSONSerialization.data(withJSONObject: ["alg": "none"])
         let payloadData = try JSONSerialization.data(withJSONObject: payload)

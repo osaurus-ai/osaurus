@@ -12,21 +12,48 @@ public enum OpenAICodexOAuthError: LocalizedError, Sendable {
     case invalidAuthorizationCallback
     case invalidPKCE
     case invalidTokenResponse
+    case missingSignInTokens
     case missingAccountId
     case tokenRequestFailed(String)
+    case loopbackBindFailed(String)
+    case browserOpenFailed
+    case authorizationCallbackFailed(String)
+    case authorizationCallbackRejected(String)
+    case modelCatalogRequestFailed(String)
+    case modelCatalogDecodeFailed(String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidAuthorizationCallback:
-            return "OpenAI did not return a valid authorization code"
+            return
+                "ChatGPT sign-in did not return a valid authorization code. Try the sign-in again from the same browser window."
         case .invalidPKCE:
             return "Could not create a secure login challenge"
         case .invalidTokenResponse:
-            return "OpenAI returned an invalid token response"
+            return "OpenAI returned an invalid token response during ChatGPT sign-in"
+        case .missingSignInTokens:
+            return "Missing ChatGPT/Codex sign-in tokens. Sign in with ChatGPT again, then retry the provider."
         case .missingAccountId:
-            return "Could not identify the ChatGPT account from the sign-in token"
+            return
+                "Could not identify the ChatGPT account from the sign-in token. Sign in with the ChatGPT account that has Codex access, then retry."
         case .tokenRequestFailed(let message):
-            return "OpenAI token request failed: \(message)"
+            return "OpenAI token request failed: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))"
+        case .loopbackBindFailed(let message):
+            return
+                "Could not start the ChatGPT sign-in callback server on localhost:1455. Close any other in-progress sign-in or app using that port, then retry. Details: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))"
+        case .browserOpenFailed:
+            return
+                "Could not open the browser for ChatGPT sign-in. Check the macOS default browser setting, then retry."
+        case .authorizationCallbackFailed(let message):
+            return "ChatGPT sign-in callback failed: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))"
+        case .authorizationCallbackRejected(let message):
+            return "ChatGPT rejected the sign-in callback: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))"
+        case .modelCatalogRequestFailed(let message):
+            return
+                "ChatGPT/Codex model catalog request failed: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))"
+        case .modelCatalogDecodeFailed(let message):
+            return
+                "OpenAI returned an unreadable Codex model catalog: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))"
         }
     }
 }
@@ -126,9 +153,10 @@ public enum OpenAICodexOAuthService {
         request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
         request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
 
-        let data = try await performRequest(request)
+        let data = try await performRequest(request, operation: .modelCatalog)
         guard let decoded = try? JSONDecoder().decode(ModelsResponse.self, from: data) else {
-            throw OpenAICodexOAuthError.invalidTokenResponse
+            let preview = String(data: data.prefix(200), encoding: .utf8) ?? "non-text response"
+            throw OpenAICodexOAuthError.modelCatalogDecodeFailed(preview)
         }
 
         return decoded.models
@@ -173,6 +201,49 @@ public enum OpenAICodexOAuthService {
             return supportedModels
         }
         return live
+    }
+
+    /// Convert Codex OAuth failures into a short, safe-to-paste message for
+    /// UI surfaces and GitHub issue replies. The raw failures may include HTTP
+    /// bodies, callback URLs, or provider diagnostics, so this always applies
+    /// the same redaction rules before text leaves the service boundary.
+    public static func diagnosticMessage(for error: Error) -> String {
+        if let codexError = error as? OpenAICodexOAuthError {
+            return codexError.errorDescription ?? "ChatGPT/Codex sign-in failed"
+        }
+
+        if let loopbackError = error as? OAuthLoopbackError {
+            return mapLoopbackError(loopbackError).errorDescription ?? "ChatGPT/Codex sign-in failed"
+        }
+
+        return "ChatGPT/Codex sign-in failed: \(safeDiagnosticFragment(error.localizedDescription))"
+    }
+
+    /// Redact OAuth credentials from provider diagnostics while preserving
+    /// enough status/body detail for maintainers to understand what failed.
+    public static func safeDiagnosticFragment(_ raw: String, maxLength: Int = 240) -> String {
+        var value = raw
+        let replacements: [(pattern: String, template: String)] = [
+            (#"(?i)authorization\s*[:=]\s*(?:bearer\s+)?[^\s,;}]+\"?"#, "credential=***"),
+            (#"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"#, "credential=***"),
+            (#"(?i)\"(access_token|refresh_token|code_verifier|code|verifier)\"\s*:\s*\"[^\"]*\""#, #""$1":"***""#),
+            (#"(?i)\b(access_token|refresh_token|code_verifier|code|verifier)=([^&\s,;}]+)"#, "$1=***"),
+            (#"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"#, "jwt=***"),
+        ]
+        for replacement in replacements {
+            value = value.replacingMatches(of: replacement.pattern, with: replacement.template)
+        }
+
+        value = value.replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.contains("  ") {
+            value = value.replacingOccurrences(of: "  ", with: " ")
+        }
+
+        guard !value.isEmpty else { return "No details returned" }
+        guard value.count > maxLength else { return value }
+        return String(value.prefix(maxLength)) + "..."
     }
 
     // MARK: - OAuth Helpers
@@ -269,17 +340,44 @@ public enum OpenAICodexOAuthService {
 
     // MARK: Networking
 
-    /// Executes `request`, returning the body on success. Throws
-    /// `.invalidTokenResponse` for non-HTTP responses and `.tokenRequestFailed`
-    /// for any HTTP error (body included in the message for diagnostics).
-    private static func performRequest(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
+    private enum RequestOperation {
+        case token
+        case modelCatalog
+    }
+
+    /// Executes `request`, preserving whether the failure happened during token
+    /// exchange or catalog lookup so the UI can give the user the right next step.
+    private static func performRequest(_ request: URLRequest, operation: RequestOperation) async throws -> Data {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            let message = "Network error: \(error.localizedDescription)"
+            switch operation {
+            case .token:
+                throw OpenAICodexOAuthError.tokenRequestFailed(message)
+            case .modelCatalog:
+                throw OpenAICodexOAuthError.modelCatalogRequestFailed(message)
+            }
+        }
         guard let http = response as? HTTPURLResponse else {
-            throw OpenAICodexOAuthError.invalidTokenResponse
+            switch operation {
+            case .token:
+                throw OpenAICodexOAuthError.invalidTokenResponse
+            case .modelCatalog:
+                throw OpenAICodexOAuthError.modelCatalogRequestFailed("Non-HTTP response")
+            }
         }
         guard http.statusCode < 400 else {
             let body = String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)"
-            throw OpenAICodexOAuthError.tokenRequestFailed(body)
+            let message = "HTTP \(http.statusCode): \(body)"
+            switch operation {
+            case .token:
+                throw OpenAICodexOAuthError.tokenRequestFailed(message)
+            case .modelCatalog:
+                throw OpenAICodexOAuthError.modelCatalogRequestFailed(message)
+            }
         }
         return data
     }
@@ -290,7 +388,7 @@ public enum OpenAICodexOAuthService {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = OAuthFormEncoding.encode(form).data(using: .utf8)
 
-        let data = try await performRequest(request)
+        let data = try await performRequest(request, operation: .token)
         guard let response = try? JSONDecoder().decode(TokenResponse.self, from: data) else {
             throw OpenAICodexOAuthError.invalidTokenResponse
         }
@@ -318,24 +416,52 @@ public enum OpenAICodexOAuthService {
                 callbackPath: "/auth/callback"
             )
             try await server.start()
+        } catch let error as OAuthLoopbackError {
+            throw mapLoopbackError(error)
         } catch {
-            throw OpenAICodexOAuthError.invalidAuthorizationCallback
+            throw OpenAICodexOAuthError.loopbackBindFailed(error.localizedDescription)
         }
         defer { server.stop() }
 
         guard NSWorkspace.shared.open(url) else {
-            throw OpenAICodexOAuthError.invalidAuthorizationCallback
+            throw OpenAICodexOAuthError.browserOpenFailed
         }
 
         do {
             return try await server.waitForCallback()
+        } catch let error as OAuthLoopbackError {
+            throw mapLoopbackError(error)
         } catch {
-            throw OpenAICodexOAuthError.invalidAuthorizationCallback
+            throw OpenAICodexOAuthError.authorizationCallbackFailed(error.localizedDescription)
+        }
+    }
+
+    private static func mapLoopbackError(_ error: OAuthLoopbackError) -> OpenAICodexOAuthError {
+        switch error {
+        case .bindFailed(let message):
+            return .loopbackBindFailed(message)
+        case .stateMismatch:
+            return .authorizationCallbackRejected("state mismatch from browser callback")
+        case .missingCode:
+            return .authorizationCallbackRejected("missing authorization code")
+        case .oauthError(let error, let description):
+            let detail = [error, description].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ": ")
+            return .authorizationCallbackRejected(detail.isEmpty ? "OAuth provider returned an error" : detail)
+        case .invalidCallback:
+            return .authorizationCallbackFailed("invalid callback path or request")
         }
     }
 }
 
 // MARK: - Helpers
+
+extension String {
+    fileprivate func replacingMatches(of pattern: String, with template: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return self }
+        let range = NSRange(startIndex ..< endIndex, in: self)
+        return regex.stringByReplacingMatches(in: self, range: range, withTemplate: template)
+    }
+}
 
 extension Sequence where Element: Hashable {
     /// Returns the receiver's elements in order, dropping later duplicates.

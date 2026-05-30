@@ -61,6 +61,20 @@ struct SystemPromptComposerToolResolutionTests {
         ToolRegistry.shared.unregisterAllSandboxTools()
     }
 
+    private func withRegisteredFolderTools(_ body: @MainActor @Sendable (FolderContext) -> Void) {
+        let folder = FolderContext(
+            rootPath: URL(fileURLWithPath: "/tmp/osaurus-tool-resolution-\(UUID().uuidString)"),
+            projectType: .swift,
+            tree: "./\nREADME.md\nSources/App.swift",
+            manifest: nil,
+            gitStatus: nil,
+            isGitRepo: false
+        )
+        FolderToolManager.shared.registerFolderTools(for: folder)
+        body(folder)
+        FolderToolManager.shared.unregisterFolderTools()
+    }
+
     // MARK: - Auto mode
 
     @Test
@@ -136,6 +150,22 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(names.contains("share_artifact"))
                 #expect(names.contains("sandbox_exec"))
                 #expect(names.contains("capabilities_search"))
+            }
+        }
+    }
+
+    @Test
+    func hostFolderMode_includesFolderMutationAndArtifactTools() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            withRegisteredFolderTools { folder in
+                let tools = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .hostFolder(folder)
+                )
+                let names = Set(tools.map { $0.function.name })
+                #expect(names.contains("file_write"))
+                #expect(names.contains("file_edit"))
+                #expect(names.contains("share_artifact"))
             }
         }
     }

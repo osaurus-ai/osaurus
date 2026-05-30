@@ -159,7 +159,7 @@ public enum MCPProviderKeychain {
 
         // Sweep any remaining `<uuid>.header.*` / `<uuid>.env.*` entries.
         let prefix = "\(providerId.uuidString)."
-        for account in KeychainDataProtection.allAccounts(service: service) where account.hasPrefix(prefix) {
+        for account in Keychain.allAccounts(service: service) where account.hasPrefix(prefix) {
             deleteItem(account: account)
         }
     }
@@ -188,25 +188,22 @@ public enum MCPProviderKeychain {
 
     // MARK: - Generic CRUD
     //
-    // All items route through `KeychainDataProtection`, which prefers the
-    // data-protection keychain (so the legacy login-keychain ACL password
-    // prompt never fires) and transparently falls back to / migrates from the
-    // legacy keychain.
+    // All items route through the shared `Keychain` helper.
 
     @discardableResult
     private static func setData(_ data: Data, account: String) -> Bool {
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-        return KeychainDataProtection.write(service: service, account: account, data: data)
+        return Keychain.write(service: service, account: account, data: data)
     }
 
     private static func getData(account: String) -> Data? {
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
-        return KeychainDataProtection.read(service: service, account: account)
+        return Keychain.read(service: service, account: account)
     }
 
     @discardableResult
     private static func deleteItem(account: String) -> Bool {
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-        return KeychainDataProtection.delete(service: service, account: account)
+        return Keychain.delete(service: service, account: account)
     }
 }

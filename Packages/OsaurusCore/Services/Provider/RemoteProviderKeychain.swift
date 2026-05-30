@@ -130,8 +130,7 @@ public enum RemoteProviderKeychain {
         deleteAPIKey(for: providerId)
         deleteOAuthTokens(for: providerId)
 
-        // Sweep any remaining `<uuid>.*` accounts (header secrets) across both
-        // the data-protection and legacy keychains.
+        // Sweep any remaining `<uuid>.*` accounts (header secrets).
         let accountPrefix = "\(providerId.uuidString)."
         for account in allAccounts() where account.hasPrefix(accountPrefix) {
             deleteItem(account: account)
@@ -154,26 +153,23 @@ public enum RemoteProviderKeychain {
 
     // MARK: - Generic CRUD
     //
-    // All items route through `KeychainDataProtection`, which prefers the
-    // data-protection keychain (so the legacy login-keychain ACL password
-    // prompt never fires) and transparently falls back to / migrates from the
-    // legacy keychain.
+    // All items route through the shared `Keychain` helper.
 
     @discardableResult
     private static func setData(_ data: Data, account: String) -> Bool {
-        KeychainDataProtection.write(service: service, account: account, data: data)
+        Keychain.write(service: service, account: account, data: data)
     }
 
     private static func getData(account: String) -> Data? {
-        KeychainDataProtection.read(service: service, account: account)
+        Keychain.read(service: service, account: account)
     }
 
     @discardableResult
     private static func deleteItem(account: String) -> Bool {
-        KeychainDataProtection.delete(service: service, account: account)
+        Keychain.delete(service: service, account: account)
     }
 
     private static func allAccounts() -> [String] {
-        KeychainDataProtection.allAccounts(service: service)
+        Keychain.allAccounts(service: service)
     }
 }

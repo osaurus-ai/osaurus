@@ -38,7 +38,12 @@ xcodebuild -workspace osaurus.xcworkspace \
   CODE_SIGN_STYLE=Manual \
   clean build
 
-# 2. Archive the App (which doesn't have the CLI embedded yet via Xcode)
+# 2. Archive the App (which doesn't have the CLI embedded yet via Xcode).
+#
+# osaurus.entitlements carries no profile-managed entitlements (the only one,
+# keychain-access-groups, was removed — it shipped without a provisioning
+# profile and made AMFI kill the app at launch). Manual Developer ID signing
+# therefore archives directly against the entitlements file with no profile.
 echo "Archiving App (osaurus)..."
 xcodebuild -workspace osaurus.xcworkspace \
   -scheme osaurus \
@@ -51,6 +56,7 @@ xcodebuild -workspace osaurus.xcworkspace \
   ONLY_ACTIVE_ARCH=NO \
   MARKETING_VERSION="${VERSION}" \
   CURRENT_PROJECT_VERSION="${VERSION}" \
+  CODE_SIGN_ENTITLEMENTS="App/osaurus/osaurus.entitlements" \
   CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY_VALUE}" \
   DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
   CODE_SIGN_STYLE=Manual \
@@ -71,28 +77,13 @@ mkdir -p "$ARCHIVE_APP/Contents/Helpers"
 cp "$CLI_SRC" "$ARCHIVE_APP/Contents/Helpers/osaurus"
 chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus"
 
-# Re-sign the modified app bundle inside the archive
-# (Use --deep to sign the nested CLI binary as well, but explicitly re-apply entitlements)
-#
-# IMPORTANT: codesign does NOT expand Xcode build variables. The source
-# entitlements use `$(AppIdentifierPrefix)` for the keychain-access-groups value,
-# which only Xcode resolves during its own packaging phase. Signing with the raw
-# file here would embed the literal `$(AppIdentifierPrefix)com.dinoki.osaurus`,
-# producing an invalid access group. The data-protection keychain would then
-# return errSecMissingEntitlement at runtime and silently fall back to the legacy
-# login keychain — reintroducing the "wants to use your confidential information"
-# password prompt in production while working fine in local Xcode builds.
-# Resolve the prefix (`$(AppIdentifierPrefix)` == "<TeamID>.") before re-signing.
-echo "Resolving entitlements (AppIdentifierPrefix -> ${DEVELOPMENT_TEAM}.)..."
-RESOLVED_ENTITLEMENTS="build/osaurus.resolved.entitlements"
-sed "s|\$(AppIdentifierPrefix)|${DEVELOPMENT_TEAM}.|g" "App/osaurus/osaurus.entitlements" > "$RESOLVED_ENTITLEMENTS"
-if grep -q 'AppIdentifierPrefix' "$RESOLVED_ENTITLEMENTS"; then
-  echo "Error: failed to resolve \$(AppIdentifierPrefix) in entitlements" >&2
-  exit 1
-fi
-
+# Re-sign the archived app (now carrying the embedded CLI) with the same
+# entitlements used for the archive. `--deep` also signs the nested CLI binary
+# so Helpers/osaurus carries the hardened runtime before export seals the
+# bundle. The entitlements file has no profile-managed keys, so export succeeds
+# without a provisioning profile and no post-export re-sign is needed.
 echo "Re-signing modified app bundle..."
-codesign --force --deep --options runtime --entitlements "$RESOLVED_ENTITLEMENTS" --sign "${CODE_SIGN_IDENTITY_VALUE}" "$ARCHIVE_APP"
+codesign --force --deep --options runtime --entitlements "App/osaurus/osaurus.entitlements" --sign "${CODE_SIGN_IDENTITY_VALUE}" "$ARCHIVE_APP"
 
 cat > ExportOptions.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -115,3 +106,9 @@ xcodebuild -exportArchive \
   -archivePath build/osaurus.xcarchive \
   -exportPath build_output \
   -exportOptionsPlist ExportOptions.plist
+
+EXPORTED_APP="build_output/Osaurus.app"
+if [[ ! -d "$EXPORTED_APP" ]]; then
+  echo "Error: exported app not found at $EXPORTED_APP" >&2
+  exit 1
+fi

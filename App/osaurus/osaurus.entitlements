@@ -20,9 +20,5 @@
 	<true/>
 	<key>com.apple.security.virtualization</key>
 	<true/>
-	<key>keychain-access-groups</key>
-	<array>
-		<string>$(AppIdentifierPrefix)com.dinoki.osaurus</string>
-	</array>
 </dict>
 </plist>
