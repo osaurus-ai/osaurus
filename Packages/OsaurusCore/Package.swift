@@ -52,6 +52,7 @@ let package = Package(
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
         .package(url: "https://github.com/raspu/Highlightr", from: "2.3.0"),
         .package(url: "https://github.com/AAChartModel/AAChartKit-Swift.git", from: "9.5.0"),
+        .package(url: "https://github.com/aptabase/aptabase-swift.git", from: "0.3.11"),
     ],
     targets: [
         // Vendored SQLCipher 4.6.1 amalgamation (CommonCrypto
@@ -175,6 +176,7 @@ let package = Package(
                 .product(name: "ContainerizationExtras", package: "containerization"),
                 .product(name: "Highlightr", package: "Highlightr"),
                 .product(name: "AAInfographics", package: "AAChartKit-Swift"),
+                .product(name: "Aptabase", package: "aptabase-swift"),
             ],
             path: ".",
             exclude: ["Tests", "SQLCipher"],

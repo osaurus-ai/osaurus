@@ -52,8 +52,14 @@ public struct OnboardingView: View {
     @StateObject private var choosePluginsState = ChoosePluginsState()
     @StateObject private var walkthroughState = WalkthroughState()
 
+    // Identity and sandbox are no longer surfaced as their own steps —
+    // they're configured implicitly on completion (see `finishOnboarding`).
+    // The `.identitySetup` / `.sandboxSetup` cases are kept in the enum and
+    // the step switches so the DEBUG `forceShowIdentity` reset flow still
+    // works, but they're absent from the normal forward flow and the
+    // progress dots.
     private static let progressSteps: [OnboardingStep] = [
-        .createAgent, .configureAI, .identitySetup, .sandboxSetup, .choosePlugins, .walkthrough,
+        .createAgent, .configureAI, .choosePlugins, .walkthrough,
     ]
 
     public init(
@@ -233,7 +239,7 @@ public struct OnboardingView: View {
         case .configureAI:
             ConfigureAICTA(
                 state: configureAIState,
-                onComplete: { advance(to: .identitySetup) }
+                onComplete: { advance(to: .choosePlugins) }
             )
         case .identitySetup:
             IdentityCTA(
@@ -266,7 +272,7 @@ public struct OnboardingView: View {
         case .createAgent:
             CreateAgentSecondary(onSkip: { advance(to: .configureAI) })
         case .configureAI:
-            ConfigureAISecondary(state: configureAIState, onComplete: { advance(to: .identitySetup) })
+            ConfigureAISecondary(state: configureAIState, onComplete: { advance(to: .choosePlugins) })
         case .identitySetup:
             IdentitySecondary(state: identityState, onSkip: { advanceFromIdentity() })
         case .sandboxSetup:
@@ -317,12 +323,7 @@ public struct OnboardingView: View {
         case .sandboxSetup:
             return { advance(to: .identitySetup, direction: .backward) }
         case .choosePlugins:
-            return {
-                advance(
-                    to: sandboxStepAvailable ? .sandboxSetup : .identitySetup,
-                    direction: .backward
-                )
-            }
+            return { advance(to: .configureAI, direction: .backward) }
         case .walkthrough:
             return {
                 walkthroughState.handleBack { advance(to: .choosePlugins, direction: .backward) }
@@ -418,8 +419,36 @@ public struct OnboardingView: View {
         if let createdId = createAgentState.createdAgentId {
             AgentManager.shared.setActiveAgent(createdId)
         }
+        configureImplicitDefaults()
         OnboardingService.shared.completeOnboarding()
         onComplete()
+    }
+
+    /// Identity and sandbox no longer have their own onboarding steps — the
+    /// crypto/sandbox vocabulary read as jargon to non-technical users. We
+    /// set both up implicitly here so the user gets the same end state
+    /// without ever seeing the technical framing.
+    private func configureImplicitDefaults() {
+        // Identity: generate the master signature silently. On a fresh
+        // install `OsaurusIdentity.setup()` writes the key to iCloud
+        // Keychain with no biometric prompt. We gate on `exists()` because
+        // when a master is already present `setup()` would fall into
+        // `loadExistingIdentity()`, which *does* prompt for biometrics —
+        // unwanted noise for someone re-running onboarding.
+        if !OsaurusIdentity.exists() {
+            Task.detached(priority: .utility) {
+                _ = try? await OsaurusIdentity.setup()
+            }
+        }
+
+        // Sandbox: persist the default CPU/RAM config on machines that
+        // support it, but don't provision now. The container boots lazily
+        // the first time it's needed (Sandbox tab / first sandboxed run),
+        // exactly as the old "Skip for now" path behaved — no surprise
+        // multi-GB download for every new user.
+        if sandboxStepAvailable {
+            SandboxConfigurationStore.save(SandboxConfigurationStore.load())
+        }
     }
 }
 
