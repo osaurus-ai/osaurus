@@ -1113,21 +1113,28 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
-        #expect(decoded.contains("Required assistant message for this current request:"), "Decoded: \(decoded)")
-        #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Available functions:"), "Decoded: \(decoded)")
+        #expect(decoded.contains("- line_count:"), "Decoded: \(decoded)")
+        #expect(decoded.contains("The API requires a tool call for the next assistant turn."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Function name: line_count"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Required arguments: text"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Respond with exactly this one assistant message and nothing else:"), "Decoded: \(decoded)")
         #expect(decoded.contains(#"[line_count(text="red\ngreen\nblue")]"#), "Decoded: \(decoded)")
-        #expect(decoded.contains("Output exactly the native bracketed tool call above."), "Decoded: \(decoded)")
-        #expect(decoded.contains("Preserve the `text` value byte-for-byte, including newlines and spacing."), "Decoded: \(decoded)")
-        #expect(decoded.contains("Do not append a trailing newline or any other character after the copied value."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Copy the `text` value exactly from the current user request, including newlines and spacing."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Do not add a trailing newline after the copied value."), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not output an empty `line_count()`"), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not omit `text`"), "Decoded: \(decoded)")
-        #expect(decoded.contains("No prose, no markdown, no JSON object, no reasoning text."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Do not write reasoning, XML-style tool tags, JSON, markdown, or prose."), "Decoded: \(decoded)")
+        #expect(!decoded.contains("List of tools:"), "Decoded: \(decoded)")
+        #expect(!decoded.contains(#""name":"line_count""#), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<tools>"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("</tool_call>"), "Decoded: \(decoded)")
         if let userRange = decoded.range(
             of: "Use the line_count tool on this exact text: red\ngreen\nblue"
         ) {
             let afterUser = decoded[userRange.upperBound...]
             #expect(
-                !afterUser.contains("The active API tool_choice is required"),
+                !afterUser.contains("The API requires a tool call for the next assistant turn."),
                 "Required-tool instruction must not be appended to exact user text. Decoded: \(decoded)"
             )
         }
