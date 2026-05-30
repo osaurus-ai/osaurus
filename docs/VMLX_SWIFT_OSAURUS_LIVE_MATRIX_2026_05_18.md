@@ -13,6 +13,21 @@ repo-local live-gate artifacts. The user's requested VL/cache/UI/API/parser/
 defaults/carryover proof still requires real Osaurus app/API evidence before a
 row is production-clear.
 
+## 2026-05-30 LFM2.5 JANG_2L final required-tool and warm cache pass
+
+- Osaurus PR head at check: `ccc57314f928801ded7d7fe6f0affcb758ee6432`.
+- vMLX main / Osaurus pin: `84c8bb653a50cd48b4af7f5cdce04d3f16e6ed95`.
+- No-sign app path: `build/DerivedData-pr1268-lfm25-final-nosign-ccc57314/Build/Products/Release/osaurus.app`.
+- Launch boundary: app was launched keychain-free with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, `OSAURUS_TEST_ROOT=/tmp/osaurus-pr1268-ccc57314-lfm25-final-ui-root`, and `OSU_MODELS_DIR=/Users/eric/.mlxstudio/models`.
+- Cold artifact: `/tmp/osaurus-pr1268-ccc57314-lfm25-final-cold-20260530-010521`.
+- Warm artifact: `/tmp/osaurus-pr1268-ccc57314-lfm25-final-warm-20260530-010538`.
+- Model: `lfm2.5-8b-a1b-jang_2l`.
+- Result: cold and warm strict three-turn required/none/required rows passed. Turn 1 produced exact structured `line_count` args `red\ngreen\nblue`; turn 2 produced a visible answer and no tool call; turn 3 produced exact structured `line_count` args `one\ntwo`. Tool-call turns had no visible content, no protocol marker leaked, no visible `<think>` block leaked, no incoherent loop occurred, no length-stop fake pass occurred, and `/health` stayed healthy with no in-flight request after each row.
+- Topology/cache result: 24 layers, 6 KV layers, 18 Mamba/SSM companion layers, `companion=ssm`, disk-backed restore required, SSM companion state required, paged-cache incompatible, block disk L2 enabled, and TurboQuant KV layer count 0. Cold proved topology and disk-backed restore with `disk_l2_misses 2` and `disk_l2_stores 4`. Warm proved actual reuse with `disk_l2_hits +1`, `ssm_companion_hits +1`, and `companion_hits +1`.
+- Token/s: cold visible follow-up emitted 287 completion tokens at 249.27 tok/s; warm visible follow-up emitted 126 completion tokens at 228.25 tok/s. OpenAI-compatible structured tool-call turns emitted zero completion tokens.
+- Source/guard boundary: vMLX focused tests passed for the LFM content-mode closed-thinking parser, LFM2 escaped required-tool fallback, and LFM2 parser JSON shape before the Osaurus repin. Osaurus `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening`, `SwiftTransformersTokenizerLoaderTests/lfm2LocalTokenizerUsesStrictRequiredToolFallback`, `assert-tool-choice-required-routing.sh`, `assert-server-settings-runtime-wiring.sh`, `assert-keychain-free-proof-path.sh`, `assert-osaurus-no-forced-behavior-pr.sh`, `assert-osaurus-vmlx-pr-readiness.sh`, `assert-osaurus-pr-hygiene.sh`, and `git diff --check` passed against the `84c8bb653a50cd48b4af7f5cdce04d3f16e6ed95` vMLX pin before this app build.
+- Verdict: LFM2.5 JANG_2L is green for the current PR-head no-sign Osaurus app row: multi-turn required-tool behavior, reasoning separation, parser leak prevention, hybrid SSM topology, disk L2 reuse, and SSM companion cache reuse. This does not promote LFM MXFP4/MXFP8 siblings or broad prompt contexts.
+
 ## 2026-05-29 LFM2.5 JANG_2L current-head cold pass and warm-cache partial
 
 - Osaurus PR head at check: `662de08d1bc52bd7d5ae91ab6d8a1d6e246fb062`.
