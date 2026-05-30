@@ -47,6 +47,17 @@ enum ModelFamilyNames {
         ) != nil
     }
 
+    /// LFM2 / LFM2.5 text and MoE bundles. Accept LiquidAI repo ids,
+    /// local JANG bundle ids, and bare picker aliases while rejecting adjacent
+    /// future-family names like `lfm21` / `lfm2x`.
+    static func isLFM2Family(_ modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.range(
+            of: #"(^|/)lfm2(([\._-]?5)?([\-_].*)?)?$"#,
+            options: .regularExpression
+        ) != nil
+    }
+
     /// DeepSeek-V4 / DSV4 Flash bundles (`model_type=deepseek_v4`).
     /// Match both public repo forms (`DeepSeek-V4-...`) and shorthand
     /// runtime names (`DSV4-...`, `deepseekv4-...`) while avoiding

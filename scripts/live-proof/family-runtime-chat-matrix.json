@@ -1,0 +1,155 @@
+[
+  {
+    "id": "zaya-vl-jangtq4",
+    "model": "zaya1-vl-8b-jangtq4",
+    "family": "zaya",
+    "topology": "zaya-cca-vl",
+    "required_cache_evidence": ["zaya_cca_companion_cache", "disk_l2_hits", "requires_disk_backed_restore"],
+    "priority": "required",
+    "notes": "CCA companion/pooling and VL path; TurboQuant KV is not a substitute."
+  },
+  {
+    "id": "zaya-text-jangtq4",
+    "model": "zaya1-8b-jangtq4",
+    "family": "zaya",
+    "topology": "zaya-cca",
+    "required_cache_evidence": ["zaya_cca_companion_cache", "disk_l2_hits", "requires_disk_backed_restore"],
+    "priority": "required",
+    "notes": "Text CCA companion and disk restore proof."
+  },
+  {
+    "id": "ling-jangtq2",
+    "model": "ling-2.6-flash-jangtq2-crack",
+    "family": "ling",
+    "topology": "hybrid",
+    "required_cache_evidence": ["cache_topology", "disk_l2_hits", "companion_cache"],
+    "priority": "required",
+    "notes": "Hybrid path needs structured tool-call, multi-turn, cache reuse, and no visible protocol leak."
+  },
+  {
+    "id": "ling-mxfp4",
+    "model": "ling-2.6-flash-mxfp4-crack",
+    "family": "ling",
+    "topology": "hybrid",
+    "required_cache_evidence": ["cache_topology", "disk_l2_hits", "companion_cache"],
+    "priority": "required",
+    "notes": "MXFP sibling must not rely on JANGTQ-only parser/cache assumptions."
+  },
+  {
+    "id": "nemotron-omni-jangtq",
+    "model": "nemotron-omni-nano-jangtq-crack",
+    "family": "nemotron-omni",
+    "topology": "hybrid-ssm-omni",
+    "required_cache_evidence": ["ssm_companion_cache", "disk_l2_hits", "cache_topology"],
+    "priority": "required",
+    "notes": "Nemo Omni direct/default rail must not emit assistant header loops or raw protocol tokens."
+  },
+  {
+    "id": "nemotron-omni-jangtq4",
+    "model": "nemotron-omni-nano-jangtq4-crack",
+    "family": "nemotron-omni",
+    "topology": "hybrid-ssm-omni",
+    "required_cache_evidence": ["ssm_companion_cache", "disk_l2_hits", "cache_topology"],
+    "priority": "required",
+    "notes": "JANGTQ4 sibling of Nemo Omni must pass the same tool/history/cache proof."
+  },
+  {
+    "id": "nemotron-omni-mxfp4",
+    "model": "nemotron-omni-nano-mxfp4-crack",
+    "family": "nemotron-omni",
+    "topology": "hybrid-ssm-omni",
+    "required_cache_evidence": ["ssm_companion_cache", "disk_l2_hits", "cache_topology"],
+    "priority": "required",
+    "notes": "MXFP sibling covers the recent assistant-header loop report."
+  },
+  {
+    "id": "dsv4-jangtq2",
+    "model": "deepseek-v4-flash-jangtq2",
+    "family": "dsv4",
+    "topology": "csa-hsa-swa-hybrid-pool",
+    "required_cache_evidence": ["hybrid_pool_layer_count", "rotating_kv_layer_count", "disk_l2_hits"],
+    "priority": "required",
+    "notes": "Production DSV4 row; CSA/HSA/SWA hybrid pool proof is required."
+  },
+  {
+    "id": "dsv4-jangtq-k",
+    "model": "deepseek-v4-flash-jangtq-k",
+    "family": "dsv4",
+    "topology": "csa-hsa-swa-hybrid-pool",
+    "required_cache_evidence": ["hybrid_pool_layer_count", "rotating_kv_layer_count", "disk_l2_hits"],
+    "priority": "required",
+    "notes": "JANGTQ-K sibling of DSV4 production path."
+  },
+  {
+    "id": "qwen27-mxfp4-mtp",
+    "model": "qwen3.6-27b-mxfp4-crack-mtp",
+    "family": "qwen",
+    "topology": "hybrid-ssm",
+    "required_cache_evidence": ["ssm_companion_cache", "disk_l2_hits", "cache_topology"],
+    "priority": "red-row",
+    "notes": "Known red row: hybrid SSM/cache reuse produced hidden-reasoning length stop; rerun only when intentionally investigating Qwen."
+  },
+  {
+    "id": "qwen35-mxfp4-mtp",
+    "model": "qwen3.6-35b-a3b-mxfp4-crack-mtp",
+    "family": "qwen",
+    "topology": "hybrid-ssm",
+    "required_cache_evidence": ["ssm_companion_cache", "disk_l2_hits", "cache_topology"],
+    "priority": "required",
+    "notes": "35B sibling of the Qwen reasoning/tool-history red row; must prove visible post-tool answer, exact tool calls, SSM companion cache, and disk L2 reuse."
+  },
+  {
+    "id": "gemma4-26b-jang4m",
+    "model": "gemma-4-26b-a4b-it-jang_4m-crack",
+    "family": "gemma",
+    "topology": "swa-rotating",
+    "required_cache_evidence": ["rotating_kv_layer_count", "disk_l2_hits", "cache_topology"],
+    "priority": "required",
+    "notes": "Gemma parser/template row must prove no thought/header leak through Osaurus chat."
+  },
+  {
+    "id": "minimax-m27-small-jangtq",
+    "model": "minimax-m2.7-small-jangtq",
+    "family": "minimax",
+    "topology": "full-kv-moe",
+    "required_cache_evidence": ["cache_topology", "disk_l2_hits"],
+    "priority": "required-local",
+    "notes": "Runnable MiniMax/MiMo-adjacent row. Must prove XML tool parsing, reasoning-channel separation, prefix/L2 disk reuse, and no compiled-decode fallback."
+  },
+  {
+    "id": "minimax-m27-jangtq-k-crack",
+    "model": "minimax-m2.7-jangtq_k-crack",
+    "family": "minimax",
+    "topology": "full-kv-moe-jangtq-k",
+    "required_cache_evidence": ["cache_topology", "disk_l2_hits"],
+    "priority": "optional-local",
+    "notes": "JANGTQ_K sibling with per-projection routed-expert bits; run when memory budget allows."
+  },
+  {
+    "id": "minimax-m27-jang-k-crack",
+    "model": "minimax-m2.7-jang_k-crack",
+    "family": "minimax",
+    "topology": "full-kv-moe-jang-k",
+    "required_cache_evidence": ["cache_topology", "disk_l2_hits"],
+    "priority": "optional-local",
+    "notes": "JANG_K sibling of the MiniMax M2.7 routed path; run when memory budget allows and do not infer from JANGTQ_K."
+  },
+  {
+    "id": "mimo-v25-local-if-present",
+    "model": "mimo-v2.5",
+    "family": "mimo",
+    "topology": "hybrid-full-swa-kv",
+    "required_cache_evidence": ["rotating_kv_layer_count", "disk_l2_hits", "cache_topology"],
+    "priority": "optional-local",
+    "notes": "Run only after a converted/imported MiMo V2.5 bundle exists. Expected cache topology: full-attention KV plus SWA rotating; TurboQuant KV only for full-attention layers when explicitly enabled."
+  },
+  {
+    "id": "hy3-local-if-present",
+    "model": "hy3",
+    "family": "hy3",
+    "topology": "cca-pooling",
+    "required_cache_evidence": ["companion_cache", "disk_l2_hits", "cache_topology"],
+    "priority": "optional-local",
+    "notes": "Run only if a local HY3 bundle/model id is actually present."
+  }
+]

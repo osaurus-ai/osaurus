@@ -39,7 +39,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.cache.pagedKV.enabled == true)
             #expect(migrated.cache.blockDisk.enabled == true)
             #expect(migrated.cache.legacyDisk.enabled == false)
-            #expect(migrated.cache.liveKVCodec == .native)
+            #expect(migrated.cache.liveKVCodec == .engineSelected)
             #expect(migrated.cache.defaultMaxKVSize == 65536)
             #expect(migrated.cache.longPromptMultiplier == 2.0)
             #expect(migrated.cache.enableSSMReDerive == true)
@@ -65,7 +65,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.cache.pagedKV.enabled == true)
             #expect(snapshot.cache.blockDisk.enabled == true)
             #expect(snapshot.cache.legacyDisk.enabled == false)
-            #expect(snapshot.cache.liveKVCodec == .native)
+            #expect(snapshot.cache.liveKVCodec == .engineSelected)
             #expect(snapshot.cache.defaultMaxKVSize == 65536)
             #expect(snapshot.cache.longPromptMultiplier == 2.0)
             #expect(snapshot.cache.enableSSMReDerive == true)
@@ -183,6 +183,55 @@ struct ServerRuntimeSettingsStoreTests {
         }
     }
 
+    @Test @MainActor func load_preservesAutoMigratedEngineSelectedCacheDefault() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var autoMigrated = VMLXServerRuntimeSettings()
+            autoMigrated.cache.liveKVCodec = .engineSelected
+            autoMigrated.cache.enableSSMReDerive = true
+            autoMigrated.cache.defaultMaxKVSize = 65536
+            autoMigrated.cache.longPromptMultiplier = 2.0
+            autoMigrated.cache.legacyDisk = VMLXDiskCacheSettings(
+                enabled: false,
+                maxSizeGB: nil,
+                directory: nil
+            )
+            autoMigrated.cache.blockDisk = VMLXBlockDiskCacheSettings(
+                enabled: true,
+                maxSizeGB: nil,
+                directory: nil
+            )
+            try writeSettings(autoMigrated, to: dir)
+            try Data().write(
+                to: dir.appendingPathComponent(".server-runtime-cache-defaults-v2-migrated"),
+                options: [.atomic]
+            )
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+            #expect(loaded.cache.liveKVCodec == .engineSelected)
+            #expect(loaded.cache.enableSSMReDerive == true)
+
+            let data = try Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
+            let persisted = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
+            #expect(persisted.cache.liveKVCodec == .engineSelected)
+        }
+    }
+
+    @Test @MainActor func load_preservesExplicitEngineSelectedWithoutMigrationMarker() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var explicitEngineSelected = VMLXServerRuntimeSettings()
+            explicitEngineSelected.cache.liveKVCodec = .engineSelected
+            explicitEngineSelected.cache.enableSSMReDerive = true
+            try writeSettings(explicitEngineSelected, to: dir)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+            #expect(loaded.cache.liveKVCodec == .engineSelected)
+        }
+    }
+
     @Test func migratedFromLegacy_projectsCorsAndPort() async throws {
         var legacy = ServerConfiguration.default
         legacy.port = 9000
@@ -236,6 +285,21 @@ struct ServerRuntimeSettingsStoreTests {
         // to mean "no extra origins beyond the implicit loopback".
         #expect(projected.allowedOrigins == ["https://app.example"])
         #expect(abs(projected.genTopP - 0.85) < 1e-5)
+    }
+
+    @Test func projectIntoLegacy_clearsLegacyTopPWhenRuntimeTopPIsModelDefault() async throws {
+        var base = ServerConfiguration.default
+        base.genTopP = 0.42
+
+        var settings = VMLXServerRuntimeSettings()
+        settings.generation.topP = nil
+
+        let projected = ServerRuntimeSettingsStore.projectIntoLegacy(
+            settings,
+            base: base
+        )
+
+        #expect(projected.genTopP == ServerConfiguration.default.genTopP)
     }
 
     // MARK: - Helpers

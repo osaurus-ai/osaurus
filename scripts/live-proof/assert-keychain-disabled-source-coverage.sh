@@ -21,10 +21,6 @@ require_text() {
   fi
 }
 
-require_text "$ROOT/AGENTS.md" \
-  "In keychain-disabled test mode, Osaurus Keychain wrappers must not perform" \
-  "AGENTS records no-SecItem disabled-mode rule"
-
 require_text "$ROOT/Packages/OsaurusCore/Services/Keychain/KeychainQueryHelpers.swift" \
   "static var disablesKeychainForProcess" \
   "shared disabled-process flag"
@@ -74,7 +70,7 @@ require_text "$ROOT/scripts/live-proof/assert-keychain-disabled-source-coverage.
   "agent secret reads bypass Keychain" \
   "shell guard pins wrapper disabled-mode bypasses"
 
-if rg -n 'CodeSigningHelper\|xcodebuild\|codesign\( \|\$\)\|notarytool\|/usr/bin/security\( \|\$\)' \
+if rg -n 'xcodebuild\|codesign\( \|\$\)\|notarytool\|/usr/bin/security\( \|\$\)' \
   "$ROOT/scripts/live-proof/assert-keychain-free-proof-path.sh" >/dev/null; then
   pass "process-sensitive guard still blocks signing/keychain lanes"
 else

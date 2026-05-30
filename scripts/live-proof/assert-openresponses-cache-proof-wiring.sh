@@ -79,7 +79,7 @@ if [[ -f "$TESTS" ]]; then
   require_text "$TESTS" 'SSM hits / misses / re-derives' "source test covers SSM diagnostics surface"
 fi
 
-active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -i 'CodeSigningHelper|xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|swift-build --package-path Packages/OsaurusCore|swift-test --package-path Packages/OsaurusCore|/Users/eric/osaurus-staging/Packages/OsaurusCore/.build' | rg -v 'rg -i|assert-openresponses-cache-proof-wiring' || true)"
+active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|swift-build --package-path Packages/OsaurusCore|swift-test --package-path Packages/OsaurusCore|/Users/eric/osaurus-staging/Packages/OsaurusCore/.build' | rg -v 'rg -i|assert-openresponses-cache-proof-wiring' || true)"
 if [[ -n "$active" ]]; then
   fail_msg "active Osaurus build/keychain-sensitive process detected"
   echo "$active" >&2

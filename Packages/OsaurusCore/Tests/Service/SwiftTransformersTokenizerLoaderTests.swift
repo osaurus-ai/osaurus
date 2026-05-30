@@ -85,6 +85,193 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("<|vision_end|>"), "Decoded: \(decoded)")
     }
 
+    @Test func zayaVLLocalTokenizerRendersTextOnlyToolsFromOsaurusFallback() async throws {
+        let defaultPath = "/Users/eric/models/Osaurus/ZAYA1-VL-8B-MXFP4"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_ZAYA_VL_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object([
+                            "type": .string("string"),
+                            "description": .string("Text to count lines for."),
+                        ])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                [
+                    "role": "user",
+                    "content": "Use line_count on red\ngreen\nblue.",
+                ]
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("<tools>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<name>line_count</name>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<name>text</name>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<type>string</type>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<required>[\"text\"]</required>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("MUST be a tool call"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use line_count on red\ngreen\nblue."), "Decoded: \(decoded)")
+    }
+
+    @Test func zayaTextLocalTokenizerRendersZyphraToolsNotGemmaFallback() async throws {
+        let defaultPath = "/Users/eric/models/JANGQ/ZAYA1-8B-JANGTQ_K"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_ZAYA_TEXT_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object([
+                            "type": .string("string"),
+                            "description": .string("Text to count lines for."),
+                        ])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                [
+                    "role": "user",
+                    "content": "Use line_count on this exact text: red\ngreen\nblue",
+                ]
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("<tools>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<name>line_count</name>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<zyphra_tool_call>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<function=line_count>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<parameter=text>\nred\ngreen\nblue\n</parameter>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("MUST be a tool call"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("native Gemma function call"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<|tool_call>call:FUNCTION_NAME"), "Decoded: \(decoded)")
+    }
+
+    @Test func zayaVLLocalTokenizerKeepsRequiredToolReminderInCurrentUserTurn() async throws {
+        let defaultPath = "/Users/eric/models/Osaurus/ZAYA1-VL-8B-MXFP4"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_ZAYA_VL_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object([
+                            "type": .string("string"),
+                            "description": .string("Text to count lines for."),
+                        ])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let finalUser = "Now use line_count on exactly this new text, preserving newlines:\none\ntwo"
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                ["role": "user", "content": "Use line_count on this text:\nred\ngreen\nblue"],
+                [
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        [
+                            "id": "call_lines_1",
+                            "type": "function",
+                            "function": [
+                                "name": "line_count",
+                                "arguments": ["text": "red\ngreen\nblue"],
+                            ] as [String: any Sendable],
+                        ] as [String: any Sendable],
+                    ],
+                ] as [String: any Sendable],
+                ["role": "tool", "tool_call_id": "call_lines_1", "content": #"{"lines":3}"#],
+                ["role": "user", "content": "How many lines were counted? Do not call another tool."],
+                ["role": "assistant", "content": "Three lines were counted."],
+                ["role": "user", "content": finalUser],
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+        let reminder = "The current assistant response MUST be a tool call."
+        let finalUserRange = try #require(decoded.range(of: finalUser))
+        let afterFinalUser = decoded[finalUserRange.upperBound...]
+
+        #expect(afterFinalUser.contains(reminder), "Decoded: \(decoded)")
+        #expect(decoded.contains("<parameter=text>\none\ntwo\n</parameter>"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("Previous tool result available."), "Decoded: \(decoded)")
+        #expect(!decoded.contains(#"<zyphra_tool_response>\n{"lines":3}"#), "Decoded: \(decoded)")
+        #expect(!decoded.contains("Use line_count on this text:\nred\ngreen\nblue"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("How many lines were counted? Do not call another tool."), "Decoded: \(decoded)")
+        #expect(!decoded.contains("Three lines were counted."), "Decoded: \(decoded)")
+        #expect(!afterFinalUser.contains("<|im_start|>system\n<IMPORTANT>"), "Decoded: \(decoded)")
+        #expect(decoded.hasSuffix("<|im_start|>assistant\n"), "Decoded: \(decoded)")
+    }
+
     @Test func gemma4LocalTokenizerRendersUnionToolSchemaTypeNatively() async throws {
         let defaultPath = "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA4_TEST_MODEL"] ?? defaultPath
@@ -128,6 +315,134 @@ struct SwiftTransformersTokenizerLoaderTests {
 
         #expect(decoded.contains("write_probe_file"), "Decoded: \(decoded)")
         #expect(decoded.contains("Create the probe file."), "Decoded: \(decoded)")
+    }
+
+    @Test func gemma4FallbackCompactsClosedToolHistoryForLaterRequiredToolTurn() async throws {
+        let defaultPath = "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let finalUser = "Now use line_count on this exact text: one\ntwo"
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                ["role": "user", "content": "Use the line_count tool on this exact text: red\ngreen\nblue"],
+                [
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        [
+                            "id": "call_line_count_1",
+                            "type": "function",
+                            "function": [
+                                "name": "line_count",
+                                "arguments": ["text": "red\ngreen\nblue"],
+                            ] as [String: any Sendable],
+                        ] as [String: any Sendable],
+                    ],
+                ] as [String: any Sendable],
+                ["role": "tool", "content": "{\"lines\":3}", "tool_call_id": "call_line_count_1"],
+                ["role": "user", "content": "How many lines were counted?"],
+                ["role": "assistant", "content": "The text contains 3 lines."],
+                ["role": "user", "content": finalUser],
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains(finalUser), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
+        #expect(decoded.contains("<|tool_call>call:line_count{text:<|\"|>one\ntwo<|\"|>}<tool_call|>"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<zyphra_tool_call>"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("red\ngreen\nblue"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("The text contains 3 lines."), "Decoded: \(decoded)")
+        #expect(!decoded.contains("call_line_count_1"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("Tool result: {\"lines\":3}"), "Decoded: \(decoded)")
+    }
+
+    @Test func gemma3nLocalTokenizerDoesNotInventRequiredToolContractFromFallback() async throws {
+        let defaultPath = "/Users/eric/models/mlx-community/gemma-3n-E2B-it-4bit"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA3N_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            ),
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("chat_template.jinja").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object([
+                            "type": .string("string"),
+                            "description": .string("Text to count lines for."),
+                        ])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                [
+                    "role": "user",
+                    "content": "Use line_count on alpha\nbeta\ngamma.",
+                ]
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(!decoded.contains("<|tool>declaration:line_count"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<|tool_call>call:FUNCTION_NAME"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<|tool_call>call:line_count"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("MUST be a function call"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use line_count on alpha\nbeta\ngamma."), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<start_function_call>"), "Decoded: \(decoded)")
     }
 
     @Test func gemma4LocalTokenizerRendersFirstTurnChatUIToolSurface() async throws {
@@ -241,6 +556,65 @@ struct SwiftTransformersTokenizerLoaderTests {
                 "<\u{FF5C}User\u{FF5C}>Turn 2.<\u{FF5C}Assistant\u{FF5C}></think>"
             ),
             "DSV4 final instruct tail must be closed-thinking. Decoded: \(multiTurnDecoded)"
+        )
+    }
+
+    @Test func nemotronLocalTokenizerDoesNotRouteThroughDSV4Template() async throws {
+        let defaultPath = "/Users/eric/models/dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_NEMOTRON_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                [
+                    "role": "user",
+                    "content": "Use line_count on red\ngreen\nblue.",
+                ]
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: ["enable_thinking": false, "tool_choice": "required"]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("<|im_start|>"), "Nemotron should keep its ChatML template. Decoded: \(decoded)")
+        #expect(decoded.contains("<tools>"), "Nemotron should render XML tools. Decoded: \(decoded)")
+        #expect(decoded.contains("<tool_call>"), "Nemotron should show XML tool call contract. Decoded: \(decoded)")
+        #expect(decoded.contains("line_count"), "Nemotron should include the requested tool schema. Decoded: \(decoded)")
+        #expect(
+            decoded.contains("one available tool and no prose before the tool result"),
+            "Nemotron required tool_choice must use the strict fallback contract, not the permissive native template. Decoded: \(decoded)"
+        )
+        #expect(
+            !decoded.contains("optional reasoning for your function call"),
+            "Nemotron required tool_choice must not keep the native template's optional reasoning-before-tool allowance. Decoded: \(decoded)"
+        )
+        #expect(
+            !decoded.contains("<\u{FF5C}DSML\u{FF5C}tool_calls>")
+                && !decoded.contains("$TOOL_NAME")
+                && !decoded.contains("<\u{FF5C}Assistant\u{FF5C}>"),
+            "Nemotron must not be misrouted through the DSV4 DSML template. Decoded: \(decoded)"
         )
     }
 
@@ -435,8 +809,90 @@ struct SwiftTransformersTokenizerLoaderTests {
             "DSV4 must merge the prior tool result and the next user request into one content block. Decoded: \(decoded)"
         )
         #expect(
-            decoded.hasSuffix("<\u{FF5C}Assistant\u{FF5C}></think><\u{FF5C}action\u{FF5C}>"),
-            "DSV4 required/named tool_choice must preserve the action task after tool-result history. Decoded: \(decoded)"
+            decoded.hasSuffix("<\u{FF5C}Assistant\u{FF5C}></think>"),
+            "DSV4 required/named tool_choice must keep the ordinary assistant tail; the action task rail can leak as visible model text after tool-result history. Decoded: \(decoded)"
+        )
+        #expect(
+            !decoded.contains("<\u{FF5C}action\u{FF5C}>"),
+            "DSV4 required/named tool_choice must not inject the action task token after live repeat rows showed it can leak as visible text. Decoded: \(decoded)"
+        )
+    }
+
+    @Test func dsv4RequiredToolChoiceCompactsClosedToolHistoryBeforeNextToolCall() async throws {
+        let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ2"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let lineCountTool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let priorLineCountCall: [String: any Sendable] = [
+            "id": "call_line_count_1",
+            "type": "function",
+            "function": [
+                "name": "line_count",
+                "arguments": ["text": "red\ngreen\nblue"] as [String: any Sendable],
+            ] as [String: any Sendable],
+        ]
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                ["role": "user", "content": "Use line_count on red green blue."],
+                ["role": "assistant", "content": "", "tool_calls": [priorLineCountCall]],
+                ["role": "tool", "content": "{\"lines\":3}", "tool_call_id": "call_line_count_1"],
+                ["role": "user", "content": "How many lines were counted?"],
+                ["role": "assistant", "content": "The line_count tool counted 3 lines."],
+                ["role": "user", "content": "Now use line_count on this exact text: one\ntwo"],
+            ],
+            tools: [lineCountTool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+        let conversationSegment =
+            decoded.components(separatedBy: "<\u{FF5C}User\u{FF5C}>").dropFirst().joined(
+                separator: "<\u{FF5C}User\u{FF5C}>"
+            )
+
+        #expect(
+            !conversationSegment.contains("<\u{FF5C}DSML\u{FF5C}invoke name=\"line_count\">"),
+            "Closed historical DSV4 tool calls must not be replayed before a later required tool call. Decoded: \(decoded)"
+        )
+        #expect(
+            !conversationSegment.contains("red\ngreen\nblue"),
+            "Closed historical DSV4 tool arguments must not be replayed before a later required tool call. Decoded: \(decoded)"
+        )
+        #expect(
+            !conversationSegment.contains("<tool_result>{\"lines\":3}</tool_result>"),
+            "Closed historical DSV4 tool results must not poison the next required tool-call turn. Decoded: \(decoded)"
+        )
+        #expect(decoded.contains("The line_count tool counted 3 lines."))
+        #expect(decoded.contains("Now use line_count on this exact text: one\ntwo"))
+        #expect(decoded.contains("Use the `line_count` function."))
+        #expect(
+            decoded.hasSuffix("<\u{FF5C}Assistant\u{FF5C}></think>"),
+            "DSV4 compacted history must still leave the ordinary assistant tail. Decoded: \(decoded)"
         )
     }
 
@@ -615,6 +1071,84 @@ struct SwiftTransformersTokenizerLoaderTests {
             renderedFamilies == Set(availableRows.map(\.family)),
             "Every available downloaded tokenizer family should render. Available: \(availableRows.map(\.family)); rendered: \(renderedFamilies)"
         )
+    }
+
+    @Test func lfm2LocalTokenizerUsesStrictRequiredToolFallback() async throws {
+        let defaultPath = "/Users/eric/.mlxstudio/models/JANGQ-AI/LFM2.5-8B-A1B-JANG_2L"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_LFM2_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                ["role": "user", "content": "Use the line_count tool on this exact text: red\ngreen\nblue"]
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("Available functions:"), "Decoded: \(decoded)")
+        #expect(decoded.contains("- line_count:"), "Decoded: \(decoded)")
+        #expect(decoded.contains("The API requires a tool call for the next assistant turn."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Function name: line_count"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Required arguments: text"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Respond with exactly this one assistant message and nothing else:"), "Decoded: \(decoded)")
+        #expect(decoded.contains(#"{"name":"line_count","arguments":{"text":"red\ngreen\nblue"}}"#), "Decoded: \(decoded)")
+        #expect(decoded.contains("Copy the `text` value exactly from the current user request."), "Decoded: \(decoded)")
+        #expect(decoded.contains("This value contains exactly 2 line break(s) and 0 blank lines."), "Decoded: \(decoded)")
+        #expect(decoded.contains(#"In the JSON call, each line break is represented by the two characters \n"#), "Decoded: \(decoded)")
+        #expect(decoded.contains(#"the exact `text` value encoded with JSON \n escapes is: red\ngreen\nblue"#), "Decoded: \(decoded)")
+        #expect(decoded.contains("Do not double any line break."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Do not add a blank line, leading space, trailing newline, or any other character to the copied value."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Do not omit `text`"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Do not write reasoning, XML-style tool tags, markdown, or prose."), "Decoded: \(decoded)")
+        #expect(!decoded.contains("List of tools:"), "Decoded: \(decoded)")
+        #expect(decoded.contains(#""name":"line_count""#), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<tools>"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("</tool_call>"), "Decoded: \(decoded)")
+        #expect(decoded.contains(#"Use the line_count tool on this exact text: red\ngreen\nblue"#), "Decoded: \(decoded)")
+        #expect(!decoded.contains("Use the line_count tool on this exact text: red\ngreen\nblue"), "Decoded: \(decoded)")
+        if let userRange = decoded.range(
+            of: #"Use the line_count tool on this exact text: red\ngreen\nblue"#
+        ) {
+            let afterUser = decoded[userRange.upperBound...]
+            #expect(
+                afterUser.contains("The API requires a tool call for the next assistant turn."),
+                "Required-tool instruction must trail the latest LFM user turn instead of preceding it. Decoded: \(decoded)"
+            )
+            #expect(
+                afterUser.contains(#"{"name":"line_count","arguments":{"text":"red\ngreen\nblue"}}"#),
+                "Required-tool instruction must keep the exact multiline value after the latest LFM user turn. Decoded: \(decoded)"
+            )
+        }
+        #expect(!decoded.contains("Today's date:"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<think>"), "Decoded: \(decoded)")
     }
 }
 

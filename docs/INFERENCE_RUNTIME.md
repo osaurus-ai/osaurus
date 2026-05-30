@@ -49,11 +49,11 @@ per container at load time
 
 | Field | Value | Why |
 |---|---|---|
-| `modelKey` | `"<modelName>\|kv=fp16\|cachefmt=2\|restore=fullhit-trim-eval1\|..."` by default; `kv=engine-selected` or `kv=turbo(...)` only after explicit KV-codec opt-in | per-model isolation across loads; KV-mode, serializer, restore-contract, and topology tags prevent serving disk entries encoded under a different cache contract after a runtime update |
+| `modelKey` | `"<modelName>\|kv=turbo(3,3)\|cachefmt=2\|restore=fullhit-trim-eval1\|..."` for engine-selected proven full-KV rows; `kv=fp16` for hybrid/rotating/CCA/DSV4 rows unless explicitly overridden | per-model isolation across loads; KV-mode, serializer, restore-contract, and topology tags prevent serving disk entries encoded under a different cache contract after a runtime update |
 | `diskCacheDir` | `OsaurusPaths.diskKVCache()` | osaurus-managed sandbox path |
 | `enableDiskCache` | `true` when probe-write succeeds, else `false` | graceful fallback to memory-only when the dir is read-only / out-of-disk |
 | `usePagedCache` | `true` | content-addressed paged blocks for prefix reuse |
-| `defaultKVMode` | native/fp16 by default; `engine_selected` remains an explicit Server Settings opt-in that maps ordinary full-history KV layers to vmlx's TurboQuant policy | global TurboQuant cache defaults stay off until Qwen/Gemma/DSV4 cross-family live rows cover the historical loop/leak failure modes; DSV4/ZAYA/SSM/rotating companion caches keep their typed serializers and are not replaced by generic KV compression |
+| `defaultKVMode` | `engine_selected` by default, resolved per model/topology: proven full-KV rows get TurboQuant, while hybrid/rotating/CCA/DSV4 rows stay native/fp16 unless explicitly overridden | TurboQuant is enabled by default only where the cache topology is simple full KV; DSV4/ZAYA/SSM/rotating companion caches keep their typed serializers and are not replaced by generic KV compression |
 | `defaultMaxKVSize` | `65536` | prefill window; `longPromptMultiplier=2.0` covers the 131K case |
 | `longPromptMultiplier` | `2.0` | rotating-cache cap kicks in only past 131K |
 | `ssmMaxEntries` | `50` | SSM state cap for hybrid Mamba/CCA companion cache |
@@ -71,11 +71,6 @@ DSV4 disk-prefix reuse is additionally namespaced with
 `layers=deepseekV4|prefix=hybrid-pool-disk|decode=max-rp110` so records
 created before the current native pool serializer and max-reasoning decode
 policy cannot be reused after an app/library update.
-For `reasoningEffort=max`, Osaurus applies a DSV4-specific default
-`repetitionPenalty=1.10` only when the request did not specify one and the
-bundle default is no-op. This is a decode stability policy for the observed
-raw max-reasoning repeated-token loop; explicit request penalties still win.
-
 The final DSV4 server settings renderer must also prove the visible settings
 match that topology: native DSV4 cache copy present, paged block size
 fixed/disabled for DSV4 with the expected 256 display row when active metadata

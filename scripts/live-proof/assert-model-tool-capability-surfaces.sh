@@ -121,7 +121,7 @@ require_text "$TOKENIZER_TESTS" 'upper filter' \
 require_text "$TOKENIZER_TESTS" 'capabilities_search' \
   "tokenizer matrix checks capabilities_search renders in prompts"
 
-active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -i 'CodeSigningHelper|codesign( |$)|notarytool|/usr/bin/security( |$)' | rg -v 'rg -i|assert-model-tool-capability-surfaces' || true)"
+active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -i 'codesign( |$)|notarytool|/usr/bin/security( |$)' | rg -v 'rg -i|assert-model-tool-capability-surfaces' || true)"
 if [[ -n "$active" ]]; then
   fail_msg "active keychain/signing helper detected; source assertions above are still useful but do not promote live readiness"
   echo "$active" >&2

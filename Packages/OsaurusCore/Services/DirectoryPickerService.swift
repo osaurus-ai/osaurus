@@ -274,6 +274,14 @@ final class DirectoryPickerService: ObservableObject {
     /// Falls back to env var and defaults when no valid bookmark exists.
     /// Uses cached bookmark URL to avoid expensive IPC calls on every access.
     nonisolated static func effectiveModelsDirectory() -> URL {
+        // Test/live-proof runs may need to point at a specific model root even
+        // when the user's app has a saved bookmark. Treat an explicit env
+        // override as stronger than persisted UI state so probes are
+        // deterministic and do not accidentally scan a stale volume.
+        if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
+            return defaultModelsDirectory()
+        }
+
         // Use cached bookmark URL to avoid expensive IPC
         if let cachedURL = getCachedBookmarkURL() {
             return cachedURL

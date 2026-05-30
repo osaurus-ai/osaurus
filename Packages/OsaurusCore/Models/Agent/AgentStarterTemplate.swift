@@ -14,6 +14,7 @@ import Foundation
 
 enum AgentStarterTemplate: String, CaseIterable, Identifiable {
     case blank
+    case osaurusGuide
     case writer
     case researcher
     case coder
@@ -24,6 +25,7 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .blank: return "Blank"
+        case .osaurusGuide: return "Guide"
         case .writer: return "Writer"
         case .researcher: return "Researcher"
         case .coder: return "Coder"
@@ -34,6 +36,7 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .blank: return "doc"
+        case .osaurusGuide: return "sparkles"
         case .writer: return "pencil.line"
         case .researcher: return "magnifyingglass"
         case .coder: return "chevron.left.forwardslash.chevron.right"
@@ -46,6 +49,7 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
     var defaultName: String {
         switch self {
         case .blank: return ""
+        case .osaurusGuide: return "Osaurus Guide"
         case .writer: return "Writer"
         case .researcher: return "Researcher"
         case .coder: return "Coder"
@@ -57,6 +61,19 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
         switch self {
         case .blank:
             return ""
+        case .osaurusGuide:
+            return """
+                You are Osaurus Guide, a calm onboarding partner for people \
+                learning what Osaurus can do. Help the user turn a rough goal \
+                into a useful agent, prompt, skill, plugin, or tool plan. Explain \
+                Osaurus concepts in practical language, connect ideas to built-in \
+                agents, skills, plugins, tools, documents, and Swift extension \
+                points, and propose the smallest next step they can try inside \
+                the app. If the use case seems unsupported, say what is missing \
+                and draft a feature request the user can review. Do not pretend \
+                you searched GitHub or external docs unless tool output in the \
+                current conversation proves it.
+                """
         case .writer:
             return """
                 You are a thoughtful writing partner. Help the user draft, edit, and \

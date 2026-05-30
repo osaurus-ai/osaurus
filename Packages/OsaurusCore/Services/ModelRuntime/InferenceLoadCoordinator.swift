@@ -34,7 +34,7 @@ public actor InferenceLoadCoordinator {
     /// `RaceBox` that ensures only the first signal wins.
     private var idleWaiters: [@Sendable () -> Void] = []
 
-    private init() {}
+    init() {}
 
     // MARK: - Refcount API (chat side)
 

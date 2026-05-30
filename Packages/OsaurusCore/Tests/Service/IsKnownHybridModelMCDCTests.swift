@@ -24,7 +24,7 @@
 //   Block 8:  regex `(^|/)falcon[\-_]?h1([\-_].*)?$`                  → true
 //   Block 9:  regex `(^|/)baichuan[\-_]?m1([\-_].*)?$`                → true
 //   Block 10: regex `(^|/)jamba[\-_\.0-9]`                            → true
-//   Block 11: regex `(^|/)lfm2([\-_].*)?$`                            → true
+//   Block 11: regex `(^|/)lfm2(([\._-]?5)?([\-_].*)?)?$`               → true
 //   else: return false
 //
 // MC/DC requirements per OR block: every condition must independently

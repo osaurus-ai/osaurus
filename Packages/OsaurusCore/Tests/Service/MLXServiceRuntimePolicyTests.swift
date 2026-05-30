@@ -118,4 +118,71 @@ struct MLXServiceRuntimePolicyTests {
             )
         }
     }
+
+    @Test func policyRejectsGemma3nToolsInsteadOfLeakingTemplateMarkers() {
+        #expect(throws: MLXService.RuntimePolicyError.self) {
+            try MLXService.validateRuntimePolicy(
+                modelName: "gemma-3n-e2b-it-4bit",
+                modelId: "mlx-community/gemma-3n-E2B-it-4bit",
+                messages: [ChatMessage(role: "user", content: "Use line_count on alpha\nbeta.")],
+                parameters: GenerationParameters(temperature: nil, maxTokens: 16),
+                tools: [Self.lineCountTool()],
+                runtime: VMLXServerRuntimeSettings()
+            )
+        }
+    }
+
+    @Test func localToolSupportFollowsBundleToolParserContract() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-tool-support-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let gemma3n = root.appendingPathComponent("gemma3n", isDirectory: true)
+        try FileManager.default.createDirectory(at: gemma3n, withIntermediateDirectories: true)
+        try #"{"model_type":"gemma3n_text"}"#.write(
+            to: gemma3n.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        #expect(
+            MLXService.supportsLocalToolCalling(
+                modelName: "gemma-3n-e2b-it-4bit",
+                modelId: "local/gemma3n",
+                modelDirectory: gemma3n
+            ) == false
+        )
+
+        let gemma4 = root.appendingPathComponent("gemma4", isDirectory: true)
+        try FileManager.default.createDirectory(at: gemma4, withIntermediateDirectories: true)
+        try #"{"model_type":"gemma4_text"}"#.write(
+            to: gemma4.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        #expect(
+            MLXService.supportsLocalToolCalling(
+                modelName: "gemma-4-26b-a4b-it-jang_4m-crack",
+                modelId: "local/gemma4",
+                modelDirectory: gemma4
+            ) == true
+        )
+    }
+
+    private static func lineCountTool() -> OsaurusCore.Tool {
+        OsaurusCore.Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+    }
 }

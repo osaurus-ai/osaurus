@@ -462,12 +462,17 @@ struct RuntimePolicySourceTests {
         // bare-name key/value DSV4 tool attempts such as
         // `file_read\npath=...` being parsed as tools instead of visible text,
         // and Qwen multi-turn tool/cache matrix coverage staying present in
-        // the vMLX regression harness.
+        // the vMLX regression harness, plus the Nemotron Omni tool-template
+        // fallback that keeps tool schemas rendered through the model-native
+        // [AVAILABLE_TOOLS]/XML function-call contract instead of leaking
+        // role-token/DSML fragments in Osaurus tool turns, plus the Gemma4
+        // Zyphra XML tool-call parser used by live JANG_4M multiline tool
+        // envelopes.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "a8a8e65451beebd0ef6e115f9e66bb9cde2988de"
+        let expectedRuntimeHardenedRevision = "84c8bb653a50cd48b4af7f5cdce04d3f16e6ed95"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -751,16 +756,32 @@ struct RuntimePolicySourceTests {
             "ServerRuntimeSettingsStore.migratedFromLegacy must seed enableSSMReDerive=true for automatic hybrid cache reuse"
         )
         #expect(
-            store.contains("liveKVCodec: .native"),
-            "ServerRuntimeSettingsStore.migratedFromLegacy must keep first-run live KV on native/fp16 until TurboQuant has per-family live proof"
+            store.contains("liveKVCodec: .engineSelected"),
+            "ServerRuntimeSettingsStore.migratedFromLegacy must use engine-selected live KV so proven full-KV rows default to TurboQuant"
         )
         #expect(
             !store.contains("normalized.cache.liveKVCodec = .engineSelected"),
-            "Legacy cache migration must not silently flip existing users to engine-selected TurboQuant KV"
+            "Legacy cache migration must not overwrite explicit existing live-KV choices"
+        )
+        #expect(
+            store.contains("Engine-selected live KV is resolved by ModelRuntime per"),
+            "ServerRuntimeSettingsStore must document that engine-selected is topology-gated by ModelRuntime"
         )
         #expect(
             store.contains("shouldRepairLegacyCacheDefaults"),
             "ServerRuntimeSettingsStore must still repair stale persisted hybrid cache companion defaults"
+        )
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        #expect(
+            runtime.contains("shouldUseTurboQuantByDefault"),
+            "ModelRuntime must resolve engine-selected cache policy per family/topology instead of enabling TurboQuant globally"
+        )
+        #expect(
+            runtime.contains("ModelFamilyNames.isDSV4Family(modelName)")
+                && runtime.contains("ModelFamilyNames.isZayaFamily(modelName)")
+                && runtime.contains("ModelFamilyNames.isZayaVLFamily(modelName)")
+                && runtime.contains("Self.isKnownHybridModel(name: modelName)"),
+            "Engine-selected TurboQuant must stay off by default for DSV4, ZAYA/ZAYA-VL, and hybrid topologies until exact rows prove it"
         )
     }
 
@@ -773,8 +794,14 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains(#""block_disk_store""#))
         #expect(httpHandler.contains(#""disk_l2_hits""#))
         #expect(httpHandler.contains(#""prefix_hits""#))
+        #expect(httpHandler.contains(#""companion_cache""#))
+        #expect(httpHandler.contains(#""zaya_cca_companion_cache""#))
+        #expect(httpHandler.contains(#""zaya_cca_companion_hits""#))
+        #expect(httpHandler.contains(#"let hasSSMCompanion = companionKinds.contains("companion=ssm")"#))
+        #expect(httpHandler.contains("if hasSSMCompanion"))
         #expect(httpHandler.contains(#""cache_topology""#))
         #expect(httpHandler.contains("hybrid_pool_layer_count"))
+        #expect(httpHandler.contains("zaya_cca_layer_count"))
         #expect(httpHandler.contains("requires_disk_backed_restore"))
         #expect(!httpHandler.contains(#"aggregate["prefix_hits", default: 0] += diskStats.hits"#))
         #expect(!httpHandler.contains(#"aggregate["prefix_misses", default: 0] += diskStats.misses"#))
@@ -913,6 +940,12 @@ struct RuntimePolicySourceTests {
         #expect(adapter.contains("acquireSoloLease"))
         #expect(adapter.contains("await soloLease.release()"))
         #expect(
+            adapter.contains("lmInput.text.tokenIds")
+                && adapter.contains("?? MLXCacheIOLock.withSerializedMLXCacheIO")
+                && adapter.contains("lmInput.text.tokens.asArray(Int.self)"),
+            "prompt token extraction must use vmlx's CPU tokenIds when available and fall back to the serialized MLX readback only for legacy processors"
+        )
+        #expect(
             adapter.contains("post-generation disk-cache store")
                 && adapter.contains("for await event in upstream")
                 && adapter.contains(
@@ -974,6 +1007,36 @@ struct RuntimePolicySourceTests {
                 "for try await delta in inner {\n                    // Check for task cancellation to allow early termination\n                    if Task.isCancelled"
             ),
             "ChatEngine stream logging wrapper must pass StreamingStatsHint through before honoring cancellation"
+        )
+    }
+
+    @Test("ChatEngine honors tool choice none by bypassing local tool dispatch")
+    func chatEngineHonorsToolChoiceNoneBypassingLocalToolDispatch() throws {
+        let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
+
+        #expect(chatEngine.contains("private static func allowsLocalToolDispatch"))
+        #expect(chatEngine.contains("if case .some(.none) = toolChoice"))
+        #expect(
+            chatEngine.contains("if Self.allowsLocalToolDispatch(request.tool_choice),\n                let tools = request.tools"),
+            "ChatEngine must not route tool_choice none requests through local streamWithTools just because tool schemas are present."
+        )
+    }
+
+    @Test("ModelRuntime drops structured tool history when no active tools are routed")
+    func modelRuntimeDropsStructuredToolHistoryWithoutActiveTools() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(
+            runtime.contains("preserveStructuredToolHistory: !tools.isEmpty"),
+            "ModelRuntime must not preserve structured assistant/tool history when the request is routed with no active tool schemas."
+        )
+        #expect(
+            runtime.contains("let toolCalls = preserveStructuredToolHistory ? toMLXToolCalls(m.tool_calls) : nil"),
+            "Assistant tool_calls must be omitted from the MLX template context when structured tool history is disabled."
+        )
+        #expect(
+            runtime.contains("role: .user,\n                            content: \"Tool result: \\(content)\""),
+            "Tool-role results should be converted to ordinary text context when structured tool history is disabled, so follow-up answers can use the result without re-entering tool-call mode."
         )
     }
 
@@ -1180,6 +1243,8 @@ struct RuntimePolicySourceTests {
     func httpChannelCloseCancelsPerRequestStreamingTasks() throws {
         let handler = try Self.source("Networking/HTTPHandler.swift")
         let helper = try Self.source("Networking/HTTPLoopHelpers.swift")
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
 
         #expect(helper.contains("final class HTTPRequestTaskRegistry"))
         #expect(helper.contains("func cancelAll()"))
@@ -1208,6 +1273,12 @@ struct RuntimePolicySourceTests {
         #expect(handler.contains("if disconnected.value { throw CancellationError() }"))
         #expect(handler.contains("let channelClosed = SendableBool(false)"))
         #expect(handler.contains("let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)"))
+        #expect(handler.contains("let responseFinished = SendableBool(false)"))
+        #expect(handler.contains("let wasResidentBeforeComplete = SendableBool(false)"))
+        #expect(handler.contains("await ModelRuntime.shared.cancelGeneration(name: model)"))
+        #expect(handler.contains("wasResidentBeforeComplete.value = await ModelRuntime.shared.isResident(name: model)"))
+        #expect(handler.contains("try Task.checkCancellation()\n                    var resp = try await chatEngine.completeChat(request: enrichedReq)"))
+        #expect(handler.contains("var resp = try await chatEngine.completeChat(request: enrichedReq)\n                    try Task.checkCancellation()"))
         #expect(handler.contains("var emittedSemanticDelta = false"))
         #expect(handler.contains("func markSemanticDeltaIfConnected()"))
         #expect(handler.contains("if self._isChannelActive.value && !disconnected.value && !channelClosed.value"))
@@ -1284,6 +1355,10 @@ struct RuntimePolicySourceTests {
         )
         let errorCaught = String(handler[errorStart.lowerBound ..< errorEnd.lowerBound])
         #expect(errorCaught.contains("requestTasks.cancelAll()"))
+        #expect(runtime.contains("func cancelGeneration(name: String) async"))
+        #expect(runtime.contains("await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)"))
+        #expect(chatEngine.contains("for try await delta in stream {\n                        try Task.checkCancellation()"))
+        #expect(chatEngine.contains("for try await delta in stream {\n                try Task.checkCancellation()"))
 
         #expect(
             !handler.contains("\n        Task(priority: .userInitiated)"),
@@ -1397,6 +1472,7 @@ struct RuntimePolicySourceTests {
     func liveProofKeychainDisabledModeKeepsStartupOffUserKeychain() throws {
         let paths = try Self.source("Utils/OsaurusPaths.swift")
         let storage = try Self.source("Identity/StorageKeyManager.swift")
+        let storageMigration = try Self.source("Views/Storage/StorageMigrationOverlay.swift")
         let appDelegate = try Self.source("AppDelegate.swift")
         let keychainHelper = try Self.source("Services/Keychain/KeychainQueryHelpers.swift")
         let agentSecrets = try Self.source("Services/Keychain/AgentSecretsKeychain.swift")
@@ -1408,6 +1484,8 @@ struct RuntimePolicySourceTests {
         #expect(storage.contains("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"))
         #expect(storage.contains("generateInMemoryKey()"))
         #expect(storage.contains("if Self.disablesKeychainForProcess"))
+        #expect(storageMigration.contains("if StorageKeyManager.disablesKeychainForProcess"))
+        #expect(storageMigration.contains("without touching the user's at-rest migration/keychain"))
         #expect(appDelegate.contains("private var keychainDisabledTestMode"))
         #expect(appDelegate.contains("private var keychainDisabledUIPresentationMode"))
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
@@ -1546,6 +1624,37 @@ struct RuntimePolicySourceTests {
         #expect(reasoningDecode.lowerBound < yieldReasoning.lowerBound)
         #expect(yieldReasoning.lowerBound < visibleAppend.lowerBound)
         #expect(yieldReasoning.lowerBound < textEstimate.lowerBound)
+    }
+
+    @Test("ChatEngine completeChat preserves reasoning_content before generic sentinel filtering")
+    func chatEngineCompleteChatPreservesReasoningContentBeforeSentinelFiltering() throws {
+        let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
+
+        let toolStreamStart = try #require(chatEngine.range(of: "let stream = try await toolSvc.streamWithTools("))
+        let toolResponseStart = try #require(
+            chatEngine.range(
+                of: "let outputTokens = TokenEstimator.estimate(text)",
+                range: toolStreamStart.upperBound ..< chatEngine.endIndex
+            )
+        )
+        let toolSlice = chatEngine[toolStreamStart.lowerBound ..< toolResponseStart.lowerBound]
+        let toolReasoning = try #require(toolSlice.range(of: "if let reasoningDelta = StreamingReasoningHint.decode(delta)"))
+        let toolSentinel = try #require(toolSlice.range(of: "if StreamingToolHint.isSentinel(delta)"))
+        #expect(toolReasoning.lowerBound < toolSentinel.lowerBound)
+
+        let plainStreamStart = try #require(chatEngine.range(of: "let stream = try await service.streamDeltas("))
+        let plainResponseStart = try #require(
+            chatEngine.range(
+                of: "let outputTokens = authoritativeOutputTokens",
+                range: plainStreamStart.upperBound ..< chatEngine.endIndex
+            )
+        )
+        let plainSlice = chatEngine[plainStreamStart.lowerBound ..< plainResponseStart.lowerBound]
+        let plainReasoning = try #require(plainSlice.range(of: "if let reasoningDelta = StreamingReasoningHint.decode(delta)"))
+        let plainSentinel = try #require(plainSlice.range(of: "if StreamingToolHint.isSentinel(delta)"))
+        #expect(plainReasoning.lowerBound < plainSentinel.lowerBound)
+
+        #expect(chatEngine.contains("reasoning_content: reasoning.isEmpty ? nil : reasoning"))
     }
 
     @Test("ModelRuntime wires idle residency around model leases")
@@ -1728,6 +1837,13 @@ struct RuntimePolicySourceTests {
                 && adapter.contains("case .required, .function(_)"),
             "Required or named local tool_choice must become template context instead of being reduced to a tools-available-only prompt."
         )
+        #expect(
+            adapter.contains("context[\"tool_choice_name\"] = toolChoiceName")
+                && adapter.contains("private static func requiredToolChoiceName(")
+                && adapter.contains("case .function(let target):")
+                && adapter.contains("guard let toolsSpec, toolsSpec.count == 1"),
+            "Required/named local tool_choice must pass the target tool name into vmlx template context so Nemotron-family required tool templates do not fall back to generic placeholders."
+        )
         let tokenizerLoader = try Self.source("Services/ModelRuntime/SwiftTransformersTokenizerLoader.swift")
         #expect(
             tokenizerLoader.contains("let toolChoiceRequired =")
@@ -1738,10 +1854,15 @@ struct RuntimePolicySourceTests {
             "DSV4 native prompt rendering must pass required tool_choice into DeepseekV4ChatEncoder so second-turn/named required tool calls keep the DSML must-call directive."
         )
         #expect(
-            tokenizerLoader.contains("let dsv4HasPriorToolResult = dsv4Messages.contains { $0.role == .tool }")
-                && tokenizerLoader.contains("!dsv4HasPriorToolResult")
-                && tokenizerLoader.contains("dsv4Messages[idx].task = \"action\""),
-            "DSV4 first-turn required/named tool_choice may use the native action task rail, but multi-turn tool-result prompts must stay on the DSML directive path instead of leaking action metadata."
+            !tokenizerLoader.contains("dsv4Messages[idx].task = \"action\"")
+                && tokenizerLoader.contains("toolChoiceRequired: toolChoiceRequired"),
+            "DSV4 required/named tool_choice must pass through the required-template contract; the Swift encoder must not mutate historical messages with task=action. The pinned vMLX fallback may still open the native DSV4 action token at the current assistant generation rail."
+        )
+        #expect(
+            tokenizerLoader.contains("&& upstream.bosToken == Self.dsv4Bos")
+                && !tokenizerLoader.contains("convertTokenToId(Self.dsv4Bos)")
+                && !tokenizerLoader.contains("convertTokenToId(Self.dsv4Eos)"),
+            "DSV4 template routing must require the actual DSV4 BOS token; token-id convertibility is too broad and can misroute Nemotron Omni into DSML placeholders."
         )
         #expect(
             registry.contains("invalidToolArgumentsEnvelope")
@@ -1821,6 +1942,26 @@ struct RuntimePolicySourceTests {
                 "context[\"enable_thinking\"] = hasPositiveReasoningEffort\n            if hasPositiveReasoningEffort"
             ),
             "Family-specific reasoning profiles must not force enable_thinking=false by writing a false boolean when no positive effort was requested."
+        )
+        #expect(
+            adapter.contains("if ModelFamilyNames.isZayaFamily(modelName)")
+                && adapter.contains("context[\"enable_thinking\"] = false"),
+            "ZAYA text bundles are the explicit exception: their profile default is a closed/no-thinking prompt, so omitted reasoning controls must reach vmlx as enable_thinking=false."
+        )
+        #expect(
+            adapter.contains("if ModelFamilyNames.isQwenFamily(modelName)")
+                && adapter.contains("context[\"enable_thinking\"] = false"),
+            "Qwen local chat is an explicit exception: live tool-history rows must default to the closed/no-thinking rail instead of hidden reasoning-only length stops."
+        )
+        #expect(
+            adapter.contains("if ModelFamilyNames.isNemotronOmniFamily(modelName)")
+                && adapter.contains("context[\"enable_thinking\"] = false"),
+            "Nemotron Omni bundles are the explicit multimodal exception: live ordinary chat must default to the closed/no-thinking rail instead of hidden reasoning-only output."
+        )
+        #expect(
+            adapter.contains("if ModelFamilyNames.isGemmaFamily(modelName)")
+                && adapter.contains("context[\"enable_thinking\"] = false"),
+            "Gemma4 bundles must default to the closed/no-thinking rail for local API requests, matching their UI profile default without parser-side output repair."
         )
         #expect(
             !adapter.contains("dsv4MaxReasoningRepetitionPenalty")

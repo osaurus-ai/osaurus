@@ -132,6 +132,43 @@ struct ModelRuntimeMappingTests {
         #expect(mapped[5].role == .user)
     }
 
+    @Test func flattensToolHistoryWhenStructuredToolsAreDisabled() throws {
+        let call = ToolCall(
+            id: "c1",
+            type: "function",
+            function: ToolCallFunction(
+                name: "line_count",
+                arguments: "{\"text\":\"red\\ngreen\\nblue\"}"
+            )
+        )
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: [call],
+            tool_call_id: nil
+        )
+        let tool = ChatMessage(
+            role: "tool",
+            content: "{\"lines\":3}",
+            tool_calls: nil,
+            tool_call_id: "c1"
+        )
+        let user = ChatMessage(role: "user", content: "How many lines?")
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX(
+            [assistant, tool, user],
+            preserveStructuredToolHistory: false
+        )
+
+        #expect(mapped.count == 2)
+        #expect(mapped[0].role == .user)
+        #expect(mapped[0].content == "Tool result: {\"lines\":3}")
+        #expect(mapped[0].toolCalls == nil)
+        #expect(mapped[0].toolCallId == nil)
+        #expect(mapped[1].role == .user)
+        #expect(mapped[1].content == "How many lines?")
+    }
+
     /// Empty assistant turn (no content AND no tool_calls) must still be
     /// dropped so downstream templates don't see a stray empty message.
     @Test func skipsFullyEmptyAssistantTurns() throws {

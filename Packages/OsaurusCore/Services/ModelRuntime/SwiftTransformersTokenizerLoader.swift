@@ -13,7 +13,21 @@ import VMLXTokenizers
 struct SwiftTransformersTokenizerLoader: TokenizerLoader, @unchecked Sendable {
     func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
         let upstream = try await AutoTokenizer.from(modelFolder: directory)
-        return TokenizerBridge(upstream: upstream)
+        let modelType = Self.modelType(in: directory)
+        return TokenizerBridge(upstream: upstream, modelType: modelType)
+    }
+
+    private static func modelType(in directory: URL) -> String? {
+        let url = directory.appendingPathComponent("config.json")
+        guard
+            let data = try? Data(contentsOf: url),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let value = object["model_type"] as? String
+        else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -23,6 +37,7 @@ struct SwiftTransformersTokenizerLoader: TokenizerLoader, @unchecked Sendable {
 /// production instead of the macro bridge.
 private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenizer, @unchecked Sendable {
     let upstream: any VMLXTokenizers.Tokenizer
+    let modelType: String?
 
     private static let dsv4Bos =
         "<" + String(UnicodeScalar(0xFF5C)!)
@@ -35,6 +50,93 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         + "end" + String(UnicodeScalar(0x2581)!) + "of"
         + String(UnicodeScalar(0x2581)!) + "sentence"
         + String(UnicodeScalar(0xFF5C)!) + ">"
+
+    private static let gemma3FunctionToolMinimal = #"""
+{{ bos_token }}
+{%- set loop_messages = messages -%}
+{%- if messages[0]['role'] == 'system' -%}
+    {%- set system_message = messages[0]['content'] -%}
+    {%- set loop_messages = messages[1:] -%}
+{%- else -%}
+    {%- set system_message = "" -%}
+{%- endif -%}
+{%- if tools is defined and tools | length > 0 -%}
+    {{ '<start_of_turn>user\n' }}
+    {%- if system_message is string and system_message | length > 0 -%}
+        {{ system_message | trim + '\n\n' }}
+    {%- endif -%}
+    {{ 'You have access to the following functions.\n' }}
+    {{ 'When a function call is required, do not explain, do not summarize, and do not answer in prose.\n' }}
+    {{ 'Output exactly one function call using this grammar:\n' }}
+    {{ '<start_function_call>call:FUNCTION_NAME{ARGUMENT_NAME:<escape>ARGUMENT_VALUE<escape>}<end_function_call>\n' }}
+    {{ 'Example:\nUser asks: Count the lines in this text: alpha\nbeta\ngamma\n' }}
+    {{ 'Assistant replies: <start_function_call>call:line_count{text:<escape>alpha\nbeta\ngamma<escape>}<end_function_call>\n\n' }}
+    {%- for tool in tools -%}
+        {%- set fn = tool['function'] if tool['function'] is defined else tool -%}
+        {{ 'Function: ' + fn['name'] + '\n' }}
+        {%- if fn['description'] is defined and fn['description'] -%}
+            {{ 'Description: ' + (fn['description'] | trim) + '\n' }}
+        {%- endif -%}
+        {%- if fn['parameters'] is defined -%}
+            {{ 'Parameters: ' + (fn['parameters'] | tojson) + '\n' }}
+        {%- endif -%}
+    {%- endfor -%}
+    {%- if tool_choice is defined and tool_choice == 'required' -%}
+        {{ '\nThe current assistant response MUST be a function call.' }}
+        {%- if tool_choice_name is defined and tool_choice_name -%}
+            {{ ' Use the `' + tool_choice_name + '` function.' }}
+        {%- endif -%}
+    {%- endif -%}
+    {{ '<end_of_turn>\n' }}
+{%- endif -%}
+{%- for message in loop_messages -%}
+    {%- set role = 'model' if message['role'] == 'assistant' else message['role'] -%}
+    {%- if message['role'] == 'tool' -%}
+        {{ '<start_of_turn>user\nTool result: ' + (message['content'] | string | trim) + '<end_of_turn>\n' }}
+    {%- else -%}
+        {{ '<start_of_turn>' + role + '\n' }}
+        {%- if message['content'] is string -%}
+            {{ message['content'] | trim }}
+        {%- elif message['content'] is iterable -%}
+            {%- for item in message['content'] -%}
+                {%- if item['type'] == 'text' -%}
+                    {{ item['text'] | trim }}
+                {%- elif item['type'] == 'audio' -%}
+                    {{ '<audio_soft_token>' }}
+                {%- elif item['type'] == 'image' -%}
+                    {{ '<image_soft_token>' }}
+                {%- endif -%}
+            {%- endfor -%}
+        {%- endif -%}
+        {%- if message['tool_calls'] is defined and message['tool_calls'] is iterable -%}
+            {%- for tool_call in message['tool_calls'] -%}
+                {%- set fn = tool_call['function'] -%}
+                {{ '<start_function_call>call:' + fn['name'] + '{' }}
+                {%- if fn['arguments'] is mapping -%}
+                    {%- set first = true -%}
+                    {%- for key, value in fn['arguments'] | dictsort -%}
+                        {%- if not first %},{% endif -%}
+                        {%- set first = false -%}
+                        {{ key + ':' }}
+                        {%- if value is string -%}
+                            {{ '<escape>' + value + '<escape>' }}
+                        {%- else -%}
+                            {{ value }}
+                        {%- endif -%}
+                    {%- endfor -%}
+                {%- elif fn['arguments'] is string -%}
+                    {{ fn['arguments'] }}
+                {%- endif -%}
+                {{ '}<end_function_call>' }}
+            {%- endfor -%}
+        {%- endif -%}
+        {{ '<end_of_turn>\n' }}
+    {%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {{ '<start_of_turn>model\n' }}
+{%- endif -%}
+"""#
 
     private enum DeepseekV4BridgeError: Error {
         case invalidRole(String)
@@ -110,18 +212,49 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             && upstream.convertTokenToId("</assistant>") != nil
             && upstream.convertTokenToId("<think>") != nil
             && upstream.convertTokenToId("</think>") != nil
-        let hasZayaVLVisionSentinel =
+        let normalizedModelType = modelType?.lowercased()
+        let modelTypeIsGemma3n =
+            normalizedModelType == "gemma3n"
+            || normalizedModelType == "gemma3n_text"
+        let modelTypeIsGemma3 =
+            normalizedModelType == "gemma3"
+            || normalizedModelType == "gemma3_text"
+        let modelTypeIsZayaVL =
+            normalizedModelType == "zaya1_vl"
+            || normalizedModelType == "zaya_vl"
+        let modelTypeIsZayaText =
+            normalizedModelType == "zaya"
+            || normalizedModelType == "zaya1"
+        let modelTypeIsLFM2 =
+            normalizedModelType == "lfm2"
+            || normalizedModelType == "lfm2_moe"
+            || normalizedModelType == "lfm2-vl"
+            || normalizedModelType == "lfm2_vl"
+        let hasZayaChatTokens =
             upstream.bosToken == "<bos>"
+            && upstream.convertTokenToId("<|im_start|>") != nil
+            && upstream.convertTokenToId("<|im_end|>") != nil
+        let hasZayaVLVisionSentinel =
+            hasZayaChatTokens
             && upstream.convertTokenToId("<|vision_start|>") != nil
             && upstream.convertTokenToId("<image>") != nil
             && upstream.convertTokenToId("<|vision_end|>") != nil
-            && upstream.convertTokenToId("<|im_start|>") != nil
-            && upstream.convertTokenToId("<|im_end|>") != nil
+        let hasGemma3TurnSentinel =
+            modelTypeIsGemma3
+            || (
+                normalizedModelType == nil
+                && !hasZayaVLVisionSentinel
+                && upstream.bosToken == "<bos>"
+                && upstream.convertTokenToId("<start_of_turn>") != nil
+                && upstream.convertTokenToId("<end_of_turn>") != nil
+            )
+        let hasZayaToolChatSentinel =
+            (modelTypeIsZayaText || modelTypeIsZayaVL)
+            && hasZayaChatTokens
+            && !hasGemma3TurnSentinel
         let hasDSV4Sentinel =
             !hasZayaVLVisionSentinel
-            && (upstream.bosToken == Self.dsv4Bos
-                || (upstream.convertTokenToId(Self.dsv4Bos) != nil
-                    && upstream.convertTokenToId(Self.dsv4Eos) != nil))
+            && upstream.bosToken == Self.dsv4Bos
         if hasLagunaSentinel
             && (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
         {
@@ -157,8 +290,21 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         }
 
         var adjustedContext = additionalContext
-        if hasZayaVLVisionSentinel,
-            Self.messagesContainImageContent(messages),
+        if modelTypeIsLFM2,
+            !(chatTemplateTools?.isEmpty ?? true),
+            (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
+            return try fallback(
+                label: "LFM2ToolMinimal",
+                template: MLXLMCommon.ChatTemplateFallbacks.lfm2ToolMinimal,
+                messages: messages,
+                tools: chatTemplateTools,
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
+            )
+        }
+        if hasZayaToolChatSentinel,
+            (Self.messagesContainImageContent(messages) || !(chatTemplateTools?.isEmpty ?? true)),
             (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
         {
             return try fallback(
@@ -193,7 +339,48 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 addGenerationPrompt: addGenerationPrompt
             )
         }
-
+        if upstream.bosToken == "<bos>",
+            !(chatTemplateTools?.isEmpty ?? true),
+            !modelTypeIsGemma3n,
+            Self.requiresToolChoice(adjustedContext),
+            (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
+            return try fallback(
+                label: "Gemma4RequiredTool",
+                template: MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools,
+                messages: Self.compactGemma4CompletedToolHistoryForRequiredChoice(messages),
+                tools: chatTemplateTools,
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
+            )
+        }
+        if hasGemma3TurnSentinel,
+            !(chatTemplateTools?.isEmpty ?? true),
+            (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
+            return try fallback(
+                label: "Gemma3FunctionToolMinimal",
+                template: Self.gemma3FunctionToolMinimal,
+                messages: messages,
+                tools: chatTemplateTools,
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
+            )
+        }
+        if !(chatTemplateTools?.isEmpty ?? true),
+            upstream.bosToken == "<s>",
+            upstream.convertTokenToId("<|im_end|>") != nil,
+            (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
+            return try fallback(
+                label: "NemotronMinimal",
+                template: MLXLMCommon.ChatTemplateFallbacks.nemotronMinimal,
+                messages: messages,
+                tools: chatTemplateTools,
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
+            )
+        }
         do {
             return try upstream.applyChatTemplate(
                 messages: messages,
@@ -230,7 +417,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     addGenerationPrompt: addGenerationPrompt
                 )
             }
-            if hasZayaVLVisionSentinel, Self.messagesContainImageContent(messages) {
+            if hasZayaToolChatSentinel,
+                Self.messagesContainImageContent(messages) || !(chatTemplateTools?.isEmpty ?? true)
+            {
                 return try fallback(
                     label: "Zaya1VLVisionToolMinimal",
                     template: MLXLMCommon.ChatTemplateFallbacks.zayaVLVisionToolMinimal,
@@ -240,17 +429,33 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     addGenerationPrompt: addGenerationPrompt
                 )
             }
+            if hasGemma3TurnSentinel,
+                !(chatTemplateTools?.isEmpty ?? true)
+            {
+                return try fallback(
+                    label: "Gemma3FunctionToolMinimal",
+                    template: Self.gemma3FunctionToolMinimal,
+                    messages: messages,
+                    tools: chatTemplateTools,
+                    additionalContext: adjustedContext,
+                    addGenerationPrompt: addGenerationPrompt
+                )
+            }
             if upstream.bosToken == "<bos>" {
                 let template =
-                    (chatTemplateTools?.isEmpty ?? true)
+                    (chatTemplateTools?.isEmpty ?? true) || modelTypeIsGemma3n
                     ? MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal
                     : MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools
+                let fallbackMessages = Self.requiresToolChoice(adjustedContext)
+                    ? Self.compactGemma4CompletedToolHistoryForRequiredChoice(messages)
+                    : messages
+                let fallbackTools = modelTypeIsGemma3n ? nil : chatTemplateTools
                 return try fallback(
                     label: "Gemma4",
                     template: template,
-                    messages: messages,
-                    tools: chatTemplateTools,
-                    additionalContext: additionalContext,
+                    messages: fallbackMessages,
+                    tools: fallbackTools,
+                    additionalContext: adjustedContext,
                     addGenerationPrompt: addGenerationPrompt
                 )
             }
@@ -271,7 +476,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             guard (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
                 throw error
             }
-            let isGemma = upstream.bosToken == "<bos>"
+            let isGemma = upstream.bosToken == "<bos>" && !hasZayaToolChatSentinel
             let hasNemotronSentinel =
                 upstream.convertTokenToId("<|im_start|>") != nil
                 || upstream.convertTokenToId("<|im_end|>") != nil
@@ -281,7 +486,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             let ordered: [(label: String, template: String)]
             if hasLagunaSentinel {
                 ordered = [("LagunaMinimal", MLXLMCommon.ChatTemplateFallbacks.lagunaMinimal)]
-            } else if hasZayaVLVisionSentinel, Self.messagesContainImageContent(messages) {
+            } else if hasZayaToolChatSentinel,
+                Self.messagesContainImageContent(messages) || !(chatTemplateTools?.isEmpty ?? true)
+            {
                 ordered = [
                     (
                         "Zaya1VLVisionToolMinimal",
@@ -317,6 +524,66 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         messages.contains { message in
             contentContainsImage(message["content"])
         }
+    }
+
+    private static func requiresToolChoice(_ context: [String: any Sendable]?) -> Bool {
+        guard let context else { return false }
+        if (context["tool_choice"] as? String) == "required" {
+            return true
+        }
+        if let name = context["tool_choice_name"] as? String,
+            !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return true
+        }
+        return false
+    }
+
+    private static func compactGemma4CompletedToolHistoryForRequiredChoice(
+        _ messages: [[String: any Sendable]]
+    ) -> [[String: any Sendable]] {
+        guard let latestUserIndex = messages.lastIndex(where: {
+            let role = $0["role"] as? String
+            return role == "user" || role == "developer"
+        }) else {
+            return messages
+        }
+
+        var compacted: [[String: any Sendable]] = []
+        compacted.reserveCapacity(messages.count)
+
+        for (index, message) in messages.enumerated() {
+            if index >= latestUserIndex {
+                compacted.append(message)
+                continue
+            }
+
+            let role = message["role"] as? String
+            if role == "system" || role == "developer" {
+                compacted.append(message)
+            }
+        }
+
+        return compacted
+    }
+
+    private static func messageContentString(_ content: Any?) -> String {
+        if let string = content as? String {
+            return string
+        }
+        if let parts = content as? [[String: any Sendable]] {
+            return parts.compactMap { part in
+                guard part["type"] as? String == "text" else { return nil }
+                return part["text"] as? String
+            }.joined(separator: "\n")
+        }
+        if let parts = content as? [[String: String]] {
+            return parts.compactMap { part in
+                guard part["type"] == "text" else { return nil }
+                return part["text"]
+            }.joined(separator: "\n")
+        }
+        return ""
     }
 
     private static func normalizedToolsForChatTemplate(
@@ -532,6 +799,12 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 task: Self.deepseekV4String(raw["task"])
             )
         }
+        let toolChoiceRequired =
+            Self.deepseekV4String(additionalContext?["tool_choice"]) == "required"
+        let toolChoiceName = Self.deepseekV4String(additionalContext?["tool_choice_name"])
+        if toolChoiceRequired || !(toolChoiceName?.isEmpty ?? true) {
+            dsv4Messages = Self.compactCompletedDSV4ToolHistory(dsv4Messages)
+        }
 
         if let tools, !tools.isEmpty {
             if let idx = dsv4Messages.firstIndex(where: {
@@ -582,23 +855,13 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             effort = nil
         }
 
-        let toolChoiceRequired =
-            Self.deepseekV4String(additionalContext?["tool_choice"]) == "required"
-        let dsv4HasPriorToolResult = dsv4Messages.contains { $0.role == .tool }
-        if toolChoiceRequired,
-            !dsv4HasPriorToolResult,
-            let idx = dsv4Messages.lastIndex(where: { $0.role == .user || $0.role == .developer }),
-            dsv4Messages[idx].task == nil
-        {
-            dsv4Messages[idx].task = "action"
-        }
-
         var prompt = MLXLMCommon.DeepseekV4ChatEncoder().encode(
             messages: dsv4Messages,
             thinkingMode: thinkingMode,
             reasoningEffort: effort,
             dropEarlierReasoning: true,
-            toolChoiceRequired: toolChoiceRequired
+            toolChoiceRequired: toolChoiceRequired,
+            toolChoiceName: toolChoiceName
         )
         if !addGenerationPrompt,
             let lastRole = dsv4Messages.last?.role,
@@ -614,6 +877,73 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             }
         }
         return upstream.encode(text: prompt, addSpecialTokens: false)
+    }
+
+    private static func compactCompletedDSV4ToolHistory(
+        _ messages: [MLXLMCommon.DeepseekV4ChatEncoder.Message]
+    ) -> [MLXLMCommon.DeepseekV4ChatEncoder.Message] {
+        guard let latestUserIndex = messages.lastIndex(where: {
+            $0.role == .user || $0.role == .developer
+        }) else {
+            return messages
+        }
+
+        let hasLaterAssistantAnswerBeforeLatestUser: (Int) -> Bool = { index in
+            guard index + 1 < latestUserIndex else { return false }
+            return messages[(index + 1)..<latestUserIndex].contains { message in
+                guard message.role == .assistant else { return false }
+                if let content = message.content,
+                   !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    return true
+                }
+                if let reasoning = message.reasoningContent,
+                   !reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    return true
+                }
+                return false
+            }
+        }
+
+        var compacted: [MLXLMCommon.DeepseekV4ChatEncoder.Message] = []
+        compacted.reserveCapacity(messages.count)
+        var droppingClosedToolResult = false
+
+        for (index, message) in messages.enumerated() {
+            if index >= latestUserIndex {
+                compacted.append(message)
+                continue
+            }
+
+            if message.role == .assistant,
+               let toolCalls = message.toolCalls,
+               !toolCalls.isEmpty,
+               hasLaterAssistantAnswerBeforeLatestUser(index)
+            {
+                droppingClosedToolResult = true
+                let content = message.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let reasoning = message.reasoningContent?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !content.isEmpty || !reasoning.isEmpty else {
+                    continue
+                }
+                var copy = message
+                copy.toolCalls = nil
+                compacted.append(copy)
+                continue
+            }
+
+            if message.role == .tool, droppingClosedToolResult {
+                continue
+            }
+
+            if message.role != .tool {
+                droppingClosedToolResult = false
+            }
+            compacted.append(message)
+        }
+
+        return compacted
     }
 
     private func fallback(

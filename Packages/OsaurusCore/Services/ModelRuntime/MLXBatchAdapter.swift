@@ -667,11 +667,17 @@ struct MLXBatchAdapter {
     static func additionalContext(
         for generation: GenerationParameters,
         modelName: String,
-        toolChoice: ToolChoiceOption? = nil
+        toolChoice: ToolChoiceOption? = nil,
+        toolChoiceName: String? = nil
     ) -> [String: any Sendable] {
         var context: [String: any Sendable] = [:]
         if toolChoiceRequiresLocalCall(toolChoice) {
             context["tool_choice"] = "required"
+        }
+        if let toolChoiceName,
+           !toolChoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            context["tool_choice_name"] = toolChoiceName
         }
         let normalizedReasoningEffort: String? = {
             guard let effort = generation.modelOptions["reasoningEffort"]?.stringValue else {
@@ -742,6 +748,19 @@ struct MLXBatchAdapter {
             }
             return context
         }
+        if ModelFamilyNames.isQwenFamily(modelName) {
+            if directRailReasoningEffort {
+                context["enable_thinking"] = false
+                return context
+            }
+            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["enable_thinking"] = true
+                context["reasoning_effort"] = normalizedReasoningEffort
+            } else {
+                context["enable_thinking"] = false
+            }
+            return context
+        }
         if ModelFamilyNames.isNemotronOmniFamily(modelName) {
             if directRailReasoningEffort {
                 context["enable_thinking"] = false
@@ -750,6 +769,8 @@ struct MLXBatchAdapter {
             if hasPositiveReasoningEffort, let normalizedReasoningEffort {
                 context["enable_thinking"] = true
                 context["reasoning_effort"] = normalizedReasoningEffort
+            } else {
+                context["enable_thinking"] = false
             }
             return context
         }
@@ -761,6 +782,45 @@ struct MLXBatchAdapter {
             if hasPositiveReasoningEffort, let normalizedReasoningEffort {
                 context["enable_thinking"] = true
                 context["reasoning_effort"] = normalizedReasoningEffort
+            } else {
+                context["enable_thinking"] = false
+            }
+            return context
+        }
+        if ModelFamilyNames.isMiniMaxFamily(modelName) {
+            if directRailReasoningEffort {
+                context["enable_thinking"] = false
+                return context
+            }
+            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["enable_thinking"] = true
+                context["reasoning_effort"] = normalizedReasoningEffort
+            } else {
+                context["enable_thinking"] = false
+            }
+            return context
+        }
+
+        if ModelFamilyNames.isLFM2Family(modelName) {
+            if toolChoiceRequiresLocalCall(toolChoice) {
+                context["enable_thinking"] = false
+            } else if let disableThinking {
+                context["enable_thinking"] = !disableThinking
+            } else if normalizedReasoningEffort != nil {
+                context["enable_thinking"] = hasPositiveReasoningEffort
+            }
+            return context
+        }
+        if ModelFamilyNames.isGemmaFamily(modelName) {
+            if directRailReasoningEffort {
+                context["enable_thinking"] = false
+                return context
+            }
+            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["enable_thinking"] = true
+                context["reasoning_effort"] = normalizedReasoningEffort
+            } else {
+                context["enable_thinking"] = false
             }
             return context
         }
@@ -783,6 +843,24 @@ struct MLXBatchAdapter {
             return true
         case .auto, .none:
             return false
+        }
+    }
+
+    private static func requiredToolChoiceName(
+        toolChoice: ToolChoiceOption?,
+        toolsSpec: [[String: any Sendable]]?
+    ) -> String? {
+        guard let toolChoice else { return nil }
+        switch toolChoice {
+        case .function(let target):
+            return target.function.name
+        case .required:
+            guard let toolsSpec, toolsSpec.count == 1 else { return nil }
+            let tool = toolsSpec[0]
+            let function = (tool["function"] as? [String: any Sendable]) ?? tool
+            return function["name"] as? String
+        case .auto, .none:
+            return nil
         }
     }
 
@@ -1043,6 +1121,9 @@ struct MLXBatchAdapter {
                 let toolsSpec = buildToolsSpec()
                 box.toolsBuiltAt = CFAbsoluteTimeGetCurrent()
                 box.toolCount = toolsSpec?.count ?? 0
+                let requiredToolName = requiredToolChoiceName(
+                    toolChoice: toolChoice,
+                    toolsSpec: toolsSpec)
 
                 // Reasoning template context. Only explicit request controls are
                 // translated into model-specific template kwargs; omitted controls
@@ -1050,7 +1131,8 @@ struct MLXBatchAdapter {
                 let additionalContext = additionalContext(
                     for: generation,
                     modelName: modelName,
-                    toolChoice: toolChoice
+                    toolChoice: toolChoice,
+                    toolChoiceName: requiredToolName
                 )
                 box.contextBuiltAt = CFAbsoluteTimeGetCurrent()
                 box.contextKeys = additionalContext.keys.sorted()
@@ -1080,7 +1162,11 @@ struct MLXBatchAdapter {
                 trace?.mark("batch_tokenization_done")
             }
 
-            let tokens = lmInput.text.tokens.asArray(Int.self)
+            let tokens =
+                lmInput.text.tokenIds
+                ?? MLXCacheIOLock.withSerializedMLXCacheIO {
+                    lmInput.text.tokens.asArray(Int.self)
+                }
             box.tokenArrayDoneAt = CFAbsoluteTimeGetCurrent()
             box.promptTokenCount = tokens.count
             guard !tokens.isEmpty else {
@@ -1124,7 +1210,7 @@ struct MLXBatchAdapter {
 
     private static func safeContextSummary(_ context: [String: any Sendable]) -> String {
         context.keys.sorted().compactMap { key in
-            guard key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice" else {
+            guard key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice" || key == "tool_choice_name" else {
                 return nil
             }
             let value = context[key]

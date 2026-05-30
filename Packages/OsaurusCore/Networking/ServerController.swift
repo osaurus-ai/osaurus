@@ -260,9 +260,9 @@ final class ServerController: ObservableObject {
     ///
     /// Fields that require a NIO restart: port, host (expose toggle),
     /// CORS origins.
-    /// Fields that only need a generation-config invalidate: `genTopP`
-    /// changes (consumed by `RuntimeConfig.snapshot()` on the next
-    /// request).
+    /// Fields that only need a runtime-config invalidate: generation and
+    /// concurrency defaults consumed by `RuntimeConfig.snapshot()` on the next
+    /// request.
     func saveRuntimeSettings(_ settings: VMLXServerRuntimeSettings) async {
         let previousRuntimeSettings = runtimeSettings
         let previousConfig = configuration
@@ -283,7 +283,12 @@ final class ServerController: ObservableObject {
             previousConfig.port != projected.port
             || previousConfig.exposeToNetwork != projected.exposeToNetwork
             || previousConfig.allowedOrigins != projected.allowedOrigins
-        let runtimeConfigChanged = previousConfig.genTopP != projected.genTopP
+        let runtimeConfigChanged =
+            Self.runtimeConfigInputsRequireInvalidate(
+                previous: previousRuntimeSettings,
+                next: settings
+            )
+            || previousConfig.genTopP != projected.genTopP
 
         if configChanged {
             configuration = projected
@@ -311,6 +316,16 @@ final class ServerController: ObservableObject {
         previous.cache != next.cache
             || previous.multimodal != next.multimodal
             || previous.mtp != next.mtp
+    }
+
+    /// Settings captured by `RuntimeConfig.snapshot()` but not by a loaded
+    /// model container must be re-read on the next request after saving.
+    nonisolated static func runtimeConfigInputsRequireInvalidate(
+        previous: VMLXServerRuntimeSettings,
+        next: VMLXServerRuntimeSettings
+    ) -> Bool {
+        previous.generation != next.generation
+            || previous.concurrency != next.concurrency
     }
 
     // MARK: - Private Helpers
