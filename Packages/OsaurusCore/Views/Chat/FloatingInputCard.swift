@@ -1744,9 +1744,18 @@ extension FloatingInputCard {
         Binding(
             get: { activeModelOptions },
             set: { newValues in
-                activeModelOptions = newValues
-                if let model = selectedModel {
-                    ModelOptionsStore.shared.saveOptions(newValues, for: model)
+                // Defer the write off the popover's synchronous update. The
+                // selector popover is anchored to a chip whose label reads
+                // `activeModelOptions` (`modelOptionsSummary`); mutating it
+                // inline resizes/replaces that anchor while the popover is
+                // presenting, which makes NSPopover dereference a freed
+                // positioning view (EXC_BAD_ACCESS). Hopping to the next
+                // runloop tick lets the current update finish first.
+                DispatchQueue.main.async {
+                    activeModelOptions = newValues
+                    if let model = selectedModel {
+                        ModelOptionsStore.shared.saveOptions(newValues, for: model)
+                    }
                 }
             }
         )
@@ -3628,9 +3637,7 @@ private struct ModelOptionsSelectorView: View {
 
             if hasExplicitOptions {
                 Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        values = [:]
-                    }
+                    values = [:]
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.uturn.backward")
@@ -3705,9 +3712,7 @@ private struct ModelOptionsSelectorView: View {
             ForEach(segments) { segment in
                 let isSelected = segment.id == currentId
                 Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        values[optionId] = .string(segment.id)
-                    }
+                    values[optionId] = .string(segment.id)
                 } label: {
                     Text(segment.label)
                         .font(.system(size: 11, weight: isSelected ? .semibold : .medium))

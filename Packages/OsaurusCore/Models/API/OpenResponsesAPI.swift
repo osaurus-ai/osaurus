@@ -13,6 +13,17 @@ import Foundation
 /// Reasoning configuration for reasoning models.
 public struct OpenResponsesReasoningConfig: Codable, Sendable {
     public let effort: String
+    /// Requests a human-readable reasoning summary, streamed as
+    /// `response.reasoning_summary_text.delta` events. Without it the
+    /// Responses API returns only the opaque `encrypted_content` blob, so the
+    /// UI has no reasoning to display. "auto" lets the server pick the
+    /// summary granularity (works without org verification).
+    public let summary: String?
+
+    public init(effort: String, summary: String? = nil) {
+        self.effort = effort
+        self.summary = summary
+    }
 }
 
 /// Open Responses API create request

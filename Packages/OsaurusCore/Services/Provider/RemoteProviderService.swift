@@ -8,6 +8,11 @@
 import Foundation
 import os
 
+/// Logger for the reasoning round-trip. Emitted at `.debug`, so it's quiet by
+/// default; stream it with
+/// `log stream --debug --predicate 'subsystem == "ai.osaurus" AND category == "reasoning"'`.
+private let reasoningLogger = Logger(subsystem: "ai.osaurus", category: "reasoning")
+
 /// Errors specific to remote provider operations
 public enum RemoteProviderServiceError: LocalizedError {
     case invalidURL
@@ -899,6 +904,11 @@ public actor RemoteProviderService: ToolCapableService {
         var lastTouchedToolSlot: Int?
         var lastFinishReason: String?
 
+        /// Set once a reasoning item with non-empty `encrypted_content` has
+        /// been yielded from the streaming `output_item.done` path, so the
+        /// `response.completed` fallback doesn't re-emit the same blob.
+        var didCaptureReasoning: Bool = false
+
         /// Yielded text content. Only used when `trackContent` is `true`
         /// (streamWithTools, for the inline tool-call detection fallback).
         var accumulatedContent: String = ""
@@ -1214,6 +1224,19 @@ public actor RemoteProviderService: ToolCapableService {
                 if hitStop { return .finishNormal }
             }
 
+        case "response.reasoning_summary_text.delta":
+            // Visible reasoning for the Responses path. Parsed untyped (read
+            // only `delta`) because OpenAI omits fields the typed event marks
+            // required (e.g. `sequence_number`), which would make a strict
+            // decode throw and silently drop the summary. Routed through the
+            // same reasoning sentinel as `reasoning_content` so ChatView
+            // places it in the Think panel.
+            if let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                let delta = root["delta"] as? String, !delta.isEmpty
+            {
+                yield(StreamingReasoningHint.encode(delta))
+            }
+
         case "response.output_item.added":
             if let addedEvent = try? JSONDecoder().decode(OutputItemAddedEvent.self, from: jsonData),
                 case .functionCall(let funcCall) = addedEvent.item
@@ -1257,6 +1280,25 @@ public actor RemoteProviderService: ToolCapableService {
             }
 
         case "response.output_item.done":
+            // Capture the encrypted reasoning item untyped. The typed
+            // `OpenResponsesReasoningItem` requires `status`/`summary`, which
+            // gpt-5.5/Codex omits on the reasoning item, so a typed decode
+            // throws and silently drops the blob. The client re-emits it next
+            // turn for chain continuity (store:false + include.encrypted_content).
+            if !state.didCaptureReasoning,
+                let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                let item = root["item"] as? [String: Any],
+                (item["type"] as? String) == "reasoning",
+                let id = item["id"] as? String, !id.isEmpty,
+                let encrypted = item["encrypted_content"] as? String, !encrypted.isEmpty
+            {
+                state.didCaptureReasoning = true
+                reasoningLogger.debug(
+                    "captured reasoning from output_item.done bytes=\(encrypted.count, privacy: .public)"
+                )
+                yield(StreamingReasoningItemHint.encode(id: id, encryptedContent: encrypted))
+            }
+
             // Final confirmed item — extract args from the completed function_call
             // when no `.delta` events landed first (common for short calls).
             if let doneEvent = try? JSONDecoder().decode(OutputItemDoneEvent.self, from: jsonData) {
@@ -1269,25 +1311,20 @@ public actor RemoteProviderService: ToolCapableService {
                         )
                     if current.args.isEmpty { current.args = funcCall.arguments }
                     state.accumulatedToolCalls[idx] = current
-                case .reasoning(let reasoning):
-                    // Capture the encrypted reasoning item so the client can
-                    // re-emit it next turn (chain continuity). The encrypted
-                    // blob is only present with store:false + include.
-                    if let encrypted = reasoning.encrypted_content, !encrypted.isEmpty {
-                        yield(
-                            StreamingReasoningItemHint.encode(
-                                id: reasoning.id,
-                                encryptedContent: encrypted
-                            )
-                        )
-                    }
-                case .message:
+                case .reasoning, .message:
                     break
                 }
             }
 
         case "response.completed":
             state.lastFinishReason = "completed"
+            // Defensive fallback: some providers attach
+            // `reasoning.encrypted_content` only to the final `response.output`
+            // array rather than a streaming `output_item.done`. No-op when we
+            // already captured it mid-stream (gpt-5.5/Codex).
+            if !state.didCaptureReasoning {
+                captureReasoningFromCompleted(jsonData, yield: yield)
+            }
             switch resolveAccumulatedToolCall(
                 from: state.accumulatedToolCalls,
                 finishMarker: "response.completed"
@@ -1301,6 +1338,32 @@ public actor RemoteProviderService: ToolCapableService {
             break
         }
         return .continue
+    }
+
+    /// Fallback reasoning capture from a `response.completed` payload. Parsed
+    /// untyped so an unknown sibling output-item type can't make a strict
+    /// `OpenResponsesResponse` decode throw and drop the reasoning blob.
+    /// Yields a `StreamingReasoningItemHint` for each reasoning item carrying
+    /// a non-empty `encrypted_content` and a usable id.
+    private static func captureReasoningFromCompleted(
+        _ jsonData: Data,
+        yield: (String) -> Void
+    ) {
+        guard
+            let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let response = root["response"] as? [String: Any],
+            let output = response["output"] as? [[String: Any]]
+        else { return }
+
+        for item in output where (item["type"] as? String) == "reasoning" {
+            guard let id = item["id"] as? String, !id.isEmpty,
+                let encrypted = item["encrypted_content"] as? String, !encrypted.isEmpty
+            else { continue }
+            reasoningLogger.debug(
+                "captured reasoning from response.completed bytes=\(encrypted.count, privacy: .public)"
+            )
+            yield(StreamingReasoningItemHint.encode(id: id, encryptedContent: encrypted))
+        }
     }
 
     static func handleOpenAIEvent(
@@ -3063,6 +3126,19 @@ struct RemoteChatRequest: Encodable {
                         )
                     }
                 } else if let content = msg.content {
+                    // Re-emit the captured reasoning item before the assistant
+                    // text message too (not only before function_calls), so a
+                    // reasoning model resumes its chain on plain-answer turns.
+                    if let itemId = msg.reasoning_item_id, let encrypted = msg.reasoning_encrypted {
+                        inputItems.append(
+                            .reasoning(
+                                OpenResponsesReasoningInputItem(
+                                    id: itemId,
+                                    encryptedContent: encrypted
+                                )
+                            )
+                        )
+                    }
                     let msgContent = OpenResponsesMessageContent.text(content)
                     inputItems.append(.message(OpenResponsesMessageItem(role: "assistant", content: msgContent)))
                 }
@@ -3127,7 +3203,7 @@ struct RemoteChatRequest: Encodable {
 
         let reasoning =
             reasoning_effort
-            .map { OpenResponsesReasoningConfig(effort: $0) }
+            .map { OpenResponsesReasoningConfig(effort: $0, summary: "auto") }
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
 
         return OpenResponsesRequest(

@@ -511,6 +511,12 @@ enum PreflightCapabilitySearch {
     /// embedder recall failure cannot remove a true positive.
     static let guardrailMinSimilarity: Float = 0.05
 
+    /// Max number of folder-suggested plugin tools to inject per turn after
+    /// query ranking. Caps the schema cost of folder detection so a workspace
+    /// containing one `.xlsx` no longer drags the plugin's whole tool surface
+    /// into every request; the rest remain loadable via `capabilities_load`.
+    static let folderInjectionCap: Int = 3
+
     // MARK: Search
 
     /// Public entry point. Wires the agent's enabled-tool allowlist into the
@@ -648,9 +654,20 @@ enum PreflightCapabilitySearch {
         // already respected — we only ever inject tools the user could
         // pick manually. Computed once and reused on both the LLM-NONE
         // path and the post-guardrail merge.
-        let folderSuggestedNames = await MainActor.run {
+        let folderCandidateNames = await MainActor.run {
             folderInjectedToolNames(catalog: catalog, groups: groups)
         }
+        // Rank the folder-suggested tools by the query and keep only the most
+        // relevant few. Folder detection used to inject a plugin's ENTIRE tool
+        // surface (e.g. all 10 XLSX tools for any directory containing one
+        // `.xlsx`), bypassing the LLM cap and the embedding guardrail and
+        // bloating every later request. Ranking confines injection to tools
+        // that actually serve this turn; the rest stay reachable via
+        // `capabilities_load` (they're listed as plugin companions).
+        let folderSuggestedNames = await rankFolderInjection(
+            query: query,
+            candidates: folderCandidateNames
+        )
 
         let nameToDesc = Dictionary(uniqueKeysWithValues: catalog.map { ($0.name, $0.description) })
 
@@ -777,6 +794,30 @@ enum PreflightCapabilitySearch {
                 return entry.name
             }
             .sorted()
+    }
+
+    /// Rank `candidates` (a plugin's folder-matched tools) by relevance to the
+    /// query and keep the top `folderInjectionCap`. Reuses the same hybrid
+    /// search + `minimumFusedScore` floor as `capabilities_search`, restricted
+    /// to the candidate set, so a vague/unrelated query injects few or no tools
+    /// while a matching one surfaces the right entry points. Returns `[]` when
+    /// there are no candidates or none clear the relevance floor (e.g. the
+    /// search index is still warming up).
+    static func rankFolderInjection(query: String, candidates: [String]) async -> [String] {
+        guard !candidates.isEmpty else { return [] }
+        let candidateSet = Set(candidates)
+        let hits = await ToolSearchService.shared.searchHybrid(
+            query: query,
+            topK: folderInjectionCap,
+            minFusedScore: CapabilitySearch.minimumFusedScore,
+            allowedNames: candidateSet
+        )
+        var ranked: [String] = []
+        for hit in hits where candidateSet.contains(hit.entry.name) {
+            ranked.append(hit.entry.name)
+            if ranked.count >= folderInjectionCap { break }
+        }
+        return ranked
     }
 
     /// Append `additions` to `base`, preserving order and dropping any

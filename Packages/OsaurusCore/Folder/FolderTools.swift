@@ -376,6 +376,11 @@ struct FileTreeTool: OsaurusTool {
     /// directories, which don't count toward `maxFiles`) can still bloat the
     /// retained context across every later request, so cap the raw output too.
     private static let maxOutputChars = 8000
+    /// Per-directory file ceiling. A flat media folder (hundreds of
+    /// screenshots) is collapsed past this so the listing — and the retained
+    /// context on every later turn — stays readable. Directories are never
+    /// collapsed; the full folder structure is always shown.
+    private static let maxFilesPerDir = 20
 
     private func buildTree(_ url: URL, maxDepth: Int) -> String {
         var result = "./\n"
@@ -383,6 +388,7 @@ struct FileTreeTool: OsaurusTool {
         var truncated = false
         let maxFiles = Self.maxFiles
         let maxChars = Self.maxOutputChars
+        let maxFilesPerDir = Self.maxFilesPerDir
         let ignorePatterns = FolderToolHelpers.detectProjectType(rootPath).ignorePatterns
 
         func traverse(_ currentURL: URL, depth: Int, prefix: String) {
@@ -404,6 +410,10 @@ struct FileTreeTool: OsaurusTool {
                 return a.lastPathComponent.lowercased() < b.lastPathComponent.lowercased()
             }
 
+            // Directories sort first, so files form a contiguous tail; track
+            // how many files this directory has shown to collapse the rest.
+            var filesShownHere = 0
+            var filesCollapsedHere = 0
             for (index, item) in sorted.enumerated() {
                 guard fileCount < maxFiles, result.count < maxChars else {
                     truncated = true
@@ -430,9 +440,19 @@ struct FileTreeTool: OsaurusTool {
                         traverse(item, depth: depth + 1, prefix: prefix + childPrefix)
                     }
                 } else {
+                    if filesShownHere >= maxFilesPerDir {
+                        filesCollapsedHere += 1
+                        continue
+                    }
                     result += "\(prefix)\(connector)\(name)\n"
+                    filesShownHere += 1
                     fileCount += 1
                 }
+            }
+            // Collapsed files are the directory's trailing entries, so the
+            // summary is its last visual child (`└──`).
+            if filesCollapsedHere > 0 {
+                result += "\(prefix)└── ... +\(filesCollapsedHere) more files\n"
             }
         }
 
@@ -604,18 +624,10 @@ struct FileReadTool: OsaurusTool {
         } else {
             text = output
         }
-        let contentEnd = max(validStart - 1, lastLineIncluded)
-        let rawContent: String
-        if contentEnd > validStart - 1 {
-            rawContent = lines[(validStart - 1) ..< contentEnd].joined(separator: "\n")
-        } else {
-            rawContent = ""
-        }
         return ToolEnvelope.success(
             tool: name,
             result: [
                 "text": text,
-                "content": rawContent,
                 "path": relativePath,
                 "start_line": validStart,
                 "end_line": lastLineIncluded,
