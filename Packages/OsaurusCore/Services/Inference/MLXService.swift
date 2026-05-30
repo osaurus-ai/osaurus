@@ -322,9 +322,11 @@ actor MLXService: ToolCapableService {
         let base = DirectoryPickerService.effectiveModelsDirectory()
         let url = parts.reduce(base) { $0.appendingPathComponent($1, isDirectory: true) }
         let resolved = url.resolvingSymlinksInPath()
-        guard FileManager.default.fileExists(
-            atPath: resolved.appendingPathComponent("config.json").path
-        ) else {
+        guard
+            FileManager.default.fileExists(
+                atPath: resolved.appendingPathComponent("config.json").path
+            )
+        else {
             return nil
         }
         return resolved

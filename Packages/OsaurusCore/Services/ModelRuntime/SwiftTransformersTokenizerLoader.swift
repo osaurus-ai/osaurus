@@ -52,91 +52,91 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         + String(UnicodeScalar(0xFF5C)!) + ">"
 
     private static let gemma3FunctionToolMinimal = #"""
-{{ bos_token }}
-{%- set loop_messages = messages -%}
-{%- if messages[0]['role'] == 'system' -%}
-    {%- set system_message = messages[0]['content'] -%}
-    {%- set loop_messages = messages[1:] -%}
-{%- else -%}
-    {%- set system_message = "" -%}
-{%- endif -%}
-{%- if tools is defined and tools | length > 0 -%}
-    {{ '<start_of_turn>user\n' }}
-    {%- if system_message is string and system_message | length > 0 -%}
-        {{ system_message | trim + '\n\n' }}
-    {%- endif -%}
-    {{ 'You have access to the following functions.\n' }}
-    {{ 'When a function call is required, do not explain, do not summarize, and do not answer in prose.\n' }}
-    {{ 'Output exactly one function call using this grammar:\n' }}
-    {{ '<start_function_call>call:FUNCTION_NAME{ARGUMENT_NAME:<escape>ARGUMENT_VALUE<escape>}<end_function_call>\n' }}
-    {{ 'Example:\nUser asks: Count the lines in this text: alpha\nbeta\ngamma\n' }}
-    {{ 'Assistant replies: <start_function_call>call:line_count{text:<escape>alpha\nbeta\ngamma<escape>}<end_function_call>\n\n' }}
-    {%- for tool in tools -%}
-        {%- set fn = tool['function'] if tool['function'] is defined else tool -%}
-        {{ 'Function: ' + fn['name'] + '\n' }}
-        {%- if fn['description'] is defined and fn['description'] -%}
-            {{ 'Description: ' + (fn['description'] | trim) + '\n' }}
+        {{ bos_token }}
+        {%- set loop_messages = messages -%}
+        {%- if messages[0]['role'] == 'system' -%}
+            {%- set system_message = messages[0]['content'] -%}
+            {%- set loop_messages = messages[1:] -%}
+        {%- else -%}
+            {%- set system_message = "" -%}
         {%- endif -%}
-        {%- if fn['parameters'] is defined -%}
-            {{ 'Parameters: ' + (fn['parameters'] | tojson) + '\n' }}
-        {%- endif -%}
-    {%- endfor -%}
-    {%- if tool_choice is defined and tool_choice == 'required' -%}
-        {{ '\nThe current assistant response MUST be a function call.' }}
-        {%- if tool_choice_name is defined and tool_choice_name -%}
-            {{ ' Use the `' + tool_choice_name + '` function.' }}
-        {%- endif -%}
-    {%- endif -%}
-    {{ '<end_of_turn>\n' }}
-{%- endif -%}
-{%- for message in loop_messages -%}
-    {%- set role = 'model' if message['role'] == 'assistant' else message['role'] -%}
-    {%- if message['role'] == 'tool' -%}
-        {{ '<start_of_turn>user\nTool result: ' + (message['content'] | string | trim) + '<end_of_turn>\n' }}
-    {%- else -%}
-        {{ '<start_of_turn>' + role + '\n' }}
-        {%- if message['content'] is string -%}
-            {{ message['content'] | trim }}
-        {%- elif message['content'] is iterable -%}
-            {%- for item in message['content'] -%}
-                {%- if item['type'] == 'text' -%}
-                    {{ item['text'] | trim }}
-                {%- elif item['type'] == 'audio' -%}
-                    {{ '<audio_soft_token>' }}
-                {%- elif item['type'] == 'image' -%}
-                    {{ '<image_soft_token>' }}
+        {%- if tools is defined and tools | length > 0 -%}
+            {{ '<start_of_turn>user\n' }}
+            {%- if system_message is string and system_message | length > 0 -%}
+                {{ system_message | trim + '\n\n' }}
+            {%- endif -%}
+            {{ 'You have access to the following functions.\n' }}
+            {{ 'When a function call is required, do not explain, do not summarize, and do not answer in prose.\n' }}
+            {{ 'Output exactly one function call using this grammar:\n' }}
+            {{ '<start_function_call>call:FUNCTION_NAME{ARGUMENT_NAME:<escape>ARGUMENT_VALUE<escape>}<end_function_call>\n' }}
+            {{ 'Example:\nUser asks: Count the lines in this text: alpha\nbeta\ngamma\n' }}
+            {{ 'Assistant replies: <start_function_call>call:line_count{text:<escape>alpha\nbeta\ngamma<escape>}<end_function_call>\n\n' }}
+            {%- for tool in tools -%}
+                {%- set fn = tool['function'] if tool['function'] is defined else tool -%}
+                {{ 'Function: ' + fn['name'] + '\n' }}
+                {%- if fn['description'] is defined and fn['description'] -%}
+                    {{ 'Description: ' + (fn['description'] | trim) + '\n' }}
+                {%- endif -%}
+                {%- if fn['parameters'] is defined -%}
+                    {{ 'Parameters: ' + (fn['parameters'] | tojson) + '\n' }}
                 {%- endif -%}
             {%- endfor -%}
+            {%- if tool_choice is defined and tool_choice == 'required' -%}
+                {{ '\nThe current assistant response MUST be a function call.' }}
+                {%- if tool_choice_name is defined and tool_choice_name -%}
+                    {{ ' Use the `' + tool_choice_name + '` function.' }}
+                {%- endif -%}
+            {%- endif -%}
+            {{ '<end_of_turn>\n' }}
         {%- endif -%}
-        {%- if message['tool_calls'] is defined and message['tool_calls'] is iterable -%}
-            {%- for tool_call in message['tool_calls'] -%}
-                {%- set fn = tool_call['function'] -%}
-                {{ '<start_function_call>call:' + fn['name'] + '{' }}
-                {%- if fn['arguments'] is mapping -%}
-                    {%- set first = true -%}
-                    {%- for key, value in fn['arguments'] | dictsort -%}
-                        {%- if not first %},{% endif -%}
-                        {%- set first = false -%}
-                        {{ key + ':' }}
-                        {%- if value is string -%}
-                            {{ '<escape>' + value + '<escape>' }}
-                        {%- else -%}
-                            {{ value }}
+        {%- for message in loop_messages -%}
+            {%- set role = 'model' if message['role'] == 'assistant' else message['role'] -%}
+            {%- if message['role'] == 'tool' -%}
+                {{ '<start_of_turn>user\nTool result: ' + (message['content'] | string | trim) + '<end_of_turn>\n' }}
+            {%- else -%}
+                {{ '<start_of_turn>' + role + '\n' }}
+                {%- if message['content'] is string -%}
+                    {{ message['content'] | trim }}
+                {%- elif message['content'] is iterable -%}
+                    {%- for item in message['content'] -%}
+                        {%- if item['type'] == 'text' -%}
+                            {{ item['text'] | trim }}
+                        {%- elif item['type'] == 'audio' -%}
+                            {{ '<audio_soft_token>' }}
+                        {%- elif item['type'] == 'image' -%}
+                            {{ '<image_soft_token>' }}
                         {%- endif -%}
                     {%- endfor -%}
-                {%- elif fn['arguments'] is string -%}
-                    {{ fn['arguments'] }}
                 {%- endif -%}
-                {{ '}<end_function_call>' }}
-            {%- endfor -%}
+                {%- if message['tool_calls'] is defined and message['tool_calls'] is iterable -%}
+                    {%- for tool_call in message['tool_calls'] -%}
+                        {%- set fn = tool_call['function'] -%}
+                        {{ '<start_function_call>call:' + fn['name'] + '{' }}
+                        {%- if fn['arguments'] is mapping -%}
+                            {%- set first = true -%}
+                            {%- for key, value in fn['arguments'] | dictsort -%}
+                                {%- if not first %},{% endif -%}
+                                {%- set first = false -%}
+                                {{ key + ':' }}
+                                {%- if value is string -%}
+                                    {{ '<escape>' + value + '<escape>' }}
+                                {%- else -%}
+                                    {{ value }}
+                                {%- endif -%}
+                            {%- endfor -%}
+                        {%- elif fn['arguments'] is string -%}
+                            {{ fn['arguments'] }}
+                        {%- endif -%}
+                        {{ '}<end_function_call>' }}
+                    {%- endfor -%}
+                {%- endif -%}
+                {{ '<end_of_turn>\n' }}
+            {%- endif -%}
+        {%- endfor -%}
+        {%- if add_generation_prompt -%}
+            {{ '<start_of_turn>model\n' }}
         {%- endif -%}
-        {{ '<end_of_turn>\n' }}
-    {%- endif -%}
-{%- endfor -%}
-{%- if add_generation_prompt -%}
-    {{ '<start_of_turn>model\n' }}
-{%- endif -%}
-"""#
+        """#
 
     private enum DeepseekV4BridgeError: Error {
         case invalidRole(String)
@@ -241,13 +241,11 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             && upstream.convertTokenToId("<|vision_end|>") != nil
         let hasGemma3TurnSentinel =
             modelTypeIsGemma3
-            || (
-                normalizedModelType == nil
+            || (normalizedModelType == nil
                 && !hasZayaVLVisionSentinel
                 && upstream.bosToken == "<bos>"
                 && upstream.convertTokenToId("<start_of_turn>") != nil
-                && upstream.convertTokenToId("<end_of_turn>") != nil
-            )
+                && upstream.convertTokenToId("<end_of_turn>") != nil)
         let hasZayaToolChatSentinel =
             (modelTypeIsZayaText || modelTypeIsZayaVL)
             && hasZayaChatTokens
@@ -446,7 +444,8 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     (chatTemplateTools?.isEmpty ?? true) || modelTypeIsGemma3n
                     ? MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal
                     : MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools
-                let fallbackMessages = Self.requiresToolChoice(adjustedContext)
+                let fallbackMessages =
+                    Self.requiresToolChoice(adjustedContext)
                     ? Self.compactGemma4CompletedToolHistoryForRequiredChoice(messages)
                     : messages
                 let fallbackTools = modelTypeIsGemma3n ? nil : chatTemplateTools
@@ -542,10 +541,12 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
     private static func compactGemma4CompletedToolHistoryForRequiredChoice(
         _ messages: [[String: any Sendable]]
     ) -> [[String: any Sendable]] {
-        guard let latestUserIndex = messages.lastIndex(where: {
-            let role = $0["role"] as? String
-            return role == "user" || role == "developer"
-        }) else {
+        guard
+            let latestUserIndex = messages.lastIndex(where: {
+                let role = $0["role"] as? String
+                return role == "user" || role == "developer"
+            })
+        else {
             return messages
         }
 
@@ -882,23 +883,25 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
     private static func compactCompletedDSV4ToolHistory(
         _ messages: [MLXLMCommon.DeepseekV4ChatEncoder.Message]
     ) -> [MLXLMCommon.DeepseekV4ChatEncoder.Message] {
-        guard let latestUserIndex = messages.lastIndex(where: {
-            $0.role == .user || $0.role == .developer
-        }) else {
+        guard
+            let latestUserIndex = messages.lastIndex(where: {
+                $0.role == .user || $0.role == .developer
+            })
+        else {
             return messages
         }
 
         let hasLaterAssistantAnswerBeforeLatestUser: (Int) -> Bool = { index in
             guard index + 1 < latestUserIndex else { return false }
-            return messages[(index + 1)..<latestUserIndex].contains { message in
+            return messages[(index + 1) ..< latestUserIndex].contains { message in
                 guard message.role == .assistant else { return false }
                 if let content = message.content,
-                   !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 {
                     return true
                 }
                 if let reasoning = message.reasoningContent,
-                   !reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    !reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 {
                     return true
                 }
@@ -917,9 +920,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             }
 
             if message.role == .assistant,
-               let toolCalls = message.toolCalls,
-               !toolCalls.isEmpty,
-               hasLaterAssistantAnswerBeforeLatestUser(index)
+                let toolCalls = message.toolCalls,
+                !toolCalls.isEmpty,
+                hasLaterAssistantAnswerBeforeLatestUser(index)
             {
                 droppingClosedToolResult = true
                 let content = message.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

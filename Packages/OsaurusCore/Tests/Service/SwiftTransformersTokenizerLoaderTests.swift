@@ -241,7 +241,7 @@ struct SwiftTransformersTokenizerLoaderTests {
                                 "name": "line_count",
                                 "arguments": ["text": "red\ngreen\nblue"],
                             ] as [String: any Sendable],
-                        ] as [String: any Sendable],
+                        ] as [String: any Sendable]
                     ],
                 ] as [String: any Sendable],
                 ["role": "tool", "tool_call_id": "call_lines_1", "content": #"{"lines":3}"#],
@@ -359,7 +359,7 @@ struct SwiftTransformersTokenizerLoaderTests {
                                 "name": "line_count",
                                 "arguments": ["text": "red\ngreen\nblue"],
                             ] as [String: any Sendable],
-                        ] as [String: any Sendable],
+                        ] as [String: any Sendable]
                     ],
                 ] as [String: any Sendable],
                 ["role": "tool", "content": "{\"lines\":3}", "tool_call_id": "call_line_count_1"],
@@ -378,7 +378,10 @@ struct SwiftTransformersTokenizerLoaderTests {
 
         #expect(decoded.contains(finalUser), "Decoded: \(decoded)")
         #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
-        #expect(decoded.contains("<|tool_call>call:line_count{text:<|\"|>one\ntwo<|\"|>}<tool_call|>"), "Decoded: \(decoded)")
+        #expect(
+            decoded.contains("<|tool_call>call:line_count{text:<|\"|>one\ntwo<|\"|>}<tool_call|>"),
+            "Decoded: \(decoded)"
+        )
         #expect(!decoded.contains("<zyphra_tool_call>"), "Decoded: \(decoded)")
         #expect(!decoded.contains("red\ngreen\nblue"), "Decoded: \(decoded)")
         #expect(!decoded.contains("The text contains 3 lines."), "Decoded: \(decoded)")
@@ -601,7 +604,10 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("<|im_start|>"), "Nemotron should keep its ChatML template. Decoded: \(decoded)")
         #expect(decoded.contains("<tools>"), "Nemotron should render XML tools. Decoded: \(decoded)")
         #expect(decoded.contains("<tool_call>"), "Nemotron should show XML tool call contract. Decoded: \(decoded)")
-        #expect(decoded.contains("line_count"), "Nemotron should include the requested tool schema. Decoded: \(decoded)")
+        #expect(
+            decoded.contains("line_count"),
+            "Nemotron should include the requested tool schema. Decoded: \(decoded)"
+        )
         #expect(
             decoded.contains("one available tool and no prose before the tool result"),
             "Nemotron required tool_choice must use the strict fallback contract, not the permissive native template. Decoded: \(decoded)"
@@ -1118,22 +1124,51 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("The API requires a tool call for the next assistant turn."), "Decoded: \(decoded)")
         #expect(decoded.contains("Function name: line_count"), "Decoded: \(decoded)")
         #expect(decoded.contains("Required arguments: text"), "Decoded: \(decoded)")
-        #expect(decoded.contains("Respond with exactly this one assistant message and nothing else:"), "Decoded: \(decoded)")
-        #expect(decoded.contains(#"{"name":"line_count","arguments":{"text":"red\ngreen\nblue"}}"#), "Decoded: \(decoded)")
+        #expect(
+            decoded.contains("Respond with exactly this one assistant message and nothing else:"),
+            "Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.contains(#"{"name":"line_count","arguments":{"text":"red\ngreen\nblue"}}"#),
+            "Decoded: \(decoded)"
+        )
         #expect(decoded.contains("Copy the `text` value exactly from the current user request."), "Decoded: \(decoded)")
-        #expect(decoded.contains("This value contains exactly 2 line break(s) and 0 blank lines."), "Decoded: \(decoded)")
-        #expect(decoded.contains(#"In the JSON call, each line break is represented by the two characters \n"#), "Decoded: \(decoded)")
-        #expect(decoded.contains(#"the exact `text` value encoded with JSON \n escapes is: red\ngreen\nblue"#), "Decoded: \(decoded)")
+        #expect(
+            decoded.contains("This value contains exactly 2 line break(s) and 0 blank lines."),
+            "Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.contains(#"In the JSON call, each line break is represented by the two characters \n"#),
+            "Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.contains(#"the exact `text` value encoded with JSON \n escapes is: red\ngreen\nblue"#),
+            "Decoded: \(decoded)"
+        )
         #expect(decoded.contains("Do not double any line break."), "Decoded: \(decoded)")
-        #expect(decoded.contains("Do not add a blank line, leading space, trailing newline, or any other character to the copied value."), "Decoded: \(decoded)")
+        #expect(
+            decoded.contains(
+                "Do not add a blank line, leading space, trailing newline, or any other character to the copied value."
+            ),
+            "Decoded: \(decoded)"
+        )
         #expect(decoded.contains("Do not omit `text`"), "Decoded: \(decoded)")
-        #expect(decoded.contains("Do not write reasoning, XML-style tool tags, markdown, or prose."), "Decoded: \(decoded)")
+        #expect(
+            decoded.contains("Do not write reasoning, XML-style tool tags, markdown, or prose."),
+            "Decoded: \(decoded)"
+        )
         #expect(!decoded.contains("List of tools:"), "Decoded: \(decoded)")
         #expect(decoded.contains(#""name":"line_count""#), "Decoded: \(decoded)")
         #expect(!decoded.contains("<tools>"), "Decoded: \(decoded)")
         #expect(!decoded.contains("</tool_call>"), "Decoded: \(decoded)")
-        #expect(decoded.contains(#"Use the line_count tool on this exact text: red\ngreen\nblue"#), "Decoded: \(decoded)")
-        #expect(!decoded.contains("Use the line_count tool on this exact text: red\ngreen\nblue"), "Decoded: \(decoded)")
+        #expect(
+            decoded.contains(#"Use the line_count tool on this exact text: red\ngreen\nblue"#),
+            "Decoded: \(decoded)"
+        )
+        #expect(
+            !decoded.contains("Use the line_count tool on this exact text: red\ngreen\nblue"),
+            "Decoded: \(decoded)"
+        )
         if let userRange = decoded.range(
             of: #"Use the line_count tool on this exact text: red\ngreen\nblue"#
         ) {

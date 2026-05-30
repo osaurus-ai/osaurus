@@ -107,16 +107,6 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    /// True between `send()` and the first inbound delta when the
-    /// Privacy Filter is engaged and the user is being asked to
-    /// confirm redactions. We don't want the Stop button to show
-    /// during this window — the cancel path lives on the review sheet
-    /// itself, and double-firing Stop would race the
-    /// `withTaskCancellationHandler` we now wire in
-    /// `PrivacyReviewService`. Flipped to false the first time
-    /// `firstDeltaTime` is set in the streaming loop, or in the catch
-    /// handler when the review is cancelled / errors out.
-    @Published var isAwaitingPrivacyReview: Bool = false
     @Published var lastStreamError: String?
 
     /// Last typed draft preserved when a send is cancelled
@@ -1568,7 +1558,6 @@ final class ChatSession: ObservableObject {
     private func completeRunCleanup() {
         currentTask = nil
         isStreaming = false
-        isAwaitingPrivacyReview = false
         // Successful run finished — drop the saved draft so a later
         // unrelated cancel doesn't accidentally repopulate the input
         // with a turn the user already sent.
@@ -1890,11 +1879,6 @@ final class ChatSession: ObservableObject {
                     let now = Date()
                     if firstDeltaTime == nil {
                         firstDeltaTime = now
-                        // Network response started — Stop button can
-                        // come back. Setting unconditionally is safe
-                        // because the flag is only meaningful while
-                        // `isStreaming` is true.
-                        isAwaitingPrivacyReview = false
                         ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
                         ttftTrace?.mark("first_text_delta")
                         ttftTrace?.set("model", selectedModel ?? "unknown")
@@ -1916,7 +1900,6 @@ final class ChatSession: ObservableObject {
                     let now = Date()
                     if firstDeltaTime == nil {
                         firstDeltaTime = now
-                        isAwaitingPrivacyReview = false
                         ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
                         ttftTrace?.mark("first_text_delta")
                         ttftTrace?.set("model", selectedModel ?? "unknown")
@@ -2178,12 +2161,6 @@ final class ChatSession: ObservableObject {
                 debugLog("send: task started runId=\(runId) model=\(self.selectedModel ?? "nil")")
                 lastStreamError = nil
                 isStreaming = true
-                // Privacy Filter is about to run (potentially showing the
-                // review sheet) — gate the Stop button off until the first
-                // delta arrives so the user can't accidentally cancel a
-                // half-prepared request. Flipped false the first time
-                // `firstDeltaTime` becomes non-nil in the streaming loops.
-                isAwaitingPrivacyReview = true
                 ServerController.signalGenerationStart()
                 defer {
                     finalizeRun(runId: runId, persistConversationArtifacts: true)
@@ -2905,7 +2882,7 @@ final class ChatSession: ObservableObject {
                     //     transcript. `completeRunCleanup()` (called via
                     //     `finalizeRun` from `stop()`) will trim the
                     //     empty assistant placeholder; we just clear the
-                    //     error and awaiting-review state here.
+                    //     error here.
                     //
                     // Pre-PR behavior for case 2 was to let the
                     // CancellationError fall into the generic `catch`
@@ -2913,7 +2890,6 @@ final class ChatSession: ObservableObject {
                     // bubble, which was its own bug. This branch fixes
                     // both cases.
                     lastStreamError = nil
-                    isAwaitingPrivacyReview = false
                     if stopRequested {
                         debugLog("send: stop() cancelled mid-prepare — keeping user turn")
                     } else {
@@ -2933,14 +2909,9 @@ final class ChatSession: ObservableObject {
                     debugLog("send: privacy filter blocked send — \(pfError.localizedDescription)")
                     assistantTurn.content = pfError.localizedDescription
                     lastStreamError = pfError.localizedDescription
-                    isAwaitingPrivacyReview = false
                 } catch {
                     assistantTurn.content = "Error: \(error.localizedDescription)"
                     lastStreamError = error.localizedDescription
-                    // Drop the awaiting flag on error too so the Stop
-                    // button stops looking pinned-on once the run
-                    // finalises.
-                    isAwaitingPrivacyReview = false
                 }
             }  // ChatExecutionContext.$currentAgentId.withValue
         }
@@ -2957,7 +2928,6 @@ final class ChatSession: ObservableObject {
     /// privacy review cancel ⇒ text reappears in the composer, no
     /// error bubble.
     private func handleCancelledBeforeFirstDelta() {
-        isAwaitingPrivacyReview = false
         // Remove the trailing empty assistant turn (we always append
         // one before entering the stream — see `send(_:attachments:)`).
         if let last = turns.last, last.role == .assistant, last.contentIsEmpty {
@@ -3270,7 +3240,16 @@ struct ChatView: View {
                                 pickerItems: filteredPickerItems,
                                 activeModelOptions: $observedSession.activeModelOptions,
                                 isStreaming: observedSession.isStreaming,
-                                isAwaitingPrivacyReview: observedSession.isAwaitingPrivacyReview,
+                                // Hide Stop ONLY while the redaction review
+                                // sheet is actually on screen (the sheet owns
+                                // its own Cancel and the streaming Task is
+                                // suspended in its continuation). Crucially
+                                // this is NOT gated on the broader
+                                // "before first token" window, so Stop stays
+                                // available during model load / prefill — the
+                                // long pause a big model spends loading from
+                                // disk while the typing-indicator shimmer is up.
+                                isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,

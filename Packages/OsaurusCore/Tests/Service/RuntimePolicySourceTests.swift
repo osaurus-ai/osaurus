@@ -1017,7 +1017,9 @@ struct RuntimePolicySourceTests {
         #expect(chatEngine.contains("private static func allowsLocalToolDispatch"))
         #expect(chatEngine.contains("if case .some(.none) = toolChoice"))
         #expect(
-            chatEngine.contains("if Self.allowsLocalToolDispatch(request.tool_choice),\n                let tools = request.tools"),
+            chatEngine.contains(
+                "if Self.allowsLocalToolDispatch(request.tool_choice),\n                let tools = request.tools"
+            ),
             "ChatEngine must not route tool_choice none requests through local streamWithTools just because tool schemas are present."
         )
     }
@@ -1277,8 +1279,16 @@ struct RuntimePolicySourceTests {
         #expect(handler.contains("let wasResidentBeforeComplete = SendableBool(false)"))
         #expect(handler.contains("await ModelRuntime.shared.cancelGeneration(name: model)"))
         #expect(handler.contains("wasResidentBeforeComplete.value = await ModelRuntime.shared.isResident(name: model)"))
-        #expect(handler.contains("try Task.checkCancellation()\n                    var resp = try await chatEngine.completeChat(request: enrichedReq)"))
-        #expect(handler.contains("var resp = try await chatEngine.completeChat(request: enrichedReq)\n                    try Task.checkCancellation()"))
+        #expect(
+            handler.contains(
+                "try Task.checkCancellation()\n                    var resp = try await chatEngine.completeChat(request: enrichedReq)"
+            )
+        )
+        #expect(
+            handler.contains(
+                "var resp = try await chatEngine.completeChat(request: enrichedReq)\n                    try Task.checkCancellation()"
+            )
+        )
         #expect(handler.contains("var emittedSemanticDelta = false"))
         #expect(handler.contains("func markSemanticDeltaIfConnected()"))
         #expect(handler.contains("if self._isChannelActive.value && !disconnected.value && !channelClosed.value"))
@@ -1357,7 +1367,9 @@ struct RuntimePolicySourceTests {
         #expect(errorCaught.contains("requestTasks.cancelAll()"))
         #expect(runtime.contains("func cancelGeneration(name: String) async"))
         #expect(runtime.contains("await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)"))
-        #expect(chatEngine.contains("for try await delta in stream {\n                        try Task.checkCancellation()"))
+        #expect(
+            chatEngine.contains("for try await delta in stream {\n                        try Task.checkCancellation()")
+        )
         #expect(chatEngine.contains("for try await delta in stream {\n                try Task.checkCancellation()"))
 
         #expect(
@@ -1638,7 +1650,9 @@ struct RuntimePolicySourceTests {
             )
         )
         let toolSlice = chatEngine[toolStreamStart.lowerBound ..< toolResponseStart.lowerBound]
-        let toolReasoning = try #require(toolSlice.range(of: "if let reasoningDelta = StreamingReasoningHint.decode(delta)"))
+        let toolReasoning = try #require(
+            toolSlice.range(of: "if let reasoningDelta = StreamingReasoningHint.decode(delta)")
+        )
         let toolSentinel = try #require(toolSlice.range(of: "if StreamingToolHint.isSentinel(delta)"))
         #expect(toolReasoning.lowerBound < toolSentinel.lowerBound)
 
@@ -1650,7 +1664,9 @@ struct RuntimePolicySourceTests {
             )
         )
         let plainSlice = chatEngine[plainStreamStart.lowerBound ..< plainResponseStart.lowerBound]
-        let plainReasoning = try #require(plainSlice.range(of: "if let reasoningDelta = StreamingReasoningHint.decode(delta)"))
+        let plainReasoning = try #require(
+            plainSlice.range(of: "if let reasoningDelta = StreamingReasoningHint.decode(delta)")
+        )
         let plainSentinel = try #require(plainSlice.range(of: "if StreamingToolHint.isSentinel(delta)"))
         #expect(plainReasoning.lowerBound < plainSentinel.lowerBound)
 

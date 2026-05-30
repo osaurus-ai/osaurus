@@ -22,14 +22,15 @@ struct FloatingInputCard: View {
     let pickerItems: [ModelPickerItem]
     @Binding var activeModelOptions: [String: ModelOptionValue]
     let isStreaming: Bool
-    /// True while the Privacy Filter review sheet is up (or about to
-    /// be) and the network hasn't started yet. In this window we hide
-    /// the Stop button — its target task is suspended in the review
-    /// sheet's continuation, and the sheet has its own Cancel button.
-    /// Once the first inbound delta lands, `ChatSession` flips this
-    /// back to false and the Stop button reappears alongside the
-    /// streaming UI.
-    let isAwaitingPrivacyReview: Bool
+    /// True while the Privacy Filter redaction review sheet is actually
+    /// on screen. In this window we hide the Stop button — its target
+    /// task is suspended in the review sheet's continuation, and the
+    /// sheet has its own Cancel button. This is driven by the live sheet
+    /// presentation (not the broader "before first token" window), so
+    /// Stop remains available during model load / prefill — e.g. the
+    /// multi-second pause a big model spends loading from disk while the
+    /// typing-indicator shimmer is up.
+    let isPrivacyReviewSheetVisible: Bool
     let supportsImages: Bool
     /// Current estimated context token count for the session
     let estimatedContextTokens: Int
@@ -75,7 +76,7 @@ struct FloatingInputCard: View {
         pickerItems: [ModelPickerItem],
         activeModelOptions: Binding<[String: ModelOptionValue]>,
         isStreaming: Bool,
-        isAwaitingPrivacyReview: Bool = false,
+        isPrivacyReviewSheetVisible: Bool = false,
         supportsImages: Bool,
         estimatedContextTokens: Int,
         contextBreakdown: ContextBreakdown = .zero,
@@ -102,7 +103,7 @@ struct FloatingInputCard: View {
         self.pickerItems = pickerItems
         self._activeModelOptions = activeModelOptions
         self.isStreaming = isStreaming
-        self.isAwaitingPrivacyReview = isAwaitingPrivacyReview
+        self.isPrivacyReviewSheetVisible = isPrivacyReviewSheetVisible
         self.supportsImages = supportsImages
         self.estimatedContextTokens = estimatedContextTokens
         self.contextBreakdown = contextBreakdown
@@ -2890,13 +2891,15 @@ extension FloatingInputCard {
             HStack(spacing: 8) {
                 keyboardHint
                 if isStreaming {
-                    // While the Privacy Filter review sheet is open
-                    // (and no inbound delta has arrived yet), suppress
-                    // Stop — the sheet owns the cancel UX. The
+                    // While the Privacy Filter review sheet is on screen,
+                    // suppress Stop — the sheet owns the cancel UX. The
                     // streaming Task is suspended inside
                     // `PrivacyReviewService.review`'s continuation; the
-                    // sheet's Cancel button resolves it cleanly.
-                    if !isAwaitingPrivacyReview {
+                    // sheet's Cancel button resolves it cleanly. Outside
+                    // that sheet (including model load / prefill before the
+                    // first token), Stop stays available so the user can
+                    // cancel a long-running load.
+                    if !isPrivacyReviewSheetVisible {
                         stopButton
                     }
                     if queuedSend != nil {
@@ -2904,7 +2907,7 @@ extension FloatingInputCard {
                     } else {
                         // No queue-during-review: the user hasn't even
                         // committed the in-flight message yet.
-                        if !isAwaitingPrivacyReview {
+                        if !isPrivacyReviewSheetVisible {
                             sendQueueButton
                         }
                     }

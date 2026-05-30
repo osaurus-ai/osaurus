@@ -251,8 +251,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         tools: [Tool]?
     ) -> ToolChoiceOption? {
         guard case .some(.required) = toolChoice,
-              let tools,
-              tools.count == 1
+            let tools,
+            tools.count == 1
         else {
             return toolChoice
         }

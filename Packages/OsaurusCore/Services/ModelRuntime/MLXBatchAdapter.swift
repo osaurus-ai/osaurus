@@ -675,7 +675,7 @@ struct MLXBatchAdapter {
             context["tool_choice"] = "required"
         }
         if let toolChoiceName,
-           !toolChoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !toolChoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             context["tool_choice_name"] = toolChoiceName
         }
@@ -1123,7 +1123,8 @@ struct MLXBatchAdapter {
                 box.toolCount = toolsSpec?.count ?? 0
                 let requiredToolName = requiredToolChoiceName(
                     toolChoice: toolChoice,
-                    toolsSpec: toolsSpec)
+                    toolsSpec: toolsSpec
+                )
 
                 // Reasoning template context. Only explicit request controls are
                 // translated into model-specific template kwargs; omitted controls
@@ -1210,7 +1211,10 @@ struct MLXBatchAdapter {
 
     private static func safeContextSummary(_ context: [String: any Sendable]) -> String {
         context.keys.sorted().compactMap { key in
-            guard key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice" || key == "tool_choice_name" else {
+            guard
+                key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice"
+                    || key == "tool_choice_name"
+            else {
                 return nil
             }
             let value = context[key]
