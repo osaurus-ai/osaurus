@@ -172,6 +172,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // register call in `ConfigurationDomainBootstrap`.
         ConfigurationDomainBootstrap.registerBuiltIns()
 
+        // Bring up analytics early so the launch + onboarding funnel is
+        // captured. No-ops silently when no Aptabase key is configured.
+        TelemetryService.shared.configure()
+
         // Detect repeated startup crashes and enter safe mode if needed
         LaunchGuard.checkOnLaunch()
 

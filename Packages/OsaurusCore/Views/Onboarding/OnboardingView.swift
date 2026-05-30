@@ -44,6 +44,8 @@ public struct OnboardingView: View {
     @Environment(\.theme) private var theme
     @State private var currentStep: OnboardingStep
     @State private var direction: OnboardingDirection = .forward
+    /// Guards the one-shot `onboarding_started` + first `stepViewed` emit.
+    @State private var didTrackStart = false
 
     @StateObject private var createAgentState = CreateAgentState()
     @StateObject private var configureAIState = ConfigureAIState()
@@ -79,7 +81,7 @@ public struct OnboardingView: View {
 
             OnboardingChromeShell(
                 onBack: chromeOnBack,
-                onClose: finishOnboarding,
+                onClose: { finishOnboarding(via: .closeButton) },
                 title: { titleSlot },
                 progressIndicator: { progressSlot },
                 footerCaption: { footerCaptionSlot },
@@ -96,6 +98,16 @@ public struct OnboardingView: View {
                     height: OnboardingMetrics.windowHeight
                 )
             )
+            // `.onAppear` can fire more than once (window re-activation); the
+            // flag keeps "started" and the first step-view to a single emit.
+            if !didTrackStart {
+                didTrackStart = true
+                OnboardingTelemetry.started()
+                OnboardingTelemetry.stepViewed(currentStep)
+            }
+        }
+        .onChange(of: currentStep) { _, newStep in
+            OnboardingTelemetry.stepViewed(newStep)
         }
     }
 
@@ -259,7 +271,7 @@ public struct OnboardingView: View {
         case .walkthrough:
             WalkthroughCTA(
                 state: walkthroughState,
-                onFinish: finishOnboarding
+                onFinish: { finishOnboarding(via: .walkthroughFinish) }
             )
         }
     }
@@ -270,15 +282,27 @@ public struct OnboardingView: View {
         case .welcome:
             EmptyView()
         case .createAgent:
-            CreateAgentSecondary(onSkip: { advance(to: .configureAI) })
+            CreateAgentSecondary(onSkip: {
+                OnboardingTelemetry.stepSkipped(.createAgent)
+                advance(to: .configureAI)
+            })
         case .configureAI:
             ConfigureAISecondary(state: configureAIState, onComplete: { advance(to: .choosePlugins) })
         case .identitySetup:
-            IdentitySecondary(state: identityState, onSkip: { advanceFromIdentity() })
+            IdentitySecondary(state: identityState, onSkip: {
+                OnboardingTelemetry.stepSkipped(.identitySetup)
+                advanceFromIdentity()
+            })
         case .sandboxSetup:
-            SandboxSetupSecondary(onSkip: { advance(to: .choosePlugins) })
+            SandboxSetupSecondary(onSkip: {
+                OnboardingTelemetry.stepSkipped(.sandboxSetup)
+                advance(to: .choosePlugins)
+            })
         case .choosePlugins:
-            ChoosePluginsSecondary(onSkip: { advance(to: .walkthrough) })
+            ChoosePluginsSecondary(onSkip: {
+                OnboardingTelemetry.stepSkipped(.choosePlugins)
+                advance(to: .walkthrough)
+            })
         case .walkthrough:
             EmptyView()
         }
@@ -411,7 +435,11 @@ public struct OnboardingView: View {
         }
     }
 
-    private func finishOnboarding() {
+    private func finishOnboarding(via: OnboardingTelemetry.Completion) {
+        // Record where the user left and how: `walkthroughFinish` is a real
+        // completion, `closeButton` at an earlier step is the drop-off point.
+        OnboardingTelemetry.completed(lastStep: currentStep, via: via)
+
         // If the user created an agent in step 2, drop them into chat
         // with that agent already selected — otherwise the freshly
         // created persona is buried behind the built-in default and the

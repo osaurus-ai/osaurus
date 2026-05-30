@@ -152,3 +152,6 @@ default.profraw
 
 # Local i18n tooling venv (scripts/i18n/fill-zh-hans.py)
 .venv-i18n/
+
+# Local secrets
+App/osaurus/Secrets.xcconfig
