@@ -1117,6 +1117,7 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
         #expect(decoded.contains(#"[line_count(text="red\ngreen\nblue")]"#), "Decoded: \(decoded)")
         #expect(decoded.contains("Output exactly the native bracketed tool call above."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Preserve the `text` value byte-for-byte, including newlines and spacing."), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not output an empty `line_count()`"), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not omit `text`"), "Decoded: \(decoded)")
         #expect(decoded.contains("No prose, no markdown, no JSON object, no reasoning text."), "Decoded: \(decoded)")
