@@ -1018,48 +1018,60 @@ final class NativeMarkdownView: NSView {
         let storageLength = tv.textStorage?.length ?? 0
         let origin = tv.textContainerOrigin
         let font = tv.font ?? .systemFont(ofSize: 13)
-        let lineHeight = font.boundingRectForFont.height
         let trailingPadding: CGFloat = 6
         let slotWidth: CGFloat = StreamingCursorOverlay.dotDiameter + 4
+        let slotHeight: CGFloat = StreamingCursorOverlay.dotDiameter
 
+        // Work from the text BASELINE rather than the line's top/bottom.
+        // The baseline is the only metric that lets us derive the text's
+        // true optical mid-line from the font itself; line-rect math drags
+        // in leading and ascender/descender asymmetry, which is what left
+        // the dot sitting above the line.
         let trailingX: CGFloat
-        let lineBottomInTV: CGFloat
+        let baselineInTV: CGFloat
 
         if storageLength == 0 {
             trailingX = origin.x + trailingPadding
-            lineBottomInTV = origin.y + lineHeight
+            baselineInTV = origin.y + font.ascender
         } else {
             let lastCharIdx = storageLength - 1
             let lastGlyphIdx = lm.glyphIndexForCharacter(at: lastCharIdx)
+            // Used rect (not bounding rect) so soft-wrapped trailing
+            // whitespace doesn't pull the dot back to the previous line.
             let usedRect = lm.lineFragmentUsedRect(
                 forGlyphAt: lastGlyphIdx,
                 effectiveRange: nil
             )
+            let lineFragRect = lm.lineFragmentRect(
+                forGlyphAt: lastGlyphIdx,
+                effectiveRange: nil
+            )
+            // `location(forGlyphAt:)` returns the glyph origin relative to
+            // its line fragment; its y is the baseline offset from the
+            // fragment top.
+            let baselineOffset = lm.location(forGlyphAt: lastGlyphIdx).y
             trailingX = usedRect.maxX + origin.x + trailingPadding
-            lineBottomInTV = usedRect.maxY + origin.y
+            baselineInTV = lineFragRect.minY + baselineOffset + origin.y
         }
 
-        // Anchor slot to the line BOTTOM in self coords + give it the
-        // font's natural line height. Computing the slot height from the
-        // rect difference (top vs. bottom) was picking up extra leading
-        // on some lines, which made the slot taller than the line and
-        // pushed the centered dot above the visible text.
-        let bottomInSelf = tv.convert(
-            NSPoint(x: trailingX, y: lineBottomInTV),
+        // The dot's center axis lands on the midpoint of the cap-height
+        // band above the baseline — the line's optical center for running
+        // text. Deriving the offset from `font.capHeight` keeps it aligned
+        // across font sizes, where the old fixed nudge drifted off-axis.
+        let textMiddleInTV = baselineInTV - font.capHeight / 2
+
+        // Convert just the mid-line point and center the symmetric slot on
+        // it: this is independent of whether `self` is flipped, so we no
+        // longer have to reason about which converted edge is the lower y.
+        let centerInSelf = tv.convert(
+            NSPoint(x: trailingX, y: textMiddleInTV),
             to: self
         )
-        // Slot spans exactly the line, dot is centered inside, plus a
-        // small downward nudge so the dot's center axis lands on the
-        // text's visual middle (x-height middle / mid-strike line)
-        // rather than the geometric center of the full line height —
-        // body text's center-of-mass sits below the geometric middle
-        // because ascenders extend higher than descenders.
-        let baselineNudge: CGFloat = -3
         cursor.frame = NSRect(
-            x: bottomInSelf.x,
-            y: bottomInSelf.y + baselineNudge,
+            x: centerInSelf.x,
+            y: centerInSelf.y - slotHeight / 2,
             width: slotWidth,
-            height: lineHeight
+            height: slotHeight
         )
     }
 }

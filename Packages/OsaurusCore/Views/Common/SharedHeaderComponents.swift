@@ -10,8 +10,10 @@ import SwiftUI
 
 // MARK: - Header Action Button
 
-/// An icon-only button for the toolbar. Relies on the native toolbar item
-/// pill for its background; only renders the icon with a hover color change.
+/// An icon-only button for the toolbar. On macOS 26+ each icon sits on its
+/// own circular Liquid Glass capsule; on earlier systems it relies on the
+/// native toolbar item pill for its background and only renders the icon
+/// with a hover color change.
 struct HeaderActionButton: View {
     let icon: String
     let help: String
@@ -26,6 +28,7 @@ struct HeaderActionButton: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
                 .frame(width: 28, height: 28)
+                .liquidGlassCircle()
                 .padding(.horizontal, 4)
                 .contentShape(Rectangle())
         }
@@ -36,6 +39,19 @@ struct HeaderActionButton: View {
             }
         }
         .help(Text(LocalizedStringKey(help), bundle: .module))
+    }
+}
+
+// MARK: - Liquid Glass
+
+extension View {
+    @ViewBuilder
+    func liquidGlassCircle() -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: .circle)
+        } else {
+            self
+        }
     }
 }
 
@@ -95,6 +111,7 @@ struct PinButton: View {
                 .foregroundColor(isPinned || isHovered ? theme.accentColor : theme.secondaryText)
                 .rotationEffect(.degrees(isPinned ? 0 : 45))
                 .frame(width: 28, height: 28)
+                .liquidGlassCircle()
                 .padding(.horizontal, 4)
                 .contentShape(Rectangle())
         }
