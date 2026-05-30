@@ -7,7 +7,6 @@
 //  the repository.
 //
 
-import Compression
 import Foundation
 import Testing
 
@@ -275,7 +274,7 @@ struct PPTXAdapterTests {
         externalRelationships: [RelationshipFixture] = [],
         extraSlideRelationships: [Int: [RelationshipFixture]] = [:],
         extraEntries: [(String, Data)] = [],
-        compression: FixtureCompression
+        compression: OpenXMLZipFixture.Compression
     ) throws -> (root: URL, url: URL) {
         let root = try makeTempDirectory()
         let url = root.appendingPathComponent("fixture.\(fileExtension)")
@@ -309,7 +308,7 @@ struct PPTXAdapterTests {
         }
 
         entries.append(contentsOf: extraEntries)
-        try writeZip(entries: entries, to: url, compression: compression)
+        try OpenXMLZipFixture.write(entries: entries, to: url, compression: compression)
         return (root, url)
     }
 
@@ -443,91 +442,6 @@ struct PPTXAdapterTests {
         return url
     }
 
-    private func writeZip(
-        entries: [(String, Data)],
-        to destination: URL,
-        compression: FixtureCompression
-    ) throws {
-        var output = Data()
-        var centralDirectory = Data()
-        var centralRecords: [CentralRecord] = []
-
-        for (path, data) in entries {
-            let encoded = compression.encoded(data)
-            let pathData = Data(path.utf8)
-            let localOffset = output.count
-
-            output.appendUInt32(0x0403_4B50)
-            output.appendUInt16(20)
-            output.appendUInt16(0)
-            output.appendUInt16(encoded.method)
-            output.appendUInt16(0)
-            output.appendUInt16(0)
-            output.appendUInt32(crc32(data))
-            output.appendUInt32(UInt32(encoded.data.count))
-            output.appendUInt32(UInt32(data.count))
-            output.appendUInt16(UInt16(pathData.count))
-            output.appendUInt16(0)
-            output.append(pathData)
-            output.append(encoded.data)
-
-            centralRecords.append(
-                CentralRecord(
-                    pathData: pathData,
-                    method: encoded.method,
-                    crc32: crc32(data),
-                    compressedSize: UInt32(encoded.data.count),
-                    uncompressedSize: UInt32(data.count),
-                    localOffset: UInt32(localOffset)
-                )
-            )
-        }
-
-        let centralDirectoryOffset = output.count
-        for record in centralRecords {
-            centralDirectory.appendUInt32(0x0201_4B50)
-            centralDirectory.appendUInt16(20)
-            centralDirectory.appendUInt16(20)
-            centralDirectory.appendUInt16(0)
-            centralDirectory.appendUInt16(record.method)
-            centralDirectory.appendUInt16(0)
-            centralDirectory.appendUInt16(0)
-            centralDirectory.appendUInt32(record.crc32)
-            centralDirectory.appendUInt32(record.compressedSize)
-            centralDirectory.appendUInt32(record.uncompressedSize)
-            centralDirectory.appendUInt16(UInt16(record.pathData.count))
-            centralDirectory.appendUInt16(0)
-            centralDirectory.appendUInt16(0)
-            centralDirectory.appendUInt16(0)
-            centralDirectory.appendUInt16(0)
-            centralDirectory.appendUInt32(0)
-            centralDirectory.appendUInt32(record.localOffset)
-            centralDirectory.append(record.pathData)
-        }
-        output.append(centralDirectory)
-
-        output.appendUInt32(0x0605_4B50)
-        output.appendUInt16(0)
-        output.appendUInt16(0)
-        output.appendUInt16(UInt16(centralRecords.count))
-        output.appendUInt16(UInt16(centralRecords.count))
-        output.appendUInt32(UInt32(centralDirectory.count))
-        output.appendUInt32(UInt32(centralDirectoryOffset))
-        output.appendUInt16(0)
-        try output.write(to: destination)
-    }
-
-    private func crc32(_ data: Data) -> UInt32 {
-        var crc: UInt32 = 0xFFFF_FFFF
-        for byte in data {
-            crc ^= UInt32(byte)
-            for _ in 0 ..< 8 {
-                let mask = UInt32(bitPattern: -Int32(crc & 1))
-                crc = (crc >> 1) ^ (0xEDB8_8320 & mask)
-            }
-        }
-        return crc ^ 0xFFFF_FFFF
-    }
 }
 
 private struct RelationshipFixture {
@@ -542,56 +456,3 @@ private struct RelationshipFixture {
     }
 }
 
-private enum FixtureCompression {
-    case stored
-    case deflated
-
-    func encoded(_ data: Data) -> (method: UInt16, data: Data) {
-        switch self {
-        case .stored:
-            return (0, data)
-        case .deflated:
-            var output = [UInt8](repeating: 0, count: max(64, data.count + 64))
-            let written = data.withUnsafeBytes { sourceBuffer in
-                guard let source = sourceBuffer.bindMemory(to: UInt8.self).baseAddress else {
-                    return 0
-                }
-                return compression_encode_buffer(
-                    &output,
-                    output.count,
-                    source,
-                    data.count,
-                    nil,
-                    COMPRESSION_ZLIB
-                )
-            }
-            guard written > 0, written < data.count else {
-                return (0, data)
-            }
-            return (8, Data(output.prefix(written)))
-        }
-    }
-}
-
-private struct CentralRecord {
-    let pathData: Data
-    let method: UInt16
-    let crc32: UInt32
-    let compressedSize: UInt32
-    let uncompressedSize: UInt32
-    let localOffset: UInt32
-}
-
-private extension Data {
-    mutating func appendUInt16(_ value: UInt16) {
-        append(UInt8(value & 0x00FF))
-        append(UInt8((value >> 8) & 0x00FF))
-    }
-
-    mutating func appendUInt32(_ value: UInt32) {
-        append(UInt8(value & 0x0000_00FF))
-        append(UInt8((value >> 8) & 0x0000_00FF))
-        append(UInt8((value >> 16) & 0x0000_00FF))
-        append(UInt8((value >> 24) & 0x0000_00FF))
-    }
-}

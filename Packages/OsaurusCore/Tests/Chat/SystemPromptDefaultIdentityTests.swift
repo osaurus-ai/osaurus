@@ -208,7 +208,7 @@ struct SoulSectionTests {
     /// `AgentManager.shared` and `containerAgentDir`.
     private func withSoulAgent(
         soulContent: String? = nil,
-        executionMode: ExecutionMode = .sandbox,
+        executionMode: ExecutionMode = .sandbox(hostRead: nil),
         body: @MainActor @Sendable ([String], ComposedContext) -> Void
     ) async {
         await SandboxTestLock.runWithStoragePaths {

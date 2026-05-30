@@ -328,83 +328,9 @@ struct XLSXAdapterTests {
     }
 
     private static func makeZip(entries: [(path: String, contents: String)]) -> Data {
-        var archive = Data()
-        var centralDirectory = Data()
-        var centralEntries = 0
-
-        for entry in entries {
-            let name = Data(entry.path.utf8)
-            let payload = Data(entry.contents.utf8)
-            let crc = crc32(payload)
-            let localHeaderOffset = UInt32(archive.count)
-
-            archive.appendUInt32LE(0x0403_4B50)
-            archive.appendUInt16LE(20)
-            archive.appendUInt16LE(0)
-            archive.appendUInt16LE(0)
-            archive.appendUInt16LE(0)
-            archive.appendUInt16LE(0)
-            archive.appendUInt32LE(crc)
-            archive.appendUInt32LE(UInt32(payload.count))
-            archive.appendUInt32LE(UInt32(payload.count))
-            archive.appendUInt16LE(UInt16(name.count))
-            archive.appendUInt16LE(0)
-            archive.append(name)
-            archive.append(payload)
-
-            centralDirectory.appendUInt32LE(0x0201_4B50)
-            centralDirectory.appendUInt16LE(20)
-            centralDirectory.appendUInt16LE(20)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt32LE(crc)
-            centralDirectory.appendUInt32LE(UInt32(payload.count))
-            centralDirectory.appendUInt32LE(UInt32(payload.count))
-            centralDirectory.appendUInt16LE(UInt16(name.count))
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt32LE(0)
-            centralDirectory.appendUInt32LE(localHeaderOffset)
-            centralDirectory.append(name)
-            centralEntries += 1
-        }
-
-        let centralDirectoryOffset = UInt32(archive.count)
-        archive.append(centralDirectory)
-        archive.appendUInt32LE(0x0605_4B50)
-        archive.appendUInt16LE(0)
-        archive.appendUInt16LE(0)
-        archive.appendUInt16LE(UInt16(centralEntries))
-        archive.appendUInt16LE(UInt16(centralEntries))
-        archive.appendUInt32LE(UInt32(centralDirectory.count))
-        archive.appendUInt32LE(centralDirectoryOffset)
-        archive.appendUInt16LE(0)
-        return archive
-    }
-
-    private static func crc32(_ data: Data) -> UInt32 {
-        var crc: UInt32 = 0xFFFF_FFFF
-        for byte in data {
-            let index = Int((crc ^ UInt32(byte)) & 0xFF)
-            crc = (crc >> 8) ^ crc32Table[index]
-        }
-        return crc ^ 0xFFFF_FFFF
-    }
-
-    private static let crc32Table: [UInt32] = (0 ..< 256).map { value in
-        var crc = UInt32(value)
-        for _ in 0 ..< 8 {
-            if crc & 1 == 1 {
-                crc = 0xEDB8_8320 ^ (crc >> 1)
-            } else {
-                crc >>= 1
-            }
-        }
-        return crc
+        OpenXMLZipFixture.archive(
+            entries: entries.map { ($0.path, Data($0.contents.utf8)) }
+        )
     }
 }
 
@@ -421,22 +347,6 @@ private extension Workbook.Sheet {
 }
 
 private extension Data {
-    mutating func appendUInt16LE(_ value: UInt16) {
-        append(contentsOf: [
-            UInt8(value & 0x00FF),
-            UInt8((value >> 8) & 0x00FF),
-        ])
-    }
-
-    mutating func appendUInt32LE(_ value: UInt32) {
-        append(contentsOf: [
-            UInt8(value & 0x0000_00FF),
-            UInt8((value >> 8) & 0x0000_00FF),
-            UInt8((value >> 16) & 0x0000_00FF),
-            UInt8((value >> 24) & 0x0000_00FF),
-        ])
-    }
-
     func uint16LE(at offset: Int) throws -> UInt16 {
         guard offset >= 0, offset + 2 <= count else {
             throw XLSXFixtureMutationError.truncatedArchive

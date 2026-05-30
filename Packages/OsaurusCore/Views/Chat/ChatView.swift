@@ -1557,7 +1557,11 @@ final class ChatSession: ObservableObject {
         // Optimistic estimate: when autonomous is on but sandbox tools haven't
         // registered yet, report `.sandbox` so the budget preview matches what
         // the next send will most likely produce after `registerTools` runs.
-        if autonomous && resolved.usesSandboxTools == false { return .sandbox }
+        // Thread the folder through so the combined sandbox + host-read mode
+        // is estimated correctly when a folder is also mounted.
+        if autonomous && resolved.usesSandboxTools == false {
+            return .sandbox(hostRead: folder)
+        }
         return resolved
     }
 
@@ -2622,10 +2626,19 @@ final class ChatSession: ObservableObject {
                                 ) {
                                     try await ChatExecutionContext.$currentAssistantTurnId.withValue(assistantTurn.id) {
                                         try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
-                                            try await ToolRegistry.shared.execute(
-                                                name: inv.toolName,
-                                                argumentsJSON: inv.jsonArguments
-                                            )
+                                            // Combined sandbox + host-read mode:
+                                            // expose the read-only host workspace
+                                            // root so the host read tools enforce
+                                            // combined-mode-only policy (secret
+                                            // refusal). `nil` in every other mode.
+                                            try await ChatExecutionContext.$hostReadOnlyScope.withValue(
+                                                executionMode.hostReadContext?.rootPath
+                                            ) {
+                                                try await ToolRegistry.shared.execute(
+                                                    name: inv.toolName,
+                                                    argumentsJSON: inv.jsonArguments
+                                                )
+                                            }
                                         }
                                     }
                                 }

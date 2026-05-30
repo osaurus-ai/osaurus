@@ -172,6 +172,16 @@ enum DocumentParser {
         plainTextExtensions.contains(ext)
     }
 
+    /// Whether `ext` is one of the extensions decoded as raw plain text
+    /// (source code, CSV/TSV, JSON, config, etc.). Exposed so callers
+    /// like `file_read` can keep the raw line-numbered read path for
+    /// these — preserving `start_line`/`end_line` semantics — and only
+    /// route the binary-but-text-extractable formats (pdf/docx/pptx/...)
+    /// through the parser.
+    static func isPlainTextExtension(_ ext: String) -> Bool {
+        isPlainText(ext: ext.lowercased())
+    }
+
     private static func parsePlainText(url: URL) throws -> String {
         do {
             return try String(contentsOf: url, encoding: .utf8)

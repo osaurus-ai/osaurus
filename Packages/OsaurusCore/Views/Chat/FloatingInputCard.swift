@@ -1815,18 +1815,12 @@ extension FloatingInputCard {
         newConfig.enabled.toggle()
         let agentId = effectiveAgentId
         let manager = agentManager
-        let willEnable = newConfig.enabled
-        let folderService = folderContextService
         Task {
-            // Sandbox and folder backends are mutually exclusive — clear the
-            // folder context BEFORE provisioning sandbox so we don't briefly
-            // leave both backends "live". On a provision failure we roll the
-            // sandbox flag back but leave the folder cleared (the user can
-            // re-pick it); avoiding a partial-state mess is worth the extra
-            // tap.
-            if willEnable && folderService.hasActiveFolder {
-                folderService.clearFolder()
-            }
+            // Sandbox and folder backends now compose: enabling sandbox
+            // while a folder is selected yields combined mode (read-only
+            // host workspace + sandbox exec), so we keep the folder
+            // instead of clearing it. On a provision failure we roll the
+            // sandbox flag back below.
             do {
                 try await manager.updateAutonomousExec(newConfig, for: agentId)
             } catch {
@@ -1844,30 +1838,32 @@ extension FloatingInputCard {
         }
     }
 
-    /// Disable autonomous execution (sandbox) if currently enabled. Used by
-    /// folder selection paths to enforce sandbox/folder mutual exclusion at
-    /// the tap site instead of by hiding chips.
-    private func disableSandboxIfEnabled() async {
-        guard isSandboxEnabled else { return }
-        var config = agentManager.effectiveAutonomousExec(for: effectiveAgentId) ?? .default
-        config.enabled = false
-        do {
-            try await agentManager.updateAutonomousExec(config, for: effectiveAgentId)
-        } catch {
-            debugLog(
-                "[Sandbox] Failed to disable sandbox for folder backend switch: \(error.localizedDescription)"
-            )
+    /// Open the system folder picker. Sandbox and folder now compose
+    /// (combined mode), so selecting a folder no longer disables the
+    /// sandbox — picking a folder while sandbox is on yields a read-only
+    /// host workspace alongside sandbox exec.
+    private func selectFolder() {
+        Task {
+            _ = await folderContextService.selectFolder()
         }
     }
 
-    /// Disable sandbox (if enabled) then open the system folder picker.
-    /// Drives both the chip's main tap and the context-menu "Change Folder"
-    /// item so they share one mutual-exclusion path.
-    private func selectFolderWithSandboxOff() {
-        Task {
-            await disableSandboxIfEnabled()
-            _ = await folderContextService.selectFolder()
+    /// True when sandbox is on AND a folder is selected — combined mode,
+    /// where the host workspace is read-only and exec runs in the VM.
+    private var isCombinedMode: Bool {
+        isSandboxEnabled && folderContextService.hasActiveFolder
+    }
+
+    /// Folder chip tooltip. In combined mode it spells out the read-only
+    /// contract so users don't expect in-place edits.
+    private func folderChipHelp(hasFolder: Bool) -> Text {
+        if hasFolder && isSandboxEnabled {
+            return Text(
+                localized: "Working folder is read-only in sandbox mode — code runs in the sandbox")
         }
+        return hasFolder
+            ? Text(localized: "Change working folder")
+            : Text(localized: "Select a working folder")
     }
 
     private var sandboxHelpText: String {
@@ -1875,6 +1871,9 @@ extension FloatingInputCard {
             return "Sandbox unavailable: \(failure.message)\nClick to open Sandbox settings."
         } else if isSandboxLoading {
             return "Sandbox is starting up — click to view progress."
+        } else if isCombinedMode {
+            return
+                "Combined mode: the selected folder is read-only and all code runs in the sandbox. Click to disable."
         } else if isSandboxEnabled && isSandboxRunning {
             return "Sandbox is active — click to disable. Right-click for settings."
         } else if isSandboxEnabled {
@@ -2304,15 +2303,15 @@ extension FloatingInputCard {
         let hasFolder = folderContextService.hasActiveFolder
 
         return HStack(spacing: 4) {
-            Button(action: selectFolderWithSandboxOff) {
+            Button(action: selectFolder) {
                 folderChipContent(hasFolder: hasFolder, canEdit: true)
             }
             .buttonStyle(.plain)
-            .help(hasFolder ? Text(localized: "Change working folder") : Text(localized: "Select a working folder"))
+            .help(folderChipHelp(hasFolder: hasFolder))
             .contextMenu {
                 if hasFolder {
                     Button {
-                        selectFolderWithSandboxOff()
+                        selectFolder()
                     } label: {
                         Label {
                             Text("Change Folder", bundle: .module)

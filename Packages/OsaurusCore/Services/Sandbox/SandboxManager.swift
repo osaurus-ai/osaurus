@@ -281,6 +281,32 @@
             let memoryGB: Int
         }
 
+        /// The single host directory mounted into the sandbox at
+        /// `/workspace`. Centralised + guarded so the combined sandbox +
+        /// host-read mode invariant cannot regress: the user's selected
+        /// folder is NEVER a sandbox mount source. Combined mode reads
+        /// the host folder through host-side tools only (`file_read`
+        /// etc.); the sandbox has no mount of it, which is the entire
+        /// security argument for the mode. If a future change ever wires
+        /// the folder root in as the workspace, the precondition trips
+        /// loudly instead of silently opening a hole. `nonisolated` so
+        /// the regression test can exercise it without the actor hop.
+        nonisolated static func validatedWorkspaceMountSource(
+            workspace: String,
+            folderRoot: String?
+        ) -> String {
+            if let folderRoot {
+                let normalizedWorkspace = URL(fileURLWithPath: workspace).standardized.path
+                let normalizedFolder = URL(fileURLWithPath: folderRoot).standardized.path
+                precondition(
+                    normalizedWorkspace != normalizedFolder,
+                    "Sandbox workspace mount must never be the host folder root — combined "
+                        + "mode reads the host via host-side tools, never a bind mount."
+                )
+            }
+            return workspace
+        }
+
         /// Build the `LinuxContainer.Configuration` closure that's shared
         /// between the warm and cold `manager.create` calls. Identical
         /// process, sockets, and mount setup in both cases — only the
@@ -485,7 +511,10 @@
                         network: try VmnetNetwork()
                     )
                     let inputs = BootInputs(
-                        workspace: OsaurusPaths.containerWorkspace().path,
+                        workspace: Self.validatedWorkspaceMountSource(
+                            workspace: OsaurusPaths.containerWorkspace().path,
+                            folderRoot: FolderContextService.cachedRootPath?.path
+                        ),
                         bridgeSocketPath: Self.bridgeSocketPath,
                         guestBridgeSocketPath: Self.guestBridgeSocketPath,
                         cpus: config.cpus,

@@ -184,7 +184,11 @@ struct SessionToolState: Sendable {
         let modeTag: String
         switch executionMode {
         case .hostFolder: modeTag = "host"
-        case .sandbox: modeTag = "sandbox"
+        // Combined sandbox + host-read carries a different tool surface
+        // (host read tools present) than plain sandbox, so it gets its
+        // own fingerprint — toggling a folder on/off while sandbox stays
+        // on must invalidate any cached preflight for the prior surface.
+        case .sandbox(let hostRead): modeTag = hostRead == nil ? "sandbox" : "sandbox+hostread"
         case .none: modeTag = "none"
         }
         return "\(modeTag)/\(toolMode.rawValue)"

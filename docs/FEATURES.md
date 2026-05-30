@@ -606,7 +606,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 - `Folder/FolderContextService.swift` — `NSOpenPanel`, security-scoped bookmark persistence, MainActor service
 - `Folder/FolderTools.swift` — File / shell / git tool implementations + `FolderToolFactory`
 - `Folder/ChatExecutionContext.swift` — TaskLocal session/agent/batch IDs read by tools at execution time
-- `Folder/ExecutionMode.swift` — First-class `.hostFolder | .sandbox | .none` enum
+- `Folder/ExecutionMode.swift` — First-class `.hostFolder | .sandbox(hostRead:) | .none` enum (the sandbox case carries an optional read-only host folder for combined mode)
 - `Folder/FileOperation.swift`, `Folder/FileOperationLog.swift` — Per-op log used for undo
 - `Models/Chat/AgentTodo.swift`, `Models/Chat/AgentTodoStore.swift` — Markdown checklist parser + per-session store
 - `Models/Chat/SharedArtifact.swift` — Artifact model surfaced via `share_artifact`
@@ -618,7 +618,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 - **Single mode resolver** — `ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)` decides sandbox > host folder > none for chat, plugin, and HTTP entry points
 - **Working folder picker** — Per-chat folder via `FolderContextService`, with security-scoped bookmark persistence
 - **Project-aware tools** — Core file tools + `shell_run` registered for every folder mount; git tools layered on when the folder is a git repo. Project type only changes the file-tree ignore patterns (and prompt metadata), not the tool surface.
-- **Sandbox toggle** — Mutually exclusive with the working-folder backend; selecting a folder disables sandbox autonomous exec and vice versa
+- **Sandbox toggle** — Composes with the working-folder backend. Sandbox-only keeps current behavior; **combined mode** (sandbox on + folder selected → `.sandbox(hostRead: ctx)`) exposes the host workspace **read-only** (`file_tree` / `file_read` / `file_search`, scoped to the folder root, secret files refused) while all execution stays in the sandbox VM, which has no mount of the host workspace. Host write/edit/shell/git stay hidden in combined mode. Residual risks (the trusted agent is the read→exec bridge, prompt injection from read content, in-scope secrets) are mitigated by scope enforcement + secret refusal; v1 keeps sandbox network-on, so document the exfiltration residual rather than relying on isolation.
 - **`share_artifact`** — Only path for the user to see files the agent produced
 **Loop Tools (engine-intercepted):**
 

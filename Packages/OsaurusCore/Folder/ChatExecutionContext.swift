@@ -60,4 +60,21 @@ public enum ChatExecutionContext {
     /// enforcement (spec §11.3). Bound by
     /// `BackgroundTaskManager.dispatchChat` alongside `currentRunId`.
     @TaskLocal public static var currentBackgroundId: UUID?
+
+    /// Root of the read-only host workspace when the current execution
+    /// is in combined sandbox + host-read mode
+    /// (`ExecutionMode.sandbox(hostRead: ctx)`). Bound by the send paths
+    /// when that mode resolves. The host read tools key off this to
+    /// enforce combined-mode-only policy (secret-file refusal) without
+    /// changing plain folder-mode behavior — it is `nil` in every other
+    /// mode.
+    @TaskLocal public static var hostReadOnlyScope: URL?
+
+    /// Per-session override that relaxes the combined-mode secret-file
+    /// refusal in `file_read`. Defaults to `false` (refuse secret files
+    /// inside the read-only host workspace). A future per-session
+    /// setting can bind this `true` to allow reading `.env` / key /
+    /// credential files when the user explicitly opts in. Only consulted
+    /// when `hostReadOnlyScope` is non-nil.
+    @TaskLocal public static var allowHostSecretReads: Bool = false
 }

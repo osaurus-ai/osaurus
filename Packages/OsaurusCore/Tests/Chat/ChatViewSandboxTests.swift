@@ -19,7 +19,7 @@ struct ChatViewSandboxTests {
     @Test
     func buildToolSpecs_sandboxEnabledIncludesBuiltIns() async {
         await withRegisteredSandboxBuiltins {
-            let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .sandbox)
+            let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .sandbox(hostRead: nil))
 
             #expect(specs.contains(where: { $0.function.name == "capabilities_search" }))
             #expect(specs.contains(where: { $0.function.name == "capabilities_load" }))
@@ -34,7 +34,7 @@ struct ChatViewSandboxTests {
         )
         let sandboxCtx = await SystemPromptComposer.composeChatContext(
             agentId: Agent.defaultId,
-            executionMode: .sandbox
+            executionMode: .sandbox(hostRead: nil)
         )
         let standardPrompt = standardCtx.prompt
         let sandboxPrompt = sandboxCtx.prompt
@@ -45,6 +45,40 @@ struct ChatViewSandboxTests {
         // from `sandbox_run_script` (deleted) to `sandbox_execute_code`
         // which is now the canonical Python power tool.
         #expect(sandboxPrompt.contains("sandbox_execute_code"))
+        // Plain sandbox (no host folder) must NOT emit the combined
+        // read-only workspace section or the two-filesystem block.
+        #expect(sandboxPrompt.contains("## Host Workspace (read-only)") == false)
+        #expect(sandboxPrompt.contains("## Two filesystems") == false)
+    }
+
+    @Test
+    func buildSystemPrompt_combinedMode_emitsSandboxAndReadOnlyWorkspaceSections() async {
+        let folder = FolderContext(
+            rootPath: URL(fileURLWithPath: "/tmp/osaurus-combined-prompt-\(UUID().uuidString)"),
+            projectType: .swift,
+            tree: "./\nREADME.md\nSources/App.swift",
+            manifest: nil,
+            gitStatus: nil,
+            isGitRepo: false,
+            contextFiles: nil
+        )
+        let combinedCtx = await SystemPromptComposer.composeChatContext(
+            agentId: Agent.defaultId,
+            executionMode: .sandbox(hostRead: folder)
+        )
+        let prompt = combinedCtx.prompt
+
+        // Sandbox framing is present (exec is sandbox-only)...
+        #expect(prompt.contains(SystemPromptTemplates.sandboxSectionHeading))
+        // ...alongside the read-only host workspace section and the
+        // two-filesystem block that keeps the model from assuming the
+        // sandbox shell can see the workspace.
+        #expect(prompt.contains("## Host Workspace (read-only)"))
+        #expect(prompt.contains("## Two filesystems"))
+        // The two-filesystem block must name the real exec tools, never
+        // the (hidden in this mode) host `shell_run`.
+        #expect(prompt.contains("sandbox_exec"))
+        #expect(prompt.contains("shell_run") == false)
     }
 
     @Test

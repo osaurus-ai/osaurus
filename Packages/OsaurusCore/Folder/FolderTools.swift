@@ -35,6 +35,9 @@ enum FolderToolError: LocalizedError {
         case decodeFailed
         /// `DocumentParser` returned an image-only PDF (no text layer).
         case imageOnlyPdf
+        /// The file is an image (`.png` / `.jpg` / ...); `file_read`
+        /// returns text only and cannot surface pixels.
+        case image
         /// `DocumentParser` threw `.readFailed` / `.unsupportedFormat` /
         /// `.fileTooLarge`.
         case parseFailed
@@ -44,6 +47,9 @@ enum FolderToolError: LocalizedError {
             case .imageOnlyPdf:
                 return
                     "The PDF has no extractable text layer (likely scanned images); use an OCR tool via shell_run."
+            case .image:
+                return
+                    "This is an image file; file_read returns text only. Attach the image to chat or use an OCR / vision tool to read it."
             case .parseFailed:
                 return
                     "The document couldn't be parsed — it may be encrypted, password-protected, or malformed."
@@ -205,9 +211,9 @@ enum FolderToolHelpers {
 struct FileTreeTool: OsaurusTool {
     let name = "file_tree"
     let description =
-        "List the directory structure of the working directory or a subdirectory. **Use this instead "
-        + "of `ls` / `tree` in `shell_run`.** Returns a tree view of files and folders. Skips hidden "
-        + "files and truncates at 300 files."
+        "List the directory structure of the working directory or a subdirectory. Use this (rather "
+        + "than a shell `ls` / `tree`) to inspect the working directory layout. Returns a tree view of "
+        + "files and folders. Skips hidden files and truncates at 300 files."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -315,10 +321,11 @@ struct FileTreeTool: OsaurusTool {
 struct FileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
-        "Read the contents of a text file or a bounded preview of an XLSX workbook. **Use this instead "
-        + "of `cat` / `head` / `tail` in `shell_run`.** Cannot read most binary files (PDFs, images, etc.). "
-        + "Optionally specify start_line and end_line for partial text reads; for workbooks they select "
-        + "worksheet row numbers. Line numbers are 1-indexed."
+        "Read the contents of a text or source file, a text-extractable document (PDF, Word, "
+        + "PowerPoint, RTF, HTML), or a bounded preview of an XLSX workbook in the working directory. "
+        + "Use this (rather than a shell `cat` / `head` / `tail`) to read files. Images and other "
+        + "non-text binaries are not supported. Optionally specify start_line and end_line for partial "
+        + "text reads; for workbooks they select worksheet row numbers. Line numbers are 1-indexed."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -363,19 +370,68 @@ struct FileReadTool: OsaurusTool {
     /// Consistent with truncation limits on shell_run (10k) and git_diff (20k).
     private static let maxOutputChars = 15_000
 
-    /// File extensions that `DocumentParser` (PDFKit + `NSAttributedString`)
-    /// already extracts plain text from. For these we route through the
-    /// parser instead of attempting a UTF-8 decode that would fail with
-    /// `NSCocoaError 264` ("isn't in the correct format").
-    private static let richDocumentExtensions: Set<String> = [
-        "pdf", "docx", "doc", "rtf", "rtfd", "html", "htm",
-    ]
-
     /// First-chunk byte budget for the NUL-byte binary sniff. Catches
     /// off-extension binaries whose UTF-8 decode happens to succeed by
     /// luck. Matches the size most editors / `file(1)` use for the same
     /// heuristic.
     private static let binarySniffBytes = 4096
+
+    /// Extensions whose files are treated as secret material (private
+    /// keys, certs with keys, keystores). Lowercased, no leading dot.
+    private static let secretExtensions: Set<String> = [
+        "pem", "key", "p12", "pfx", "keystore", "jks",
+    ]
+
+    /// Exact basenames that are secret regardless of extension.
+    private static let secretBasenames: Set<String> = [
+        ".npmrc", ".netrc", "credentials", ".pypirc", ".dockercfg",
+    ]
+
+    /// Suffixes on a `.env` family file that are conventionally NON-secret
+    /// (templates / samples) and therefore allowed even under refusal.
+    private static let envAllowedSuffixes: [String] = [
+        ".example", ".sample", ".template", ".dist",
+    ]
+
+    /// Whether `fileURL` points at a file that should be refused in
+    /// combined read-only mode. Checks the basename, extension, and the
+    /// path components so a key under `.ssh/` or `.aws/` is caught even
+    /// when its own name looks innocuous.
+    static func isSecretPath(fileURL: URL) -> Bool {
+        let lowerName = fileURL.lastPathComponent.lowercased()
+        let ext = fileURL.pathExtension.lowercased()
+
+        // `.git/config` and `.aws/`, `.ssh/`, `.gnupg/` directory contents
+        // routinely carry tokens / private keys.
+        let components = fileURL.pathComponents
+        let secretDirs: Set<String> = [".aws", ".ssh", ".gnupg"]
+        if !secretDirs.isDisjoint(with: Set(components.map { $0.lowercased() })) {
+            return true
+        }
+        if components.count >= 2 {
+            let tail = components.suffix(2).map { $0.lowercased() }
+            if tail == [".git", "config"] { return true }
+        }
+
+        if secretBasenames.contains(lowerName) { return true }
+
+        // SSH/GPG private keys: `id_rsa`, `id_ed25519`, etc. — but allow
+        // the matching `.pub` public keys.
+        if lowerName.hasPrefix("id_"), ext != "pub" { return true }
+
+        // `.env` family: refuse `.env` and `.env.<anything>` except
+        // template/sample suffixes.
+        if lowerName == ".env" { return true }
+        if lowerName.hasPrefix(".env.") {
+            return !envAllowedSuffixes.contains { lowerName.hasSuffix($0) }
+        }
+
+        // Public keys (`*.pub`) are safe; secret extensions otherwise.
+        if ext == "pub" { return false }
+        if secretExtensions.contains(ext) { return true }
+
+        return false
+    }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
@@ -392,6 +448,29 @@ struct FileReadTool: OsaurusTool {
         }
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+
+        // Combined sandbox + host-read mode (`hostReadOnlyScope` set):
+        // refuse secret files even though they live inside the scoped
+        // workspace. The read channel is the agent-as-bridge surface, so
+        // a poisoned README or a steered instruction shouldn't be able to
+        // pull `.env` / private keys / credentials into context and
+        // exfiltrate them via the sandbox. Plain folder mode
+        // (`hostReadOnlyScope == nil`) is unaffected. Overridable per
+        // session via `allowHostSecretReads`.
+        if ChatExecutionContext.hostReadOnlyScope != nil,
+            !ChatExecutionContext.allowHostSecretReads,
+            Self.isSecretPath(fileURL: fileURL)
+        {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "Refused to read '\(relativePath)': secret files (.env, private keys, "
+                    + "credentials) are blocked in read-only sandbox mode to prevent leaking "
+                    + "secrets into the sandbox. This is not retryable.",
+                tool: name,
+                retryable: false
+            )
+        }
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw FolderToolError.fileNotFound(relativePath)
@@ -484,18 +563,27 @@ struct FileReadTool: OsaurusTool {
     }
 
     /// Pull text out of the file at `url`, throwing `binaryContent` when
-    /// the file is not decodable as text. Two branches:
-    ///   - rich extensions go through `DocumentParser` (PDFKit /
-    ///     `NSAttributedString`);
-    ///   - other extensions read raw bytes, NUL-sniff the first 4KB,
-    ///     then UTF-8 decode. The byte-first ordering catches binaries
-    ///     whose UTF-8 prefix happens to be valid by coincidence.
+    /// the file is not text or text-extractable. Three branches:
+    ///   - images are refused outright (this tool returns text only);
+    ///   - text-extractable documents (PDF, Word, PowerPoint, RTF, HTML,
+    ///     …) go through `DocumentParser`, which routes through
+    ///     `DocumentFormatRegistry` and PDFKit / `NSAttributedString`;
+    ///   - plain text / source / CSV / unknown extensions read raw bytes,
+    ///     NUL-sniff the first 4KB, then UTF-8 decode. The raw path keeps
+    ///     line-numbering and `start_line`/`end_line` semantics, and the
+    ///     byte-first ordering catches binaries whose UTF-8 prefix happens
+    ///     to be valid by coincidence.
     private func loadFileContent(
         url: URL,
         relativePath: String,
         ext: String
     ) async throws -> String {
-        if Self.richDocumentExtensions.contains(ext) {
+        // Text-only tool: never try to surface image pixels.
+        if DocumentParser.isImageFile(url: url) {
+            throw binaryError(path: relativePath, ext: ext, detail: .image)
+        }
+
+        if Self.shouldExtractViaParser(url: url, ext: ext) {
             return try await extractRichDocumentText(
                 url: url,
                 relativePath: relativePath,
@@ -511,6 +599,20 @@ struct FileReadTool: OsaurusTool {
             return text
         }
         throw binaryError(path: relativePath, ext: ext, detail: .decodeFailed)
+    }
+
+    /// Whether `url` should be routed through `DocumentParser` for text
+    /// extraction rather than read as raw bytes. Plain-text / source /
+    /// CSV extensions stay on the raw path (so line ranges keep working);
+    /// every other format the document infrastructure can parse — PDF,
+    /// Word, PowerPoint, RTF, HTML, etc. — is extracted. Lazily registers
+    /// the built-in adapters (idempotent) so `canParse` sees formats like
+    /// PPTX even on entry points that didn't bootstrap at launch, mirroring
+    /// `workbookAdapter(for:)`.
+    private static func shouldExtractViaParser(url: URL, ext: String) -> Bool {
+        if DocumentParser.isPlainTextExtension(ext) { return false }
+        DocumentAdaptersBootstrap.registerBuiltIns()
+        return DocumentParser.canParse(url: url)
     }
 
     /// Run `DocumentParser.parse(url:)` on a detached task so the
@@ -1007,8 +1109,9 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
 struct FileSearchTool: OsaurusTool {
     let name = "file_search"
     let description =
-        "Search for text in files using case-insensitive substring matching. **Use this instead of "
-        + "`grep` / `rg` / `find` in `shell_run`.** Returns matching lines with file paths and line numbers."
+        "Search for text in files in the working directory using case-insensitive substring matching. "
+        + "Use this (rather than a shell `grep` / `rg` / `find`) to search file contents. Returns matching "
+        + "lines with file paths and line numbers."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1162,7 +1265,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         "Run a shell command in the working directory. **Reserve this for builds, tests, "
         + "git, processes, network calls, and filesystem mutations (`mv`/`cp`/`rm`/`mkdir`).** "
         + "For file IO, search, edit, write, and directory listing, prefer the dedicated "
-        + "`file_*` tools — each one's description states the `shell_run` pattern it "
+        + "`file_*` tools — each one's description notes the shell pattern it "
         + "replaces. This action requires approval. Long-running commands stream their "
         + "output live to the chat — the user sees it as it happens and can press [Terminate] "
         + "at any time. Final stdout truncated to 10,000 characters. No built-in timeout: "

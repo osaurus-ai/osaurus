@@ -131,19 +131,21 @@ Every write/exec/git-mutating call is logged in [`FileOperationLog`](../Packages
 
 ## Sandbox Toggle
 
-On macOS 26+, the chat input bar also has a Sandbox toggle. The Sandbox is mutually exclusive with the working-folder backend — turning it on clears any selected folder, and selecting a folder disables autonomous sandbox exec. See the [Sandbox Guide](SANDBOX.md) for the full sandbox tool inventory.
+On macOS 26+, the chat input bar also has a Sandbox toggle. The Sandbox **composes** with the working-folder backend rather than excluding it — turning sandbox on while a folder is selected yields **combined mode**: the host workspace is exposed **read-only** while all execution happens in the sandbox VM. See the [Sandbox Guide](SANDBOX.md) for the full sandbox tool inventory.
 
 The execution mode is captured as a first-class enum in [`ExecutionMode.swift`](../Packages/OsaurusCore/Folder/ExecutionMode.swift):
 
 ```swift
 public enum ExecutionMode: Sendable {
-    case hostFolder(FolderContext)
-    case sandbox
+    case hostFolder(FolderContext)        // host-native read-write exec
+    case sandbox(hostRead: FolderContext?) // sandbox exec; optional read-only host folder
     case none
 }
 ```
 
-`ExecutionMode` is what the system prompt composer, tool registry, and memory layer all key off when deciding which tools and instructions to surface. The single resolver is [`ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)`](../Packages/OsaurusCore/Tools/ToolRegistry.swift) and its priority is **sandbox > host folder > none**: if the user has both an open folder and the autonomous-exec toggle on (with `sandbox_exec` registered), the sandbox wins. Plugin and HTTP entry points use the same resolver so the same agent gets the same mode regardless of how it's invoked.
+`ExecutionMode` is what the system prompt composer, tool registry, and memory layer all key off when deciding which tools and instructions to surface. The single resolver is [`ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)`](../Packages/OsaurusCore/Tools/ToolRegistry.swift) and its priority is **sandbox > host folder > none**: if the user has both an open folder and the autonomous-exec toggle on (with `sandbox_exec` registered), the sandbox wins — but the folder now rides along as `.sandbox(hostRead: ctx)` instead of being dropped. Plugin and HTTP entry points use the same resolver so the same agent gets the same mode regardless of how it's invoked.
+
+**Combined mode (`.sandbox(hostRead: ctx)`).** The agent gets the host workspace tree/manifest/git status in context plus the read-only host read tools (`file_tree` / `file_read` / `file_search`, scoped to the folder root). Host write/edit/shell/git stay hidden; all execution runs in the sandbox VM, which has **no mount** of the host workspace (asserted in `SandboxManager.validatedWorkspaceMountSource`). The system prompt emits a read-only workspace section and a two-filesystem block that tells the agent to `file_read` host content and carry it into the sandbox rather than expecting `sandbox_exec` to see the workspace. Security: the no-mount invariant fully contains untrusted *code*, but the trusted agent is the read→exec bridge by design, so three residual risks remain — agent-as-bridge exfiltration, prompt injection from read content, and in-scope secrets. Scope enforcement + secret-file refusal (`.env`/keys/credentials, overridable per session) mitigate the latter two; v1 keeps sandbox **network-on**, so the exfiltration residual is documented rather than closed.
 
 In sandbox mode, the composer also reads the agent's `~/SOUL.md` and emits it as a static `## SOUL` section between persona and the operational directives. This is the agent-authored complement to the user-authored persona slot — see the [Sandbox Guide](SANDBOX.md) for the full contract. Folder mode does not get a SOUL section; folder agents are short-lived and project-bound.
 

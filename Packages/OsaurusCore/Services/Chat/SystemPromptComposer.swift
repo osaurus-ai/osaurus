@@ -753,6 +753,21 @@ public struct SystemPromptComposer: Sendable {
                     content: SystemPromptTemplates.sandbox(secretNames: secretNames)
                 )
             )
+            // Combined mode: a read-only host workspace rides alongside
+            // the sandbox. Append the read-only workspace section + the
+            // two-filesystem block AFTER the sandbox section so the agent
+            // reads sandbox framing first, then learns the workspace is a
+            // separate, read-only filesystem. Static so it joins the
+            // cached prefix.
+            if let hostRead = executionMode.hostReadContext {
+                composer.append(
+                    .static(
+                        id: "combinedHostRead",
+                        label: "Host Workspace (read-only)",
+                        content: SystemPromptTemplates.combinedHostRead(from: hostRead)
+                    )
+                )
+            }
         } else if let folder = executionMode.folderContext {
             composer.append(
                 .static(

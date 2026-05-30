@@ -139,7 +139,7 @@ struct PromptSectionOrderingTests {
 
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agent.id,
-                executionMode: .sandbox,
+                executionMode: .sandbox(hostRead: nil),
                 model: "gpt-5",
                 cachedPreflight: .empty
             )

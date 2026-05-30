@@ -122,7 +122,7 @@ struct SystemPromptComposerToolResolutionTests {
             withRegisteredSandboxBuiltins {
                 let tools = SystemPromptComposer.resolveTools(
                     agentId: agentId,
-                    executionMode: .sandbox
+                    executionMode: .sandbox(hostRead: nil)
                 )
                 let names = Set(tools.map { $0.function.name })
                 #expect(names.contains("render_chart"))
@@ -141,7 +141,7 @@ struct SystemPromptComposerToolResolutionTests {
             withRegisteredSandboxBuiltins {
                 let tools = SystemPromptComposer.resolveTools(
                     agentId: agentId,
-                    executionMode: .sandbox
+                    executionMode: .sandbox(hostRead: nil)
                 )
                 let names = Set(tools.map { $0.function.name })
                 // No manual selection — but always-loaded built-ins and
@@ -170,6 +170,37 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    @Test
+    func combinedMode_showsHostReadToolsAndSandboxExec_hidesHostWrite() async {
+        // Combined sandbox + host-read: both the sandbox builtins and the
+        // folder tools are registered, but only the read-only host subset
+        // (`file_tree`/`file_read`/`file_search`) should surface alongside
+        // sandbox exec. Host write/edit/shell stay hidden — the host is
+        // read-only and exec is sandbox-only.
+        await withSandboxAgent(autonomous: true) { agentId in
+            withRegisteredSandboxBuiltins {
+                withRegisteredFolderTools { folder in
+                    let tools = SystemPromptComposer.resolveTools(
+                        agentId: agentId,
+                        executionMode: .sandbox(hostRead: folder)
+                    )
+                    let names = Set(tools.map { $0.function.name })
+                    // Read-only host subset is visible.
+                    #expect(names.contains("file_tree"))
+                    #expect(names.contains("file_read"))
+                    #expect(names.contains("file_search"))
+                    // Sandbox exec is visible.
+                    #expect(names.contains("sandbox_exec"))
+                    // Host write / edit are hidden (read-only host).
+                    #expect(!names.contains("file_write"))
+                    #expect(!names.contains("file_edit"))
+                    // Global egress + loop tools remain.
+                    #expect(names.contains("share_artifact"))
+                }
+            }
+        }
+    }
+
     // MARK: - Loop tools + share_artifact visibility
 
     @Test
@@ -191,7 +222,7 @@ struct SystemPromptComposerToolResolutionTests {
         await withSandboxAgent(autonomous: true) { agentId in
             withRegisteredSandboxBuiltins {
                 let names = Set(
-                    SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .sandbox)
+                    SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .sandbox(hostRead: nil))
                         .map { $0.function.name }
                 )
                 #expect(names.contains("todo"))
@@ -208,7 +239,7 @@ struct SystemPromptComposerToolResolutionTests {
             withRegisteredSandboxBuiltins {
                 let names = SystemPromptComposer.resolveTools(
                     agentId: agentId,
-                    executionMode: .sandbox
+                    executionMode: .sandbox(hostRead: nil)
                 ).map { $0.function.name }
                 // The first four entries must be the loop tools in fixed
                 // order. This is what makes the rendered <tools> prefix
@@ -227,7 +258,7 @@ struct SystemPromptComposerToolResolutionTests {
             withRegisteredSandboxBuiltins {
                 let tools = SystemPromptComposer.resolveTools(
                     agentId: agentId,
-                    executionMode: .sandbox,
+                    executionMode: .sandbox(hostRead: nil),
                     toolsDisabled: true
                 )
                 #expect(tools.isEmpty)
@@ -301,8 +332,8 @@ struct SystemPromptComposerToolResolutionTests {
                 // Two compositions with identical inputs must return the
                 // exact same tool ordering — that's what makes the rendered
                 // <tools> block byte-stable across sends.
-                let a = SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .sandbox)
-                let b = SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .sandbox)
+                let a = SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .sandbox(hostRead: nil))
+                let b = SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .sandbox(hostRead: nil))
                 let aNames = a.map { $0.function.name }
                 let bNames = b.map { $0.function.name }
                 #expect(aNames == bNames)

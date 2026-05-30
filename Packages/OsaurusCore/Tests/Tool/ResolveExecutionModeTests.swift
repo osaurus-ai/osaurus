@@ -45,12 +45,36 @@ struct ResolveExecutionModeTests {
             registerSandboxExec()
             defer { ToolRegistry.shared.unregisterAllSandboxTools() }
 
+            let folder = sampleFolderContext()
             let mode = ToolRegistry.shared.resolveExecutionMode(
-                folderContext: sampleFolderContext(),
+                folderContext: folder,
                 autonomousEnabled: true
             )
             #expect(mode.usesSandboxTools)
             #expect(!mode.usesHostFolderTools)
+            // Combined mode: the folder rides along read-only on the
+            // sandbox case instead of being dropped. Host-native folder
+            // tools (`folderContext`) stay nil; the read-only host folder
+            // is exposed via `hostReadContext` / `allowsHostReadTools`.
+            #expect(mode.allowsHostReadTools)
+            #expect(mode.hostReadContext?.rootPath == folder.rootPath)
+            #expect(mode.folderContext == nil)
+        }
+    }
+
+    @Test
+    func sandboxWithoutFolder_hasNoHostReadContext() async {
+        await SandboxTestLock.shared.run {
+            registerSandboxExec()
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: nil,
+                autonomousEnabled: true
+            )
+            #expect(mode.usesSandboxTools)
+            #expect(!mode.allowsHostReadTools)
+            #expect(mode.hostReadContext == nil)
         }
     }
 

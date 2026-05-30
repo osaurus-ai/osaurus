@@ -959,6 +959,16 @@ final class ToolRegistry: ObservableObject {
         Set(FolderToolManager.shared.folderToolNames)
     }
 
+    /// The read-only subset of the folder tools. In combined sandbox +
+    /// host-read mode these stay visible (the agent reads the host
+    /// workspace) while every other folder tool — host write / edit /
+    /// shell / git — is hidden, because exec is confined to the sandbox
+    /// and the host is read-only. Single source of truth shared by
+    /// `excludedToolNames` and the combined-mode tests.
+    static let folderReadOnlyToolNames: Set<String> = [
+        "file_tree", "file_read", "file_search",
+    ]
+
     /// Runtime-managed tools are execution infrastructure, always loaded when registered.
     var runtimeManagedToolNames: Set<String> {
         Self.folderToolNames.union(builtInSandboxToolNames)
@@ -985,7 +995,15 @@ final class ToolRegistry: ObservableObject {
     private func excludedToolNames(for mode: ExecutionMode) -> Set<String> {
         var excluded: Set<String> = []
         if !mode.usesHostFolderTools {
-            excluded.formUnion(Self.folderToolNames)
+            // Combined sandbox + host-read mode keeps the read-only host
+            // subset (`file_tree` / `file_read` / `file_search`) visible
+            // while still hiding host write / edit / shell / git — exec
+            // is sandbox-only, the host is read-only.
+            var folderExcluded = Self.folderToolNames
+            if mode.allowsHostReadTools {
+                folderExcluded.subtract(Self.folderReadOnlyToolNames)
+            }
+            excluded.formUnion(folderExcluded)
         }
         if !mode.usesSandboxTools {
             excluded.formUnion(builtInSandboxToolNames)
@@ -1016,7 +1034,12 @@ final class ToolRegistry: ObservableObject {
         autonomousEnabled: Bool
     ) -> ExecutionMode {
         if autonomousEnabled, toolsByName.keys.contains("sandbox_exec") {
-            return .sandbox
+            // Combined mode: exec runs in the sandbox, and any mounted
+            // folder rides along as a read-only host workspace
+            // (`hostRead`). When no folder is picked this is plain
+            // sandbox mode. Either way exec is confined to the VM, which
+            // has no mount of the host workspace.
+            return .sandbox(hostRead: folderContext)
         }
         if let folderContext {
             return .hostFolder(folderContext)
