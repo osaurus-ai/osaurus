@@ -1122,6 +1122,15 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("Do not output an empty `line_count()`"), "Decoded: \(decoded)")
         #expect(decoded.contains("Do not omit `text`"), "Decoded: \(decoded)")
         #expect(decoded.contains("No prose, no markdown, no JSON object, no reasoning text."), "Decoded: \(decoded)")
+        if let userRange = decoded.range(
+            of: "Use the line_count tool on this exact text: red\ngreen\nblue"
+        ) {
+            let afterUser = decoded[userRange.upperBound...]
+            #expect(
+                !afterUser.contains("The active API tool_choice is required"),
+                "Required-tool instruction must not be appended to exact user text. Decoded: \(decoded)"
+            )
+        }
         #expect(!decoded.contains("Today's date:"), "Decoded: \(decoded)")
         #expect(!decoded.contains("<think>"), "Decoded: \(decoded)")
     }
