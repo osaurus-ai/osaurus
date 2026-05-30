@@ -1369,6 +1369,112 @@ struct MLXBatchAdapterTests {
         }
     }
 
+    /// LFM2.5 JANG tool rows use the explicit required-tool rail when
+    /// `tool_choice` requires a local call. Live strict rows showed the
+    /// ordinary reasoning-capable rail can spend the whole budget thinking
+    /// about the correct call after tool-result history without emitting it.
+    /// Keep this scoped to required/named tool turns; ordinary follow-up chat
+    /// keeps the bundle's default behavior unless the request opts in/out.
+    @Test func additionalContext_closesLFMThinkingOnlyForRequiredToolTurns() {
+        let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
+        let userDisabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(true)]
+        )
+        let userEnabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(false)]
+        )
+        let userReasoning = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["reasoningEffort": .string("high")]
+        )
+
+        for modelName in [
+            "LiquidAI/LFM2-7B",
+            "LiquidAI/LFM2.5-8B-A1B",
+            "JANGQ-AI/LFM2.5-8B-A1B-JANG_2L",
+            "lfm2.5-8b-a1b-jang_2l",
+            "lfm2_moe",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] == nil,
+                "ordinary LFM chat must not get a hidden no-thinking default: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName,
+                    toolChoice: .required
+                )["enable_thinking"] as? Bool == false,
+                "required LFM tool turns must use the closed tool rail: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName,
+                    toolChoice: .function(
+                        ToolChoiceOption.FunctionName(
+                            type: "function",
+                            function: ToolChoiceOption.Name(name: "line_count")
+                        )
+                    )
+                )["enable_thinking"] as? Bool == false,
+                "named LFM tool turns must use the closed tool rail: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName,
+                    toolChoice: ToolChoiceOption.none
+                )["enable_thinking"] == nil,
+                "explicit tool_choice none must not close ordinary LFM chat: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userDisabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == false,
+                "explicit LFM thinking-off must still be honored: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userEnabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "explicit LFM thinking opt-in must still be honored: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userReasoning,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "explicit LFM reasoning effort must still be honored for ordinary chat: \(modelName)"
+            )
+        }
+
+        for modelName in [
+            "lfm21",
+            "lfm2x",
+            "dataset/alfm2",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName,
+                    toolChoice: .required
+                )["enable_thinking"] == nil,
+                "non-LFM boundary names must not get LFM required-tool behavior: \(modelName)"
+            )
+        }
+    }
+
     /// Nemotron Omni call/audio workloads default to the closed/no-thinking
     /// rail for ordinary chat. Live JANGTQ rows otherwise stream only hidden
     /// reasoning_content and length-stop with empty visible content. Explicit

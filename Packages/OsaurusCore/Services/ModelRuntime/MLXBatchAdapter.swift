@@ -800,6 +800,17 @@ struct MLXBatchAdapter {
             }
             return context
         }
+
+        if ModelFamilyNames.isLFM2Family(modelName) {
+            if toolChoiceRequiresLocalCall(toolChoice) {
+                context["enable_thinking"] = false
+            } else if let disableThinking {
+                context["enable_thinking"] = !disableThinking
+            } else if normalizedReasoningEffort != nil {
+                context["enable_thinking"] = hasPositiveReasoningEffort
+            }
+            return context
+        }
         if ModelFamilyNames.isGemmaFamily(modelName) {
             if directRailReasoningEffort {
                 context["enable_thinking"] = false
