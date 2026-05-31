@@ -226,6 +226,74 @@ struct UnifiedFileToolParamsTests {
         #expect(!text.contains("huge.txt"))
     }
 
+    // MARK: - file_search traversal guards (cancellation + visit budget)
+
+    @Test func fileSearch_targetFiles_visitBudgetTruncates() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for i in 0 ..< 8 {
+            try "x".write(
+                to: root.appendingPathComponent("f\(i).txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+
+        // A tiny injected budget stops the walk well before all 8 entries,
+        // even though nothing matches, so the result is marked truncated.
+        let output = try await FileSearchTool(rootPath: root, maxEntriesVisited: 3).execute(
+            argumentsJSON: #"{"pattern":"nomatch_zzz","target":"files"}"#
+        )
+        let text = (ToolEnvelope.successPayload(output) as? [String: Any])?["text"] as? String ?? ""
+        #expect(text.contains("search stopped after scanning"))
+    }
+
+    @Test func fileSearch_content_visitBudgetTruncates() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for i in 0 ..< 8 {
+            try "nothing here".write(
+                to: root.appendingPathComponent("f\(i).txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+
+        let output = try await FileSearchTool(rootPath: root, maxEntriesVisited: 3).execute(
+            argumentsJSON: #"{"pattern":"needle","target":"content"}"#
+        )
+        let text = (ToolEnvelope.successPayload(output) as? [String: Any])?["text"] as? String ?? ""
+        #expect(text.contains("search stopped after scanning"))
+    }
+
+    /// Best-effort: a cancelled search observes cancellation and bails rather
+    /// than running the full walk. `Task { }` enqueues the body, so the
+    /// synchronous `cancel()` lands before the loop's first
+    /// `Task.checkCancellation()`. Timing-tolerant by construction.
+    @Test func fileSearch_respectsCancellation() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for i in 0 ..< 50 {
+            try "x".write(
+                to: root.appendingPathComponent("f\(i).txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+
+        let tool = FileSearchTool(rootPath: root)
+        let task = Task { () throws -> String in
+            try await tool.execute(argumentsJSON: #"{"pattern":"nomatch_zzz","target":"files"}"#)
+        }
+        task.cancel()
+        do {
+            _ = try await task.value
+            Issue.record("expected the cancelled search to throw CancellationError")
+        } catch is CancellationError {
+            // Expected.
+        }
+    }
+
     // MARK: - Secret refusal can't be bypassed via a bound bridge
 
     @Test func fileRead_relativeSecret_refusesEvenWithBridgeBound() async throws {

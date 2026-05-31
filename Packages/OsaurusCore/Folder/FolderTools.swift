@@ -332,6 +332,15 @@ enum FolderToolHelpers {
     /// dropped by `.skipsHiddenFiles`; this catches the non-hidden ones.
     static let prunedSearchDirectories: Set<String> = ["node_modules", "Pods", "DerivedData"]
 
+    /// Maximum number of filesystem entries a single host search pulls from
+    /// the enumerator before stopping and reporting truncation. A
+    /// deterministic worst-case traversal bound so a low/zero-match query
+    /// over a huge tree can't walk the entire subtree (and blow past the
+    /// registry's 120s wall-clock cap with no results). Filename matching at
+    /// this count is sub-second; content reads stay separately bounded by
+    /// `maxContentSearchFileBytes` + the binary-extension skip.
+    static let maxSearchEntriesVisited = 20_000
+
     /// Shared prune step for a recursive host search enumerator. When
     /// `fileURL` is a directory, prunes build-artifact subtrees (via
     /// `skipDescendants()`) and returns true so the caller skips it; returns
@@ -346,6 +355,18 @@ enum FolderToolHelpers {
             enumerator?.skipDescendants()
         }
         return true
+    }
+
+    /// Cancellation + visit-budget gate for one search enumerator step,
+    /// shared by both host search loops. Throws `CancellationError` when the
+    /// surrounding task is cancelled (so a timed-out search stops instead of
+    /// walking on as a background zombie), counts the visited entry, and
+    /// returns false once `limit` is exceeded so the caller can stop and mark
+    /// the result truncated.
+    static func searchStepWithinBudget(visited: inout Int, limit: Int) throws -> Bool {
+        try Task.checkCancellation()
+        visited += 1
+        return visited <= limit
     }
 
     /// Per-file size cap for a content search. Files larger than this are
@@ -1594,9 +1615,14 @@ struct FileSearchTool: OsaurusTool {
     ])
 
     private let rootPath: URL
+    /// Entries pulled from the enumerator before a search stops and reports
+    /// truncation. Defaults to the shared budget; injectable so tests can
+    /// exercise the bound without creating tens of thousands of files.
+    private let maxEntriesVisited: Int
 
-    init(rootPath: URL) {
+    init(rootPath: URL, maxEntriesVisited: Int = FolderToolHelpers.maxSearchEntriesVisited) {
         self.rootPath = rootPath
+        self.maxEntriesVisited = maxEntriesVisited
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -1639,7 +1665,7 @@ struct FileSearchTool: OsaurusTool {
         // `sandbox_search_files(target:"files")` so the unified family can
         // locate files by name on either filesystem.
         if target == "files" {
-            return findFilesByName(root: searchURL, glob: pattern, maxResults: maxResults)
+            return try findFilesByName(root: searchURL, glob: pattern, maxResults: maxResults)
         }
 
         var results: [String] = []
@@ -1662,6 +1688,8 @@ struct FileSearchTool: OsaurusTool {
             return FolderToolHelpers.secretRefusalEnvelope(relativePath: searchPath, tool: name)
         }
 
+        var budgetTruncated = false
+
         if isDirectory.boolValue {
             // Search directory recursively
             let enumerator = FileManager.default.enumerator(
@@ -1670,8 +1698,18 @@ struct FileSearchTool: OsaurusTool {
                 options: [.skipsHiddenFiles]
             )
 
+            var visited = 0
             while let fileURL = enumerator?.nextObject() as? URL {
                 guard totalMatches < maxResults else { break }
+                guard
+                    try FolderToolHelpers.searchStepWithinBudget(
+                        visited: &visited,
+                        limit: maxEntriesVisited
+                    )
+                else {
+                    budgetTruncated = true
+                    break
+                }
 
                 let resourceValues = try? fileURL.resourceValues(forKeys: [
                     .isRegularFileKey, .isDirectoryKey,
@@ -1719,9 +1757,10 @@ struct FileSearchTool: OsaurusTool {
         }
 
         if results.isEmpty {
+            let base = "No matches found for '\(pattern)'"
             return ToolEnvelope.success(
                 tool: name,
-                text: "No matches found for '\(pattern)'"
+                text: budgetTruncated ? base + Self.budgetTruncationNote : base
             )
         }
 
@@ -1730,10 +1769,19 @@ struct FileSearchTool: OsaurusTool {
 
         if totalMatches >= maxResults {
             output += "\n\n(results truncated at \(maxResults))"
+        } else if budgetTruncated {
+            output += Self.budgetTruncationNote
         }
 
         return ToolEnvelope.success(tool: name, text: output)
     }
+
+    /// Appended when a search stops at `maxEntriesVisited` rather than from
+    /// running out of matches, so the model knows the result is incomplete
+    /// because the tree was too large — and what to do about it.
+    private static let budgetTruncationNote =
+        "\n\n(search stopped after scanning the entry limit; narrow the `path` "
+        + "or use a more specific pattern)"
 
     /// Filename find under `root` (recursive, hidden + secret files skipped,
     /// build-artifact dirs pruned), returning matching relative paths as a
@@ -1741,7 +1789,7 @@ struct FileSearchTool: OsaurusTool {
     /// substring of the basename; a pattern with `*`/`?` is a case-insensitive
     /// glob anchored to the full basename. Mirrors the sandbox
     /// `find … -iname` behaviour.
-    private func findFilesByName(root: URL, glob: String, maxResults: Int) -> String {
+    private func findFilesByName(root: URL, glob: String, maxResults: Int) throws -> String {
         let regexBody =
             NSRegularExpression.escapedPattern(for: glob)
             .replacingOccurrences(of: "\\*", with: ".*")
@@ -1752,13 +1800,24 @@ struct FileSearchTool: OsaurusTool {
             FolderToolHelpers.patternHasGlobMetacharacters(glob) ? "^\(regexBody)$" : regexBody
 
         var matches: [String] = []
+        var budgetTruncated = false
         let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
             options: [.skipsHiddenFiles]
         )
+        var visited = 0
         while let fileURL = enumerator?.nextObject() as? URL {
             guard matches.count < maxResults else { break }
+            guard
+                try FolderToolHelpers.searchStepWithinBudget(
+                    visited: &visited,
+                    limit: maxEntriesVisited
+                )
+            else {
+                budgetTruncated = true
+                break
+            }
             let resourceValues = try? fileURL.resourceValues(forKeys: [
                 .isRegularFileKey, .isDirectoryKey,
             ])
@@ -1782,11 +1841,17 @@ struct FileSearchTool: OsaurusTool {
         }
 
         if matches.isEmpty {
-            return ToolEnvelope.success(tool: name, text: "No files found matching '\(glob)'")
+            let base = "No files found matching '\(glob)'"
+            return ToolEnvelope.success(
+                tool: name,
+                text: budgetTruncated ? base + Self.budgetTruncationNote : base
+            )
         }
         var output = "Found \(matches.count) file(s):\n\n" + matches.joined(separator: "\n")
         if matches.count >= maxResults {
             output += "\n\n(results truncated at \(maxResults))"
+        } else if budgetTruncated {
+            output += Self.budgetTruncationNote
         }
         return ToolEnvelope.success(tool: name, text: output)
     }
