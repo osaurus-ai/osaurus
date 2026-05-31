@@ -813,7 +813,7 @@ extension Notification.Name {
     static let chatToolbarSelectRelayAgent = Notification.Name("chatToolbarSelectRelayAgent")
 }
 
-/// Contextual action button: settings (empty state) or new-chat plus.
+/// Contextual action button: new-chat plus once a conversation exists.
 private struct ChatToolbarActionView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
@@ -821,9 +821,7 @@ private struct ChatToolbarActionView: View {
     var body: some View {
         Group {
             if session.turns.isEmpty {
-                SettingsButton(action: {
-                    AppDelegate.shared?.showManagementWindow(initialTab: nil)
-                })
+                EmptyView()
             } else {
                 HeaderActionButton(
                     icon: "plus",
