@@ -53,7 +53,7 @@ struct UnifiedFileToolParamsTests {
     @Test func fileRead_maxChars_capsOutput() async throws {
         let root = tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        let big = (1...200).map { "line-\($0)" }.joined(separator: "\n")
+        let big = (1 ... 200).map { "line-\($0)" }.joined(separator: "\n")
         try big.write(
             to: root.appendingPathComponent("big.txt"),
             atomically: true,
