@@ -420,6 +420,18 @@ public struct ContextBudgetManager: Sendable {
         let lineCount = content.components(separatedBy: .newlines).count
         let charCount = content.count
 
+        // Structured directory listing envelope: collapse to a count so an
+        // old listing doesn't retain its full entry array, but keep enough
+        // that the model knows a listing happened and where.
+        if ToolEnvelope.isSuccess(content),
+            let payload = ToolEnvelope.successPayload(content) as? [String: Any],
+            payload["kind"] as? String == "listing"
+        {
+            let count = payload["entry_count"] as? Int ?? (payload["entries"] as? [Any])?.count ?? 0
+            let path = payload["path"] as? String ?? "."
+            return "[Compressed: directory listing, \(count) entries in \(path)]"
+        }
+
         // Try to detect the tool type from content patterns
         if content.hasPrefix("Lines ") || content.contains("| ") {
             // file_read result

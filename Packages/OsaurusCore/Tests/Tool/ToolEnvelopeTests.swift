@@ -196,7 +196,10 @@ struct ToolEnvelopeTests {
             tool: "file_read"
         )
         let dict = try parse(env)
-        #expect(dict["kind"] as? String == "execution_error")
+        // Distinct `not_found` kind so the harness can classify the result
+        // as a not-found transition (steer to the last listing) instead of a
+        // generic execution error.
+        #expect(dict["kind"] as? String == "not_found")
         #expect(dict["retryable"] as? Bool == false)
     }
 

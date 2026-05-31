@@ -188,6 +188,15 @@ use the document-adapter limits instead. `sandbox_read_file` remains a raw
 sandbox utility with its own character/range controls; it does not currently
 share the folder `file_read` document-adapter path.
 
+When `file_read` is pointed at a **directory** (host or, in combined mode, a
+`/workspace/...` sandbox path), it returns a structured `kind: "listing"`
+envelope with `entries[]` (`{name, path, type}`) instead of an ASCII tree —
+the sandbox route builds it with `find -maxdepth N -printf '%y\t%p\n'`. Each
+entry's `path` is a ready-to-use argument for the next `file_read`, so a small
+model descends by copying a field rather than parsing a tree. The agent loop's
+`AgentTaskState` harness classifies the listing to steer the next step; see
+[Agent Loop — Harness Task State](AGENT_LOOP.md#harness-task-state-agenttaskstate).
+
 ### Requires Autonomous Exec
 
 | Tool | Description |

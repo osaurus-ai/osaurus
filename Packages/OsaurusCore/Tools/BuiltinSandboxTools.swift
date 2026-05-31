@@ -416,7 +416,13 @@ internal func sandboxBridgeList(
     guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
 
     let depth = max(1, maxDepth)
-    let command = "find '\(resolved)' -maxdepth \(depth) 2>/dev/null | head -500"
+    // `-printf '%y\t%p'` emits a type letter (`d`/`f`/...) + path per entry so
+    // we can return a structured `{name, path, type}` listing instead of a
+    // prose tree (GNU find on the Linux sandbox). The model copies an entry's
+    // `path` straight into the next `file_read` call.
+    let listCap = 500
+    let command =
+        "find '\(resolved)' -maxdepth \(depth) -printf '%y\\t%p\\n' 2>/dev/null | head -\(listCap)"
     let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
         bridge.agentName,
         command: command
@@ -431,8 +437,25 @@ internal func sandboxBridgeList(
             retryable: false
         )
     }
-    let listing = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-    return ToolEnvelope.success(tool: "file_read", text: listing.isEmpty ? "(empty)" : result.stdout)
+    let rawLines = result.stdout.split(separator: "\n", omittingEmptySubsequences: true)
+    var entries: [[String: Any]] = []
+    for raw in rawLines {
+        let line = String(raw)
+        guard let tab = line.firstIndex(of: "\t") else { continue }
+        let typeLetter = line[line.startIndex ..< tab]
+        let entryPath = String(line[line.index(after: tab)...])
+        // `find` lists the search root itself first; it is not a child entry.
+        if entryPath == resolved { continue }
+        let type = typeLetter == "d" ? "directory" : "file"
+        let name = (entryPath as NSString).lastPathComponent
+        entries.append(["name": name, "path": entryPath, "type": type])
+    }
+    return ToolEnvelope.listing(
+        tool: "file_read",
+        path: resolved,
+        entries: entries,
+        truncated: rawLines.count >= listCap
+    )
 }
 
 /// Search a sandbox path for a combined-mode `file_search(..., path:"/workspace/...")`
@@ -1239,7 +1262,8 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
     let description =
         "Search file contents OR find files by name. **Use this instead of `grep`/`rg`/`find`/`ls` "
         + "in `sandbox_exec`.** Pass `target=\"content\"` (default) for a regex search inside file "
-        + "bodies, or `target=\"files\"` for a filename glob (e.g. `*.py`, `test_*`). Cap output "
+        + "bodies, or `target=\"files\"` to find files by name (case-insensitive substring, e.g. `q4`; "
+        + "use `*`/`?` for a glob like `*.py`, `test_*`). Cap output "
         + "with `max_results` (default 100, max 500). Returns `{matches: \"...\"}` for both targets."
     let agentName: String
     let home: String
@@ -1253,7 +1277,8 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
                     "type": .string("string"),
                     "description": .string(
                         "When `target=\"content\"`: ripgrep regex (e.g. `TODO|FIXME`). "
-                            + "When `target=\"files\"`: filename glob (e.g. `*.py`, `test_*`)."
+                            + "When `target=\"files\"`: filename to find (case-insensitive substring, "
+                            + "e.g. `q4`; use `*`/`?` for a glob like `*.py`, `test_*`)."
                     ),
                 ]),
                 "target": .object([
@@ -1320,9 +1345,14 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
 
         switch target {
         case "files":
-            let escapedPattern = shellEscapeSingleQuoted(pattern)
+            // A bare word becomes a case-insensitive substring (`*word*`); a
+            // pattern with `*`/`?` is passed through as a case-insensitive
+            // glob. Mirrors the host `findFilesByName` matching rule.
+            let namePattern =
+                FolderToolHelpers.patternHasGlobMetacharacters(pattern) ? pattern : "*\(pattern)*"
+            let escapedPattern = shellEscapeSingleQuoted(namePattern)
             let cmd =
-                "find '\(resolved)' -type f -name '\(escapedPattern)' 2>/dev/null | head -\(cappedMax)"
+                "find '\(resolved)' -type f -iname '\(escapedPattern)' 2>/dev/null | head -\(cappedMax)"
             let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
                 agentName,
                 command: cmd

@@ -87,9 +87,18 @@ struct UnifiedFileToolParamsTests {
             argumentsJSON: #"{"path":"."}"#
         )
         let payload = try #require(ToolEnvelope.successPayload(output) as? [String: Any])
-        let text = payload["text"] as? String ?? ""
-        #expect(text.contains("alpha.txt"))
-        #expect(text.contains("nested"))
+        // Structured, actionable listing shape — entries, not a tree string.
+        #expect(payload["kind"] as? String == "listing")
+        #expect(payload["text"] == nil, "a listing must not hand the model a prose tree")
+        let entries = try #require(payload["entries"] as? [[String: Any]])
+        let names = entries.compactMap { $0["name"] as? String }
+        #expect(names.contains("alpha.txt"))
+        #expect(names.contains("nested"))
+        // The directory entry is typed so the model can branch without parsing.
+        let nested = try #require(entries.first { $0["name"] as? String == "nested" })
+        #expect(nested["type"] as? String == "directory")
+        // Each entry's `path` is a ready-to-use next `file_read` argument.
+        #expect(entries.allSatisfy { ($0["path"] as? String)?.isEmpty == false })
     }
 
     /// `file_read(max_depth:)` on a directory bounds how deep the listing
@@ -110,10 +119,13 @@ struct UnifiedFileToolParamsTests {
         let shallow = try await FileReadTool(rootPath: root).execute(
             argumentsJSON: #"{"path":".","max_depth":1}"#
         )
-        let shallowText = (ToolEnvelope.successPayload(shallow) as? [String: Any])?["text"] as? String ?? ""
-        #expect(shallowText.contains("level1"))
+        let shallowEntries =
+            (ToolEnvelope.successPayload(shallow) as? [String: Any])?["entries"]
+            as? [[String: Any]] ?? []
+        let shallowNames = shallowEntries.compactMap { $0["name"] as? String }
+        #expect(shallowNames.contains("level1"))
         // Depth 1 must not descend to the depth-2 file.
-        #expect(!shallowText.contains("deep.txt"))
+        #expect(!shallowNames.contains("deep.txt"))
     }
 
     // MARK: - file_search target=files (host route)
@@ -135,6 +147,83 @@ struct UnifiedFileToolParamsTests {
         #expect(text.contains("a.swift"))
         #expect(text.contains("c.swift"))
         #expect(!text.contains("b.txt"))
+    }
+
+    @Test func fileSearch_targetFiles_bareWordIsSubstring() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let docs = root.appendingPathComponent("Documents")
+        try FileManager.default.createDirectory(at: docs, withIntermediateDirectories: true)
+        try "x".write(
+            to: docs.appendingPathComponent("q4_sales_report.xlsx"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "x".write(to: docs.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+
+        // A bare word matches as a (recursive) substring of the basename.
+        let lower = try await FileSearchTool(rootPath: root).execute(
+            argumentsJSON: #"{"pattern":"q4","target":"files"}"#
+        )
+        let lowerText = (ToolEnvelope.successPayload(lower) as? [String: Any])?["text"] as? String ?? ""
+        #expect(lowerText.contains("q4_sales_report.xlsx"))
+        #expect(!lowerText.contains("notes.txt"))
+
+        // Matching is case-insensitive.
+        let upper = try await FileSearchTool(rootPath: root).execute(
+            argumentsJSON: #"{"pattern":"Q4","target":"files"}"#
+        )
+        let upperText = (ToolEnvelope.successPayload(upper) as? [String: Any])?["text"] as? String ?? ""
+        #expect(upperText.contains("q4_sales_report.xlsx"))
+    }
+
+    @Test func fileSearch_targetFiles_prunesBuildArtifactDirs() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let nodeModules = root.appendingPathComponent("node_modules")
+        try FileManager.default.createDirectory(at: nodeModules, withIntermediateDirectories: true)
+        try "x".write(
+            to: nodeModules.appendingPathComponent("widget.js"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "x".write(to: root.appendingPathComponent("widget.js"), atomically: true, encoding: .utf8)
+
+        let output = try await FileSearchTool(rootPath: root).execute(
+            argumentsJSON: #"{"pattern":"widget","target":"files"}"#
+        )
+        let text = (ToolEnvelope.successPayload(output) as? [String: Any])?["text"] as? String ?? ""
+        // The top-level file is returned; the node_modules copy is pruned.
+        #expect(text.contains("widget.js"))
+        #expect(!text.contains("node_modules"))
+    }
+
+    @Test func fileSearch_content_skipsOversizedAndBinaryFiles() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // Normal text file with the needle.
+        try "the needle is here".write(
+            to: root.appendingPathComponent("normal.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        // Binary-extension file containing the needle as text -> skipped by extension.
+        try "needle".write(
+            to: root.appendingPathComponent("image.png"),
+            atomically: true,
+            encoding: .utf8
+        )
+        // Oversized text file (> 2 MiB cap) containing the needle -> skipped by size.
+        let big = String(repeating: "a", count: 3 * 1024 * 1024) + " needle"
+        try big.write(to: root.appendingPathComponent("huge.txt"), atomically: true, encoding: .utf8)
+
+        let output = try await FileSearchTool(rootPath: root).execute(
+            argumentsJSON: #"{"pattern":"needle","target":"content"}"#
+        )
+        let text = (ToolEnvelope.successPayload(output) as? [String: Any])?["text"] as? String ?? ""
+        #expect(text.contains("normal.txt"))
+        #expect(!text.contains("image.png"))
+        #expect(!text.contains("huge.txt"))
     }
 
     // MARK: - Secret refusal can't be bypassed via a bound bridge

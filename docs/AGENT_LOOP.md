@@ -201,6 +201,64 @@ The OpenAI-compatible HTTP endpoint is **stateless** — there's no Osaurus sess
 
 ---
 
+## Harness Task State (`AgentTaskState`)
+
+Small local models (≈1B active) used as both planner and executor in a free
+loop fail at the bookkeeping, not the choices: every turn they have to
+reconstruct from raw tool text *where they are*, *what the last result was*,
+and *what the next valid move is*. The win came from moving that bookkeeping
+into the loop and making results structured rather than prose.
+
+Two changes, one component:
+
+1. **Results are actionable objects, not prose.** A `file_read` on a directory
+   returns a `kind: "listing"` envelope with `entries[]` (each carrying a
+   ready-to-use `path`), not an ASCII tree. Descending is a field copy
+   (`entries[i].path`), not a comprehension task. File reads carry `kind:
+   "file"`; missing paths return the `not_found` kind. See
+   [Tool Contract — structured result kinds](TOOL_CONTRACT.md#structured-actionable-result-kinds).
+
+2. **A task-state machine in the harness.** [`AgentTaskState`](../Packages/OsaurusCore/Services/Chat/AgentTaskState.swift)
+   classifies each result (`classify(_:)` → empty/partial/populated listing,
+   file content, not-found, error, other) and:
+   - **De-dupes still-fresh re-reads.** A read whose `(name, canonical args)`
+     was already satisfied this message replays the **exact** prior envelope
+     (never a budget-collapsed form) instead of re-executing. A write/edit to a
+     path **invalidates** that path's fresh read — both sides canonicalize
+     through one shared `canonicalPath(_:)` — so the normal `read → edit →
+     read-to-verify` pattern is never short-circuited with stale content.
+   - **Emits a next-step nudge** for the next turn, driven by a data table:
+     populated listing → "copy an entry's `path`"; empty → "don't invent an
+     entry"; truncated → "use `file_search`"; not-found → "pick from the last
+     listing". The nudge is **system-attributed** (`[System Notice] …`, like
+     the tool-budget notice). The listing nudge is **reactive, not proactive**:
+     it fires only after **two listings without an intervening read** (the
+     model is observed wandering), so a capable model that descends immediately
+     after the first listing never sees it — no backseat-driving for a model
+     that already inferred the next step. It then keeps firing while the model
+     stays stuck (no upper silence cap). Only a **successful file read** resets
+     the wandering counter; a `not_found` does not (a failed read is not
+     progress), so interleaved failed reads can't mask wandering — and
+     `not_found` fires its own reactive nudge in parallel. (The two listings
+     are not asserted to be distinct paths; a different spelling of the same
+     dir would also count, but the nudge is benign.)
+
+   **The nudge is a nudge, not the mechanism.** The structured `entries[]` must
+   carry the descent on its own — validated by a bias-disabled gate
+   (`AgentTaskStateTests.transcript_listThenRead_descendsWithoutBias`) that
+   requires the model to descend and read within a fixed turn budget with the
+   note **off**. If it only works with the note on, the structure failed.
+
+**Scope.** All three tool-call loops share the component:
+`ChatSession.send` (chat), the HTTP `/v1/chat/completions` agent loop, and the
+plugin completion loop. Within-message dedupe/bias is reset by `beginMessage()`.
+Cross-*user-message* survival of `lastListing` (so "what's on my desktop"
+carries into a later "read the file") is **`ChatSession`-only** — the HTTP and
+plugin loops are stateless across requests by design (see the divergence note
+above), so their `AgentTaskState` lives for the single request/invocation.
+
+---
+
 ## Best Practices
 
 - **Be specific in the prompt.** "Add a logout button to the navbar" beats "update the UI".

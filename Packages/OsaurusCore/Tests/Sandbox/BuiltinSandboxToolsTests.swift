@@ -587,7 +587,41 @@ struct BuiltinSandboxToolsTests {
             return
         }
         #expect(command.contains("find "))
-        #expect(command.contains("-type f -name '*.py'"))
+        // A glob pattern is passed through, case-insensitively (`-iname`).
+        #expect(command.contains("-type f -iname '*.py'"))
+    }
+
+    @Test @MainActor
+    func sandboxSearchFiles_bareWordWrapsAsCaseInsensitiveSubstring() async throws {
+        // A bare word (no glob metacharacters) becomes `-iname '*word*'` so
+        // `q4` matches `q4_sales_report.xlsx`, mirroring the host route.
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(
+                    stdout: "/workspace/agents/test-agent/q4_sales_report.xlsx",
+                    stderr: "",
+                    exitCode: 0
+                )
+            ]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_search_files",
+                argumentsJSON: #"{"pattern":"q4","target":"files"}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect((payload["matches"] as? String)?.contains("q4_sales_report.xlsx") == true)
+
+        let calls = await runner.calls
+        guard case .agent(_, let command) = try #require(calls.first) else {
+            Issue.record("Expected agent call")
+            return
+        }
+        #expect(command.contains("-type f -iname '*q4*'"))
     }
 
     @Test @MainActor
@@ -946,9 +980,13 @@ struct BuiltinSandboxToolsTests {
                     stderr: "cat: /workspace/agents/test-agent: Is a directory",
                     exitCode: 1
                 ),
-                // 2) the depth-bounded listing fallback
+                // 2) the depth-bounded listing fallback — `find -printf '%y\t%p'`
+                //    emits a type letter + path per entry (root dir first).
                 .init(
-                    stdout: "/workspace/agents/test-agent/a.py\n/workspace/agents/test-agent/b.py",
+                    stdout:
+                        "d\t/workspace/agents/test-agent\n"
+                        + "f\t/workspace/agents/test-agent/a.py\n"
+                        + "f\t/workspace/agents/test-agent/b.py",
                     stderr: "",
                     exitCode: 0
                 ),
@@ -968,19 +1006,27 @@ struct BuiltinSandboxToolsTests {
             }
         }
 
-        // Normalized to the host-style text envelope.
+        // Structured, actionable listing — entries (typed paths), not prose.
         let payload = try successPayload(output)
-        #expect((payload["text"] as? String)?.contains("a.py") == true)
-        #expect(payload["matches"] == nil, "sandbox-route output must be normalized to `text`")
+        #expect(payload["kind"] as? String == "listing")
+        let entries = try #require(payload["entries"] as? [[String: Any]])
+        let paths = entries.compactMap { $0["path"] as? String }
+        #expect(paths.contains("/workspace/agents/test-agent/a.py"))
+        #expect(paths.contains("/workspace/agents/test-agent/b.py"))
+        // The search root itself is not a child entry.
+        #expect(!paths.contains("/workspace/agents/test-agent"))
+        #expect(entries.allSatisfy { $0["type"] as? String == "file" })
+        #expect(payload["text"] == nil, "a listing must not hand the model a prose tree")
 
         let calls = await runner.calls
         guard calls.count >= 2, case .agent(_, let listCmd) = calls[1] else {
             Issue.record("expected a read attempt followed by a listing fallback")
             return
         }
-        // Depth-bounded listing honors `max_depth`.
+        // Depth-bounded listing honors `max_depth` and emits typed entries.
         #expect(listCmd.contains("find "))
         #expect(listCmd.contains("-maxdepth 2"))
+        #expect(listCmd.contains("-printf"))
     }
 
     /// Combined mode: `file_search(target:"files")` on a `/workspace/...`
@@ -1029,9 +1075,9 @@ struct BuiltinSandboxToolsTests {
             Issue.record("expected two sandbox search commands")
             return
         }
-        // target=files -> find -name glob.
+        // target=files -> find -iname glob (case-insensitive).
         #expect(filesCmd.contains("find "))
-        #expect(filesCmd.contains("-name '*.py'"))
+        #expect(filesCmd.contains("-iname '*.py'"))
         // content -> rg with the regex-escaped literal + the include glob.
         #expect(contentCmd.contains("rg -n"))
         #expect(contentCmd.contains(#"TODO\(x\)"#))

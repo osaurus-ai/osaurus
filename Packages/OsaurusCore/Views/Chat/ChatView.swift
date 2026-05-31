@@ -221,6 +221,12 @@ final class ChatSession: ObservableObject {
     /// view renders it as a "Completed" banner inline.
     @Published var lastCompletionSummary: String?
 
+    /// Per-task state machine the harness holds so the (small) model doesn't
+    /// have to. Session-scoped here so a listing produced by one user message
+    /// ("what's on my desktop") survives into the next ("read the file");
+    /// `beginMessage()` resets only the within-message dedupe/bias tracking.
+    let taskState = AgentTaskState()
+
     /// Notification observer for AgentTodoStore updates. Removed in deinit.
     nonisolated(unsafe) private var agentTodoObserver: NSObjectProtocol?
 
@@ -2379,6 +2385,14 @@ final class ChatSession: ObservableObject {
                     var attempts = 0
                     var reachedToolLimit = false
                     var pendingBudgetNotice: String?
+                    // Harness next-step nudge for the next iteration, derived
+                    // from the task-state machine (post-listing / not-found).
+                    // Non-load-bearing: the structured result objects carry the
+                    // win; this is a system-attributed hint layered on top.
+                    var pendingStateNotice: String?
+                    // Reset within-message dedupe/bias tracking for this user
+                    // turn (lastListing intentionally persists across messages).
+                    taskState.beginMessage()
                     // Transient stream errors (e.g. provider closes connection
                     // mid-tool-args, see `RemoteProviderService` truncation
                     // detection) shouldn't immediately surface to the user — they
@@ -2421,6 +2435,10 @@ final class ChatSession: ObservableObject {
                         if let notice = pendingBudgetNotice {
                             msgs.append(ChatMessage(role: "user", content: notice))
                             pendingBudgetNotice = nil
+                        }
+                        if let stateNotice = pendingStateNotice {
+                            msgs.append(ChatMessage(role: "user", content: stateNotice))
+                            pendingStateNotice = nil
                         }
 
                         // Memory now lives on the latest user message instead of
@@ -2585,6 +2603,26 @@ final class ChatSession: ObservableObject {
                             // streaming the moment the tool body registers
                             // its sink.
                             rebuildVisibleBlocks()
+
+                            // Consecutive-identical dedupe: a read re-issued
+                            // back-to-back (and not invalidated by an
+                            // intervening write to the same path) replays the
+                            // EXACT envelope the model already received — never
+                            // a collapsed/summarized form — so the short-circuit
+                            // is neutral and never hands back less than it had.
+                            if let held = taskState.heldResult(
+                                name: inv.toolName,
+                                argsJSON: inv.jsonArguments
+                            ) {
+                                let toolTurn = recordToolTurn(held)
+                                let newAssistantTurn = ChatTurn(role: .assistant, content: "")
+                                turns.append(contentsOf: [toolTurn, newAssistantTurn])
+                                assistantTurn = newAssistantTurn
+                                pendingStateNotice =
+                                    "[System Notice] You already retrieved this exact result this turn and it is unchanged. Use the result you already have instead of repeating the call."
+                                rebuildVisibleBlocks()
+                                continue invocations
+                            }
 
                             // Execute tool and append hidden tool result turn
                             var resultText: String
@@ -2793,11 +2831,27 @@ final class ChatSession: ObservableObject {
                                 // same opaque `executionError` treatment.
                                 let rejectionMessage = ToolEnvelope.fromError(error, tool: inv.toolName)
                                 turns.append(recordToolTurn(rejectionMessage))
+                                taskState.record(
+                                    name: inv.toolName,
+                                    argsJSON: inv.jsonArguments,
+                                    result: rejectionMessage
+                                )
                                 rejectedDuringBatch = true
                                 break invocations  // Stop processing remaining tools in batch
                             }
                             guard isRunActive(runId) else { break outer }
                             let toolTurn = recordToolTurn(resultText)
+
+                            // Feed the result into the harness state machine and
+                            // stage the next-step nudge (post-listing / etc.).
+                            taskState.record(
+                                name: inv.toolName,
+                                argsJSON: inv.jsonArguments,
+                                result: resultText
+                            )
+                            if let bias = taskState.nextStepBias() {
+                                pendingStateNotice = "[System Notice] " + bias
+                            }
 
                             // Create a new assistant turn for subsequent content
                             // This ensures tool calls and text are rendered sequentially

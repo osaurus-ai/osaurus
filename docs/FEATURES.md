@@ -632,7 +632,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 
 | Tool              | Category | Description                                                       |
 | ----------------- | -------- | ----------------------------------------------------------------- |
-| `file_read`       | Core     | Read a file (text ranges, `tail_lines`/`max_chars`, bounded XLSX sheet previews) **or** list a directory (with `max_depth`, project-aware ignore patterns) — the path decides |
+| `file_read`       | Core     | Read a file (text ranges, `tail_lines`/`max_chars`, bounded XLSX sheet previews) **or** list a directory (with `max_depth`, project-aware ignore patterns) — the path decides. A directory returns a structured `kind: "listing"` with `entries[]` (each a ready-to-use `path`), not an ASCII tree |
 | `file_write`      | Core     | Create or overwrite                                               |
 | `file_edit`       | Core     | Surgical exact-string replacement                                 |
 | `file_search`     | Core     | ripgrep-style content search, or `target="files"` filename-glob find |
@@ -641,7 +641,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 | `git_diff`        | Git      | Show diffs                                                        |
 | `git_commit`      | Git      | Stage + commit (requires approval)                                |
 
-The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — the same operations go through `shell_run` (`mv`, `cp`, `rm`, `mkdir`) so the model has fewer near-identical tool names to differentiate. The standalone `file_tree` listing tool was likewise folded into `file_read`: pass a directory path and `file_read` returns a listing (the path carries the file-vs-directory decision, so there is no separate tool for the model to mis-select).
+The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — the same operations go through `shell_run` (`mv`, `cp`, `rm`, `mkdir`) so the model has fewer near-identical tool names to differentiate. The standalone `file_tree` listing tool was likewise folded into `file_read`: pass a directory path and `file_read` returns a listing (the path carries the file-vs-directory decision, so there is no separate tool for the model to mis-select). That listing is a **structured `entries[]` object**, not a prose tree — the model descends by copying an entry's `path` field, and the agent loop's [`AgentTaskState`](../Packages/OsaurusCore/Services/Chat/AgentTaskState.swift) harness classifies the result to de-dupe re-reads and, only if the model is observed wandering (two listings without a read), reactively nudge the next step — so capable models are never backseat-driven. See [Agent Loop — Harness Task State](AGENT_LOOP.md#harness-task-state-agenttaskstate).
 
 **Workflow:**
 
