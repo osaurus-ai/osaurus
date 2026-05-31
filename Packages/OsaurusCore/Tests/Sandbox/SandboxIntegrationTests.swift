@@ -75,7 +75,7 @@ struct SandboxIntegrationTests {
         )
         #expect(firstRead.succeeded)
         #expect(firstRead.stdout.contains("# SOUL"))
-        #expect(firstRead.stdout.contains("sandbox_edit_file"))
+        #expect(firstRead.stdout.contains("sandbox_write_file"))
 
         // Simulate the agent editing its own SOUL — overwrite with a
         // distinguishable marker that the seed body never contains.

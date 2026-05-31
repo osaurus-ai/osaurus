@@ -1379,7 +1379,7 @@ final class ChatSession: ObservableObject {
     /// `ToolEnvelope.failure` whose `message` tells the model exactly
     /// what went wrong AND what to try next. The "next" hint is keyed on
     /// `executionMode` so sandbox agents get a `sandbox_search_files`
-    /// suggestion while folder agents get `file_tree`/`file_search`.
+    /// suggestion while folder agents get `file_read`/`file_search`.
     private static func shareArtifactFailureEnvelope(
         reason: SharedArtifact.ResolutionFailure,
         executionMode: ExecutionMode
@@ -1393,7 +1393,7 @@ final class ChatSession: ObservableObject {
                 + "or pass `content`+`filename` for inline data."
         case .hostFolder:
             listingHint =
-                "Verify the file with `file_tree`/`file_search`, or pass `content`+`filename` "
+                "Verify the file with `file_read`/`file_search`, or pass `content`+`filename` "
                 + "for inline data."
         case .none:
             listingHint =

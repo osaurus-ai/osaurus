@@ -696,6 +696,107 @@ struct BuiltinSandboxToolsTests {
         #expect(payload["field"] as? String == "path")
     }
 
+    // MARK: - Merged write/edit (`sandbox_write_file`)
+
+    /// `sandbox_write_file` with `content` writes the whole file (the
+    /// pre-merge behavior): `mkdir -p` the parent then `printf … > path`.
+    @Test @MainActor
+    func sandboxWriteFile_contentWritesWholeFile() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"notes/index.html","content":"<h1>hi</h1>"}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect((payload["path"] as? String)?.contains("notes/index.html") == true)
+
+        let calls = await runner.calls
+        let commands = calls.compactMap { call -> String? in
+            if case .agent(_, let c) = call { return c }
+            return nil
+        }
+        #expect(commands.contains { $0.contains("printf") && $0.contains("notes/index.html") })
+        // The whole-file write must NOT touch the in-place edit machinery.
+        #expect(!commands.contains { $0.contains("python3 -c") })
+    }
+
+    /// `sandbox_write_file` with `old_string` selects the in-place edit
+    /// path — the presence of the argument decides edit-vs-write, with no
+    /// separate `sandbox_edit_file` tool. It runs the exact-match Python
+    /// replace and returns a `summary`.
+    @Test @MainActor
+    func sandboxWriteFile_oldStringRoutesToInPlaceEdit() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir tmp
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf old
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf new
+                .init(stdout: "replaced 1 line(s) with 1 line(s)", stderr: "", exitCode: 0),  // python
+            ]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON:
+                    #"{"path":"app.py","old_string":"old()","new_string":"new()"}"#
+            )
+        }
+
+        let payload = try successPayload(output)
+        #expect((payload["summary"] as? String)?.contains("replaced") == true)
+
+        let calls = await runner.calls
+        let commands = calls.compactMap { call -> String? in
+            if case .agent(_, let c) = call { return c }
+            return nil
+        }
+        // The edit path runs the exact-match Python replace, not a plain write.
+        #expect(commands.contains { $0.contains("python3 -c") })
+    }
+
+    /// `old_string` without `new_string` is the merge's only new
+    /// validation: an in-place edit needs both, so it returns `invalid_args`
+    /// pointing at `new_string` rather than silently writing nothing.
+    @Test @MainActor
+    func sandboxWriteFile_oldStringWithoutNewStringIsInvalidArgs() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"app.py","old_string":"old()"}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "invalid_args")
+        #expect(payload["field"] as? String == "new_string")
+
+        // Nothing should have run — the edit was rejected before dispatch.
+        let calls = await runner.calls
+        #expect(calls.isEmpty)
+    }
+
+    /// After the merge, `sandbox_edit_file` is no longer a registered tool —
+    /// its behavior lives in `sandbox_write_file`. The schema must show one
+    /// write tool, not two.
+    @Test @MainActor
+    func sandboxEditFile_isUnregisteredAfterMerge() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        try await withRegisteredSandboxTools(runner: runner) {
+            #expect(ToolRegistry.shared.specs(forTools: ["sandbox_edit_file"]).isEmpty)
+            #expect(ToolRegistry.shared.specs(forTools: ["sandbox_write_file"]).count == 1)
+        }
+    }
+
     /// The silent-cwd-fallback bug: `sandbox_exec` with a bad `cwd` used
     /// to run without `cd`, ending up in the wrong directory with no
     /// signal to the model. Now it returns an `invalid_args` envelope
@@ -719,6 +820,258 @@ struct BuiltinSandboxToolsTests {
         // The command must NOT have run (no silent fallback to agent home).
         let calls = await runner.calls
         #expect(calls.isEmpty, "no exec call should be made when cwd is rejected")
+    }
+
+    /// Host-vs-sandbox confusion regression: a small model handed a host
+    /// filesystem path to `sandbox_read_file`. The rejection must redirect
+    /// it to the `file_*` host tools instead of just saying "outside the
+    /// agent home". (`ToolRegistry.execute` rebinds `hostReadOnlyScope`
+    /// from its own combined-mode policy, which is nil in this harness, so
+    /// the broad macOS-path branch produces the redirect here; the precise
+    /// workspace-scope wording is pinned in `HostPathRedirectTests`.)
+    @Test @MainActor
+    func sandboxReadFile_hostPathRedirectsToFileTools() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_read_file",
+                argumentsJSON: #"{"path":"/Users/tpae/Desktop"}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "invalid_args")
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("file_read"))
+
+        // The read must NOT have run against the sandbox.
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "no read call should be made when the path is rejected")
+    }
+
+    // MARK: - Combined-mode unified file routing
+
+    /// Combined mode: the unified host `file_read` serves an absolute
+    /// `/workspace/...` path from the Linux sandbox via the bridge,
+    /// translating the host `start_line`/`end_line` range to the sandbox
+    /// `start_line`/`line_count` convention.
+    @Test @MainActor
+    func combinedMode_fileRead_workspacePathRoutesToSandbox() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [.init(stdout: "sandbox-line-5\n", stderr: "", exitCode: 0)]
+        )
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-route-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileReadTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/notes.txt","start_line":5,"end_line":6}"#
+                )
+            }
+        }
+
+        // Normalized to the host-style text envelope (one shape per tool,
+        // regardless of route).
+        let payload = try successPayload(output)
+        #expect((payload["text"] as? String)?.contains("sandbox-line-5") == true)
+        #expect(payload["content"] == nil, "sandbox-route output must be normalized to `text`")
+
+        let calls = await runner.calls
+        guard case .agent(_, let command) = try #require(calls.first) else {
+            Issue.record("expected the sandbox bridge to issue an agent read")
+            return
+        }
+        // start_line 5 + end_line 6 -> sandbox sed range 5,6.
+        #expect(command.contains("sed -n '5,6p'"))
+        #expect(command.contains("/workspace/agents/test-agent/notes.txt"))
+    }
+
+    /// Combined mode: `file_read(tail_lines:)` on a `/workspace/...` path
+    /// issues a `tail -n N` against the sandbox (log-style read) and is
+    /// normalized to the host text envelope.
+    @Test @MainActor
+    func combinedMode_fileRead_tailLinesIssuesTailCommand() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [.init(stdout: "last-log-line\n", stderr: "", exitCode: 0)]
+        )
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-route-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileReadTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/server.log","tail_lines":20}"#
+                )
+            }
+        }
+
+        let payload = try successPayload(output)
+        #expect((payload["text"] as? String)?.contains("last-log-line") == true)
+
+        let calls = await runner.calls
+        guard case .agent(_, let command) = try #require(calls.first) else {
+            Issue.record("expected the sandbox bridge to issue an agent tail")
+            return
+        }
+        #expect(command.contains("tail -n 20"))
+        #expect(command.contains("/workspace/agents/test-agent/server.log"))
+    }
+
+    /// Combined mode: `file_read` on a `/workspace/...` DIRECTORY lists it
+    /// through the sandbox. The unified reader first attempts a read, sees
+    /// the "Is a directory" failure, and falls back to a depth-bounded
+    /// `find` — the path (not a separate `file_tree` tool) decides
+    /// file-vs-directory on the sandbox route too.
+    @Test @MainActor
+    func combinedMode_fileRead_workspaceDirectoryListsViaSandbox() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                // 1) the read attempt fails because the path is a directory
+                .init(
+                    stdout: "",
+                    stderr: "cat: /workspace/agents/test-agent: Is a directory",
+                    exitCode: 1
+                ),
+                // 2) the depth-bounded listing fallback
+                .init(
+                    stdout: "/workspace/agents/test-agent/a.py\n/workspace/agents/test-agent/b.py",
+                    stderr: "",
+                    exitCode: 0
+                ),
+            ]
+        )
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-route-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileReadTool(rootPath: hostRoot).execute(
+                    argumentsJSON: #"{"path":"/workspace/agents/test-agent","max_depth":2}"#
+                )
+            }
+        }
+
+        // Normalized to the host-style text envelope.
+        let payload = try successPayload(output)
+        #expect((payload["text"] as? String)?.contains("a.py") == true)
+        #expect(payload["matches"] == nil, "sandbox-route output must be normalized to `text`")
+
+        let calls = await runner.calls
+        guard calls.count >= 2, case .agent(_, let listCmd) = calls[1] else {
+            Issue.record("expected a read attempt followed by a listing fallback")
+            return
+        }
+        // Depth-bounded listing honors `max_depth`.
+        #expect(listCmd.contains("find "))
+        #expect(listCmd.contains("-maxdepth 2"))
+    }
+
+    /// Combined mode: `file_search(target:"files")` on a `/workspace/...`
+    /// path maps to a sandbox `find -name <glob>`; `file_search` content
+    /// route escapes regex metacharacters so it matches the same literal
+    /// substring the host route does, and forwards `file_pattern` as the
+    /// ripgrep `--glob` include.
+    @Test @MainActor
+    func combinedMode_fileSearch_filesAndContentRoutes() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "/workspace/agents/test-agent/a.py\n", stderr: "", exitCode: 0),
+                .init(stdout: "a.py:1: TODO(x)\n", stderr: "", exitCode: 0),
+            ]
+        )
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-route-\(UUID().uuidString)")
+
+        let (filesOut, contentOut) = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                let files = try await FileSearchTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"pattern":"*.py","target":"files","path":"/workspace/agents/test-agent"}"#
+                )
+                let content = try await FileSearchTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"pattern":"TODO(x)","path":"/workspace/agents/test-agent","file_pattern":"*.py"}"#
+                )
+                return (files, content)
+            }
+        }
+
+        // Both routes normalized to the host text envelope.
+        #expect((try successPayload(filesOut)["text"] as? String)?.contains("a.py") == true)
+        #expect((try successPayload(contentOut)["text"] as? String)?.contains("TODO(x)") == true)
+
+        let calls = await runner.calls
+        guard case .agent(_, let filesCmd) = try #require(calls.first),
+            calls.count >= 2,
+            case .agent(_, let contentCmd) = calls[1]
+        else {
+            Issue.record("expected two sandbox search commands")
+            return
+        }
+        // target=files -> find -name glob.
+        #expect(filesCmd.contains("find "))
+        #expect(filesCmd.contains("-name '*.py'"))
+        // content -> rg with the regex-escaped literal + the include glob.
+        #expect(contentCmd.contains("rg -n"))
+        #expect(contentCmd.contains(#"TODO\(x\)"#))
+        #expect(contentCmd.contains("--glob"))
+    }
+
+    /// Combined mode: a relative / default path keeps `file_read` on the
+    /// host workspace even with a sandbox bridge bound — the exact "what's
+    /// on my Desktop?" listing that the old two-family split kept getting
+    /// wrong. A directory path lists the host folder; no sandbox call is
+    /// issued.
+    @Test @MainActor
+    func combinedMode_fileRead_defaultDirectoryListsHostWorkspace() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-host-list-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: hostRoot,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: hostRoot) }
+        try "hi".write(
+            to: hostRoot.appendingPathComponent("hello.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileReadTool(rootPath: hostRoot).execute(argumentsJSON: #"{"path":"."}"#)
+            }
+        }
+
+        #expect(output.contains("hello.txt"))
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "a default/relative path must stay on the host, not hit the sandbox")
     }
 }
 

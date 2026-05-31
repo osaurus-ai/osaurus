@@ -254,7 +254,7 @@ enum FolderToolHelpers {
     /// combined read-only mode. Checks the basename, extension, and the
     /// path components so a key under `.ssh/` or `.aws/` is caught even
     /// when its own name looks innocuous. Single source of truth shared
-    /// by `file_read`, `file_search`, and `file_tree`.
+    /// by `file_read` (including its directory listing) and `file_search`.
     static func isSecretPath(fileURL: URL) -> Bool {
         let lowerName = fileURL.lastPathComponent.lowercased()
         let ext = fileURL.pathExtension.lowercased()
@@ -358,6 +358,15 @@ struct FileTreeTool: OsaurusTool {
         let relativePath = (args["path"] as? String) ?? "."
         let maxDepth = coerceInt(args["max_depth"]) ?? 3
 
+        // Combined mode: an absolute `/workspace/...` path is the Linux
+        // sandbox, not the host workspace — serve it from the sandbox
+        // bridge so this one tool lists either filesystem by path.
+        if combinedFileRoute(path: relativePath) == .sandbox,
+            let bridge = ChatExecutionContext.sandboxReadBridge
+        {
+            return try await sandboxBridgeList(bridge, path: relativePath, maxDepth: maxDepth)
+        }
+
         let targetURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         var isDirectory: ObjCBool = false
@@ -368,6 +377,15 @@ struct FileTreeTool: OsaurusTool {
         }
 
         return ToolEnvelope.success(tool: name, text: buildTree(targetURL, maxDepth: maxDepth))
+    }
+
+    /// Render a directory tree for `targetURL` (already resolved and known
+    /// to be a directory). Shared with `file_read`, which lists directories
+    /// under the unified read tool — the path argument decides file vs
+    /// directory, so this struct is now an internal lister, not a
+    /// separately-registered tool.
+    func treeText(for targetURL: URL, maxDepth: Int) -> String {
+        buildTree(targetURL, maxDepth: maxDepth)
     }
 
     /// File-count ceiling — caps how many leaf files the tree enumerates.
@@ -471,11 +489,12 @@ struct FileTreeTool: OsaurusTool {
 struct FileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
-        "Read the contents of a text or source file, a text-extractable document (PDF, Word, "
-        + "PowerPoint, RTF, HTML), or a bounded preview of an XLSX workbook in the working directory. "
-        + "Use this (rather than a shell `cat` / `head` / `tail`) to read files. Images and other "
-        + "non-text binaries are not supported. Optionally specify start_line and end_line for partial "
-        + "text reads; for workbooks they select worksheet row numbers. Line numbers are 1-indexed."
+        "Read a file's contents, or list a directory's contents. Pass any path — files return text, "
+        + "directories return a listing. Use this rather than a shell `cat` / `head` / `tail` / `ls` / "
+        + "`tree`. For files: text and text-extractable documents (PDF, Word, PowerPoint, RTF, HTML) and "
+        + "a bounded XLSX workbook preview are supported (images and other binaries are not); bound large "
+        + "reads with start_line/end_line, tail_lines, or max_chars. For directories: bound the depth with "
+        + "max_depth."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -483,6 +502,10 @@ struct FileReadTool: OsaurusTool {
             "path": .object([
                 "type": .string("string"),
                 "description": .string("Relative path to the file from the working directory"),
+            ]),
+            "max_depth": .object([
+                "type": .string("integer"),
+                "description": .string("Optional directory listing depth when path is a directory (default: 3)"),
             ]),
             "sheet_name": .object([
                 "type": .string("string"),
@@ -495,6 +518,16 @@ struct FileReadTool: OsaurusTool {
             "end_line": .object([
                 "type": .string("integer"),
                 "description": .string("Optional end line number or XLSX row number (1-indexed, inclusive)"),
+            ]),
+            "tail_lines": .object([
+                "type": .string("integer"),
+                "description": .string(
+                    "Optional: read the last N lines instead of a range (useful for logs)"
+                ),
+            ]),
+            "max_chars": .object([
+                "type": .string("integer"),
+                "description": .string("Optional cap on returned characters after line selection"),
             ]),
             "max_rows": .object([
                 "type": .string("integer"),
@@ -540,6 +573,25 @@ struct FileReadTool: OsaurusTool {
             return pathReq.failureEnvelope ?? ""
         }
 
+        // Combined mode: an absolute `/workspace/...` path is the Linux
+        // sandbox — serve it from the sandbox bridge, translating the
+        // host `start_line`/`end_line` range to the sandbox convention.
+        // A directory path falls back to a listing inside the bridge
+        // (detected via the "Is a directory" read error).
+        if combinedFileRoute(path: relativePath) == .sandbox,
+            let bridge = ChatExecutionContext.sandboxReadBridge
+        {
+            return try await sandboxBridgeRead(
+                bridge,
+                path: relativePath,
+                startLine: max(coerceInt(args["start_line"]) ?? 0, 0),
+                endLine: max(coerceInt(args["end_line"]) ?? 0, 0),
+                tailLines: max(coerceInt(args["tail_lines"]) ?? 0, 0),
+                maxChars: max(coerceInt(args["max_chars"]) ?? 0, 0),
+                maxDepth: max(coerceInt(args["max_depth"]) ?? 0, 0)
+            )
+        }
+
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         // Combined sandbox + host-read mode: refuse secret files even
@@ -549,14 +601,25 @@ struct FileReadTool: OsaurusTool {
         // keys / credentials into context and exfiltrate them via the
         // sandbox. Plain folder mode is unaffected (the gate is inert
         // when no read-only host scope is bound). Shared with
-        // `file_search` / `file_tree` so the denylist can't be bypassed
-        // by switching tools.
+        // `file_search` so the denylist can't be bypassed by switching
+        // tools.
         if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
             return FolderToolHelpers.secretRefusalEnvelope(relativePath: relativePath, tool: name)
         }
 
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory) else {
             throw FolderToolError.fileNotFound(relativePath)
+        }
+
+        // A directory path lists rather than reads (the path carries the
+        // decision — no separate `file_tree` tool to mis-select). Reuse the
+        // internal tree lister, honoring `max_depth`, but stamp the
+        // envelope as `file_read` since that's the only file tool now.
+        if isDirectory.boolValue {
+            let maxDepth = coerceInt(args["max_depth"]) ?? 3
+            let listing = FileTreeTool(rootPath: rootPath).treeText(for: fileURL, maxDepth: maxDepth)
+            return ToolEnvelope.success(tool: name, text: listing)
         }
 
         let sheetName: String?
@@ -592,16 +655,29 @@ struct FileReadTool: OsaurusTool {
         )
         let lines = content.components(separatedBy: .newlines)
 
-        let startLine = coerceInt(args["start_line"]) ?? 1
-        let endLine = coerceInt(args["end_line"]) ?? lines.count
+        // `tail_lines` (last N lines, for logs) overrides an explicit
+        // start/end range; `max_chars` optionally tightens the per-call
+        // character cap below the hard `maxOutputChars` ceiling.
+        let tailLines = max(coerceInt(args["tail_lines"]) ?? 0, 0)
+        let maxChars = max(coerceInt(args["max_chars"]) ?? 0, 0)
+        let startLine: Int
+        let endLine: Int
+        if tailLines > 0 {
+            endLine = lines.count
+            startLine = max(1, lines.count - tailLines + 1)
+        } else {
+            startLine = coerceInt(args["start_line"]) ?? 1
+            endLine = coerceInt(args["end_line"]) ?? lines.count
+        }
         let validStart = max(1, min(startLine, lines.count))
         let validEnd = max(validStart, min(endLine, lines.count))
+        let charCap = maxChars > 0 ? min(maxChars, Self.maxOutputChars) : Self.maxOutputChars
 
         var output = ""
         var lastLineIncluded = validStart - 1
         for i in (validStart - 1) ..< validEnd {
             let line = String(format: "%6d| %@\n", i + 1, lines[i])
-            if output.count + line.count > Self.maxOutputChars {
+            if output.count + line.count > charCap {
                 break
             }
             output += line
@@ -1107,7 +1183,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
 
         // Empty `old_string` is ambiguous — `requireString` (default
         // `allowEmpty: false`) rejects it with a pointed envelope that
-        // matches `sandbox_edit_file`.
+        // matches the sandbox in-place edit (`sandbox_write_file`).
         let oldReq = requireString(
             args,
             "old_string",
@@ -1184,16 +1260,28 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
 struct FileSearchTool: OsaurusTool {
     let name = "file_search"
     let description =
-        "Search for text in files in the working directory using case-insensitive substring matching. "
-        + "Use this (rather than a shell `grep` / `rg` / `find`) to search file contents. Returns matching "
-        + "lines with file paths and line numbers."
+        "Search files in the working directory. With `target=\"content\"` (default) it finds text by "
+        + "case-insensitive substring match, returning matching lines with file paths and line numbers. "
+        + "With `target=\"files\"` it finds files by name glob (e.g. `*.swift`). Use this rather than a "
+        + "shell `grep` / `rg` / `find`."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
             "pattern": .object([
                 "type": .string("string"),
-                "description": .string("Text to search for (case-insensitive substring match)"),
+                "description": .string(
+                    "When `target=\"content\"`: text to find (case-insensitive substring). "
+                        + "When `target=\"files\"`: filename glob (e.g. `*.swift`, `test_*`)."
+                ),
+            ]),
+            "target": .object([
+                "type": .string("string"),
+                "enum": .array([.string("content"), .string("files")]),
+                "description": .string(
+                    "`content` searches inside file bodies; `files` finds files by name. Default: `content`."
+                ),
+                "default": .string("content"),
             ]),
             "path": .object([
                 "type": .string("string"),
@@ -1203,7 +1291,10 @@ struct FileSearchTool: OsaurusTool {
             ]),
             "file_pattern": .object([
                 "type": .string("string"),
-                "description": .string("Optional file name pattern (e.g., '*.swift', '*.ts')"),
+                "description": .string(
+                    "Optional file name pattern to restrict a content search (e.g., '*.swift'). "
+                        + "Ignored when `target=\"files\"` — use `pattern` directly."
+                ),
             ]),
             "max_results": .object([
                 "type": .string("integer"),
@@ -1236,8 +1327,31 @@ struct FileSearchTool: OsaurusTool {
         let searchPath = (args["path"] as? String) ?? "."
         let filePattern = args["file_pattern"] as? String
         let maxResults = coerceInt(args["max_results"]) ?? 50
+        let target = (args["target"] as? String)?.lowercased() ?? "content"
+
+        // Combined mode: an absolute `/workspace/...` path is the Linux
+        // sandbox — search it via the sandbox bridge (content or files).
+        if combinedFileRoute(path: searchPath) == .sandbox,
+            let bridge = ChatExecutionContext.sandboxReadBridge
+        {
+            return try await sandboxBridgeSearch(
+                bridge,
+                pattern: pattern,
+                path: searchPath,
+                target: target,
+                filePattern: filePattern,
+                maxResults: maxResults
+            )
+        }
 
         let searchURL = try FolderToolHelpers.resolvePath(searchPath, rootPath: rootPath)
+
+        // `target="files"`: filename-glob find (no content read). Mirrors
+        // `sandbox_search_files(target:"files")` so the unified family can
+        // locate files by name on either filesystem.
+        if target == "files" {
+            return findFilesByName(root: searchURL, glob: pattern, maxResults: maxResults)
+        }
 
         var results: [String] = []
         var totalMatches = 0
@@ -1323,6 +1437,50 @@ struct FileSearchTool: OsaurusTool {
             output += "\n\n(results truncated at \(maxResults))"
         }
 
+        return ToolEnvelope.success(tool: name, text: output)
+    }
+
+    /// Filename-glob find under `root` (recursive, hidden + secret files
+    /// skipped), returning matching relative paths as a host-style text
+    /// envelope. The glob supports `*` and `.`; matching is anchored to the
+    /// full basename. Mirrors the sandbox `find … -name` behaviour.
+    private func findFilesByName(root: URL, glob: String, maxResults: Int) -> String {
+        let regex =
+            "^"
+            + NSRegularExpression.escapedPattern(for: glob)
+            .replacingOccurrences(of: "\\*", with: ".*")
+            .replacingOccurrences(of: "\\?", with: ".")
+            + "$"
+
+        var matches: [String] = []
+        let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )
+        while let fileURL = enumerator?.nextObject() as? URL {
+            guard matches.count < maxResults else { break }
+            guard
+                let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
+                resourceValues.isRegularFile == true
+            else { continue }
+            if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) { continue }
+            let name = fileURL.lastPathComponent
+            guard name.range(of: regex, options: .regularExpression) != nil else { continue }
+            let relativePath =
+                fileURL.path.hasPrefix(rootPath.path)
+                ? String(fileURL.path.dropFirst(rootPath.path.count + 1))
+                : name
+            matches.append(relativePath)
+        }
+
+        if matches.isEmpty {
+            return ToolEnvelope.success(tool: name, text: "No files found matching '\(glob)'")
+        }
+        var output = "Found \(matches.count) file(s):\n\n" + matches.joined(separator: "\n")
+        if matches.count >= maxResults {
+            output += "\n\n(results truncated at \(maxResults))"
+        }
         return ToolEnvelope.success(tool: name, text: output)
     }
 
@@ -1905,8 +2063,12 @@ enum FolderToolFactory {
     /// `shell_run` chains or — when the chat is sandbox-mode —
     /// `sandbox_execute_code`.
     static func buildCoreTools(rootPath: URL) -> [OsaurusTool] {
+        // `file_tree` is intentionally absent: `file_read` now lists a
+        // directory when the path is one (the path carries the decision),
+        // so a separate listing tool is just a redundant name the model
+        // can mis-select. `FileTreeTool` remains as an internal lister
+        // reused by `file_read`.
         return [
-            FileTreeTool(rootPath: rootPath),
             FileReadTool(rootPath: rootPath),
             FileWriteTool(rootPath: rootPath),
             FileEditTool(rootPath: rootPath),

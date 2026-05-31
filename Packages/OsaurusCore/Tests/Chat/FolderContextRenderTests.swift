@@ -105,9 +105,10 @@ struct FolderContextRenderTests {
     func toolGuideIsPositiveDispatch() {
         let guide = SystemPromptTemplates.folderToolGuide
         #expect(guide.contains("Tool dispatch"))
-        #expect(guide.contains("Layout: `file_tree`"))
+        // `file_read` now reads files AND lists directories (no separate `file_tree`).
+        #expect(guide.contains("Read / list: `file_read`"))
+        #expect(!guide.contains("file_tree"))
         #expect(guide.contains("Search: `file_search`"))
-        #expect(guide.contains("Read: `file_read`"))
         #expect(guide.contains("Edit: `file_edit`"))
         #expect(guide.contains("Shell: `shell_run`"))
         // Negation framing should be gone — that lives in tool descriptions.

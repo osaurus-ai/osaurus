@@ -177,7 +177,8 @@ public final class SandboxAgentProvisioner {
 
         This file is your space to record stable preferences and patterns you
         learn about working with the user. It persists across sessions. You
-        can edit it freely with sandbox_edit_file or sandbox_write_file.
+        can edit it freely with sandbox_write_file (it writes whole files and
+        edits in place).
 
         What goes here:
         - Stable user preferences (tooling choices, voice, formatting).

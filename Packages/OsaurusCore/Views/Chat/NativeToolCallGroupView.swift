@@ -1294,8 +1294,8 @@ final class NativeToolCallRowView: NSView {
     ///
     /// Special case: a `ToolEnvelope` success result whose payload is a
     /// `{"text": "..."}` carrier renders as the prose verbatim (markdown).
-    /// This keeps file_tree / file_read / capability listings readable in
-    /// the tool-call card instead of getting buried under a JSON wrapper.
+    /// This keeps file_read / capability listings readable in the
+    /// tool-call card instead of getting buried under a JSON wrapper.
     private static func markdownForToolResultDisplay(_ result: String) -> String {
         if ToolEnvelope.isError(result) {
             return result

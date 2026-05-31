@@ -190,6 +190,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// — no LLM, fast, deterministic. Used to lock in recall floors
         /// against the embedder + threshold layer that feeds preflight.
         public let capabilitySearch: CapabilitySearchExpectations?
+        /// Detection expectation for `domain == "sandbox_diagnostics"`
+        /// cases. Pins `inlineCodeEscapeHint` — the self-heal hint that
+        /// catches multi-line code mis-escaped into a shell `-c`/`-e`
+        /// string — against canned `(command, exit, stderr)` tuples.
+        public let sandboxDiagnostics: SandboxDiagnosticsExpectations?
 
         public init(
             tools: ToolExpectations? = nil,
@@ -200,7 +205,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             prefixHash: PrefixHashExpectations? = nil,
             argumentCoercion: ArgumentCoercionExpectations? = nil,
             requestValidation: RequestValidationExpectations? = nil,
-            capabilitySearch: CapabilitySearchExpectations? = nil
+            capabilitySearch: CapabilitySearchExpectations? = nil,
+            sandboxDiagnostics: SandboxDiagnosticsExpectations? = nil
         ) {
             self.tools = tools
             self.companions = companions
@@ -211,6 +217,35 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.argumentCoercion = argumentCoercion
             self.requestValidation = requestValidation
             self.capabilitySearch = capabilitySearch
+            self.sandboxDiagnostics = sandboxDiagnostics
+        }
+    }
+
+    /// Expectation for `domain == "sandbox_diagnostics"` cases. The
+    /// runner feeds `(command, exitCode, stderr)` through
+    /// `inlineCodeEscapeHint` and asserts whether the hint fired
+    /// (`expectHint`). When `hintContains` is set on a positive case the
+    /// returned hint must additionally contain that substring — used to
+    /// pin that the recovery instruction still names `sandbox_execute_code`.
+    public struct SandboxDiagnosticsExpectations: Sendable, Codable {
+        public let command: String
+        public let exitCode: Int
+        public let stderr: String
+        public let expectHint: Bool
+        public let hintContains: String?
+
+        public init(
+            command: String,
+            exitCode: Int,
+            stderr: String,
+            expectHint: Bool,
+            hintContains: String? = nil
+        ) {
+            self.command = command
+            self.exitCode = exitCode
+            self.stderr = stderr
+            self.expectHint = expectHint
+            self.hintContains = hintContains
         }
     }
 

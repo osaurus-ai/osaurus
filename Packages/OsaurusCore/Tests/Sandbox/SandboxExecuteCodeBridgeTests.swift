@@ -32,7 +32,6 @@ struct SandboxExecuteCodeBridgeTests {
         let required: Set<String> = [
             "sandbox_read_file",
             "sandbox_write_file",
-            "sandbox_edit_file",
             "sandbox_search_files",
             "sandbox_exec",
             "sandbox_process",

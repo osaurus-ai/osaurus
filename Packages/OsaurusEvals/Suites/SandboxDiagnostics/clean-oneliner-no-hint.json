@@ -1,0 +1,16 @@
+{
+  "id": "sandbox_diagnostics.clean-oneliner-no-hint",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • correctly-escaped one-liner stays silent",
+  "query": "",
+  "notes": "A correctly-escaped `python3 -c 'print(1)'` exits 0 with no parse signature. The escape hint must stay silent so working commands are never nagged.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "python3 -c 'print(1)'",
+      "exitCode": 0,
+      "stderr": "",
+      "expectHint": false
+    }
+  }
+}

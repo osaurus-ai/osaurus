@@ -618,7 +618,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 - **Single mode resolver** — `ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)` decides sandbox > host folder > none for chat, plugin, and HTTP entry points
 - **Working folder picker** — Per-chat folder via `FolderContextService`, with security-scoped bookmark persistence
 - **Project-aware tools** — Core file tools + `shell_run` registered for every folder mount; git tools layered on when the folder is a git repo. Project type only changes the file-tree ignore patterns (and prompt metadata), not the tool surface.
-- **Sandbox toggle** — Composes with the working-folder backend. Sandbox-only keeps current behavior; **combined mode** (sandbox on + folder selected → `.sandbox(hostRead: ctx)`) exposes the host workspace **read-only** (`file_tree` / `file_read` / `file_search`, scoped to the folder root, secret files refused) while all execution stays in the sandbox VM, which has no mount of the host workspace. Host write/edit/shell/git stay hidden in combined mode. Residual risks (the trusted agent is the read→exec bridge, prompt injection from read content, in-scope secrets) are mitigated by scope enforcement + secret refusal; v1 keeps sandbox network-on, so document the exfiltration residual rather than relying on isolation.
+- **Sandbox toggle** — Composes with the working-folder backend. Sandbox-only keeps current behavior; **combined mode** (sandbox on + folder selected → `.sandbox(hostRead: ctx)`) exposes the host workspace **read-only** (`file_read` / `file_search`, scoped to the folder root, secret files refused; `file_read` also lists directories) while all execution stays in the sandbox VM, which has no mount of the host workspace. Host write/edit/shell/git stay hidden in combined mode. Residual risks (the trusted agent is the read→exec bridge, prompt injection from read content, in-scope secrets) are mitigated by scope enforcement + secret refusal; v1 keeps sandbox network-on, so document the exfiltration residual rather than relying on isolation.
 - **`share_artifact`** — Only path for the user to see files the agent produced
 **Loop Tools (engine-intercepted):**
 
@@ -632,17 +632,16 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 
 | Tool              | Category | Description                                                       |
 | ----------------- | -------- | ----------------------------------------------------------------- |
-| `file_tree`       | Core     | Directory structure with project-aware ignore patterns            |
-| `file_read`       | Core     | Read text ranges or bounded XLSX sheet previews                   |
+| `file_read`       | Core     | Read a file (text ranges, `tail_lines`/`max_chars`, bounded XLSX sheet previews) **or** list a directory (with `max_depth`, project-aware ignore patterns) — the path decides |
 | `file_write`      | Core     | Create or overwrite                                               |
 | `file_edit`       | Core     | Surgical exact-string replacement                                 |
-| `file_search`     | Core     | ripgrep-style search                                              |
+| `file_search`     | Core     | ripgrep-style content search, or `target="files"` filename-glob find |
 | `shell_run`       | Core     | Run a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, tests, git, installs. |
 | `git_status`      | Git      | Repository status. Registered when `.git` present.                |
 | `git_diff`        | Git      | Show diffs                                                        |
 | `git_commit`      | Git      | Stage + commit (requires approval)                                |
 
-The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — the same operations go through `shell_run` (`mv`, `cp`, `rm`, `mkdir`) so the model has fewer near-identical tool names to differentiate.
+The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — the same operations go through `shell_run` (`mv`, `cp`, `rm`, `mkdir`) so the model has fewer near-identical tool names to differentiate. The standalone `file_tree` listing tool was likewise folded into `file_read`: pass a directory path and `file_read` returns a listing (the path carries the file-vs-directory decision, so there is no separate tool for the model to mis-select).
 
 **Workflow:**
 
@@ -715,8 +714,7 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 |------|----------|-------------|
 | `sandbox_read_file` | Read-only | Read file contents (supports line ranges and log tails). Use instead of `cat`/`head`/`tail`. |
 | `sandbox_search_files` | Read-only | Search file contents (`target="content"`, ripgrep) **or** find files by name (`target="files"`, glob). Replaces the old `sandbox_search_files` + `sandbox_find_files` + `sandbox_list_directory` trio. |
-| `sandbox_write_file` | Write | Write content to a file (creates parent directories). Use instead of `echo`/`cat` heredoc. |
-| `sandbox_edit_file` | Write | Edit a file by exact string replacement (old_string/new_string). Use instead of `sed`/`awk`. |
+| `sandbox_write_file` | Write | Write a whole file (`content`, creates parent directories) **or** edit it in place (`old_string`+`new_string`, exact match) — the presence of `old_string` selects the edit path. Use instead of `echo`/`cat` heredoc / `sed` / `awk`. |
 | `sandbox_exec` | Exec | Run shell command. Foreground (default) or `background:true` for servers/long jobs. |
 | `sandbox_process` | Exec | Manage background jobs from `sandbox_exec(background:true)` — `poll` / `wait` / `kill`. |
 | `sandbox_execute_code` | Exec | Run a Python script that imports sandbox tools as helpers (`from osaurus_tools import …`). Use for ≥3 tool calls with logic between them. |
@@ -727,7 +725,7 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 | `sandbox_secret_set` | Secret | Store a secret directly or prompt the user |
 | `sandbox_plugin_register` | Plugin | Register an agent-created plugin (requires `pluginCreate`) |
 
-The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, and `sandbox_run_script` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`) or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script`'s use case — multi-step Python orchestration — moved to `sandbox_execute_code`.
+The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, `sandbox_run_script`, and `sandbox_edit_file` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`), an argument (`old_string`+`new_string` on `sandbox_write_file` for in-place edits), or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script`'s use case — multi-step Python orchestration — moved to `sandbox_execute_code`.
 
 `share_artifact` is a global built-in (registered in `ToolRegistry`, available in plain chat / folder / sandbox alike) so it does not appear in this sandbox-specific table.
 

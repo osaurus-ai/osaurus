@@ -174,9 +174,9 @@ struct SystemPromptComposerToolResolutionTests {
     func combinedMode_showsHostReadToolsAndSandboxExec_hidesHostWrite() async {
         // Combined sandbox + host-read: both the sandbox builtins and the
         // folder tools are registered, but only the read-only host subset
-        // (`file_tree`/`file_read`/`file_search`) should surface alongside
-        // sandbox exec. Host write/edit/shell stay hidden — the host is
-        // read-only and exec is sandbox-only.
+        // (`file_read`/`file_search`) should surface alongside sandbox exec.
+        // Host write/edit/shell stay hidden — the host is read-only and
+        // exec is sandbox-only.
         await withSandboxAgent(autonomous: true) { agentId in
             withRegisteredSandboxBuiltins {
                 withRegisteredFolderTools { folder in
@@ -185,18 +185,92 @@ struct SystemPromptComposerToolResolutionTests {
                         executionMode: .sandbox(hostRead: folder)
                     )
                     let names = Set(tools.map { $0.function.name })
-                    // Read-only host subset is visible.
-                    #expect(names.contains("file_tree"))
+                    // Read-only host subset is visible — now the single,
+                    // path-routed read family (serves `/workspace/...`
+                    // sandbox paths too via the bridge). `file_read` also
+                    // lists directories, so there is no separate `file_tree`.
                     #expect(names.contains("file_read"))
                     #expect(names.contains("file_search"))
+                    #expect(!names.contains("file_tree"))
                     // Sandbox exec is visible.
                     #expect(names.contains("sandbox_exec"))
                     // Host write / edit are hidden (read-only host).
                     #expect(!names.contains("file_write"))
                     #expect(!names.contains("file_edit"))
+                    // The redundant sandbox read tools are hidden in
+                    // combined mode (`file_*` reach sandbox paths now), but
+                    // the single sandbox writer stays visible.
+                    #expect(!names.contains("sandbox_read_file"))
+                    #expect(!names.contains("sandbox_search_files"))
+                    #expect(names.contains("sandbox_write_file"))
+                    // `sandbox_edit_file` folded into `sandbox_write_file`.
+                    #expect(!names.contains("sandbox_edit_file"))
                     // Global egress + loop tools remain.
                     #expect(names.contains("share_artifact"))
                 }
+            }
+        }
+    }
+
+    @Test
+    func combinedMode_unifiedReadTools_advertiseRoutingAndKeepSandboxReadCallable() async {
+        // The unified `file_*` read tools must tell the model (at the
+        // schema level) that they also reach `/workspace/...` sandbox
+        // paths, and the hidden `sandbox_read_file` must remain registered
+        // so the `sandbox_execute_code` Python bridge can still dispatch it.
+        // The note rides the FULL spec (turn-1 bootstrap compaction keeps
+        // only the first sentence; the `## Files` prompt block carries the
+        // routing on turn 1), so assert against `alwaysLoadedSpecs`.
+        await withSandboxAgent(autonomous: true) { _ in
+            withRegisteredSandboxBuiltins {
+                withRegisteredFolderTools { folder in
+                    let specs = ToolRegistry.shared.alwaysLoadedSpecs(
+                        mode: .sandbox(hostRead: folder)
+                    )
+                    let byName = Dictionary(
+                        uniqueKeysWithValues: specs.map { ($0.function.name, $0) }
+                    )
+                    for readTool in ["file_read", "file_search"] {
+                        let desc = byName[readTool]?.function.description ?? ""
+                        #expect(
+                            desc.contains("/workspace/"),
+                            "\(readTool) should advertise the sandbox route in combined mode"
+                        )
+                    }
+                    // `file_tree` is merged into `file_read` — absent from the schema.
+                    #expect(byName["file_tree"] == nil)
+
+                    // Hidden from the schema...
+                    #expect(byName["sandbox_read_file"] == nil)
+                    // ...but still registered (callable for the Python bridge).
+                    let callable = ToolRegistry.shared.specs(forTools: ["sandbox_read_file"])
+                    #expect(
+                        callable.count == 1,
+                        "sandbox_read_file must stay registered for the execute-code bridge"
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    func pureFolderMode_readToolDescriptionsHaveNoSandboxRoutingNote() async {
+        // The routing note is combined-mode only — pure folder schemas must
+        // not mention `/workspace/...` (there is no sandbox to route to).
+        await withSandboxAgent(autonomous: false) { _ in
+            withRegisteredFolderTools { folder in
+                let specs = ToolRegistry.shared.alwaysLoadedSpecs(
+                    mode: .hostFolder(folder)
+                )
+                let byName = Dictionary(
+                    uniqueKeysWithValues: specs.map { ($0.function.name, $0) }
+                )
+                for readTool in ["file_read", "file_search"] {
+                    let desc = byName[readTool]?.function.description ?? ""
+                    #expect(!desc.contains("/workspace/"))
+                }
+                // `file_tree` no longer exists as a separate tool.
+                #expect(byName["file_tree"] == nil)
             }
         }
     }

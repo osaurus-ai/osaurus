@@ -25,7 +25,7 @@ public struct ShareArtifactTool: OsaurusTool {
         + "Pass `path` to share an existing file (under your working folder, or under your sandbox home / "
         + "`/workspace/...`), or `content` + `filename` to share inline text/markdown without writing to disk first. "
         + "If unsure where you wrote a file, list it first with `sandbox_search_files(target=\"files\", pattern=\"<name>\")` "
-        + "(sandbox) or `file_tree`/`file_search` (folder mode). Required: at least one of `path` or `content`."
+        + "(sandbox) or `file_read`/`file_search` (folder mode). Required: at least one of `path` or `content`."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
