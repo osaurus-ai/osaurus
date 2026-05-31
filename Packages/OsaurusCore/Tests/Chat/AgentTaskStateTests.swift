@@ -87,6 +87,45 @@ struct AgentTaskStateTests {
         #expect(AgentTaskState.classify(env) == .other)
     }
 
+    /// The `kind:"search"` shape must classify as benign `.other`, NOT be
+    /// misread as a listing. Recording one must leave both the wandering
+    /// counter and the retained `lastListing` snapshot untouched — a future
+    /// edit that makes search results count as listings would corrupt Fix 1's
+    /// truncated-listing steer, so pin the behaviour here.
+    @Test func classify_searchResultIsBenignOther() {
+        let searchEnv = ToolEnvelope.search(
+            tool: "file_search",
+            query: "q4",
+            entries: [["name": "q4.xlsx", "path": "q4.xlsx", "type": "file"]],
+            truncated: false
+        )
+        #expect(AgentTaskState.classify(searchEnv) == .other)
+
+        let state = AgentTaskState()
+        // Seed a truncated listing so we can prove recording a search doesn't
+        // overwrite it (the not_found steer reads this snapshot).
+        let truncatedListing = listingEnvelope(
+            path: "big",
+            entries: [("a.txt", "big/a.txt", false)],
+            truncated: true
+        )
+        state.record(name: "file_read", argsJSON: #"{"path":"big"}"#, result: truncatedListing)
+        let snapshotBefore = state.lastListing
+        #expect(snapshotBefore?.truncated == true)
+
+        state.record(name: "file_search", argsJSON: #"{"pattern":"q4","target":"files"}"#, result: searchEnv)
+
+        // Counter unchanged (search is not a listing), snapshot unchanged.
+        #expect(state.lastListing == snapshotBefore, "a search result must not overwrite lastListing")
+        // The retained truncated listing still drives the not_found steer.
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"big/missing.txt"}"#,
+            result: ToolEnvelope.failure(kind: .notFound, message: "not found", tool: "file_read")
+        )
+        #expect(state.nextStepBias()?.contains("file_search") == true)
+    }
+
     // MARK: - Path canonicalization (shared)
 
     @Test func canonicalPath_normalizesSpellings() {
@@ -345,6 +384,57 @@ struct AgentTaskStateTests {
             state.nextStepBias()?.contains("result.entries") == true,
             "a not_found must not mask wandering — the second listing still reaches the nudge"
         )
+    }
+
+    /// A truncated listing followed by a failed read must NOT steer the model
+    /// back into the partial set (that's how a present file gets reported
+    /// absent). The not_found nudge points at `file_search` instead.
+    @Test func bias_notFoundAfterTruncatedListingPointsAtSearch() {
+        let state = AgentTaskState()
+        // A single truncated listing (below the listing reactive threshold, so
+        // no listing nudge fires on its own).
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"big"}"#,
+            result: listingEnvelope(
+                path: "big",
+                entries: [("a.txt", "big/a.txt", false)],
+                truncated: true
+            )
+        )
+        // The model guesses a path and misses.
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"big/missing.txt"}"#,
+            result: ToolEnvelope.failure(
+                kind: .notFound,
+                message: "File not found: big/missing.txt",
+                tool: "file_read"
+            )
+        )
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("file_search"), "truncated listing -> not_found must steer to file_search")
+        #expect(!bias.contains("most recent listing's entries"))
+    }
+
+    /// The result-level steer fires on the FIRST truncated listing (no
+    /// reactive gating): the warning is attached to the envelope itself.
+    @Test func truncatedListingEnvelopeCarriesSearchWarning() {
+        func warnings(_ envelope: String) -> [String] {
+            guard let data = envelope.data(using: .utf8),
+                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return [] }
+            return dict["warnings"] as? [String] ?? []
+        }
+        let truncated = listingEnvelope(
+            path: "big",
+            entries: [("a.txt", "big/a.txt", false)],
+            truncated: true
+        )
+        #expect(warnings(truncated).contains { $0.contains("file_search") && $0.contains("truncated") })
+        // A non-truncated listing carries no auto-warning.
+        let ok = listingEnvelope(path: "small", entries: [("a.txt", "small/a.txt", false)])
+        #expect(warnings(ok).isEmpty)
     }
 
     // MARK: - Bias-disabled validation gate

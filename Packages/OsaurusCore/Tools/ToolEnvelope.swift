@@ -150,6 +150,44 @@ public enum ToolEnvelope {
             "entry_count": entries.count,
             "truncated": truncated,
         ]
+        // A truncated listing is incomplete, so it must NOT be used as a
+        // find-by-name substrate: concluding "absent" from a partial dump is a
+        // silent data-loss bug. Steer find-by-name to `file_search` at the
+        // result level (route-agnostic, visible on the same turn) when the
+        // caller hasn't supplied its own warnings.
+        let effectiveWarnings = (truncated && (warnings?.isEmpty ?? true)) ? [Self.truncatedListingWarning] : warnings
+        return success(tool: tool, result: result, warnings: effectiveWarnings)
+    }
+
+    /// Steer attached to a truncated listing: the entries are incomplete, so a
+    /// specific file must be found via `file_search`, not by scanning the
+    /// partial set.
+    public static let truncatedListingWarning =
+        "Listing truncated; entries are incomplete. To find a specific file by name, call "
+        + "`file_search` with `target:\"files\"` and a token from the name — do not conclude a "
+        + "file is absent from this partial list."
+
+    /// Build a filename-search success envelope: the same structured,
+    /// actionable `entries[]` shape as `listing` (so the model copies a
+    /// `path`), tagged `kind: "search"` so it is distinguishable from a
+    /// directory listing. `query` echoes what was actually matched (post mode
+    /// correction / broadening). The tool returns ALL candidates and never
+    /// picks among them — which match satisfies the request is the model's
+    /// judgement.
+    public static func search(
+        tool: String? = nil,
+        query: String,
+        entries: [[String: Any]],
+        truncated: Bool,
+        warnings: [String]? = nil
+    ) -> String {
+        let result: [String: Any] = [
+            "kind": "search",
+            "query": query,
+            "entries": entries,
+            "match_count": entries.count,
+            "truncated": truncated,
+        ]
         return success(tool: tool, result: result, warnings: warnings)
     }
 

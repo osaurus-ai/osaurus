@@ -1661,11 +1661,15 @@ struct FileSearchTool: OsaurusTool {
 
         let searchURL = try FolderToolHelpers.resolvePath(searchPath, rootPath: rootPath)
 
-        // `target="files"`: filename-glob find (no content read). Mirrors
+        // `target="files"`: filename find (no content read). Mirrors
         // `sandbox_search_files(target:"files")` so the unified family can
-        // locate files by name on either filesystem.
+        // locate files by name on either filesystem. The tool does the
+        // deterministic search mechanics (broaden-on-empty) and returns ALL
+        // candidates as structured `entries[]`; which match satisfies the
+        // request is the model's judgement, never auto-picked here.
         if target == "files" {
-            return try findFilesByName(root: searchURL, glob: pattern, maxResults: maxResults)
+            let found = try searchFilesByName(root: searchURL, query: pattern, maxResults: maxResults)
+            return filesSearchEnvelope(originalQuery: pattern, found: found)
         }
 
         var results: [String] = []
@@ -1757,6 +1761,24 @@ struct FileSearchTool: OsaurusTool {
         }
 
         if results.isEmpty {
+            // Mode correction (deterministic, no NL parsing): a content search
+            // that finds nothing is the classic "wanted files, grepped bodies"
+            // mistake. Run the files-mode search; if it finds candidates,
+            // return them so the reasonable-but-wrong `target` succeeds at the
+            // model's actual intent. Only fires on empty content, so it never
+            // overrides a real content hit.
+            let fallback = try searchFilesByName(root: searchURL, query: pattern, maxResults: maxResults)
+            if !fallback.entries.isEmpty {
+                let note =
+                    "(no content matches for '\(pattern)'; showing files named like '\(fallback.matchedQuery)')"
+                return ToolEnvelope.search(
+                    tool: name,
+                    query: fallback.matchedQuery,
+                    entries: fallback.entries,
+                    truncated: fallback.truncated,
+                    warnings: fallback.truncated ? [note, Self.searchBudgetWarning] : [note]
+                )
+            }
             let base = "No matches found for '\(pattern)'"
             return ToolEnvelope.success(
                 tool: name,
@@ -1783,23 +1805,24 @@ struct FileSearchTool: OsaurusTool {
         "\n\n(search stopped after scanning the entry limit; narrow the `path` "
         + "or use a more specific pattern)"
 
-    /// Filename find under `root` (recursive, hidden + secret files skipped,
-    /// build-artifact dirs pruned), returning matching relative paths as a
-    /// host-style text envelope. A bare pattern is a case-insensitive
-    /// substring of the basename; a pattern with `*`/`?` is a case-insensitive
-    /// glob anchored to the full basename. Mirrors the sandbox
-    /// `find … -iname` behaviour.
-    private func findFilesByName(root: URL, glob: String, maxResults: Int) throws -> String {
+    /// One files-mode search pass: collect basename matches under `root`
+    /// (recursive, hidden + secret files skipped, build-artifact dirs pruned)
+    /// as structured `{name, path, type}` entries. A bare pattern is a
+    /// case-insensitive substring of the basename; a pattern with `*`/`?` is a
+    /// case-insensitive glob anchored to the full basename. Mirrors the
+    /// sandbox `find … -iname` behaviour. `truncated` is true when the walk
+    /// stopped at the visit budget rather than from running out of matches.
+    private func collectFileMatches(root: URL, glob: String, maxResults: Int) throws
+        -> (entries: [[String: Any]], truncated: Bool)
+    {
         let regexBody =
             NSRegularExpression.escapedPattern(for: glob)
             .replacingOccurrences(of: "\\*", with: ".*")
             .replacingOccurrences(of: "\\?", with: ".")
-        // Wildcards -> anchored glob over the whole basename; a bare word ->
-        // unanchored substring (so `q4` matches `q4_sales_report.xlsx`).
         let regex =
             FolderToolHelpers.patternHasGlobMetacharacters(glob) ? "^\(regexBody)$" : regexBody
 
-        var matches: [String] = []
+        var entries: [[String: Any]] = []
         var budgetTruncated = false
         let enumerator = FileManager.default.enumerator(
             at: root,
@@ -1808,7 +1831,7 @@ struct FileSearchTool: OsaurusTool {
         )
         var visited = 0
         while let fileURL = enumerator?.nextObject() as? URL {
-            guard matches.count < maxResults else { break }
+            guard entries.count < maxResults else { break }
             guard
                 try FolderToolHelpers.searchStepWithinBudget(
                     visited: &visited,
@@ -1830,31 +1853,109 @@ struct FileSearchTool: OsaurusTool {
             }
             guard resourceValues?.isRegularFile == true else { continue }
             if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) { continue }
-            let name = fileURL.lastPathComponent
-            guard name.range(of: regex, options: [.regularExpression, .caseInsensitive]) != nil
+            let entryName = fileURL.lastPathComponent
+            guard entryName.range(of: regex, options: [.regularExpression, .caseInsensitive]) != nil
             else { continue }
             let relativePath =
                 fileURL.path.hasPrefix(rootPath.path)
                 ? String(fileURL.path.dropFirst(rootPath.path.count + 1))
-                : name
-            matches.append(relativePath)
+                : entryName
+            entries.append(["name": entryName, "path": relativePath, "type": "file"])
         }
+        return (entries, budgetTruncated)
+    }
 
-        if matches.isEmpty {
-            let base = "No files found matching '\(glob)'"
-            return ToolEnvelope.success(
-                tool: name,
-                text: budgetTruncated ? base + Self.budgetTruncationNote : base
+    /// The result of a files-mode search after any broadening: the candidate
+    /// entries, the query actually matched (post-broaden), whether the walk
+    /// hit the visit budget, and an optional human note describing broadening.
+    private struct FileSearchOutcome {
+        let entries: [[String: Any]]
+        let matchedQuery: String
+        let truncated: Bool
+        let note: String?
+    }
+
+    /// Files-mode search with bounded broaden-on-empty. Runs the query as
+    /// given; if it finds nothing AND the query has multiple tokens, retries
+    /// with the longest token, then the next-longest — at most 2 retries —
+    /// returning the first non-empty candidate set. The tokenizer is dumb on
+    /// purpose (length-sorted alphanumeric tokens); no natural-language
+    /// cleverness. Never decides which match the user meant.
+    private func searchFilesByName(root: URL, query: String, maxResults: Int) throws
+        -> FileSearchOutcome
+    {
+        let first = try collectFileMatches(root: root, glob: query, maxResults: maxResults)
+        let empty = FileSearchOutcome(
+            entries: [], matchedQuery: query, truncated: first.truncated, note: nil
+        )
+        if !first.entries.isEmpty {
+            return FileSearchOutcome(
+                entries: first.entries, matchedQuery: query, truncated: first.truncated, note: nil
             )
         }
-        var output = "Found \(matches.count) file(s):\n\n" + matches.joined(separator: "\n")
-        if matches.count >= maxResults {
-            output += "\n\n(results truncated at \(maxResults))"
-        } else if budgetTruncated {
-            output += Self.budgetTruncationNote
+
+        let tokens = Self.broadeningTokens(query)
+        guard tokens.count > 1 else { return empty }
+        for token in tokens.prefix(2) where token != query {
+            let broadened = try collectFileMatches(root: root, glob: token, maxResults: maxResults)
+            if !broadened.entries.isEmpty {
+                return FileSearchOutcome(
+                    entries: broadened.entries,
+                    matchedQuery: token,
+                    truncated: broadened.truncated,
+                    note: "(no match for '\(query)'; broadened to '\(token)')"
+                )
+            }
         }
-        return ToolEnvelope.success(tool: name, text: output)
+        return empty
     }
+
+    /// Split a filename query into distinctive tokens for broaden-on-empty,
+    /// longest first (the distinctive token is usually the longest). Splits on
+    /// whitespace / `_` / `-` / `.` and drops tokens with no alphanumerics
+    /// (so a bare `*` never becomes a broaden target).
+    private static func broadeningTokens(_ query: String) -> [String] {
+        let separators = CharacterSet(charactersIn: " \t\n_-.")
+        return query.components(separatedBy: separators)
+            .filter { token in token.contains(where: { $0.isLetter || $0.isNumber }) }
+            .sorted { $0.count > $1.count }
+    }
+
+    /// Wrap a files-mode search outcome into a `kind:"search"` envelope. On a
+    /// non-empty result the candidates are returned for the model to pick
+    /// among; on empty (after any broadening) it returns no candidates plus a
+    /// steer to list the parent directory or ask the user — the tool never
+    /// guesses which file was meant.
+    private func filesSearchEnvelope(originalQuery: String, found: FileSearchOutcome) -> String {
+        if found.entries.isEmpty {
+            let steer =
+                "No files matched '\(originalQuery)'. List the parent directory with `file_read` "
+                + "to see what's there, or ask the user which file they mean."
+            return ToolEnvelope.search(
+                tool: name,
+                query: originalQuery,
+                entries: [],
+                truncated: found.truncated,
+                warnings: found.truncated ? [steer, Self.searchBudgetWarning] : [steer]
+            )
+        }
+        var warnings: [String] = []
+        if let note = found.note { warnings.append(note) }
+        if found.truncated { warnings.append(Self.searchBudgetWarning) }
+        return ToolEnvelope.search(
+            tool: name,
+            query: found.matchedQuery,
+            entries: found.entries,
+            truncated: found.truncated,
+            warnings: warnings.isEmpty ? nil : warnings
+        )
+    }
+
+    /// Warning-array form of `budgetTruncationNote` (no leading newlines) for
+    /// the structured `search` envelope.
+    private static let searchBudgetWarning =
+        "Search stopped after scanning the entry limit; results may be incomplete — narrow the "
+        + "`path` or use a more specific token."
 
     private func searchFile(_ url: URL, pattern: String, maxResults: Int) -> [String]? {
         // Skip obvious binaries by extension and any file over the size cap

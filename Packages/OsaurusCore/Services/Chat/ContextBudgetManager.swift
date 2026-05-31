@@ -422,14 +422,29 @@ public struct ContextBudgetManager: Sendable {
 
         // Structured directory listing envelope: collapse to a count so an
         // old listing doesn't retain its full entry array, but keep enough
-        // that the model knows a listing happened and where.
+        // that the model knows a listing happened and where. A truncated
+        // listing keeps its find-by-name steer so the "incomplete, use
+        // file_search" signal survives into later turns.
         if ToolEnvelope.isSuccess(content),
             let payload = ToolEnvelope.successPayload(content) as? [String: Any],
             payload["kind"] as? String == "listing"
         {
             let count = payload["entry_count"] as? Int ?? (payload["entries"] as? [Any])?.count ?? 0
             let path = payload["path"] as? String ?? "."
-            return "[Compressed: directory listing, \(count) entries in \(path)]"
+            let truncatedNote =
+                payload["truncated"] as? Bool == true ? " (truncated; use file_search target:files)" : ""
+            return "[Compressed: directory listing, \(count) entries in \(path)\(truncatedNote)]"
+        }
+
+        // Structured filename-search envelope: collapse to a match count and
+        // the query, mirroring the listing collapse.
+        if ToolEnvelope.isSuccess(content),
+            let payload = ToolEnvelope.successPayload(content) as? [String: Any],
+            payload["kind"] as? String == "search"
+        {
+            let count = payload["match_count"] as? Int ?? (payload["entries"] as? [Any])?.count ?? 0
+            let query = payload["query"] as? String ?? ""
+            return "[Compressed: \(count) file match(es) for '\(query)']"
         }
 
         // Try to detect the tool type from content patterns

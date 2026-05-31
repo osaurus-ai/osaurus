@@ -1315,6 +1315,15 @@ final class NativeToolCallRowView: NSView {
                 let truncated = payload["truncated"] as? Bool ?? false
                 return markdownForListing(path: path, entries: entries, truncated: truncated)
             }
+            // Filename-search results (`kind: "search"`) share the actionable
+            // `entries[]` shape; render the candidate list like a listing.
+            if payload["kind"] as? String == "search",
+                let entries = payload["entries"] as? [[String: Any]]
+            {
+                let query = payload["query"] as? String ?? ""
+                let truncated = payload["truncated"] as? Bool ?? false
+                return markdownForSearch(query: query, entries: entries, truncated: truncated)
+            }
             if let text = payload["text"] as? String {
                 return text
             }
@@ -1358,6 +1367,30 @@ final class NativeToolCallRowView: NSView {
         }
         if truncated {
             lines.append("… (listing truncated — use `file_search` to find a specific file)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Render a structured filename-search result (`kind: "search"`) as a flat
+    /// candidate list. Mirrors `markdownForListing` but keyed on the query
+    /// rather than a directory path; the model picks among the candidates.
+    private static func markdownForSearch(
+        query: String,
+        entries: [[String: Any]],
+        truncated: Bool
+    ) -> String {
+        if entries.isEmpty {
+            return "No files matched `\(query)`"
+        }
+        let countLabel = entries.count == 1 ? "1 match" : "\(entries.count) matches"
+        var lines: [String] = ["`\(query)` — \(countLabel)"]
+        for entry in entries {
+            guard let entryPath = entry["path"] as? String else { continue }
+            let isDir = (entry["type"] as? String) == "directory"
+            lines.append("- \(entryPath)\(isDir ? "/" : "")")
+        }
+        if truncated {
+            lines.append("… (search truncated — narrow the path or use a more specific token)")
         }
         return lines.joined(separator: "\n")
     }

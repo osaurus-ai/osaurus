@@ -333,7 +333,7 @@ public enum SystemPromptTemplates {
     /// so the rule is anchored once at the top of the section instead of
     /// repeated in every dispatch bullet.
     static let folderPathRule =
-        "Tool paths are relative to the working directory; absolute paths are rejected."
+        "Use paths relative to the working directory; an absolute path is accepted only if it is inside the working directory (paths outside it are rejected)."
 
     /// Positive dispatch table for the folder-mode tools. Mirror of
     /// `sandboxToolGuide` — discipline ("instead of cat / sed / awk")
@@ -343,6 +343,7 @@ public enum SystemPromptTemplates {
         shell pattern it replaces):
         - Read / list: `file_read` to read a file or list a directory — the path decides (optional line range, or `max_depth` for a directory).
         - Search: `file_search` for content (case-insensitive substring), or `target:"files"` to find files by name (case-insensitive substring, e.g. `q4`).
+        - Find a file by name: use `file_search` with `target:"files"` and a short distinctive token from the name (not the whole phrase).
         - Edit: `file_edit` for targeted in-place edits, `file_write` for new files or full rewrites.
         - Shell: `shell_run` for `mv` / `cp` / `rm` / `mkdir` (write/exec ops are logged and undoable).
         """

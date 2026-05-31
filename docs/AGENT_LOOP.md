@@ -100,7 +100,7 @@ Project type is auto-detected from manifests (defined in [`FolderContext.swift`]
 
 ### Folder tool inventory
 
-Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift) when the folder is selected. Tools that operate on the filesystem all enforce the same path contract: paths must be relative to the working folder, and after `..`/`.` standardisation must stay strictly under it. `share_artifact` is NOT in this table — it lives as a global built-in (see below) so it's available in every chat.
+Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift) when the folder is selected. Tools that operate on the filesystem all enforce the same path contract: a path is taken relative to the working folder, but an absolute path is also accepted as long as it resolves (after `..`/`.` standardisation) to the working folder or somewhere strictly under it; paths outside it are rejected. `share_artifact` is NOT in this table — it lives as a global built-in (see below) so it's available in every chat.
 
 **Core (always registered):**
 

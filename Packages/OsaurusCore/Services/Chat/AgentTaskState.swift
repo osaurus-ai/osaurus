@@ -54,6 +54,9 @@ public struct ListingEntry: Equatable, Sendable {
 public struct ListingSnapshot: Equatable, Sendable {
     public let path: String
     public let entries: [ListingEntry]
+    /// True when the listing was capped, so its entries are incomplete and it
+    /// must not be treated as an exhaustive set for find-by-name.
+    public let truncated: Bool
 }
 
 /// Identity of a tool call for dedupe: tool name + canonicalised arguments.
@@ -227,6 +230,13 @@ public final class AgentTaskState {
             return
                 "This listing was truncated; the entries shown are incomplete. Use `file_search` to find a specific file by name instead of picking blindly from the partial set."
         case .notFound:
+            // If the last listing was truncated, its entries are incomplete —
+            // steering the model back into that partial set is how a present
+            // file gets wrongly reported absent. Send it to file_search.
+            if lastListing?.truncated == true {
+                return
+                    "Path not found, and the last directory listing was incomplete (truncated). Use `file_search` with `target:\"files\"` and a token from the name instead of picking from the partial listing."
+            }
             return
                 "Path not found. Pick a `path` from the most recent listing's entries, or list the parent directory."
         case .fileContent, .error, .other:
@@ -326,6 +336,10 @@ public final class AgentTaskState {
                 isDirectory: (entry["type"] as? String) == "directory"
             )
         }
-        return ListingSnapshot(path: path, entries: entries)
+        return ListingSnapshot(
+            path: path,
+            entries: entries,
+            truncated: payload["truncated"] as? Bool == true
+        )
     }
 }
