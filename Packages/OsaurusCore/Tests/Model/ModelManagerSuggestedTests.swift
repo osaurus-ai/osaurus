@@ -95,6 +95,18 @@ struct ModelManagerSuggestedTests {
         #expect(jangtq?.releasedAt != nil)
     }
 
+    @Test func lfm25Entry_haveExpectedMetadata() async {
+        let suggested = await MainActor.run { ModelManager().suggestedModels }
+        let mxfp8 = suggested.first { $0.id == "OsaurusAI/LFM2.5-8B-A1B-MXFP8" }
+
+        #expect(mxfp8 != nil)
+        #expect(mxfp8?.modelType == "lfm2_moe")
+        #expect(mxfp8?.isTopSuggestion == true)
+        // Sum of the two safetensors shards from the HF tree API.
+        #expect(mxfp8?.downloadSizeBytes == 8_732_780_803)
+        #expect(mxfp8?.releasedAt != nil)
+    }
+
     // MARK: - OsaurusAI org auto-discovery merge
 
     @Test func applyOsaurusOrgFetch_addsNewEntriesAfterCurated() async {

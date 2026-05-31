@@ -1550,9 +1550,11 @@ struct RuntimePolicySourceTests {
     func modelRuntimeWeightSizePreflightIsManualMultiModelOnly() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         let start = try #require(runtime.range(of: "private static func computeWeightsSizeBytes"))
-        let end = runtime.range(of: "private static func findLocalDirectory", range: start.upperBound..<runtime.endIndex)?.lowerBound
+        let end =
+            runtime.range(of: "private static func findLocalDirectory", range: start.upperBound ..< runtime.endIndex)?
+            .lowerBound
             ?? runtime.endIndex
-        let body = String(runtime[start.lowerBound..<end])
+        let body = String(runtime[start.lowerBound ..< end])
 
         #expect(body.contains("contentsOfDirectory("))
         #expect(
@@ -1561,8 +1563,10 @@ struct RuntimePolicySourceTests {
         )
 
         let loadStart = try #require(runtime.range(of: "func loadContainer(id: String, name: String)"))
-        let loadEnd = try #require(runtime.range(of: "let loadID = allocateLoadingTaskID()", range: loadStart.upperBound..<runtime.endIndex))
-        let loadPreflight = String(runtime[loadStart.lowerBound..<loadEnd.lowerBound])
+        let loadEnd = try #require(
+            runtime.range(of: "let loadID = allocateLoadingTaskID()", range: loadStart.upperBound ..< runtime.endIndex)
+        )
+        let loadPreflight = String(runtime[loadStart.lowerBound ..< loadEnd.lowerBound])
         #expect(loadPreflight.contains("if policy == .manualMultiModel"))
         #expect(loadPreflight.contains("weightsBytes = Self.computeWeightsSizeBytes(at: localURL)"))
         #expect(

@@ -1886,11 +1886,17 @@ struct FileSearchTool: OsaurusTool {
     {
         let first = try collectFileMatches(root: root, glob: query, maxResults: maxResults)
         let empty = FileSearchOutcome(
-            entries: [], matchedQuery: query, truncated: first.truncated, note: nil
+            entries: [],
+            matchedQuery: query,
+            truncated: first.truncated,
+            note: nil
         )
         if !first.entries.isEmpty {
             return FileSearchOutcome(
-                entries: first.entries, matchedQuery: query, truncated: first.truncated, note: nil
+                entries: first.entries,
+                matchedQuery: query,
+                truncated: first.truncated,
+                note: nil
             )
         }
 
