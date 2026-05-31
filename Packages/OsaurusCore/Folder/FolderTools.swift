@@ -553,11 +553,33 @@ struct FileReadTool: OsaurusTool {
     /// Consistent with truncation limits on shell_run (10k) and git_diff (20k).
     private static let maxOutputChars = 15_000
 
+    /// Maximum raw bytes read for plain text / source / CSV before
+    /// decoding. Rich documents and XLSX previews have their own adapter
+    /// limits; this cap protects the raw path from loading a huge file
+    /// just to emit a 15K-character preview.
+    private static let rawReadByteLimit = 5 * 1024 * 1024
+
+    /// Chunk size for bounded raw reads. Keeps peak transient allocation
+    /// modest while avoiding tiny syscall loops.
+    private static let rawReadChunkBytes = 64 * 1024
+
     /// First-chunk byte budget for the NUL-byte binary sniff. Catches
     /// off-extension binaries whose UTF-8 decode happens to succeed by
     /// luck. Matches the size most editors / `file(1)` use for the same
     /// heuristic.
     private static let binarySniffBytes = 4096
+
+    private struct LoadedFileContent {
+        let text: String
+        let rawRead: RawReadMetadata?
+    }
+
+    private struct RawReadMetadata {
+        let bytesRead: Int
+        let byteLimit: Int
+        let fileSize: Int64?
+        let truncatedByByteLimit: Bool
+    }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
@@ -653,7 +675,7 @@ struct FileReadTool: OsaurusTool {
             relativePath: relativePath,
             ext: ext
         )
-        let lines = content.components(separatedBy: .newlines)
+        let lines = content.text.components(separatedBy: .newlines)
 
         // `tail_lines` (last N lines, for logs) overrides an explicit
         // start/end range; `max_chars` optionally tightens the per-call
@@ -675,9 +697,16 @@ struct FileReadTool: OsaurusTool {
 
         var output = ""
         var lastLineIncluded = validStart - 1
+        var outputTruncated = false
         for i in (validStart - 1) ..< validEnd {
             let line = String(format: "%6d| %@\n", i + 1, lines[i])
             if output.count + line.count > charCap {
+                let remaining = charCap - output.count
+                if remaining > 0 {
+                    output += String(line.prefix(remaining))
+                    lastLineIncluded = i + 1
+                }
+                outputTruncated = true
                 break
             }
             output += line
@@ -689,27 +718,45 @@ struct FileReadTool: OsaurusTool {
         }
 
         // If truncated, inform the model and suggest using line ranges
-        if lastLineIncluded < validEnd {
+        if outputTruncated || lastLineIncluded < validEnd {
             output +=
-                "\n... (truncated at \(lastLineIncluded) of \(lines.count) lines — use start_line/end_line for specific ranges)"
+                "\n... (truncated at \(lastLineIncluded) of \(Self.lineCountLabel(lines.count, rawRead: content.rawRead)) lines — use start_line/end_line for specific ranges)"
+        }
+        if let rawRead = content.rawRead, rawRead.truncatedByByteLimit {
+            output +=
+                "\n... (raw read capped at \(Self.formatByteCount(Int64(rawRead.bytesRead)))"
+                + " of \(Self.formatByteCount(rawRead.fileSize ?? Int64(rawRead.bytesRead)))"
+                + " before full-file load; split the file or use a format-specific reader for later content)"
         }
 
         let text: String
-        if validStart > 1 || validEnd < lines.count {
-            text = "Lines \(validStart)-\(validEnd) of \(lines.count):\n" + output
+        if validStart > 1 || validEnd < lines.count || content.rawRead?.truncatedByByteLimit == true {
+            let totalLines = Self.lineCountLabel(lines.count, rawRead: content.rawRead)
+            text = "Lines \(validStart)-\(lastLineIncluded) of \(totalLines):\n" + output
         } else {
             text = output
         }
+        var result: [String: Any] = [
+            "text": text,
+            "path": relativePath,
+            "start_line": validStart,
+            "end_line": lastLineIncluded,
+            "total_lines": lines.count,
+            "total_lines_exact": content.rawRead?.truncatedByByteLimit != true,
+            "truncated": outputTruncated || lastLineIncluded < validEnd
+                || content.rawRead?.truncatedByByteLimit == true,
+        ]
+        if let rawRead = content.rawRead {
+            result["bytes_read"] = rawRead.bytesRead
+            result["byte_limit"] = rawRead.byteLimit
+            result["raw_bytes_truncated"] = rawRead.truncatedByByteLimit
+            if let fileSize = rawRead.fileSize {
+                result["file_size"] = fileSize
+            }
+        }
         return ToolEnvelope.success(
             tool: name,
-            result: [
-                "text": text,
-                "path": relativePath,
-                "start_line": validStart,
-                "end_line": lastLineIncluded,
-                "total_lines": lines.count,
-                "truncated": lastLineIncluded < validEnd,
-            ]
+            result: result
         )
     }
 
@@ -728,28 +775,30 @@ struct FileReadTool: OsaurusTool {
         url: URL,
         relativePath: String,
         ext: String
-    ) async throws -> String {
+    ) async throws -> LoadedFileContent {
         // Text-only tool: never try to surface image pixels.
         if DocumentParser.isImageFile(url: url) {
-            throw binaryError(path: relativePath, ext: ext, detail: .image)
+            throw Self.binaryError(path: relativePath, ext: ext, detail: .image)
         }
 
         if Self.shouldExtractViaParser(url: url, ext: ext) {
-            return try await extractRichDocumentText(
+            return LoadedFileContent(
+                text: try await extractRichDocumentText(
+                    url: url,
+                    relativePath: relativePath,
+                    ext: ext
+                ),
+                rawRead: nil
+            )
+        }
+
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.loadBoundedRawText(
                 url: url,
                 relativePath: relativePath,
                 ext: ext
             )
-        }
-
-        let data = try Data(contentsOf: url)
-        if data.prefix(Self.binarySniffBytes).contains(0) {
-            throw binaryError(path: relativePath, ext: ext, detail: .nulByte)
-        }
-        if let text = String(data: data, encoding: .utf8) {
-            return text
-        }
-        throw binaryError(path: relativePath, ext: ext, detail: .decodeFailed)
+        }.value
     }
 
     /// Whether `url` should be routed through `DocumentParser` for text
@@ -788,7 +837,7 @@ struct FileReadTool: OsaurusTool {
                 // text path would for a zero-byte `.txt`.
                 return ""
             case .unsupportedFormat, .readFailed, .fileTooLarge:
-                throw binaryError(path: relativePath, ext: ext, detail: .parseFailed)
+                throw Self.binaryError(path: relativePath, ext: ext, detail: .parseFailed)
             }
         }
         if case .document(_, let text, _) = attachment.kind {
@@ -797,12 +846,105 @@ struct FileReadTool: OsaurusTool {
         // Image-only PDF (DocumentParser falls back to per-page image
         // attachments). We can't surface those through file_read — emit
         // the binary envelope so the model pivots instead of retrying.
-        throw binaryError(path: relativePath, ext: ext, detail: .imageOnlyPdf)
+        throw Self.binaryError(path: relativePath, ext: ext, detail: .imageOnlyPdf)
+    }
+
+    private static func loadBoundedRawText(
+        url: URL,
+        relativePath: String,
+        ext: String
+    ) throws -> LoadedFileContent {
+        let fileSize: Int64? = {
+            guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else {
+                return nil
+            }
+            return Int64(size)
+        }()
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forReadingFrom: url)
+        } catch {
+            throw FolderToolError.operationFailed(
+                "Could not read '\(relativePath)': \(error.localizedDescription)"
+            )
+        }
+        defer { try? handle.close() }
+
+        var data = Data()
+        let reserve = min(Self.rawReadByteLimit, Int(fileSize ?? Int64(Self.rawReadByteLimit)))
+        data.reserveCapacity(max(0, reserve))
+
+        var bytesRead = 0
+        do {
+            while bytesRead < Self.rawReadByteLimit {
+                try Task.checkCancellation()
+                let remaining = Self.rawReadByteLimit - bytesRead
+                let count = min(Self.rawReadChunkBytes, remaining)
+                guard let chunk = try handle.read(upToCount: count), !chunk.isEmpty else { break }
+                data.append(chunk)
+                bytesRead += chunk.count
+                if chunk.count < count { break }
+            }
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            throw FolderToolError.operationFailed(
+                "Could not read '\(relativePath)': \(error.localizedDescription)"
+            )
+        }
+
+        if data.prefix(Self.binarySniffBytes).contains(0) {
+            throw binaryError(path: relativePath, ext: ext, detail: .nulByte)
+        }
+
+        let truncatedByByteLimit: Bool
+        if let fileSize {
+            truncatedByByteLimit = Int64(data.count) < fileSize
+        } else {
+            truncatedByByteLimit = data.count >= Self.rawReadByteLimit
+        }
+        let decoded = try decodeUTF8(
+            data,
+            allowTrailingScalarTrim: truncatedByByteLimit,
+            relativePath: relativePath,
+            ext: ext
+        )
+
+        return LoadedFileContent(
+            text: decoded.text,
+            rawRead: RawReadMetadata(
+                bytesRead: decoded.bytesUsed,
+                byteLimit: Self.rawReadByteLimit,
+                fileSize: fileSize,
+                truncatedByByteLimit: truncatedByByteLimit
+            )
+        )
+    }
+
+    private static func decodeUTF8(
+        _ data: Data,
+        allowTrailingScalarTrim: Bool,
+        relativePath: String,
+        ext: String
+    ) throws -> (text: String, bytesUsed: Int) {
+        let maxTrim = allowTrailingScalarTrim ? min(3, data.count) : 0
+        for trim in 0 ... maxTrim {
+            let candidate: Data
+            if trim == 0 {
+                candidate = data
+            } else {
+                candidate = Data(data.dropLast(trim))
+            }
+            if let text = String(data: candidate, encoding: .utf8) {
+                return (text, candidate.count)
+            }
+        }
+        throw binaryError(path: relativePath, ext: ext, detail: .decodeFailed)
     }
 
     /// Construct a `binaryContent` error, normalising an empty extension
     /// to `nil` so the envelope mapper doesn't emit a bare `(.)` label.
-    private func binaryError(
+    private static func binaryError(
         path: String,
         ext: String,
         detail: FolderToolError.BinaryDetail
@@ -812,6 +954,19 @@ struct FileReadTool: OsaurusTool {
             ext: ext.isEmpty ? nil : ext,
             detail: detail
         )
+    }
+
+    private static func lineCountLabel(_ count: Int, rawRead: RawReadMetadata?) -> String {
+        guard rawRead?.truncatedByByteLimit == true else { return "\(count)" }
+        return "at least \(count) scanned"
+    }
+
+    private static func formatByteCount(_ bytes: Int64) -> String {
+        let mib = 1024 * 1024
+        if bytes >= Int64(mib), bytes % Int64(mib) == 0 {
+            return "\(bytes / Int64(mib)) MiB (\(bytes) bytes)"
+        }
+        return "\(bytes) bytes"
     }
 
     private func workbookPreviewIfAvailable(

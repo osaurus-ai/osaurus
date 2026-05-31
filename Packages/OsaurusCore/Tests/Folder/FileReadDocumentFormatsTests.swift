@@ -9,6 +9,8 @@
 //  (stored ZIP, no checked-in binary) mirroring the OpenXML adapter tests.
 //
 
+import AppKit
+import CoreGraphics
 import Foundation
 import Testing
 
@@ -45,6 +47,24 @@ struct FileReadDocumentFormatsTests {
             text.contains("Quarterly Strategy Review"),
             "PPTX slide text was not extracted: \(text)"
         )
+    }
+
+    @Test func fileReadExtractsPDFTextLayerPages() async throws {
+        DocumentAdaptersBootstrap.registerBuiltIns()
+
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let report = root.appendingPathComponent("report.pdf")
+        try Self.writePDF(pages: ["Executive summary", "Revenue table follows"], to: report)
+
+        let tool = FileReadTool(rootPath: root)
+        let result = try await tool.execute(argumentsJSON: #"{"path":"report.pdf"}"#)
+
+        #expect(ToolEnvelope.isSuccess(result))
+        let text = EnvelopeAssertions.successText(result) ?? ""
+        #expect(text.contains("Executive summary"))
+        #expect(text.contains("Revenue table follows"))
+        #expect(text.contains("binary") == false)
     }
 
     // MARK: - Images stay refused
@@ -151,4 +171,30 @@ private enum PPTXFixture {
         ]
         try OpenXMLZipFixture.write(entries: entries, to: url)
     }
+}
+
+private extension FileReadDocumentFormatsTests {
+    static func writePDF(pages: [String], to url: URL) throws {
+        var mediaBox = CGRect(x: 0, y: 0, width: 320, height: 220)
+        guard let ctx = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else {
+            throw PDFFixtureError.contextCreationFailed
+        }
+        for (index, pageText) in pages.enumerated() {
+            ctx.beginPDFPage(nil)
+            let graphicsContext = NSGraphicsContext(cgContext: ctx, flipped: false)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = graphicsContext
+            let font = NSFont.systemFont(ofSize: 14)
+            NSAttributedString(
+                string: pageText,
+                attributes: [.font: font]
+            )
+            .draw(at: NSPoint(x: 24, y: 160 - CGFloat(index * 12)))
+            NSGraphicsContext.restoreGraphicsState()
+            ctx.endPDFPage()
+        }
+        ctx.closePDF()
+    }
+
+    enum PDFFixtureError: Error { case contextCreationFailed }
 }

@@ -120,4 +120,25 @@ struct FolderPluginHintsTests {
         )
         #expect(result == ["osaurus.xlsx"])
     }
+
+    @Test @MainActor func folderContextDetectsOnlyPluginHintedDocumentExtensions() async throws {
+        let root = try Self.tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for name in ["report.XLSX", "slides.pptx", "raw.csv", "brief.pdf"] {
+            try Data(name.utf8).write(to: root.appendingPathComponent(name))
+        }
+
+        let context = await FolderContextService.shared.buildContext(from: root)
+
+        #expect(context.detectedFileExtensions == Set(["xlsx", "pptx", "csv"]))
+        #expect(context.detectedFileExtensions.contains("pdf") == false)
+    }
+
+    private static func tmpRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-folder-plugin-hints-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
 }

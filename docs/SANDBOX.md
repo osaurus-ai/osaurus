@@ -181,6 +181,13 @@ Reserve `sandbox_exec` for builds, installs, git, processes, network calls, pack
 | `sandbox_read_file` | Read a file's contents from the sandbox (supports line ranges, tail, char cap) |
 | `sandbox_search_files` | Search file contents (`target="content"`, ripgrep) **or** find files by name (`target="files"`, glob). Folded the previously-separate `sandbox_find_files` and `sandbox_list_directory` here. |
 
+Folder-mode `file_read` uses a bounded raw path for plain text, source, and
+CSV/TSV: it reads at most 5 MiB before UTF-8 decoding and returns explicit
+metadata when that cap truncates the preview. Rich documents and XLSX previews
+use the document-adapter limits instead. `sandbox_read_file` remains a raw
+sandbox utility with its own character/range controls; it does not currently
+share the folder `file_read` document-adapter path.
+
 ### Requires Autonomous Exec
 
 | Tool | Description |
