@@ -46,9 +46,11 @@ struct ChatViewSandboxTests {
         // which is now the canonical Python power tool.
         #expect(sandboxPrompt.contains("sandbox_execute_code"))
         // Plain sandbox (no host folder) must NOT emit the combined
-        // read-only workspace section or the two-filesystem block.
+        // read-only workspace section or the unified Files block.
         #expect(sandboxPrompt.contains("## Host Workspace (read-only)") == false)
-        #expect(sandboxPrompt.contains("## Two filesystems") == false)
+        #expect(sandboxPrompt.contains("## Files") == false)
+        // Plain sandbox keeps the sandbox read tools in its dispatch guide.
+        #expect(sandboxPrompt.contains("sandbox_read_file"))
     }
 
     @Test
@@ -71,14 +73,20 @@ struct ChatViewSandboxTests {
         // Sandbox framing is present (exec is sandbox-only)...
         #expect(prompt.contains(SystemPromptTemplates.sandboxSectionHeading))
         // ...alongside the read-only host workspace section and the
-        // two-filesystem block that keeps the model from assuming the
-        // sandbox shell can see the workspace.
+        // unified Files block that routes one file family by path so the
+        // model never picks between `file_*` and `sandbox_*` read tools.
         #expect(prompt.contains("## Host Workspace (read-only)"))
-        #expect(prompt.contains("## Two filesystems"))
-        // The two-filesystem block must name the real exec tools, never
-        // the (hidden in this mode) host `shell_run`.
+        #expect(prompt.contains("## Files"))
+        // The unified Files block must name the real exec tools, never the
+        // (hidden in this mode) host `shell_run`.
         #expect(prompt.contains("sandbox_exec"))
         #expect(prompt.contains("shell_run") == false)
+        // Combined mode hides the redundant sandbox read tools; the
+        // dispatch guide steers to the unified `file_*` family instead.
+        // `file_read` reads files AND lists directories, so there is no
+        // separate `file_tree`.
+        #expect(prompt.contains("file_read"))
+        #expect(prompt.contains("file_tree") == false)
     }
 
     @Test

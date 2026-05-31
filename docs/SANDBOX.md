@@ -144,7 +144,7 @@ Every sandboxed agent gets a `SOUL.md` file at `~/SOUL.md` inside its home (host
 |------|------|--------------|
 | Seed | First sandbox provision for an agent | A documented seed is written to `~/SOUL.md` (idempotent — never overwrites an existing soul). |
 | Read | Every chat compose in sandbox mode | Composer reads the file, caps it at 8 KB on a line boundary, and emits a `## SOUL` section into the system prompt between persona and operational directives. |
-| Edit | Any time during a sandbox session | The agent edits its own soul via `sandbox_edit_file` or `sandbox_write_file`. Edits apply on the **next** session — within the active turn the cached system prompt stays byte-stable for KV-cache reuse. |
+| Edit | Any time during a sandbox session | The agent edits its own soul via `sandbox_write_file` (whole-file write, or in-place edit via `old_string`+`new_string`). Edits apply on the **next** session — within the active turn the cached system prompt stays byte-stable for KV-cache reuse. |
 
 ### Precedence with persona
 
@@ -168,8 +168,8 @@ When the container is running, sandbox tools are automatically registered for th
 |--------------------------------------|------------------------------------------------------------------------------------------------------------------|
 | `cat` / `head` / `tail` in `sandbox_exec` | `sandbox_read_file`                                                                                              |
 | `grep` / `rg` / `find` / `ls` in `sandbox_exec` | `sandbox_search_files` — `target="content"` (rg) or `target="files"` (find).                                     |
-| `sed` / `awk`                        | `sandbox_edit_file` (`old_string` → `new_string`)                                                                 |
-| `echo` / `cat` heredoc to create files | `sandbox_write_file`                                                                                             |
+| `sed` / `awk`                        | `sandbox_write_file` with `old_string` → `new_string` (in-place edit)                                            |
+| `echo` / `cat` heredoc to create files | `sandbox_write_file` with `content` (whole file)                                                               |
 | `&` / `nohup` / `disown` for backgrounding | `sandbox_exec(background:true)` — pid + log_file ride back, manage with `sandbox_process` (poll/wait/kill)        |
 
 Reserve `sandbox_exec` for builds, installs, git, processes, network calls, package managers, and any work that doesn't have a dedicated tool above. For ≥3 tool calls with logic between them, `sandbox_execute_code` lets you write a Python script that imports the same tools as helper functions.
@@ -181,12 +181,18 @@ Reserve `sandbox_exec` for builds, installs, git, processes, network calls, pack
 | `sandbox_read_file` | Read a file's contents from the sandbox (supports line ranges, tail, char cap) |
 | `sandbox_search_files` | Search file contents (`target="content"`, ripgrep) **or** find files by name (`target="files"`, glob). Folded the previously-separate `sandbox_find_files` and `sandbox_list_directory` here. |
 
+Folder-mode `file_read` uses a bounded raw path for plain text, source, and
+CSV/TSV: it reads at most 5 MiB before UTF-8 decoding and returns explicit
+metadata when that cap truncates the preview. Rich documents and XLSX previews
+use the document-adapter limits instead. `sandbox_read_file` remains a raw
+sandbox utility with its own character/range controls; it does not currently
+share the folder `file_read` document-adapter path.
+
 ### Requires Autonomous Exec
 
 | Tool | Description |
 |------|-------------|
-| `sandbox_write_file` | Write content to a file (creates parent directories) |
-| `sandbox_edit_file` | Edit a file by exact string replacement — `old_string` must match exactly once |
+| `sandbox_write_file` | Write a whole file via `content` (creates parent directories), **or** edit in place via `old_string`+`new_string` (exact match, must match exactly once). The presence of `old_string` selects the edit path; folds in the previously-separate `sandbox_edit_file`. |
 | `sandbox_exec` | Run a shell command. Foreground (default, max 300s) **or** `background:true` for servers/long tasks (the spawn shim returns immediately with `pid` + `log_file`). Pair the background form with `sandbox_process`. |
 | `sandbox_process` | Manage background jobs: `action="poll"` (alive + log tail), `"wait"` (block until exit, capped by `timeout`), `"kill"` (`force:true` for SIGKILL). |
 | `sandbox_execute_code` | Run a Python script that imports `read_file` / `write_file` / `edit_file` / `search_files` / `terminal` from `osaurus_tools`. Use for ≥3 tool calls with logic between them. 5-min timeout, 50KB stdout cap, 50 tool calls per script. `share_artifact` is intentionally not in the helper allow-list — call it from the model layer after the script returns. |
@@ -197,7 +203,7 @@ Reserve `sandbox_exec` for builds, installs, git, processes, network calls, pack
 | `sandbox_secret_set` | Store a secret securely — pass `value` directly or omit to prompt the user |
 | `sandbox_plugin_register` | Register an agent-created plugin (requires `pluginCreate` permission) |
 
-The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, and `sandbox_run_script` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`) or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script`'s use case — multi-step Python orchestration — moved to `sandbox_execute_code`.
+The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, `sandbox_run_script`, and `sandbox_edit_file` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`), an argument (`old_string`+`new_string` on `sandbox_write_file` for in-place edits), or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script`'s use case — multi-step Python orchestration — moved to `sandbox_execute_code`.
 
 `share_artifact` is a global built-in (registered in `ToolRegistry`) and is the only way for sandbox-generated content to reach the chat thread. It's not in this sandbox-specific list because it's available everywhere, not just in sandbox mode.
 

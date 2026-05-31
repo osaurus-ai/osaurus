@@ -131,6 +131,8 @@ public enum EvalRunner {
             return runPrefixHashCase(testCase, modelId: modelId)
         case "argument_coercion":
             return runArgumentCoercionCase(testCase, modelId: modelId)
+        case "sandbox_diagnostics":
+            return runSandboxDiagnosticsCase(testCase, modelId: modelId)
         case "request_validation":
             return runRequestValidationCase(testCase, modelId: modelId)
         case "capability_search":
@@ -560,6 +562,49 @@ public enum EvalRunner {
             domain: testCase.domain,
             outcome: outcome.passed ? .passed : .failed,
             notes: [outcome.note],
+            modelId: modelId
+        )
+    }
+
+    /// Pure-data evaluator for `domain == "sandbox_diagnostics"`. Feeds
+    /// the canned `(command, exitCode, stderr)` tuple through
+    /// `shellCommandFailureHint` and pins both the fire/no-fire decision
+    /// and (for positive cases) an optional substring of the recovery hint.
+    private static func runSandboxDiagnosticsCase(_ testCase: EvalCase, modelId: String) -> EvalCaseReport {
+        let label = testCase.label ?? testCase.id
+        guard let exp = testCase.expect.sandboxDiagnostics else {
+            return Self.errored(
+                testCase,
+                label: label,
+                modelId: modelId,
+                note: "missing `expect.sandboxDiagnostics`"
+            )
+        }
+        let hint = shellCommandFailureHint(
+            command: exp.command,
+            exitCode: Int32(exp.exitCode),
+            stderr: exp.stderr
+        )
+        let fired = hint != nil
+        var passed = fired == exp.expectHint
+        var note: String
+        if !passed {
+            note = "hint fired: \(fired), expected: \(exp.expectHint)"
+        } else if exp.expectHint, let needle = exp.hintContains {
+            passed = hint?.contains(needle) ?? false
+            note =
+                passed
+                ? "hint fired and contains `\(needle)`"
+                : "hint fired but missing `\(needle)`: \(hint ?? "<nil>")"
+        } else {
+            note = fired ? "hint fired as expected" : "hint correctly silent"
+        }
+        return .terminal(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            outcome: passed ? .passed : .failed,
+            notes: [note],
             modelId: modelId
         )
     }

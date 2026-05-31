@@ -153,6 +153,16 @@ public enum ProviderCredentialInstructionsCatalog {
                 storageAuthType: .apiKey,
                 presetId: preset.rawValue
             )
+        case .atlasCloud:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("AtlasCloud"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Use an AtlasCloud API key from the AtlasCloud console."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
         case .google:
             return ProviderCredentialInstructions(
                 providerType: providerType,

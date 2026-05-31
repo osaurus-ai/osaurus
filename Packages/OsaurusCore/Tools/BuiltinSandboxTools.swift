@@ -20,7 +20,8 @@ enum BuiltinSandboxTools {
     /// The schema is deliberately lean so the model can keep the whole
     /// tool surface in working memory:
     ///   - reads/searches: `sandbox_read_file`, `sandbox_search_files`
-    ///   - writes/edits: `sandbox_write_file`, `sandbox_edit_file`
+    ///   - writes/edits: `sandbox_write_file` (whole-file write OR
+    ///     in-place edit via `old_string`)
     ///   - exec: `sandbox_exec` (foreground OR background via flag),
     ///     `sandbox_process` (poll/wait/kill background jobs)
     ///   - power tool: `sandbox_execute_code` (Python orchestration)
@@ -34,10 +35,17 @@ enum BuiltinSandboxTools {
     ///   - `sandbox_exec_background` → `sandbox_exec(background:true)`
     ///   - `sandbox_run_script` → `sandbox_execute_code` for Python, or
     ///     `sandbox_exec` with a heredoc for short bash/node snippets.
+    ///   - `sandbox_edit_file` → `sandbox_write_file` with `old_string` +
+    ///     `new_string` (presence of `old_string` selects the edit path).
     @MainActor
     static func register(agentId: String, agentName: String, config: AutonomousExecConfig?) {
         let registry = ToolRegistry.shared
         let home = OsaurusPaths.inContainerAgentHome(agentName)
+
+        // Capture the active agent identity so the combined-mode unified
+        // `file_*` tools can route `/workspace/...` reads to this sandbox
+        // without relying on `currentAgentId` being bound at the call site.
+        registry.setActiveSandboxAgentContext(agentName: agentName, home: home)
 
         // Always available (read-only)
         registry.registerSandboxTool(
@@ -56,10 +64,6 @@ enum BuiltinSandboxTools {
 
         registry.registerSandboxTool(
             SandboxWriteFileTool(agentName: agentName, home: home),
-            runtimeManaged: true
-        )
-        registry.registerSandboxTool(
-            SandboxEditFileTool(agentName: agentName, home: home),
             runtimeManaged: true
         )
         registry.registerSandboxTool(
@@ -162,7 +166,6 @@ extension BuiltinSandboxTools {
     public static let executeCodeBridgeAllowedTools: Set<String> = [
         "sandbox_read_file",
         "sandbox_write_file",
-        "sandbox_edit_file",
         "sandbox_search_files",
         "sandbox_exec",
         "sandbox_process",
@@ -223,16 +226,269 @@ private func requirePath(
     case .success(let resolved):
         return .value(resolved)
     case .failure(let rejection):
+        var message = "Argument `\(field)` rejected: \(rejection.reason). Got `\(path)`."
+        if let redirect = hostPathRedirectHint(path: path) {
+            message += " " + redirect
+        }
         return .failure(
             ToolEnvelope.failure(
                 kind: .invalidArgs,
-                message: "Argument `\(field)` rejected: \(rejection.reason). Got `\(path)`.",
+                message: message,
                 field: field,
                 expected: "path under the agent home (relative or absolute under `\(home)`)",
                 tool: tool
             )
         )
     }
+}
+
+/// macOS-distinctive absolute-path roots that cannot exist in the Linux
+/// sandbox. Used to recognize a host path the model handed to a
+/// `sandbox_*` tool by mistake. Excludes generic Linux roots
+/// (`/etc`, `/usr`, `/var`, ...) so a legitimate sandbox read like
+/// `/etc/os-release` is never misredirected.
+private let macHostPathPrefixes = [
+    "/Users/", "/Volumes/", "/Applications/", "/System/", "/Library/", "/private/",
+]
+
+/// When a `sandbox_*` path tool is handed a path that belongs to the
+/// host filesystem (not the Linux sandbox), return a hint redirecting the
+/// model to the read-only `file_*` host tools. Two signals, strongest
+/// first:
+///   1. The path is the combined-mode host workspace root or under it
+///      (`ChatExecutionContext.hostReadOnlyScope`).
+///   2. The path starts with a macOS-distinctive root the sandbox can't
+///      have.
+/// Returns nil for relative paths and for legitimate sandbox absolute
+/// paths (under the agent home, `/workspace`, generic Linux roots).
+internal func hostPathRedirectHint(path: String) -> String? {
+    guard path.hasPrefix("/") else { return nil }
+
+    if let scope = ChatExecutionContext.hostReadOnlyScope {
+        let root = scope.path
+        if path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/") {
+            return
+                "`\(path)` is on your read-only host workspace (`\(root)`), which the "
+                + "Linux sandbox cannot see. Use `file_read` to list the directory or read "
+                + "host files, or `file_search` to search them — not `sandbox_*` tools."
+        }
+    }
+
+    if macHostPathPrefixes.contains(where: { path.hasPrefix($0) }) {
+        return
+            "`\(path)` looks like a macOS host path; the Linux sandbox cannot see the "
+            + "host filesystem. If you meant a file in your host workspace, use "
+            + "`file_read` / `file_search` instead."
+    }
+
+    return nil
+}
+
+/// `sandbox_read_file` was pointed at a directory, so `cat` fails with
+/// "Is a directory". The model wanted to *list* it. Tell it how — and,
+/// when a read-only host workspace is mounted (combined mode), that the
+/// host workspace is listed with `file_read`, not `sandbox_*`. Catches
+/// the "I tried to read my Desktop with sandbox_read_file" slip that
+/// `hostPathRedirectHint` misses because the path is a valid sandbox
+/// directory rather than a rejected host path.
+internal func sandboxDirectoryReadHint(stderr: String) -> String? {
+    guard stderr.lowercased().contains("is a directory") else { return nil }
+    var hint =
+        "That path is a directory, not a file. To list a directory inside the "
+        + "sandbox, use `sandbox_search_files` with `target=\"files\"`."
+    if ChatExecutionContext.hostReadOnlyScope != nil {
+        hint +=
+            " To list your read-only host workspace instead, use `file_read` — "
+            + "the Linux sandbox cannot see the host workspace."
+    }
+    return hint
+}
+
+/// Combined host-read mode only: an empty `sandbox_search_files` rooted at
+/// the sandbox home usually means the model searched the (separate, often
+/// empty) Linux sandbox when it meant the host workspace — exactly the
+/// "what's in my Desktop?" → `sandbox_search_files` slip. The sandbox
+/// tools succeed emptily here, so there's no rejection to hook
+/// `hostPathRedirectHint` onto; this soft warning provides the missing
+/// signal. Narrowly gated (combined mode + home-root + empty result) so a
+/// real, legitimately-empty sandbox search elsewhere is never nagged.
+internal func hostWorkspaceSearchRedirectHint(resolvedPath: String, home: String) -> String? {
+    guard ChatExecutionContext.hostReadOnlyScope != nil else { return nil }
+    func normalize(_ p: String) -> String {
+        var s = p
+        if s.hasSuffix("/.") { s = String(s.dropLast(2)) }
+        while s.count > 1 && s.hasSuffix("/") { s = String(s.dropLast()) }
+        return s
+    }
+    guard normalize(resolvedPath) == normalize(home) else { return nil }
+    return
+        "No matches — this searched your Linux sandbox home, which is separate "
+        + "from (and usually empty compared to) your read-only host workspace. "
+        + "If you meant your workspace, use `file_read` to list it or "
+        + "`file_search` to search it."
+}
+
+// MARK: - Combined-mode file routing
+//
+// In combined mode (`.sandbox(hostRead:)`) the host `file_*` tools are the
+// single read family the model sees (the redundant `sandbox_read_file` /
+// `sandbox_search_files` are hidden). They become path-routed: an absolute
+// `/workspace/...` path is served from the Linux sandbox via the bridge
+// below; everything else (relative or host-absolute) stays on the host
+// workspace. The bridge is bound by `ToolRegistry.execute` only in
+// combined mode, so plain folder and plain sandbox modes are untouched.
+
+/// Sandbox identity needed to run read/list/search commands as the agent
+/// for combined-mode `/workspace/...` requests routed from the host
+/// `file_*` tools. Bound on `ChatExecutionContext.sandboxReadBridge`.
+public struct SandboxReadBridge: Sendable {
+    public let agentName: String
+    public let home: String
+    public init(agentName: String, home: String) {
+        self.agentName = agentName
+        self.home = home
+    }
+}
+
+/// Which filesystem a combined-mode `file_*` call targets. Absolute
+/// `/workspace/...` paths (agent home + `/workspace/shared`) are the Linux
+/// sandbox; relative paths and host-absolute paths are the host workspace.
+public enum CombinedFileRoute: Sendable {
+    case host
+    case sandbox
+}
+
+/// Classify a `file_*` path argument for combined-mode routing.
+public func combinedFileRoute(path: String) -> CombinedFileRoute {
+    path.hasPrefix("/workspace") ? .sandbox : .host
+}
+
+private func encodeBridgeArgs(_ dict: [String: Any]) -> String {
+    guard let data = try? JSONSerialization.data(withJSONObject: dict, options: []),
+        let json = String(data: data, encoding: .utf8)
+    else { return "{}" }
+    return json
+}
+
+/// Read a sandbox file for a combined-mode `file_read("/workspace/...")`
+/// call. Translates the host `start_line`/`end_line` range to the sandbox
+/// `start_line`/`line_count` convention and threads through `tail_lines` /
+/// `max_chars`. Normalizes the sandbox `{content}` payload into the
+/// host-style text envelope so `file_read` has one shape on both routes.
+/// When the path is a directory (the read fails with "Is a directory"),
+/// falls back to a depth-bounded listing — the unified `file_read` reads
+/// files and lists directories on the sandbox route too.
+internal func sandboxBridgeRead(
+    _ bridge: SandboxReadBridge,
+    path: String,
+    startLine: Int,
+    endLine: Int,
+    tailLines: Int,
+    maxChars: Int,
+    maxDepth: Int
+) async throws -> String {
+    var args: [String: Any] = ["path": path]
+    if tailLines > 0 {
+        args["tail_lines"] = tailLines
+    } else if startLine > 0 {
+        args["start_line"] = startLine
+        if endLine >= startLine { args["line_count"] = endLine - startLine + 1 }
+    }
+    if maxChars > 0 { args["max_chars"] = maxChars }
+    let raw = try await SandboxReadFileTool(agentName: bridge.agentName, home: bridge.home)
+        .execute(argumentsJSON: encodeBridgeArgs(args))
+    if ToolEnvelope.isError(raw), raw.lowercased().contains("is a directory") {
+        return try await sandboxBridgeList(bridge, path: path, maxDepth: maxDepth > 0 ? maxDepth : 3)
+    }
+    return normalizedFileEnvelope(raw, tool: "file_read", payloadKey: "content", emptyText: "(empty file)")
+}
+
+/// List a sandbox directory for a combined-mode `file_read("/workspace/...")`
+/// call on a directory path. Uses a depth-bounded `find` so `max_depth` is
+/// honored (the filename-search tool can't bound depth) and returns a
+/// host-style text envelope.
+internal func sandboxBridgeList(
+    _ bridge: SandboxReadBridge,
+    path: String,
+    maxDepth: Int
+) async throws -> String {
+    let resolvedReq = requirePath(path, home: bridge.home, tool: "file_read")
+    guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
+
+    let depth = max(1, maxDepth)
+    let command = "find '\(resolved)' -maxdepth \(depth) 2>/dev/null | head -500"
+    let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+        bridge.agentName,
+        command: command
+    )
+    guard result.succeeded else {
+        let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sandboxExecutionFailure(
+            tool: "file_read",
+            message:
+                "Failed to list `\(resolved)`: "
+                + (stderr.isEmpty ? "exit code \(result.exitCode)" : stderr),
+            retryable: false
+        )
+    }
+    let listing = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    return ToolEnvelope.success(tool: "file_read", text: listing.isEmpty ? "(empty)" : result.stdout)
+}
+
+/// Search a sandbox path for a combined-mode `file_search(..., path:"/workspace/...")`
+/// call. Mirrors the host semantics: `target="content"` escapes the
+/// pattern to a literal (case-insensitive) substring match and honors
+/// `file_pattern` (-> sandbox `include`); `target="files"` is a filename
+/// glob. Normalizes the sandbox `{matches}` payload into a host-style text
+/// envelope.
+internal func sandboxBridgeSearch(
+    _ bridge: SandboxReadBridge,
+    pattern: String,
+    path: String,
+    target: String,
+    filePattern: String?,
+    maxResults: Int
+) async throws -> String {
+    var args: [String: Any] = [
+        "path": path,
+        "max_results": max(maxResults, 1),
+    ]
+    if target == "files" {
+        args["target"] = "files"
+        args["pattern"] = pattern
+    } else {
+        args["target"] = "content"
+        // Escape regex metacharacters so the sandbox `rg` route matches the
+        // same literal substring the host route does.
+        args["pattern"] = NSRegularExpression.escapedPattern(for: pattern)
+        args["case_insensitive"] = true
+        if let include = filePattern { args["include"] = include }
+    }
+    let raw = try await SandboxSearchFilesTool(agentName: bridge.agentName, home: bridge.home)
+        .execute(argumentsJSON: encodeBridgeArgs(args))
+    return normalizedFileEnvelope(
+        raw,
+        tool: "file_search",
+        payloadKey: "matches",
+        emptyText: "No matches found for '\(pattern)'"
+    )
+}
+
+/// Re-shape a sandbox read/search success envelope into the host-style
+/// text envelope the unified `file_*` tools return, so a given tool has
+/// one output shape regardless of route. Sandbox failure envelopes (which
+/// already carry the directory / host-path recovery hints) are forwarded
+/// unchanged.
+private func normalizedFileEnvelope(
+    _ raw: String,
+    tool: String,
+    payloadKey: String,
+    emptyText: String
+) -> String {
+    guard !ToolEnvelope.isError(raw) else { return raw }
+    let value = (ToolEnvelope.successPayload(raw) as? [String: Any])?[payloadKey] as? String ?? ""
+    let isEmpty = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    return ToolEnvelope.success(tool: tool, text: isEmpty ? emptyText : value)
 }
 
 /// Sandbox-tool success envelope (thin wrapper around `ToolEnvelope.success`).
@@ -302,7 +558,141 @@ internal func diagnosticWarnings(
                 + "captured stdout is still trustworthy."
         )
     }
+    if let hint = shellCommandFailureHint(command: command, exitCode: exitCode, stderr: stderr) {
+        warnings.append(hint)
+    }
+    if let hint = sandboxExecHostPathHint(command: command, exitCode: exitCode, stderr: stderr) {
+        warnings.append(hint)
+    }
     return warnings
+}
+
+/// Combined-mode backstop for the one read surface that can't be
+/// path-routed: a raw `sandbox_exec` command (`ls`/`cat` a `/Users/...`
+/// path) still hits the Linux sandbox, which has no copy of the host
+/// workspace, so it fails or comes back empty. The unified `file_*` tools
+/// cover everything else; this redirect catches the model that reached for
+/// the shell anyway. Gated on combined mode + a macOS host path in the
+/// command + a missing-file/empty signal so legitimate sandbox commands
+/// are never nagged.
+internal func sandboxExecHostPathHint(
+    command: String,
+    exitCode: Int32,
+    stderr: String
+) -> String? {
+    guard ChatExecutionContext.hostReadOnlyScope != nil else { return nil }
+    guard macHostPathPrefixes.contains(where: { command.contains($0) }) else { return nil }
+    let lowered = stderr.lowercased()
+    let looksMissing =
+        exitCode != 0
+        && (lowered.contains("no such file")
+            || lowered.contains("not found")
+            || lowered.contains("cannot access")
+            || lowered.isEmpty)
+    guard looksMissing else { return nil }
+    return
+        "That path looks like a macOS host path, which the Linux sandbox can't "
+        + "see. To read your read-only host workspace, use `file_read` "
+        + "(reads files, lists directories) / `file_search` — not `sandbox_exec`."
+}
+
+/// Lowercased stderr fragments that mark a shell-parse failure (as
+/// opposed to an in-script runtime error). Matched case-insensitively.
+private let shellParseSignatures = [
+    "syntax error", "unexpected token", "unexpected eof", "unexpected end of file",
+]
+
+/// An interpreter followed by an inline-code flag — `python3 -c`,
+/// `node -e`, `bash -c`, `sh -c`, `perl -e`, `ruby -e` — with flexible
+/// whitespace. The signal that a command tried to inline a script.
+private let interpreterInlineCodePattern = #"\b(python3?|node|bash|sh|perl|ruby)\s+-[ce]\b"#
+
+/// Map a failed `sandbox_exec` to an actionable recovery hint for the
+/// most common ways a local model mangles the `command` string. Returns
+/// the single most-specific hint (branches are checked in priority order
+/// so hints never stack or contradict), or nil when the failure isn't a
+/// recognized shape — a raw runtime error or a syntax error the model
+/// should just fix itself gets no hint.
+///
+/// Shapes, most-specific first:
+///   1. Multi-line code mis-escaped into an interpreter `-c`/`-e` string.
+///   2. Unterminated heredoc (`<<EOF` never closed).
+///   3. Unbalanced / stray quote (the shell never found a closing quote).
+public func shellCommandFailureHint(
+    command: String,
+    exitCode: Int32,
+    stderr: String
+) -> String? {
+    guard exitCode != 0 else { return nil }
+    let loweredStderr = stderr.lowercased()
+
+    if let hint = inlineCodeHint(command: command, stderr: loweredStderr) {
+        return hint
+    }
+    if let hint = heredocHint(stderr: loweredStderr) {
+        return hint
+    }
+    if let hint = unbalancedQuoteHint(stderr: loweredStderr) {
+        return hint
+    }
+    return nil
+}
+
+/// Multi-line script embedded in a shell `-c` / `-e` string (e.g.
+/// `python3 -c "…"`) whose escaping broke, so the shell mis-parsed the
+/// code body. Requires BOTH a shell-parse signature AND an interpreter
+/// inline-code flag, so a clean one-liner (`python3 -c 'print(1)'`) and
+/// an in-script runtime error (`Traceback`) both stay silent.
+private func inlineCodeHint(command: String, stderr loweredStderr: String) -> String? {
+    guard shellParseSignatures.contains(where: { loweredStderr.contains($0) }) else { return nil }
+    guard
+        let regex = try? NSRegularExpression(pattern: interpreterInlineCodePattern, options: [.caseInsensitive]),
+        regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil
+    else { return nil }
+
+    return
+        "This looks like multi-line code embedded in a shell `-c` / `-e` "
+        + "string whose escaping broke — the shell tried to parse your code "
+        + "as commands (hence the syntax error). Don't re-escape it. For "
+        + "Python, call `sandbox_execute_code` with the script in `code` (no "
+        + "shell escaping). Otherwise `sandbox_write_file` the script to a "
+        + "file, then `sandbox_exec` runs that file."
+}
+
+/// Unterminated heredoc: the `<<DELIM` body was never closed, so the
+/// shell read to end-of-input. bash surfaces this as a `here-document …
+/// delimited by end-of-file` warning.
+private func heredocHint(stderr loweredStderr: String) -> String? {
+    guard
+        loweredStderr.contains("here-document"),
+        loweredStderr.contains("delimited by end-of-file") || loweredStderr.contains("unexpected eof")
+    else { return nil }
+
+    return
+        "This looks like an unterminated heredoc — the `<<` delimiter was "
+        + "never closed, so the shell read to end-of-input. For multi-line "
+        + "file content, prefer `sandbox_write_file` to create the file "
+        + "directly instead of a shell heredoc."
+}
+
+/// Unbalanced / stray quote: the shell hit end-of-input still looking for
+/// a closing quote (`bash: unexpected EOF while looking for matching `'`).
+/// The common slip is wrapping the whole command in a quote.
+private func unbalancedQuoteHint(stderr loweredStderr: String) -> String? {
+    guard loweredStderr.contains("unexpected eof while looking for matching") else { return nil }
+
+    // bash echoes the quote it wanted as the trailing token, e.g.
+    // ``matching `"'`` (double) vs ``matching `''`` (single). Default to
+    // single when we can't tell — it's the more common slip.
+    let quote = loweredStderr.contains("matching `\"") ? "\"" : "'"
+    return
+        "Your command has an unbalanced \(quote) quote — the shell reached "
+        + "end-of-input still looking for the closing \(quote). Check for a "
+        + "stray or unclosed quote (a common slip is wrapping the WHOLE "
+        + "command in quotes; pass it verbatim and quote only the arguments "
+        + "that need it). For code or data with awkward quoting, "
+        + "`sandbox_execute_code` (Python) or `sandbox_write_file` avoid "
+        + "shell quoting entirely."
 }
 
 private let sandboxDefaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -808,9 +1198,13 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
             // stderr so it can react (file missing, permission denied, ...).
             let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             let detail = stderr.isEmpty ? "exit code \(result.exitCode)" : stderr
+            var message = "Failed to read `\(resolved)`: \(detail)"
+            if let hint = sandboxDirectoryReadHint(stderr: stderr) {
+                message += " " + hint
+            }
             return sandboxExecutionFailure(
                 tool: name,
-                message: "Failed to read `\(resolved)`: \(detail)",
+                message: message,
                 retryable: false
             )
         }
@@ -940,7 +1334,8 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
                     "target": "files",
                     "path": resolved,
                     "matches": result.stdout,
-                ]
+                ],
+                warnings: emptySearchWarnings(matches: result.stdout, resolved: resolved)
             )
 
         case "content":
@@ -973,7 +1368,8 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
                     "target": "content",
                     "path": resolved,
                     "matches": result.stdout,
-                ]
+                ],
+                warnings: emptySearchWarnings(matches: result.stdout, resolved: resolved)
             )
 
         default:
@@ -987,6 +1383,16 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
                 tool: name
             )
         }
+    }
+
+    /// When a search comes back empty, surface the combined-mode
+    /// host-workspace redirect (if applicable) as a soft warning.
+    private func emptySearchWarnings(matches: String, resolved: String) -> [String]? {
+        guard matches.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard let hint = hostWorkspaceSearchRedirectHint(resolvedPath: resolved, home: home) else {
+            return nil
+        }
+        return [hint]
     }
 }
 
@@ -1003,10 +1409,11 @@ private func shellEscapeSingleQuoted(_ s: String) -> String {
 private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_write_file"
     let description =
-        "Write `content` to `path` in the sandbox, replacing any existing file. **Use this instead "
-        + "of `echo`/`cat` heredoc in `sandbox_exec`.** Creates parent directories as needed. Both "
-        + "arguments are required — passing only `path` returns an `invalid_args` failure pointing "
-        + "at the missing field."
+        "Write a file, or edit it in place. Provide `content` to write/replace the whole file; "
+        + "provide `old_string` (+`new_string`) to replace one exact match. **Use this instead of "
+        + "`echo`/`cat` heredoc / `sed` / `awk` in `sandbox_exec`.** Creates parent directories as "
+        + "needed. For an edit, `old_string` must uniquely match one location — include surrounding "
+        + "context lines if needed; it fails if `old_string` is missing or matches multiple locations."
     let agentName: String
     let home: String
 
@@ -1024,11 +1431,23 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
                 "content": .object([
                     "type": .string("string"),
                     "description": .string(
-                        "File contents (string). Pass `\"\"` for an empty file. Binary / NUL bytes are not safe — they ride a `printf` shell pipeline."
+                        "Whole-file contents (string). Pass `\"\"` for an empty file. Omit when editing via `old_string`. Binary / NUL bytes are not safe — they ride a `printf` shell pipeline."
+                    ),
+                ]),
+                "old_string": .object([
+                    "type": .string("string"),
+                    "description": .string(
+                        "Exact text to find and replace (must match exactly one location in the file). Present ⇒ in-place edit instead of whole-file write."
+                    ),
+                ]),
+                "new_string": .object([
+                    "type": .string("string"),
+                    "description": .string(
+                        "Replacement text for the `old_string` edit. Use `\"\"` to delete the match."
                     ),
                 ]),
             ]),
-            "required": .array([.string("path"), .string("content")]),
+            "required": .array([.string("path")]),
         ])
     }
 
@@ -1044,7 +1463,35 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let path) = pathReq else { return pathReq.failureEnvelope ?? "" }
 
-        // Empty content is legitimate (truncate-to-zero), so allow it.
+        let resolvedReq = requirePath(path, home: home, tool: name)
+        guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
+
+        // The presence of `old_string` decides edit vs whole-file write —
+        // the model picks the behavior from an argument it already holds,
+        // not a separate tool name. (Decision-elimination test.)
+        if args["old_string"] != nil {
+            return try await editInPlace(args: args, resolved: resolved)
+        }
+
+        // Neither `content` nor `old_string`: nothing to write. Point the
+        // model at the two valid shapes rather than failing opaquely.
+        guard args["content"] != nil else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Provide `content` to write the whole file, or `old_string` (+`new_string`) to "
+                    + "edit one exact match in place.",
+                field: "content",
+                expected: "`content` (whole-file write) or `old_string` + `new_string` (in-place edit)",
+                tool: name
+            )
+        }
+
+        return try await writeWhole(args: args, resolved: resolved)
+    }
+
+    /// Whole-file write branch. Empty content is legitimate (truncate-to-zero).
+    private func writeWhole(args: [String: Any], resolved: String) async throws -> String {
         let contentReq = requireString(
             args,
             "content",
@@ -1053,9 +1500,6 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             allowEmpty: true
         )
         guard case .value(let content) = contentReq else { return contentReq.failureEnvelope ?? "" }
-
-        let resolvedReq = requirePath(path, home: home, tool: name)
-        guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
 
         let dir = (resolved as NSString).deletingLastPathComponent
         _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
@@ -1081,58 +1525,11 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             result: ["path": resolved, "size": content.count]
         )
     }
-}
 
-// MARK: - sandbox_edit_file
-
-private struct SandboxEditFileTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_edit_file"
-    let description =
-        "Edit a file by replacing an exact string match. **Use this instead of `sed`/`awk` in "
-        + "`sandbox_exec`.** `old_string` must uniquely match one location — include surrounding "
-        + "context lines if needed. Fails if `old_string` is not found or matches multiple "
-        + "locations. Prefer this over `sandbox_write_file` for targeted in-place edits."
-    let agentName: String
-    let home: String
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "path": .object([
-                    "type": .string("string"),
-                    "description": .string(
-                        "File path, relative to agent home or absolute under `\(home)` / `/workspace/shared`."
-                    ),
-                ]),
-                "old_string": .object([
-                    "type": .string("string"),
-                    "description": .string(
-                        "Exact text to find and replace (must match exactly one location in the file)."
-                    ),
-                ]),
-                "new_string": .object([
-                    "type": .string("string"),
-                    "description": .string("Replacement text. Use `\"\"` to delete the match."),
-                ]),
-            ]),
-            "required": .array([.string("path"), .string("old_string"), .string("new_string")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let pathReq = requireString(
-            args,
-            "path",
-            expected: "file path under the agent home or absolute under `\(home)` / `/workspace/shared`",
-            tool: name
-        )
-        guard case .value(let path) = pathReq else { return pathReq.failureEnvelope ?? "" }
-
+    /// In-place edit branch: replace one exact `old_string` match with
+    /// `new_string`. `old_string` is already known present; `new_string`
+    /// is required here (its absence is the merge's only new validation).
+    private func editInPlace(args: [String: Any], resolved: String) async throws -> String {
         let oldReq = requireString(
             args,
             "old_string",
@@ -1141,6 +1538,17 @@ private struct SandboxEditFileTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let oldString) = oldReq else { return oldReq.failureEnvelope ?? "" }
 
+        guard args["new_string"] != nil else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`old_string` given without `new_string` — an in-place edit needs both. Use "
+                    + "`\"\"` for `new_string` to delete the match.",
+                field: "new_string",
+                expected: "replacement text (use `\"\"` to delete the match)",
+                tool: name
+            )
+        }
         // Allow empty new_string (used to delete the matched text).
         let newReq = requireString(
             args,
@@ -1150,9 +1558,6 @@ private struct SandboxEditFileTool: OsaurusTool, @unchecked Sendable {
             allowEmpty: true
         )
         guard case .value(let newString) = newReq else { return newReq.failureEnvelope ?? "" }
-
-        let resolvedReq = requirePath(path, home: home, tool: name)
-        guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
 
         let tmpDir = "\(home)/.tmp"
         _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
@@ -1256,8 +1661,12 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         yourself with `&` / `nohup` / `disown` — pass `background:true` so \
         the runtime can track it.
 
-        For multi-step Python orchestration (≥3 tool calls with logic \
-        between them, output filtering, looping), prefer `sandbox_execute_code`.
+        This is for a shell command LINE. For a multi-line script use \
+        `sandbox_execute_code` (Python) or `sandbox_write_file` the script \
+        then run the file — NEVER inline multi-line code in `python3 -c` / \
+        `node -e`: the JSON→shell→code escaping breaks and bash mis-parses \
+        the body. Pass the command verbatim — do NOT wrap the whole command \
+        in an extra quote; quote only the individual arguments that need it.
 
         LIMITS: no built-in foreground timeout — the user terminates if they \
         care. Pass `timeout: <seconds>` ONLY if you want a hard idle ceiling \
@@ -2263,8 +2672,10 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
 private struct SandboxExecuteCodeTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_execute_code"
     let description = """
-        Run a Python script that can call sandbox tools as Python functions. \
-        Use this when:
+        Run a Python script in the sandbox with the `osaurus_tools` helpers \
+        (read_file, write_file, search_files, terminal). The script runs \
+        directly — this is the home for any multi-line Python. Reach for it \
+        especially when:
         - You need ≥3 tool calls with processing logic between them.
         - You need to filter / reduce a large tool output before it enters \
           your context (e.g. read 5 logs, return the top 10 errors).
@@ -2642,9 +3053,9 @@ enum SandboxExecuteCodeHelpers {
 
 
         def edit_file(path: str, old_string: str, new_string: str) -> dict:
-            """Targeted exact-string replacement. See `sandbox_edit_file`."""
+            """Targeted exact-string replacement via `sandbox_write_file` (old_string selects the edit path)."""
             return _call(
-                "sandbox_edit_file",
+                "sandbox_write_file",
                 {"path": path, "old_string": old_string, "new_string": new_string},
             )
 

@@ -42,11 +42,12 @@ struct SandboxAgentProvisionerSoulSeedTests {
     /// are sanctioned — without that signal the agent has no reason to
     /// touch the file. Pin the tool names so a future "trim everything"
     /// refactor cannot silently strip the editing affordance.
-    @Test("seed body sanctions edits via sandbox_edit_file / sandbox_write_file")
+    @Test("seed body sanctions edits via sandbox_write_file")
     func seedBody_sanctionsEdits() {
         let body = SandboxAgentProvisioner.soulSeedBody
-        #expect(body.contains("sandbox_edit_file"))
         #expect(body.contains("sandbox_write_file"))
+        // `sandbox_edit_file` was folded into `sandbox_write_file`.
+        #expect(!body.contains("sandbox_edit_file"))
     }
 
     /// The contract draws an explicit boundary against memory and

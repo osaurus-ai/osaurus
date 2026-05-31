@@ -10,9 +10,12 @@
 //  Numbers from the in-tree run on 2026-05-06:
 //    canonical before T-O: 458 tokens (no secrets configured)
 //
-//  The 420-token ceiling leaves headroom for trivial wording changes
-//  without breaking the test. The failure message includes the live
-//  number so reviewers can re-anchor this comment when it shifts.
+//  Re-anchored 2026-05-30 after the file/write tool consolidation: the
+//  dispatch guide now explains `sandbox_write_file`'s dual whole-file /
+//  in-place-edit behavior (the merged-away `sandbox_edit_file`), nudging
+//  the canonical section to 420 tokens. The 440-token ceiling leaves
+//  headroom for trivial wording changes; the failure message includes the
+//  live number so reviewers can re-anchor this comment when it shifts.
 //
 
 import Foundation
@@ -23,14 +26,40 @@ import Testing
 @Suite("Sandbox section token cost audit")
 struct SandboxSectionTokenAuditTests {
 
-    @Test("sandbox section stays under 420 tokens")
+    @Test("sandbox section stays under 440 tokens")
     func sandboxSectionFitsBudget() {
         let section = SystemPromptTemplates.sandbox()
         let cost = TokenEstimator.estimate(section)
         #expect(
-            cost < 420,
-            "Sandbox section grew to \(cost) tokens (>420). Trim it back; if the growth is genuinely needed, revisit whether the small-context budget allocation still makes sense."
+            cost < 440,
+            "Sandbox section grew to \(cost) tokens (>440). Trim it back; if the growth is genuinely needed, revisit whether the small-context budget allocation still makes sense."
         )
+    }
+
+    /// Combined mode (`.sandbox(hostRead:)`) renders the combined tool
+    /// guide plus the `## Files` path-routing block. Pin its total budget
+    /// and the two contracts that keep it correct: the guide must not steer
+    /// the model toward the hidden sandbox read tools, and the `## Files`
+    /// block must spell out the `/workspace/...` routing.
+    @Test("combined-mode sandbox section + Files block stays within budget")
+    func combinedModeSectionFitsBudget() {
+        let section = SystemPromptTemplates.sandbox(hostReadCombined: true)
+        let files = SystemPromptTemplates.unifiedFilesBlock(allowSecretReads: false)
+        // Live number (2026-05-30): combined guide + `## Files` block ≈ 647
+        // tokens. The 720 ceiling leaves headroom for trivial wording
+        // changes; the failure message carries the live number so a
+        // reviewer can re-anchor this comment when it shifts.
+        let cost = TokenEstimator.estimate(section + "\n\n" + files)
+        #expect(
+            cost < 720,
+            "Combined-mode sandbox section + Files block grew to \(cost) tokens (>720). Trim the guide / Files block."
+        )
+        // The combined guide must not point at tools hidden in this mode.
+        #expect(!section.contains("sandbox_read_file"))
+        #expect(!section.contains("sandbox_search_files"))
+        // The Files block must explain the path routing.
+        #expect(files.contains("## Files"))
+        #expect(files.contains("/workspace"))
     }
 
     /// PR3 of the SOUL.md spec adds a one-line advert to

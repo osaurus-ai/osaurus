@@ -78,7 +78,7 @@ Memory and `SOUL.md` are **separate surfaces by design** — do not cross-pollin
 
 | | Memory | `SOUL.md` |
 |---|---|---|
-| Author | Distilled from conversations by Osaurus | The agent itself, via `sandbox_edit_file` / `sandbox_write_file` |
+| Author | Distilled from conversations by Osaurus | The agent itself, via `sandbox_write_file` (whole-file write or in-place edit) |
 | Scope | Session facts, episodes, user identity | Stable preferences and patterns the agent learned about working with you |
 | Update cadence | Background after each session | Whenever the agent observes a durable pattern |
 | Where it lands | Prepended to the latest user message (volatile) | Static section in the system prompt (KV-cacheable) |

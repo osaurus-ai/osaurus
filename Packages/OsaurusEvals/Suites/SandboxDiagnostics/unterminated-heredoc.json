@@ -1,0 +1,17 @@
+{
+  "id": "sandbox_diagnostics.unterminated-heredoc",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • unterminated heredoc surfaces write-file hint",
+  "query": "",
+  "notes": "A `cat <<EOF` whose delimiter is never closed makes bash read to end-of-input and warn `here-document … delimited by end-of-file`. The self-heal hint must point at sandbox_write_file for multi-line content instead of a shell heredoc.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "cat <<EOF\nhello world",
+      "exitCode": 2,
+      "stderr": "bash: -c: line 2: warning: here-document at line 1 delimited by end-of-file (wanted `EOF')",
+      "expectHint": true,
+      "hintContains": "sandbox_write_file"
+    }
+  }
+}

@@ -52,13 +52,11 @@ enum ChatToolChoicePolicy {
     private static func isFileLikeToolName(_ name: String) -> Bool {
         [
             "file_read",
-            "file_tree",
             "file_write",
             "file_edit",
             "file_search",
             "sandbox_read_file",
             "sandbox_write_file",
-            "sandbox_edit_file",
             "sandbox_search_files",
         ].contains(name)
     }

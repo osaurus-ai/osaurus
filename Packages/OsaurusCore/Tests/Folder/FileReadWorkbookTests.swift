@@ -53,6 +53,25 @@ struct FileReadWorkbookTests {
         #expect(text.contains("Sheet 1: Revenue") == false)
     }
 
+    @Test func fileReadSurfacesWorkbookFormulaRangeAndSecuritySummary() async throws {
+        let fixture = try Self.formulaFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let tool = FileReadTool(rootPath: fixture.root, documentRegistry: fixture.registry)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path":"formulas.xlsx","max_rows":5,"max_columns":3}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        let text = try Self.text(from: result)
+        #expect(text.contains("Formula cells: 1"))
+        #expect(text.contains("Security: inspection=partiallyInspected"))
+        #expect(text.contains("active=formula"))
+        #expect(text.contains("findings=formula(1)"))
+        #expect(text.contains("Merged ranges: A3:B3"))
+        #expect(text.contains("B2=2500 [=SUM(B1:B1)]"))
+    }
+
     @Test func fileReadRejectsUnknownWorkbookSheet() async throws {
         let fixture = try await Self.fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -88,6 +107,100 @@ struct FileReadWorkbookTests {
             to: root.appendingPathComponent("workbook.xlsx")
         )
         return Fixture(root: root, registry: registry)
+    }
+
+    private static func formulaFixture() throws -> Fixture {
+        let root = tmpRoot()
+        let registry = DocumentFormatRegistry()
+        registry.register(adapter: XLSXAdapter())
+
+        try OpenXMLZipFixture.write(
+            entries: formulaWorkbookEntries(),
+            to: root.appendingPathComponent("formulas.xlsx")
+        )
+        return Fixture(root: root, registry: registry)
+    }
+
+    private static func formulaWorkbookEntries() -> [(String, Data)] {
+        [
+            (
+                "[Content_Types].xml",
+                Data(
+                    """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+                      <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+                      <Default Extension="xml" ContentType="application/xml"/>
+                      <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+                      <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+                      <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+                    </Types>
+                    """.utf8
+                )
+            ),
+            (
+                "_rels/.rels",
+                Data(
+                    """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                      <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+                    </Relationships>
+                    """.utf8
+                )
+            ),
+            (
+                "xl/workbook.xml",
+                Data(
+                    """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                      <sheets>
+                        <sheet name="Formulas" sheetId="1" r:id="rId1"/>
+                      </sheets>
+                    </workbook>
+                    """.utf8
+                )
+            ),
+            (
+                "xl/_rels/workbook.xml.rels",
+                Data(
+                    """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                      <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+                    </Relationships>
+                    """.utf8
+                )
+            ),
+            (
+                "xl/sharedStrings.xml",
+                Data(
+                    """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="2" uniqueCount="2">
+                      <si><t>Metric</t></si>
+                      <si><t>Total</t></si>
+                    </sst>
+                    """.utf8
+                )
+            ),
+            (
+                "xl/worksheets/sheet1.xml",
+                Data(
+                    """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                      <sheetData>
+                        <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"><v>2500</v></c></row>
+                        <row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2"><f>SUM(B1:B1)</f><v>2500</v></c></row>
+                      </sheetData>
+                      <mergeCells count="1"><mergeCell ref="A3:B3"/></mergeCells>
+                    </worksheet>
+                    """.utf8
+                )
+            ),
+        ]
     }
 
     private static func tmpRoot() -> URL {

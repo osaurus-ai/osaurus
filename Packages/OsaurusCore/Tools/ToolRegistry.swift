@@ -118,6 +118,13 @@ final class ToolRegistry: ObservableObject {
     private var sandboxToolNames: Set<String> = []
     /// Built-in sandbox execution tools managed by runtime context.
     private var builtInSandboxToolNames: Set<String> = []
+    /// Identity of the agent whose sandbox built-ins are currently
+    /// registered. Captured at registration so the combined-mode unified
+    /// `file_*` tools can route `/workspace/...` reads to the sandbox
+    /// without depending on `ChatExecutionContext.currentAgentId` being
+    /// bound at the call site. Single active set is guaranteed by the
+    /// unregister-then-register pattern in `SandboxToolRegistrar`.
+    private(set) var activeSandboxAgentContext: SandboxReadBridge?
     /// Tool names registered from remote MCP providers.
     private var mcpToolNames: Set<String> = []
     /// Tool names registered from native dylib plugins.
@@ -457,17 +464,19 @@ final class ToolRegistry: ObservableObject {
             let policy = combinedHostReadPolicy
             return try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
                 try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
-                    if tool.bypassRegistryTimeout {
-                        return try await Self.runToolBodyUntimed(
+                    try await ChatExecutionContext.$sandboxReadBridge.withValue(combinedSandboxReadBridge) {
+                        if tool.bypassRegistryTimeout {
+                            return try await Self.runToolBodyUntimed(
+                                tool,
+                                argumentsJSON: effectiveArgumentsJSON
+                            )
+                        }
+                        return try await Self.runToolBody(
                             tool,
-                            argumentsJSON: effectiveArgumentsJSON
+                            argumentsJSON: effectiveArgumentsJSON,
+                            timeoutSeconds: Self.defaultToolTimeoutSeconds
                         )
                     }
-                    return try await Self.runToolBody(
-                        tool,
-                        argumentsJSON: effectiveArgumentsJSON,
-                        timeoutSeconds: Self.defaultToolTimeoutSeconds
-                    )
                 }
             }
         }
@@ -487,6 +496,32 @@ final class ToolRegistry: ObservableObject {
             let root = FolderContextService.cachedRootPath
         else { return (nil, false) }
         return (root, resolvedAutonomousExecConfig?.allowHostSecretReads ?? false)
+    }
+
+    /// Sandbox identity bound around every tool body in combined mode so the
+    /// unified host `file_*` tools can serve an absolute `/workspace/...`
+    /// path from the Linux sandbox (path-routed file access). Same gate as
+    /// `combinedHostReadPolicy` (sandbox exec registered + folder root),
+    /// plus a resolvable agent id; `nil` in plain folder / plain sandbox
+    /// modes so they stay untouched.
+    private var combinedSandboxReadBridge: SandboxReadBridge? {
+        guard toolsByName.keys.contains("sandbox_exec"),
+            FolderContextService.cachedRootPath != nil
+        else { return nil }
+        // Prefer the identity captured at sandbox-tool registration; it
+        // can't go stale mid-turn and doesn't require `currentAgentId` to
+        // be bound at the call site. Fall back to the execution context's
+        // agent id for any path that drives a tool call without going
+        // through `BuiltinSandboxTools.register` first.
+        if let captured = activeSandboxAgentContext {
+            return captured
+        }
+        guard let agentId = ChatExecutionContext.currentAgentId else { return nil }
+        let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+        return SandboxReadBridge(
+            agentName: agentName,
+            home: OsaurusPaths.inContainerAgentHome(agentName)
+        )
     }
 
     /// The effective autonomous-exec config for the agent driving the
@@ -875,6 +910,14 @@ final class ToolRegistry: ObservableObject {
         for name in snapshot {
             unregisterSandboxTool(named: name)
         }
+        activeSandboxAgentContext = nil
+    }
+
+    /// Record the agent whose sandbox built-ins are now registered, so the
+    /// combined-mode unified `file_*` tools can route `/workspace/...`
+    /// reads to that agent's sandbox. Called by `BuiltinSandboxTools.register`.
+    func setActiveSandboxAgentContext(agentName: String, home: String) {
+        activeSandboxAgentContext = SandboxReadBridge(agentName: agentName, home: home)
     }
 
     private func unregisterSandboxTool(named name: String) {
@@ -1002,7 +1045,7 @@ final class ToolRegistry: ObservableObject {
     /// and the host is read-only. Single source of truth shared by
     /// `excludedToolNames` and the combined-mode tests.
     static let folderReadOnlyToolNames: Set<String> = [
-        "file_tree", "file_read", "file_search",
+        "file_read", "file_search",
     ]
 
     /// Runtime-managed tools are execution infrastructure, always loaded when registered.
@@ -1032,9 +1075,9 @@ final class ToolRegistry: ObservableObject {
         var excluded: Set<String> = []
         if !mode.usesHostFolderTools {
             // Combined sandbox + host-read mode keeps the read-only host
-            // subset (`file_tree` / `file_read` / `file_search`) visible
-            // while still hiding host write / edit / shell / git — exec
-            // is sandbox-only, the host is read-only.
+            // subset (`file_read` / `file_search`) visible while still
+            // hiding host write / edit / shell / git — exec is
+            // sandbox-only, the host is read-only.
             var folderExcluded = Self.folderToolNames
             if mode.allowsHostReadTools {
                 folderExcluded.subtract(Self.folderReadOnlyToolNames)
@@ -1043,12 +1086,27 @@ final class ToolRegistry: ObservableObject {
         }
         if !mode.usesSandboxTools {
             excluded.formUnion(builtInSandboxToolNames)
+        } else if mode.allowsHostReadTools {
+            // Combined sandbox + host-read mode: the host `file_*` tools are
+            // the single, path-routed read family the model sees, so hide
+            // the redundant sandbox read tools (`file_read` / `file_search`
+            // serve `/workspace/...` paths via the bridge; `file_read` also
+            // lists directories). They stay registered for the
+            // `sandbox_execute_code` Python bridge, which dispatches by name.
+            excluded.formUnion(Self.sandboxReadToolNames)
         }
         if mode.usesHostFolderTools || mode.usesSandboxTools {
             excluded.formUnion(folderConflictingToolNames)
         }
         return excluded
     }
+
+    /// Sandbox read tools made redundant by the unified, path-routed host
+    /// `file_*` tools in combined mode. Hidden from the schema there (still
+    /// registered for the `sandbox_execute_code` bridge).
+    static let sandboxReadToolNames: Set<String> = [
+        "sandbox_read_file", "sandbox_search_files",
+    ]
 
     /// Resolve the active execution mode for a chat send. Single source of
     /// truth: callers pass the user's explicit intent (autonomous toggle +
@@ -1130,7 +1188,8 @@ final class ToolRegistry: ObservableObject {
         let runtimeNames = runtimeManagedToolNames
         let excluded = excludedToolNames(for: mode)
 
-        return toolsByName.values
+        let specs =
+            toolsByName.values
             .filter { tool in
                 builtInNames.contains(tool.name) || runtimeNames.contains(tool.name)
             }
@@ -1138,6 +1197,7 @@ final class ToolRegistry: ObservableObject {
             .filter { !excludeCapabilityTools || !Self.capabilityToolNames.contains($0.name) }
             .sorted { $0.name < $1.name }
             .map { $0.asOpenAITool() }
+        return annotatedForCombinedMode(specs, mode: mode)
     }
 
     /// Sandbox built-in tool specs available for the given execution mode.
@@ -1145,11 +1205,44 @@ final class ToolRegistry: ObservableObject {
     /// even when the user has not explicitly opted into them.
     func sandboxBuiltInSpecs(mode: ExecutionMode) -> [Tool] {
         let excluded = excludedToolNames(for: mode)
-        return toolsByName.values
+        let specs =
+            toolsByName.values
             .filter { builtInSandboxToolNames.contains($0.name) }
             .filter { !excluded.contains($0.name) }
             .sorted { $0.name < $1.name }
             .map { $0.asOpenAITool() }
+        return annotatedForCombinedMode(specs, mode: mode)
+    }
+
+    /// Routing note appended to the unified `file_*` read tools' rendered
+    /// descriptions in combined mode. Their base descriptions only mention
+    /// the host "working directory", but in combined mode the same tools
+    /// also reach the Linux sandbox by path, so the model needs to be told
+    /// at the schema level (not just in the prompt) that `/workspace/...`
+    /// is a valid target.
+    private static let combinedModeFileRoutingNote =
+        " In this mode the `path` may also be an absolute `/workspace/...` location, "
+        + "which reads the Linux sandbox scratch area instead of your workspace."
+
+    /// In combined sandbox + host-read mode the host `file_*` tools are the
+    /// single, path-routed read family. Annotate their rendered specs so
+    /// the model knows they reach `/workspace/...` sandbox paths too. Inert
+    /// (returns `specs` unchanged) in every other mode and for every other
+    /// tool, so pure folder / pure sandbox schemas are untouched.
+    private func annotatedForCombinedMode(_ specs: [Tool], mode: ExecutionMode) -> [Tool] {
+        guard mode.usesSandboxTools, mode.allowsHostReadTools else { return specs }
+        return specs.map { spec in
+            guard Self.folderReadOnlyToolNames.contains(spec.function.name) else { return spec }
+            let base = spec.function.description ?? ""
+            return Tool(
+                type: spec.type,
+                function: ToolFunction(
+                    name: spec.function.name,
+                    description: base + Self.combinedModeFileRoutingNote,
+                    parameters: spec.function.parameters
+                )
+            )
+        }
     }
 }
 

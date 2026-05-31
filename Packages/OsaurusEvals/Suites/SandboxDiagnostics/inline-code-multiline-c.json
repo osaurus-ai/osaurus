@@ -1,0 +1,17 @@
+{
+  "id": "sandbox_diagnostics.inline-code-multiline-c",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • multi-line python3 -c parse error surfaces escape hint",
+  "query": "",
+  "notes": "Reproduces the canonical local-model failure: a multi-line script embedded in `python3 -c \"…\"` whose JSON→shell→code escaping broke, so bash mis-parsed the body and exited with `syntax error near unexpected token '('`. The self-heal hint must fire and point at sandbox_execute_code.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "curl -s https://example.com | python3 -c \"\nimport sys, json\ndata = json.load(sys.stdin)\nprint(data)\"",
+      "exitCode": 2,
+      "stderr": "bash: -c: line 3: syntax error near unexpected token `('",
+      "expectHint": true,
+      "hintContains": "sandbox_execute_code"
+    }
+  }
+}

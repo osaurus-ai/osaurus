@@ -1,0 +1,17 @@
+{
+  "id": "sandbox_diagnostics.unbalanced-quote",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • stray leading quote surfaces unbalanced-quote hint",
+  "query": "",
+  "notes": "Reproduces the observed failure where the model wrapped the whole command in a stray leading single quote (`'curl -s \"…\"`), so bash read to end-of-input looking for the closing `'` and reported `unexpected EOF while looking for matching '`. The self-heal hint must flag the unbalanced quote.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "'curl -s \"https://api.open-meteo.com/v1/forecast?latitude=33.6884&current_weather=true&time_zone=utc\"",
+      "exitCode": 2,
+      "stderr": "bash: -c: line 1: unexpected EOF while looking for matching `''",
+      "expectHint": true,
+      "hintContains": "unbalanced"
+    }
+  }
+}

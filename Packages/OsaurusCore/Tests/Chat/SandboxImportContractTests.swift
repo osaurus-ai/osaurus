@@ -66,15 +66,15 @@ struct SandboxImportContractTests {
     }
 
     /// SOUL.md advert contract (PR3 of the SOUL.md spec): the rendered
-    /// sandbox section must name the two write-capable tools an agent
-    /// would use to edit its soul. Without this hint the agent has the
-    /// affordance (sandbox_edit_file / sandbox_write_file are in the
-    /// schema) but no link from "I noticed a durable pattern" to "I
-    /// can record it in `~/SOUL.md`". A drift between the bootstrap
-    /// seed (which exists) and the prompt (which advertises it) leaves
-    /// the file inert — exactly the failure mode the SOUL.md spec
+    /// sandbox section must name the write tool an agent would use to edit
+    /// its soul. Without this hint the agent has the affordance
+    /// (`sandbox_write_file` is in the schema and does both whole-file
+    /// writes and in-place edits) but no link from "I noticed a durable
+    /// pattern" to "I can record it in `~/SOUL.md`". A drift between the
+    /// bootstrap seed (which exists) and the prompt (which advertises it)
+    /// leaves the file inert — exactly the failure mode the SOUL.md spec
     /// calls out for the advertisement step.
-    @Test("sandbox SOUL.md advert names sandbox_edit_file + sandbox_write_file")
+    @Test("sandbox SOUL.md advert names sandbox_write_file")
     func sandboxSoulAdvertNamesEditTools() {
         let section = SystemPromptTemplates.sandbox()
         guard let advertRange = section.range(of: "~/SOUL.md") else {
@@ -82,7 +82,7 @@ struct SandboxImportContractTests {
             return
         }
         // Constrain the assertion to the advert sentence so a stray
-        // `sandbox_edit_file` mention elsewhere can't satisfy the
+        // `sandbox_write_file` mention elsewhere can't satisfy the
         // contract by accident.
         let lineStart =
             section[..<advertRange.lowerBound].lastIndex(of: "\n")
@@ -92,12 +92,13 @@ struct SandboxImportContractTests {
             ?? section.endIndex
         let advertLine = String(section[lineStart ..< lineEnd])
         #expect(
-            advertLine.contains("sandbox_edit_file"),
-            "SOUL.md advert dropped `sandbox_edit_file`; the agent loses one of the two sanctioned ways to edit its soul. Line: \(String(reflecting: advertLine))"
-        )
-        #expect(
             advertLine.contains("sandbox_write_file"),
-            "SOUL.md advert dropped `sandbox_write_file`; the agent loses the only sanctioned way to wholesale rewrite its soul. Line: \(String(reflecting: advertLine))"
+            "SOUL.md advert dropped `sandbox_write_file`; the agent loses the sanctioned way to record its soul (it writes whole files and edits in place). Line: \(String(reflecting: advertLine))"
+        )
+        // The merged-away tool must not resurface in the advert.
+        #expect(
+            !advertLine.contains("sandbox_edit_file"),
+            "SOUL.md advert still names the removed `sandbox_edit_file`; it was folded into `sandbox_write_file`. Line: \(String(reflecting: advertLine))"
         )
     }
 }

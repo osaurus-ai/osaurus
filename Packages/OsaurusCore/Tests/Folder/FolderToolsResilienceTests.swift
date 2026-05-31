@@ -140,12 +140,10 @@ struct FolderToolsResilienceTests {
         )
     }
 
-    /// Regression for the `(empty file)` raw-string leak at the bottom
-    /// of `FileReadTool.execute`. The branch is reachable when the
-    /// first line alone exceeds `maxOutputChars` — output stays empty
-    /// after the truncation break and the tool returned the bare
-    /// `"(empty file)"` string instead of an envelope. Pinned via a
-    /// 16k-character line so the truncation fires deterministically.
+    /// Regression for the old `(empty file)` lie at the bottom of
+    /// `FileReadTool.execute`. A single oversized line now returns the
+    /// leading slice inside the success envelope plus a truncation note,
+    /// instead of pretending the file had no content.
     @Test func fileRead_oversizedFirstLineWrappedInEnvelope() async throws {
         let root = tmpRoot()
         let path = root.appendingPathComponent("wide.txt")
@@ -157,8 +155,43 @@ struct FolderToolsResilienceTests {
             argumentsJSON: #"{"path": "wide.txt"}"#
         )
         #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
         let text = EnvelopeAssertions.successText(result) ?? ""
-        #expect(text == "(empty file)", "got: \(text)")
+        #expect(text.hasPrefix("     1| "), "got: \(text.prefix(40))")
+        #expect(text.contains("(empty file)") == false)
+        #expect(text.contains("truncated at 1 of 1 lines"))
+        #expect(payload["truncated"] as? Bool == true)
+        #expect(payload["raw_bytes_truncated"] as? Bool == false)
+    }
+
+    /// Raw text / CSV reads are part of the prompt-building hot path. A
+    /// huge file should be capped before full-file loading, with explicit
+    /// envelope metadata so the model understands it only saw a prefix.
+    @Test func fileRead_largeRawFileCapsBytesBeforeDecode() async throws {
+        let root = tmpRoot()
+        let path = root.appendingPathComponent("huge.csv")
+        let size = 6 * 1024 * 1024
+        try Data(repeating: 0x61, count: size).write(to: path)
+
+        let tool = FileReadTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "huge.csv"}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        let text = try #require(payload["text"] as? String)
+        let bytesRead = try #require(payload["bytes_read"] as? Int)
+        let byteLimit = try #require(payload["byte_limit"] as? Int)
+        let fileSize = try #require(payload["file_size"] as? Int)
+
+        #expect(byteLimit == 5 * 1024 * 1024)
+        #expect(bytesRead <= byteLimit)
+        #expect(fileSize == size)
+        #expect(payload["raw_bytes_truncated"] as? Bool == true)
+        #expect(payload["total_lines_exact"] as? Bool == false)
+        #expect(payload["truncated"] as? Bool == true)
+        #expect(text.contains("raw read capped at 5 MiB"))
     }
 
     /// The success payload carries a single line-numbered `text` field — no
@@ -187,7 +220,9 @@ struct FolderToolsResilienceTests {
         #expect(payload["start_line"] as? Int == 1)
         #expect(payload["end_line"] as? Int == 1)
         #expect(payload["total_lines"] as? Int == 3)
+        #expect(payload["total_lines_exact"] as? Bool == true)
         #expect(payload["truncated"] as? Bool == false)
+        #expect(payload["raw_bytes_truncated"] as? Bool == false)
         let text = try #require(payload["text"] as? String)
         #expect(text.contains("1| #!/usr/bin/env python3"))
         #expect(text.contains(#"\/"#) == false)

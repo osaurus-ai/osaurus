@@ -767,7 +767,10 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "sandbox",
                     label: "Chat Sandbox",
-                    content: SystemPromptTemplates.sandbox(secretNames: secretNames)
+                    content: SystemPromptTemplates.sandbox(
+                        secretNames: secretNames,
+                        hostReadCombined: executionMode.hostReadContext != nil
+                    )
                 )
             )
             // Combined mode: a read-only host workspace rides alongside
@@ -1094,7 +1097,7 @@ public struct SystemPromptComposer: Sendable {
     /// tools, etc.).
     static let mutationToolNames: Set<String> = [
         // sandbox built-ins
-        "sandbox_write_file", "sandbox_edit_file", "sandbox_exec",
+        "sandbox_write_file", "sandbox_exec",
         "sandbox_install", "sandbox_pip_install", "sandbox_npm_install",
         "sandbox_execute_code",
         // folder tools
