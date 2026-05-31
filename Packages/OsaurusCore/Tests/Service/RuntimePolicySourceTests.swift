@@ -788,6 +788,13 @@ struct RuntimePolicySourceTests {
                 && runtime.contains("Step 3.7 is the narrow exception"),
             "Step 3.7 must be the explicit mixed-SWA exception: only its proven full-attention KV layers default to TurboQuant while rotating layers stay disk-backed"
         )
+        #expect(
+            runtime.contains("ModelFamilyNames.isLFM2Family(modelName)")
+                && runtime.contains("config.enableDiskCache = false")
+                && runtime.contains("warm disk hit path is not stable yet")
+                && runtime.contains("SSM companion topology available"),
+            "LFM2 must stay out of automatic disk restore until the warm required-tool history row is stable"
+        )
         let mlxService = try Self.source("Services/Inference/MLXService.swift")
         #expect(
             mlxService.contains("ModelFamilyNames.isStepFamily(modelId)")
