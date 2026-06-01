@@ -525,30 +525,48 @@ recorded for future repeat-depth work.
 
 ### MiniMax M2.7 Small JANGTQ
 
-Local copy used for attempted proof:
+Local copy used for proof:
 `/Users/eric/.mlxstudio/models/JANGQ-AI/MiniMax-M2.7-Small-JANGTQ`
 
-Attempt artifact:
+Superseded blocked attempt artifact:
 `/tmp/osaurus-post1314-minimax-small-cold-20260531-185719`
 
-Verdict: blocked for live no-sign Osaurus app readiness in this matrix.
+Current proof artifacts:
 
-The no-sign app served `minimax-m2.7-small-jangtq` and reached runtime. During
-the strict required-tool harness, `/health` reported
-`current_model=minimax-m2.7-small-jangtq`, `loaded=["minimax-m2.7-small-jangtq"]`,
-and `inflight={"minimax-m2.7-small-jangtq":1}`. `/admin/cache-stats` reported
-62 KV layers and no rotating/SSM/ZAYA companion layers. The row then remained
-inside the MLX generation path for more than ten minutes without writing the
-first response JSON. The sampled stack in
-`sample-minimax-live.txt` shows `generateLoopTask`, `TokenIterator.next`,
-`TokenIterator.step`, `maybeQuantizeCacheForStep`, and MLX/Metal evaluation.
+- Native-KV cold smoke:
+  `/tmp/osaurus-post1314-minimax-native-ls-probe-20260601-024219/native-smoke.json`
+- Native-KV strict tool/topology:
+  `/tmp/osaurus-post1314-minimax-native-tool-cache-20260601-024325/minimax-m2.7-small-jangtq_summary.json`
+- Native-KV repeat with disk-L2 requirement intentionally failed only
+  `cache_evidence_disk_l2_hits`:
+  `/tmp/osaurus-post1314-minimax-native-warm-disk-20260601-024352/minimax-m2.7-small-jangtq_summary.json`
+- Engine-selected/default strict tool/topology:
+  `/tmp/osaurus-post1314-minimax-engine-selected-tool-cache-20260601-024500/minimax-m2.7-small-jangtq_summary.json`
 
-The row was stopped deliberately to avoid wasting the machine on a non-usable
-decode/performance path. This is not a parser pass and not a cache proof. The
-fact that the topology is full KV also means the original command's
-`requires_disk_backed_restore` expectation was not the right MiniMax cache gate;
-a future MiniMax retry should use the correct full-KV cache/TurboQuant
-expectation and a bounded first-token/decode-speed gate.
+Verdict: promoted for the current bounded MiniMax no-sign app path.
+
+The current no-sign app build
+`build/DerivedData-minimax-policy-probe-497a52da/Build/Products/Release/osaurus.app`
+served `minimax-m2.7-small-jangtq` from a fresh keychain-free test root. A
+native-KV cold smoke returned exact visible `ok` in 21.68 seconds including
+load. The native-KV strict required/none/required harness then passed exact
+`line_count` args for `red\ngreen\nblue` and `one\ntwo`, visible turn 2 answer,
+no protocol leakage, no visible content on tool-call turns, no length-stop fake
+pass, and healthy `/health` after the row. That native row reported 62 full KV
+layers, no rotating/SSM/ZAYA companion layers, paged/prefix hits, and
+`turbo_quant_kv_layer_count=0`.
+
+The default `engineSelected` row also passed the strict harness with exact tool
+args, visible turn 2 answer, no leak/loop/length fake, and healthy state. It
+recorded `block_disk_hits +1`, `turbo_quant_compressions=3`, 62 full KV layers,
+and `is_paged_incompatible=true` for the selected path. This supersedes the
+older blocked MiniMax attempt, which was a stale/contended app run that stayed
+inside `maybeQuantizeCacheForStep` for more than ten minutes without a response.
+
+Boundary: the native repeat row proved prefix/paged reuse but not disk-L2 reuse
+because `block_disk_hits` stayed 0 while the model remained resident. The
+engine-selected/default row is the MiniMax disk-L2/TurboQuant evidence in this
+matrix. MiniMax VL/audio is not claimed.
 
 ZAYA was not found in the local model search roots used for this pass.
 

@@ -330,6 +330,42 @@ Boundary:
   itself. The no-sign app artifacts above are the measured live evidence for
   Step tool behavior, token/s, topology, and warm disk-L2 reuse.
 
+## 2026-06-01 Current-Head MiniMax Full-KV Policy Probe
+
+- Osaurus PR head: `497a52dad9c7c98df407ee3b855216401d9d2d71`.
+- No-sign app:
+  `build/DerivedData-minimax-policy-probe-497a52da/Build/Products/Release/osaurus.app`.
+- Model:
+  `/Users/eric/.mlxstudio/models/JANGQ-AI/MiniMax-M2.7-Small-JANGTQ`,
+  served as `minimax-m2.7-small-jangtq`.
+- Native-KV cold smoke artifact:
+  `/tmp/osaurus-post1314-minimax-native-ls-probe-20260601-024219/native-smoke.json`.
+  The app returned exact visible `ok` in 21.68 seconds including load and stayed
+  healthy with the model resident.
+- Native-KV strict tool/topology artifact:
+  `/tmp/osaurus-post1314-minimax-native-tool-cache-20260601-024325/minimax-m2.7-small-jangtq_summary.json`.
+  The strict required/none/required harness passed with exact `line_count` args
+  `red\ngreen\nblue` and `one\ntwo`, visible turn 2 answer, no protocol leak, no
+  visible content on tool-call turns, no length-stop fake pass, and healthy
+  `/health` after the row. Token/s on the visible turn was 5.99. Topology was
+  62 full KV layers, no rotating/SSM/ZAYA companion layers,
+  `requires_disk_backed_restore=false`, `turbo_quant_kv_layer_count=0`, and the
+  row recorded paged/prefix hits.
+- Native-KV warm disk-L2 boundary artifact:
+  `/tmp/osaurus-post1314-minimax-native-warm-disk-20260601-024352/minimax-m2.7-small-jangtq_summary.json`.
+  The tool/coherency checks passed again, but the row failed only
+  `cache_evidence_disk_l2_hits` because the resident native path reused
+  prefix/paged memory caches and `block_disk_hits` stayed 0.
+- Engine-selected/default strict tool/topology artifact:
+  `/tmp/osaurus-post1314-minimax-engine-selected-tool-cache-20260601-024500/minimax-m2.7-small-jangtq_summary.json`.
+  This default path passed the strict tool harness with exact args, visible turn
+  2 answer, no leak/loop/length fake, and healthy state. It recorded
+  `block_disk_hits +1`, `turbo_quant_compressions=3`, 62 full KV layers, and
+  `is_paged_incompatible=true` for the selected path.
+- Verdict: MiniMax M2.7 Small JANGTQ is no longer blocked in this matrix for the
+  bounded no-sign app path. It is promoted for text/tool/coherency plus
+  engine-selected full-KV cache reuse. MiniMax VL/audio is not claimed.
+
 ## Partial / Blocked Rows
 
 Step JANG_2L:
