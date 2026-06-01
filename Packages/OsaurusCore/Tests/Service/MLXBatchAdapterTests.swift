@@ -1225,6 +1225,14 @@ struct MLXBatchAdapterTests {
         )
         #expect(stepRequired["tool_choice"] as? String == "required")
         #expect(stepRequired["enable_thinking"] as? Bool == false)
+
+        let stepJang2LRequired = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: "JANGQ-AI/Step-3.7-Flash-JANG_2L",
+            toolChoice: .required
+        )
+        #expect(stepJang2LRequired["tool_choice"] as? String == "required")
+        #expect(stepJang2LRequired["enable_thinking"] as? Bool == false)
     }
 
     @Test func additionalContext_defaultsLingThinkingOffButHonorsExplicitOptIn() {
