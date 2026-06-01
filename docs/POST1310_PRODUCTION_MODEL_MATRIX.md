@@ -2,6 +2,9 @@
 
 Date: 2026-05-31
 
+Current Osaurus PR head after the final Step boundary refresh:
+`138dd898d31d4baf132167da54dac32fa7ef5b0e`.
+
 Osaurus PR head used for the Qwen/Nemotron proof before this final Ling doc
 refresh:
 `63f8ee52ef44eb2a988594d2065ffaf70a07024a`.
@@ -177,6 +180,12 @@ Fresh LaunchServices no-sign retry artifact:
 Fresh tiny no-tool sanity artifact:
 `/tmp/osaurus-post1314-step37-simple-20260531-202306`
 
+Fresh resident-speed split artifact:
+`/tmp/osaurus-post1314-step37-resident-20260531-204840`
+
+Step JANGTQ_K bounded artifact:
+`/tmp/osaurus-post1314-step37-jangtqk-resident-20260531-205347`
+
 The row was started against the final app and loaded
 `step-3.7-flash-jang_2l`, but it stayed in-flight for several minutes without
 writing a turn response summary. The request and app were killed to clear the
@@ -211,6 +220,34 @@ and healthy `/health` with no in-flight request afterward. However, it took
 Step 3.7 JANG_2L path is not completely dead, but it also confirms the remaining
 blocker is unacceptable live decode/runtime speed. It is not a prompt/tool
 parser leak and it is not solved by extending tool-harness timeouts.
+
+The resident-speed split removes the remaining ambiguity that this was only a
+cold-load artifact. Using the same no-sign app, `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`,
+a fresh `OSAURUS_TEST_ROOT`, and a model root containing only
+`Step-3.7-Flash-JANG_2L`, two consecutive two-token requests were sent through
+`/v1/chat/completions`. The cold request returned `\nok` in 92.86s with
+`finish_reason=length`; the immediately following resident request returned the
+same two visible tokens in 70.54s with `finish_reason=length`. `/health` after
+the row was healthy with no in-flight request, and `/admin/cache-stats` showed
+`disk_l2_hits=1`, `disk_l2_misses=2`, `disk_l2_stores=4`, 45 layers, 12 KV
+layers, 33 rotating KV layers, `requires_disk_backed_restore=true`, and
+`turbo_quant_kv_layer_count=0`. This proves the problem is not model discovery,
+server endpoint routing, keychain/signing, or the first cold load alone; the
+resident Step JANG_2L runtime path is still far too slow for production.
+
+`Step-3.7-Flash-JANG_K` is still not claimed. The only local matching directory
+found at `/Volumes/EricsLLMDrive/jangq-ai/Step-3.7-Flash-JANG_K` is `0B`, so
+there is no real bundle to serve or test in this matrix.
+
+`Step-3.7-Flash-JANGTQ_K` exists locally at
+`/Volumes/EricsLLMDrive/jangq-ai/Step-3.7-Flash-JANGTQ_K` and has the expected
+JANGTQ_K metadata (`profile=JANGTQ_K`, 55 shards, 126 routed TQ triplets,
+mixed routed expert bits gate/up/down = 2/2/4). A bounded no-sign Osaurus app
+retry served `step-3.7-flash-jangtq_k`, but the first two-token chat request
+timed out at 300s and the model was not resident afterward. This row is also
+not promoted by the current Osaurus app proof. Prior JANG-side provenance says
+JANGTQ_K is the coherent Step target, but it still needs a current Osaurus
+load/runtime fix and fresh no-sign app proof before this matrix can claim it.
 
 Older Step 3.7 artifacts from earlier local work showed strict tool behavior and
 L2 reuse but very poor no-sign Osaurus decode speed. Those older rows are not
