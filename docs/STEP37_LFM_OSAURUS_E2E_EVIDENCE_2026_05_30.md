@@ -366,6 +366,39 @@ Boundary:
   bounded no-sign app path. It is promoted for text/tool/coherency plus
   engine-selected full-KV cache reuse. MiniMax VL/audio is not claimed.
 
+## 2026-06-01 Current-Head ZAYA1 Text/VL JANGTQ4 Proof
+
+- Osaurus PR head: `6aa8aa17ee83d82f6c04ca2ff69bdb2af14b59c9`.
+- No-sign app:
+  `build/DerivedData-zaya-proof-6aa8aa17/Build/Products/Release/osaurus.app`.
+- Models:
+  `/Users/eric/models/JANGQ/ZAYA1-8B-JANGTQ4`, served as
+  `zaya1-8b-jangtq4`, and `/Users/eric/models/JANGQ/ZAYA1-VL-8B-JANGTQ4`,
+  served as `zaya1-vl-8b-jangtq4`.
+- Text cold strict tool/topology artifact:
+  `/tmp/osaurus-post1314-zaya-text-jangtq4-current-20260601-032237/zaya1-8b-jangtq4_summary.json`.
+- Text warm disk-L2 artifact:
+  `/tmp/osaurus-post1314-zaya-text-jangtq4-warmdisk-20260601-032427/zaya1-8b-jangtq4_summary.json`.
+- VL red-image artifact:
+  `/tmp/osaurus-post1314-zaya-vl-jangtq4-red-current-20260601-032534/SUMMARY.json`.
+- The text rows passed exact strict required/none/required multi-turn tool
+  behavior: turn 1 `line_count` args `red\ngreen\nblue`, turn 2 visible
+  coherent answer, turn 3 `line_count` args `one\ntwo`, no protocol leakage, no
+  visible content on tool-call turns, no length-stop fake pass, and healthy
+  `/health` after the row.
+- The warm text row restarted the same app against the same cache directory and
+  recorded `block_disk_hits +1`. It reported 80 layers, 40 KV layers, 40 ZAYA
+  CCA layers, `companion=zaya-cca`, disk-backed restore required,
+  paged-incompatible, and `turbo_quant_kv_layer_count=0`.
+- The VL row used a real generated 64x64 red PNG data URL. First and repeat
+  responses were `Red`, prefix hash stayed
+  `6e340b9cffb37a989ca544e6bb780a2c`, repeat `disk_l2_hits=1`, no protocol
+  leakage occurred, and `/health` stayed healthy. The VL topology reported
+  40 ZAYA CCA layers, disk-backed restore, and no TurboQuant KV layers.
+- Boundary: ZAYA CCA topology/presence is proven, but CCA companion-hit reuse is
+  not promoted because these rows recorded CCA companion misses rather than
+  hits. ZAYA MXFP4 siblings were found locally but were not run in this evidence.
+
 ## Partial / Blocked Rows
 
 Step JANG_2L:
@@ -399,8 +432,9 @@ Step JANGTQ2:
 
 VL/media:
 
-- No fresh real media row was run for this PR evidence. Do not claim VL proof
-  from the Step/LFM rows.
+- Fresh ZAYA1-VL and prior Gemma 4 26B red-image rows are recorded in
+  `docs/POST1310_PRODUCTION_MODEL_MATRIX.md`. Do not claim broader
+  video/audio/VL coverage from the Step/LFM rows.
 
 ## Source And Guard Verification
 

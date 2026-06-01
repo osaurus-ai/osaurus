@@ -568,7 +568,53 @@ because `block_disk_hits` stayed 0 while the model remained resident. The
 engine-selected/default row is the MiniMax disk-L2/TurboQuant evidence in this
 matrix. MiniMax VL/audio is not claimed.
 
-ZAYA was not found in the local model search roots used for this pass.
+### ZAYA1 Text And VL JANGTQ4
+
+Local copies used for proof:
+
+- `/Users/eric/models/JANGQ/ZAYA1-8B-JANGTQ4`
+- `/Users/eric/models/JANGQ/ZAYA1-VL-8B-JANGTQ4`
+
+Current proof artifacts:
+
+- Text cold strict tool/topology:
+  `/tmp/osaurus-post1314-zaya-text-jangtq4-current-20260601-032237/zaya1-8b-jangtq4_summary.json`
+- Text warm strict tool/disk-L2/topology:
+  `/tmp/osaurus-post1314-zaya-text-jangtq4-warmdisk-20260601-032427/zaya1-8b-jangtq4_summary.json`
+- VL red-image repeat/cache:
+  `/tmp/osaurus-post1314-zaya-vl-jangtq4-red-current-20260601-032534/SUMMARY.json`
+
+Verdict: promoted for the current bounded ZAYA no-sign app path.
+
+The no-sign app build
+`build/DerivedData-zaya-proof-6aa8aa17/Build/Products/Release/osaurus.app`
+served `zaya1-8b-jangtq4` and `zaya1-vl-8b-jangtq4` from a fresh
+keychain-free test root. The text cold row passed exact
+required/none/required multi-turn tool behavior with `line_count` args
+`red\ngreen\nblue` and `one\ntwo`, visible turn 2 answer, no protocol leakage,
+no visible content on tool-call turns, no length-stop fake pass, and healthy
+`/health` after the row.
+
+The text warm row restarted the same app against the same test root and cache
+directory, then required cache topology, disk-backed restore, disk-L2 reuse, and
+ZAYA CCA companion topology. It passed the same exact tool checks and recorded
+`block_disk_hits +1`. The row reported 80 layers, 40 KV layers, 40 ZAYA CCA
+layers, `companion=zaya-cca`, `requires_disk_backed_restore=true`,
+`requires_ssm_companion_state=true`, paged-incompatible, and
+`turbo_quant_kv_layer_count=0`.
+
+The VL row used a real generated 64x64 red PNG data URL through
+`/v1/chat/completions` with `zaya1-vl-8b-jangtq4`. First and repeat responses
+were `Red`, both stopped normally, prefix hash stayed
+`6e340b9cffb37a989ca544e6bb780a2c`, repeat `disk_l2_hits=1`, no protocol marker
+leaked, and the app was healthy with no in-flight request after the row. The VL
+topology reported 40 ZAYA CCA layers, `companion=zaya-cca`, disk-backed restore,
+and no TurboQuant KV layers.
+
+Boundary: ZAYA CCA companion presence/topology is proven, but CCA companion-hit
+reuse is not promoted here because both the text warm and VL rows recorded CCA
+companion misses rather than hits. ZAYA MXFP4 siblings were discovered locally
+but were not run in this PR evidence.
 
 ## API and UI Boundary
 
@@ -587,6 +633,7 @@ LFM endpoint smoke is intentionally recorded above as a mixed/boundary row.
 
 ## VL Boundary
 
-Gemma 4 26B has one real-media red-image VL/cache artifact listed above. No
-other VL/video/audio family is live-proven in this final matrix. Nemotron Omni
-is proven here only on the text/tool path, not with image/audio media.
+Gemma 4 26B and ZAYA1-VL JANGTQ4 each have one real-media red-image VL/cache
+artifact listed above. No other VL/video/audio family is live-proven in this
+final matrix. Nemotron Omni is proven here only on the text/tool path, not with
+image/audio media.
