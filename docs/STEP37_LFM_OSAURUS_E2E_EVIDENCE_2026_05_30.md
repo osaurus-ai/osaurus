@@ -6,7 +6,9 @@ from partial rows.
 
 ## Code State
 
-- Final Osaurus PR head after the ZAYA evidence refresh:
+- Current Osaurus PR head after Step proof-harness hardening:
+  `31911e2319b324250bca3f3660a75d2d182e55a9`.
+- Earlier Osaurus PR head after the ZAYA evidence refresh:
   `dceaf9edf85ffe0d20a0b142b6dbe585b4874828`.
 - Current local vMLX pin after the Step required-template refresh:
   `eb116ef735d9445cfac30b6a3346ff162483122e`.
@@ -209,6 +211,18 @@ Superseded failed warm attempt:
   about 74 GB RSS, but neither is a pass.
 - Current Osaurus PR head after the stale Step cache-mode test fix:
   `eda7ac94cd78b54846db850a44fa7f1f2dcacb4d`.
+- Current Osaurus PR head after Step proof-harness hardening:
+  `31911e2319b324250bca3f3660a75d2d182e55a9`.
+  This follow-up added two proof-quality guards: the live multi-turn harness
+  writes request JSON before network calls and emits failed per-model summaries
+  on exceptions/timeouts, and
+  `MLXBatchAdapterTests/additionalContext_threadsRequiredToolChoiceToLocalTemplates`
+  explicitly covers `Step-3.7-Flash-JANG_2L` required-tool context. The focused
+  source test passed. A fresh no-sign app full-harness attempt at
+  `/tmp/osaurus-post1314-31911e23-step-jang2l-full-20260601-140154` was stopped
+  after turn 1 remained in flight under the separate 74 GB Step CRACK-v8 job;
+  it records the pre-call request/health/cache files and is a blocked
+  contested-machine artifact, not a green or red model verdict.
 - GitHub CI on `eda7ac94` passed:
   `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and
   `update_release_draft`.

@@ -2,7 +2,10 @@
 
 Date: 2026-06-01
 
-Final Osaurus PR head after the ZAYA evidence refresh:
+Current Osaurus PR head after Step proof-harness hardening:
+`31911e2319b324250bca3f3660a75d2d182e55a9`.
+
+Earlier Osaurus PR head after the ZAYA evidence refresh:
 `dceaf9edf85ffe0d20a0b142b6dbe585b4874828`.
 
 Osaurus PR head used for the Qwen/Nemotron proof before the later Ling,
@@ -192,8 +195,8 @@ multi-turn required/none/required tool behavior, no visible protocol leakage,
 no incoherent loop, no length-stop fake pass on the accepted rows, Step mixed
 KV/rotating topology, disk-backed restore requirement, and warm disk-L2 reuse.
 
-Current `eda7ac94` / vMLX `eb116ef...` refresh boundary: source, tokenizer,
-readiness, no-forced-behavior, and GitHub CI checks passed. A fresh no-sign app
+Current `31911e23` / vMLX `eb116ef...` refresh boundary: source, tokenizer,
+readiness, and no-forced-behavior checks passed. A fresh no-sign app
 strict Step JANG_2L row ran while another Step CRACK process was consuming about
 74 GB RSS and did not finish the full three-turn harness, so there is no single
 current-head `*_summary.json` green row. The partial strict artifact
@@ -211,6 +214,19 @@ in-flight request. `/admin/cache-stats` showed 45 layers, 12 KV layers,
 33 rotating KV layers, `requires_disk_backed_restore=true`, paged-incompatible,
 `turbo_quant_kv_layer_count=0`, and `disk_l2_stores=1`; this current refresh
 does not claim a fresh warm disk-L2 hit.
+
+The `31911e23` refresh also hardens the live proof harness itself: request JSON
+is now written before each network call, and harness exceptions/timeouts produce
+a per-model failed summary instead of an ambiguous partial directory. The
+focused source test
+`MLXBatchAdapterTests/additionalContext_threadsRequiredToolChoiceToLocalTemplates`
+now explicitly covers `Step-3.7-Flash-JANG_2L`, proving that required tool
+choice reaches vMLX and disables thinking for this model id as well as the
+Step JANG_K spelling. A fresh current-head no-sign app attempt at
+`/tmp/osaurus-post1314-31911e23-step-jang2l-full-20260601-140154` was stopped
+after turn 1 stayed in flight under the same external 74 GB Step CRACK-v8 job;
+it has the pre-call request/health/cache artifacts but no response and is not a
+model pass or fail.
 
 Final fix boundary:
 
