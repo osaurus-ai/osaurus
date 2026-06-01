@@ -69,6 +69,24 @@ public enum SystemPromptTemplates {
         - `share_artifact(...)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd) — files in `/tmp` won't be findable. If unsure where you wrote it, verify with `sandbox_search_files(target="files", pattern="<name>")` first. For inline text/markdown, use `content`+`filename` mode and skip the file write entirely. **When using `sandbox_execute_code`, call `share_artifact` from the model layer AFTER the script returns — the helper module does not expose it because in-script calls would silently fail to render the artifact card.**
         """
 
+    // MARK: - Grounding
+
+    /// Anti-fabrication directive injected whenever tools are present
+    /// (gated on `!effectiveToolsOff` + a non-empty schema in the
+    /// composer). Both conditions are session-constant → KV-cache safe.
+    /// Deliberately tool-name-free: this section can be emitted when
+    /// `capabilities_search` is NOT in the schema (e.g. manual mode), and
+    /// naming a tool that isn't in the request is the recitation-loop trap
+    /// `defaultPersona` documents. The capability-discovery nudge (when
+    /// present) supplies the "how to find a tool" half; this supplies the
+    /// "don't fabricate when none fits" half.
+    public static let groundingDirective = """
+        ## Grounding
+
+        - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
+        - You can almost always get there: a shell or network tool fetches live/external data, and `capabilities_search` finds tools you don't have yet. Attempt that before deciding you can't — the absence of a purpose-built tool is not a dead end. Say what you can't do only after genuinely trying, and never invent a tool name or fabricate a value to fill a gap.
+        """
+
     // MARK: - Capability Discovery Nudge
 
     /// Static guidance appended to the system prompt when `capabilities_search`
@@ -94,10 +112,12 @@ public enum SystemPromptTemplates {
 
     // MARK: - Cross-cutting Engineering Discipline
 
-    /// General code-style discipline. Injected into the system prompt
-    /// whenever any file-mutation tool (sandbox or folder) is in the
-    /// resolved schema. Not sandbox-specific — folder-mode agents doing
-    /// real edits get the same guardrails.
+    /// General code-style discipline. Injected when a file-authoring tool
+    /// (`sandbox_write_file` / `file_write` / `file_edit`, see
+    /// `SystemPromptComposer.codeEditToolNames`) is in the resolved schema —
+    /// not for shell-/install-only chats, which don't edit code. Not
+    /// sandbox-specific — folder-mode agents doing real edits get the same
+    /// guardrails.
     public static let codeStyleGuidance = """
         ## Code style
 
@@ -108,14 +128,16 @@ public enum SystemPromptTemplates {
         - Do not add docstrings, comments, or type annotations to code you did not modify.
         """
 
-    /// Risk-aware action discipline. Same gate as `codeStyleGuidance` —
-    /// fires whenever the schema includes a tool that can mutate the
-    /// user's filesystem or run arbitrary code (sandbox or folder).
+    /// Risk-aware action discipline. Fires on the broader
+    /// `SystemPromptComposer.mutationToolNames` gate (any tool that can
+    /// mutate the filesystem OR run arbitrary code / install deps) — wider
+    /// than `codeStyleGuidance` because destructive risk applies to
+    /// exec/install, not just file edits.
     public static let riskAwareGuidance = """
         ## Risk-aware actions
 
-        - Local, reversible actions (editing a file, running a test) — proceed without hesitation.
-        - Destructive or hard-to-undo actions (deleting files, `rm -rf`, dropping data) — confirm with the user first.
+        - Default to acting. Local, reversible work — reading, editing a file, running a command or test, installing into the sandbox — just do it; you do not need to ask permission first.
+        - Only pause to confirm for genuinely destructive or hard-to-undo actions: deleting the user's files, `rm -rf`, dropping data, force-pushing. The test is reversibility — if it's reversible, proceed.
         - When encountering unexpected state (unfamiliar files, unknown processes), investigate before removing anything.
         """
 
@@ -210,8 +232,9 @@ public enum SystemPromptTemplates {
         You have an isolated Alpine Linux ARM64 sandbox. Your home directory \
         (`~`) is your sandbox home; files persist across messages.
 
-        Internet access is available. Use `curl`, `wget`, Python `requests`, \
-        or Node `fetch` for live data; prefer fetched data over placeholders.
+        Internet access is available — fetch live or external data (weather, \
+        web pages, APIs) directly with `curl`, `wget`, Python `requests`, or \
+        Node `fetch`; you don't need a dedicated tool for it.
 
         Installed: bash, python3, node, git, curl, wget, jq, rg, sqlite3, \
         build-base, cmake, vim, tree, and standard POSIX utilities.

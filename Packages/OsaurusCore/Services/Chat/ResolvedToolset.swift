@@ -42,6 +42,13 @@ struct ResolvedToolset: Sendable {
     /// render its italic notice without re-deriving the decision.
     let contextDisable: ContextDisableInfo?
 
+    /// Context-window size class for the resolved model. Session-constant
+    /// (a session keeps one model), so prompt gates that key off it stay
+    /// KV-cache safe across turns. Drives the small-context loop-guidance
+    /// gate and the tiny-context section compaction. Distinct from the
+    /// `effectiveToolsOff` flag, which only flips for `.tiny`.
+    let sizeClass: ContextSizeClass
+
     /// OR of `snapshot.toolsDisabled` and the size-class auto-disable.
     /// Every gate that used to compute this from `(snapshot, sizeClass)`
     /// reads it from here instead.

@@ -314,6 +314,12 @@ public struct SystemPromptComposer: Sendable {
     /// PR2's bootstrap seed and PR3's advert don't have to re-derive it.
     static let soulMaxBytes: Int = 8 * 1024
 
+    /// Tighter SOUL byte budget for tiny-context models (Apple Foundation,
+    /// ~4K window). The default 8K cap is twice the entire window, so the
+    /// agent's own notes would crowd out the user's turn. Session-constant
+    /// (driven by the resolved model's size class) → KV-cache safe.
+    static let soulTinyMaxBytes: Int = 1 * 1024
+
     /// Marker appended on its own line after a truncation so the model
     /// knows the agent's soul was clipped (don't extrapolate from the
     /// trailing line as if it were the natural end of the file).
@@ -329,7 +335,7 @@ public struct SystemPromptComposer: Sendable {
     /// (`composePreviewContext`) is itself sync; the async `resolveSoul`
     /// wrapper just adds trace marks. Errors are swallowed and logged —
     /// a missing/corrupt SOUL must never block compose.
-    private static func loadSoulContent(linuxName: String) -> String? {
+    private static func loadSoulContent(linuxName: String, maxBytes: Int = soulMaxBytes) -> String? {
         let url = OsaurusPaths.containerAgentDir(linuxName)
             .appendingPathComponent("SOUL.md", isDirectory: false)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -340,7 +346,7 @@ public struct SystemPromptComposer: Sendable {
             debugLog("[Soul] read failed for \(url.path): \(error.localizedDescription)")
             return nil
         }
-        let capped = capSoulContent(raw)
+        let capped = capSoulContent(raw, maxBytes: maxBytes)
         let trimmed = capped.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
@@ -353,15 +359,15 @@ public struct SystemPromptComposer: Sendable {
     /// realistic shape for a markdown soul, but possible in principle)
     /// we hard-cut at the budget and still append the marker on a new
     /// line so the model sees the truncation signal regardless.
-    static func capSoulContent(_ raw: String) -> String {
+    static func capSoulContent(_ raw: String, maxBytes: Int = soulMaxBytes) -> String {
         let utf8 = Array(raw.utf8)
-        guard utf8.count > soulMaxBytes else { return raw }
+        guard utf8.count > maxBytes else { return raw }
         // Cutoff = byte index of the last `\n` within the budget + 1
         // (so the slice keeps the newline). Falls back to a hard cut
         // at the budget when no newline is reachable.
-        let lastNewline = utf8.prefix(soulMaxBytes)
+        let lastNewline = utf8.prefix(maxBytes)
             .lastIndex(of: UInt8(ascii: "\n"))
-        let cutoff = lastNewline.map { $0 + 1 } ?? soulMaxBytes
+        let cutoff = lastNewline.map { $0 + 1 } ?? maxBytes
         let prefix = String(decoding: utf8.prefix(cutoff), as: UTF8.self)
         // Hard-cut prefix may not end on `\n`; force one so the marker
         // always reads as its own line below the soul content.
@@ -383,9 +389,19 @@ public struct SystemPromptComposer: Sendable {
         guard executionMode.usesSandboxTools else { return nil }
         trace?.mark("soul_start")
         let linuxName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
-        let content = loadSoulContent(linuxName: linuxName)
+        let cap = soulCap(forModel: snapshot.model)
+        let content = loadSoulContent(linuxName: linuxName, maxBytes: cap)
         trace?.mark("soul_done")
         return content
+    }
+
+    /// SOUL byte budget for a model: the tighter tiny-context cap for
+    /// `.tiny` models, the default otherwise. Pure + session-constant
+    /// (size class is fixed for a session's model) so both the send and
+    /// preview paths agree and the result is KV-cache stable.
+    private static func soulCap(forModel modelId: String?) -> Int {
+        ContextSizeResolver.resolve(modelId: modelId).sizeClass == .tiny
+            ? soulTinyMaxBytes : soulMaxBytes
     }
 
     /// Assemble every tool-axis decision for the request: size-class
@@ -485,6 +501,7 @@ public struct SystemPromptComposer: Sendable {
             skillSuggestions: skillSuggestions,
             alwaysLoadedNames: alwaysLoadedNames,
             contextDisable: contextDisable,
+            sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
             capabilityPromptSectionsEnabled: !isTrivialInput,
             agentLoopGuidanceEnabled: hasPriorAgentLoopUse(messages)
@@ -611,16 +628,17 @@ public struct SystemPromptComposer: Sendable {
     ///   1. platform                  (forChat)
     ///   2. persona                   (forChat)
     ///   3. soul                      static, sandbox-only, gated on non-empty SOUL.md
-    ///   4. modelFamilyGuidance       static, gated on family match
-    ///   5. codeStyle                 static, gated on file-mutation tools
-    ///   6. riskAware                 static, gated on file-mutation tools
-    ///   7. agentLoopGuidance         static, gated on loop tools
-    ///   8. sandbox / folderContext   static, mode-specific
-    ///   9. capabilityNudge           static, gated on capabilities_search
-    ///  10. sandboxUnavailable        dynamic, gated on registrar failure
-    ///  11. pluginCompanions          dynamic, gated on preflight result
-    ///  12. skillSuggestions          dynamic, gated on preflight result
-    ///  13. pluginCreator             dynamic, backstop
+    ///   4. modelFamilyGuidance       static, every family (default for .other)
+    ///   5. grounding                 static, gated on tools present
+    ///   6. codeStyle                 static, gated on file-edit tools
+    ///   7. riskAware                 static, gated on file-mutation tools
+    ///   8. agentLoopGuidance         static, gated on loop tools (or small ctx)
+    ///   9. sandbox / folderContext   static, mode-specific, gated on tools on
+    ///  10. capabilityNudge           static, gated on capabilities_search
+    ///  11. sandboxUnavailable        dynamic, gated on registrar failure
+    ///  12. pluginCompanions          dynamic, gated on preflight result
+    ///  13. skillSuggestions          dynamic, gated on preflight result
+    ///  14. pluginCreator             dynamic, backstop
     ///
     /// Statics come before dynamics so the cached prefix
     /// (`PromptManifest.staticPrefixContent`) reaches as far as possible —
@@ -699,9 +717,11 @@ public struct SystemPromptComposer: Sendable {
         }
 
         // Per-model-family nudge — small, targeted blocks for known model
-        // weaknesses (Gemma over-enumerates, GPT under-acts, etc.). We
-        // deliberately ship NO universal "agentic workflow" addendum: it
-        // inflates context and encourages tool enumeration.
+        // weaknesses (Gemma over-enumerates, GPT under-acts, LFM2/other
+        // hedge and refuse without an obedience counterweight). Every
+        // family now resolves to a block, including a deliberately minimal
+        // default for unrecognised families; the blocks stay short so this
+        // is not the bloated universal "agentic workflow" addendum we avoid.
         // See ModelFamilyGuidance.swift.
         if !effectiveToolsOff,
             let familyGuidance = ModelFamilyGuidance.guidance(forModelId: snapshot.model)
@@ -715,13 +735,30 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // Grounding: a short anti-fabrication rule for any tool-enabled
+        // chat. Gated on tools being present (off-case is handled by the
+        // persona's "answer from your own knowledge" clause) — both the
+        // tools-off flag and the resolved schema are session-constant, so
+        // this stays KV-cache safe. Tool-name-free on purpose (see the
+        // template doc) so it's safe even when `capabilities_search` isn't
+        // in the schema.
+        if !effectiveToolsOff, !resolvedNames.isEmpty {
+            composer.append(
+                .static(
+                    id: "grounding",
+                    label: "Grounding",
+                    content: SystemPromptTemplates.groundingDirective
+                )
+            )
+        }
+
         // Code style + risk-aware actions — general engineering discipline
         // for any agent that can mutate the user's filesystem or run
         // arbitrary code. Sandbox tools, folder tools, and any future
         // plugin tool that writes all qualify. The set lives at the top
         // of the file so it can grow as new mutation-capable tools land.
         if !effectiveToolsOff,
-            !resolvedNames.isDisjoint(with: Self.mutationToolNames)
+            !resolvedNames.isDisjoint(with: Self.codeEditToolNames)
         {
             composer.append(
                 .static(
@@ -730,6 +767,10 @@ public struct SystemPromptComposer: Sendable {
                     content: SystemPromptTemplates.codeStyleGuidance
                 )
             )
+        }
+        if !effectiveToolsOff,
+            !resolvedNames.isDisjoint(with: Self.mutationToolNames)
+        {
             composer.append(
                 .static(
                     id: "riskAware",
@@ -741,12 +782,19 @@ public struct SystemPromptComposer: Sendable {
 
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
         // intercepted tools (todo / complete / clarify / share_artifact).
-        // First turns rely on the compact tool descriptions. Once history
-        // shows the model has entered the loop, this continuation guide is
-        // worth the extra tokens because it prevents malformed follow-up
-        // calls and premature completion.
+        // Larger models rely on the compact tool descriptions for the first
+        // turns; once history shows the model has entered the loop, this
+        // continuation guide is worth the extra tokens.
+        //
+        // Small-context models (`.small`) get it from turn 1 onward instead
+        // — they most need the "when to call which" guide up front, and
+        // gating on the session-constant size class (rather than the
+        // mid-session `agentLoopGuidanceEnabled` history flag) means the
+        // section never appears/disappears across turns, so the small-model
+        // path stays KV-cache stable. `.tiny` never reaches here (tools off).
+        let smallContextLoopGuidance = toolset.sizeClass == .small
         if !effectiveToolsOff,
-            toolset.agentLoopGuidanceEnabled,
+            toolset.agentLoopGuidanceEnabled || smallContextLoopGuidance,
             !resolvedNames.isDisjoint(with: Self.agentLoopToolNames)
         {
             composer.append(
@@ -761,7 +809,14 @@ public struct SystemPromptComposer: Sendable {
         // Mode-specific capability framing: sandbox section when sandbox
         // tools are active, working-directory framing when chat is mounted
         // on a host folder. Static so it joins the cached prefix.
-        if executionMode.usesSandboxTools {
+        //
+        // Suppressed when tools are off (`effectiveToolsOff`): with no tool
+        // schemas in the request, the dispatch tables describe tools the
+        // model can't call (a hallucination invite) and — for tiny-context
+        // models, the dominant always-on block — bury the user's turn in a
+        // ~4K window. `effectiveToolsOff` is session-constant (agent toggle
+        // OR size class), so this gate is KV-cache safe.
+        if !effectiveToolsOff, executionMode.usesSandboxTools {
             let secretNames = AgentSecretsKeychain.secretIDs(agentId: agentId)
             composer.append(
                 .static(
@@ -791,7 +846,7 @@ public struct SystemPromptComposer: Sendable {
                     )
                 )
             }
-        } else if let folder = executionMode.folderContext {
+        } else if !effectiveToolsOff, let folder = executionMode.folderContext {
             composer.append(
                 .static(
                     id: "folderContext",
@@ -854,7 +909,10 @@ public struct SystemPromptComposer: Sendable {
             !effectiveToolsOff,
             !preflight.companions.isEmpty,
             tools.contains(where: { $0.function.name == "capabilities_load" }),
-            let companionsSection = PreflightCompanions.render(preflight.companions)
+            let companionsSection = PreflightCompanions.render(
+                preflight.companions,
+                compact: toolset.sizeClass != .normal
+            )
         {
             composer.append(
                 .dynamic(
@@ -1104,6 +1162,17 @@ public struct SystemPromptComposer: Sendable {
         "file_write", "file_edit", "shell_run",
     ]
 
+    /// Subset of `mutationToolNames` that actually authors/edits files.
+    /// `codeStyleGuidance` (an editing-discipline block) gates on this
+    /// rather than the full mutation set so a chat that only has shell /
+    /// install tools (e.g. "run this script") doesn't pay the code-style
+    /// preamble. `riskAwareGuidance` keeps the broader `mutationToolNames`
+    /// gate because destructive risk applies to exec/install too. Both
+    /// gates are session-constant (driven by the frozen schema).
+    static let codeEditToolNames: Set<String> = [
+        "sandbox_write_file", "file_write", "file_edit",
+    ]
+
     /// Capture the always-loaded names present in this turn's schema so
     /// callers can stash the snapshot for the next turn. When a snapshot
     /// was supplied, just echo it; otherwise compute fresh from the
@@ -1164,7 +1233,10 @@ public struct SystemPromptComposer: Sendable {
         // helper directly keeps the popover honest with no I/O hop.
         let soulSection: String? =
             executionMode.usesSandboxTools
-            ? loadSoulContent(linuxName: SandboxAgentProvisioner.linuxName(for: agentId.uuidString))
+            ? loadSoulContent(
+                linuxName: SandboxAgentProvisioner.linuxName(for: agentId.uuidString),
+                maxBytes: soulCap(forModel: snapshot.model)
+            )
             : nil
         appendGatedSections(
             composer: &composer,
@@ -1228,6 +1300,7 @@ public struct SystemPromptComposer: Sendable {
             skillSuggestions: [],
             alwaysLoadedNames: alwaysLoadedNames,
             contextDisable: contextDisable,
+            sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
             capabilityPromptSectionsEnabled: true,
             agentLoopGuidanceEnabled: false

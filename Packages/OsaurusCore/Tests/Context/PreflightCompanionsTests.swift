@@ -187,6 +187,46 @@ struct PreflightCompanionsTests {
         #expect(rendered.contains("capabilities_load"))
     }
 
+    @Test func nudgeDoesNotNameAnUncallableTool() {
+        // The "call by name" example must use a placeholder, not a real
+        // tool name. A concrete name (the old `browser_open_login(...)`)
+        // that is not actually in the request schema is a hallucination
+        // invite for small models — they emit the example call verbatim.
+        let companion = PluginCompanion(
+            pluginId: "osaurus.browser",
+            pluginDisplay: "Browser",
+            skill: nil,
+            siblingTools: [ToolTeaser(name: "browser_open_login", description: "Login")]
+        )
+        let rendered = PreflightCompanions.render([companion]) ?? ""
+        #expect(rendered.contains("`<tool_name>(...)`"))
+        #expect(rendered.contains("browser_open_login(...)") == false)
+    }
+
+    @Test func compactRenderCollapsesToPointerLineWithoutToolDescriptions() {
+        // Small-/tiny-context models get a one-line pointer instead of the
+        // full per-tool listing: naming + describing not-in-schema tools is
+        // a hallucination surface and the listing crowds a 4K window. The
+        // compact form must NOT enumerate sibling tool names/descriptions
+        // but must still point at the discovery path.
+        let companion = PluginCompanion(
+            pluginId: "osaurus.xlsx",
+            pluginDisplay: "Osaurus XLSX",
+            skill: SkillTeaser(name: "osaurus-xlsx", description: "Spreadsheets"),
+            siblingTools: [
+                ToolTeaser(name: "csv_to_xlsx", description: "Import CSV"),
+                ToolTeaser(name: "write_cells", description: "Write cells"),
+            ]
+        )
+        let rendered = PreflightCompanions.render([companion], compact: true) ?? ""
+        #expect(rendered.contains("## Plugin Companions"))
+        #expect(rendered.contains("Osaurus XLSX"))
+        #expect(rendered.contains("capabilities_search"))
+        // No per-tool teaser lines in compact mode.
+        #expect(rendered.contains("tool/csv_to_xlsx") == false)
+        #expect(rendered.contains("write_cells") == false)
+    }
+
     @Test func renderNudgeWarnsAgainstReLoadingAndExplainsCallByName() {
         // Reasoning models were observed treating `capabilities_load` as
         // the action itself and re-loading the same id every turn instead

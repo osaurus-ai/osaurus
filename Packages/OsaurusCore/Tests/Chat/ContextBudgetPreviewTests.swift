@@ -357,19 +357,22 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// Negative path: a model with no family marker (e.g. a generic
-    /// llama finetune) should not get a guidance block. Locks the
-    /// "silence is the default" rule so future entries to
-    /// `ModelFamilyGuidance` don't accidentally bias every chat.
-    @Test("preview: unknown model family → no Model Family Guidance row")
-    func toolsOn_unknownModelFamily_skipsGuidance() async {
+    /// Unrecognised families (a generic llama finetune, Apple Foundation,
+    /// etc.) now get the minimal *default* obedience block rather than
+    /// nothing. Leaving them unguided paired them with the always-on
+    /// prohibition sections and read as refusal-prone — the regression this
+    /// fix targets. The block is the one for `.other`, kept short so it
+    /// doesn't bias the prompt the way a full universal addendum would.
+    @Test("preview: unknown model family → default obedience guidance row")
+    func toolsOn_unknownModelFamily_usesDefaultGuidance() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
                 executionMode: .none,
                 model: "mystery/llama-finetune-x"
             )
-            #expect(sectionIds(preview).contains("modelFamilyGuidance") == false)
+            #expect(sectionIds(preview).contains("modelFamilyGuidance"))
+            #expect(preview.prompt.contains(ModelFamilyGuidance.defaultGuidance))
         }
     }
 

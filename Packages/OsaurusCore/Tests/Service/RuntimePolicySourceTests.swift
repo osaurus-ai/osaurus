@@ -339,10 +339,12 @@ struct RuntimePolicySourceTests {
         #expect(keychain.contains("public static func secretIDs(agentId: UUID) -> [String]"))
 
         let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
-        let sandboxStart = try #require(composer.range(of: "if executionMode.usesSandboxTools"))
+        let sandboxStart = try #require(
+            composer.range(of: "if !effectiveToolsOff, executionMode.usesSandboxTools")
+        )
         let sandboxEnd = try #require(
             composer.range(
-                of: "} else if let folder = executionMode.folderContext",
+                of: "} else if !effectiveToolsOff, let folder = executionMode.folderContext",
                 range: sandboxStart.upperBound ..< composer.endIndex
             )
         )
