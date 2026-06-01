@@ -170,6 +170,22 @@ Document attachments keep structure where the file format exposes it: CSV/TSV ta
 
 **Developer Tools** -- Server explorer, MCP tool inspector, inference monitoring, plugin debugging. See [Developer Tools Guide](docs/DEVELOPER_TOOLS.md). For the inference scheduler, model leases, continuous-batching engine, and feature flags that tune them, see [Inference Runtime](docs/INFERENCE_RUNTIME.md).
 
+## Telemetry
+
+Osaurus collects **anonymous, aggregated usage analytics** via [Aptabase](https://aptabase.com), an [open-source](https://github.com/aptabase/aptabase), privacy-first analytics project. We collect this only to understand broad user trends and preferences (how the app is used and where people run into friction) so we can make it better. It **never** includes your chats, prompts, files, model outputs, or keys. There are no accounts or device profiles, so events aren't tied to you.
+
+It's **consent-gated and opt-out**: nothing leaves your Mac without your consent. Anything recorded beforehand stays buffered locally and is transmitted *only* if you opt in. You can change your choice anytime in **Settings → Privacy → Share Anonymous Usage Data**.
+
+### Local development
+
+Telemetry is **off by default in source builds**: with no key, the SDK is never initialized and every event is a silent no-op, so you can build and contribute without any of this. To enable it locally:
+
+1. Create `App/osaurus/Secrets.xcconfig` with a single line: `APTABASE_APP_KEY = A-XX-...` (your Aptabase app key). The file is gitignored, so never commit it.
+2. In Xcode, add `Secrets.xcconfig` to the project (**no** target membership), then under **Project → Info → Configurations → Debug → osaurus** set "Based on Configuration File" to **Secrets**.
+3. Clean build (⇧⌘K) and relaunch.
+
+The key flows `Secrets.xcconfig` → `$(APTABASE_APP_KEY)` build setting → `AptabaseAppKey` in `Info.plist`. Debug builds report to Aptabase's **Debug** bucket (enable the Debug view on the dashboard to see them), so local testing never pollutes production metrics.
+
 ## Compatible APIs
 
 Drop-in endpoints for existing tools:
