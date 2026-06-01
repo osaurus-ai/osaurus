@@ -288,6 +288,51 @@ Verdict: green for strict no-sign Osaurus app multi-turn tool/cache scope.
   `companion_hits=1`; visible answer speed was 10 tokens in 1.171s, about
   8.5 tok/s.
 
+### Gemma 4 26B A4B it JANG_4M
+
+Local copy used for proof:
+`/Users/eric/.mlxstudio/models/dealignai/Gemma-4-26B-A4B-it-JANG_4M-CRACK`
+
+Cold text/tool artifact:
+`/tmp/osaurus-post1314-gemma26-local-cold-20260531-185325/gemma-4-26b-a4b-it-jang_4m-crack_summary.json`
+
+Warm disk-hit text/tool artifact:
+`/tmp/osaurus-post1314-gemma26-local-warm-hit-20260531-185438/gemma-4-26b-a4b-it-jang_4m-crack_summary.json`
+
+Real-media VL artifact:
+`/tmp/osaurus-post1314-gemma26-vl-red-20260531-185459/SUMMARY.json`
+
+Verdict: green for strict no-sign Osaurus app text/tool/cache scope and for a
+real single-image VL/cache row. One earlier warm text/tool rerun is recorded as
+flaky below and is not hidden.
+
+- Turn 1 required tool call: exact `line_count` args `red\ngreen\nblue`.
+- Turn 2 no-tool answer: visible coherent answer, no unexpected tool call, no
+  protocol leak, no length-stop fake pass.
+- Turn 3 required tool after assistant/tool history: exact `line_count` args
+  `one\ntwo`.
+- Topology: 30 layers, 5 full KV layers, 25 rotating/sliding KV layers,
+  `requires_disk_backed_restore=true`, `requires_ssm_companion_state=false`,
+  `turbo_quant_kv_layer_count=0`.
+- Warm text/tool reuse proof: `block_disk_hits=1`; visible answer speed was
+  7 tokens in 0.506s, about 13.8 tok/s.
+- VL proof used a generated 64x64 red PNG data URL through
+  `/v1/chat/completions`. First and repeat responses were `Red`, both stopped
+  normally, prefix hash stayed `6e340b9cffb37a989ca544e6bb780a2c`, repeat
+  `disk_l2_hits=1`, no protocol marker leaked, and the app was healthy with no
+  in-flight request after the row.
+- VL token rates: first response 1 token in 3.700s, repeat response 1 token in
+  1.000s.
+
+Rejected Gemma warm artifact:
+`/tmp/osaurus-post1314-gemma26-local-warm-20260531-185343/gemma-4-26b-a4b-it-jang_4m-crack_summary.json`
+
+That row failed turn 1 with `finish_reason=stop`, no structured tool call, no
+disk L2 hit, and `reasoning_content="thought<tool_call|>"`. A subsequent warm
+repeat and the strict warm-hit row both passed exact tool behavior and disk L2
+reuse, so Gemma is promoted for the accepted rows, but the flake remains
+recorded for future repeat-depth work.
+
 ZAYA was not found in the local model search roots used for this pass.
 
 ## API and UI Boundary
@@ -306,5 +351,6 @@ added.
 
 ## VL Boundary
 
-No VL/media row was run in this final matrix. VL correctness remains outside
-this PR's live proof unless a separate real-media live artifact is added.
+Gemma 4 26B has one real-media red-image VL/cache artifact listed above. No
+other VL/video/audio family is live-proven in this final matrix. Nemotron Omni
+is proven here only on the text/tool path, not with image/audio media.
