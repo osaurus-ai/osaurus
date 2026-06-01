@@ -2,12 +2,14 @@
 
 Date: 2026-05-31
 
-Osaurus PR head containing this evidence:
-`a59e5a4079aaddce18ec868342c2c3ebfe21e111`.
+Osaurus PR head used for the Qwen/Nemotron proof before this final Ling doc
+refresh:
+`63f8ee52ef44eb2a988594d2065ffaf70a07024a`.
 
 The live no-sign app proof was run from the same local PR worktree after the
 final vMLX pin and LFM no-rail changes were applied, before those local changes
-were committed as `a59e5a4079aaddce18ec868342c2c3ebfe21e111`.
+were pushed to the PR branch. Individual artifact paths below are the source of
+truth for the exact live rows.
 
 vMLX pin in Osaurus: `3043cc98d7c2a0fd9df34376e6b42beec5517516`.
 
@@ -260,6 +262,31 @@ Verdict: green for strict no-sign Osaurus app multi-turn tool/cache scope.
 - Warm reuse proof: `block_disk_hits=1`, `ssm_companion_hits=1`, and
   `companion_hits=1`; visible answer speed was 6 tokens in 0.391s, about
   15.4 tok/s.
+
+### Ling 2.6 Flash JANGTQ2
+
+Local copy used for proof:
+`/Users/eric/.mlxstudio/models/dealignai/Ling-2.6-flash-JANGTQ2-CRACK`
+
+Cold artifact:
+`/tmp/osaurus-post1314-ling-local-cold-20260531-183358/ling-2.6-flash-jangtq2-crack_summary.json`
+
+Warm artifact:
+`/tmp/osaurus-post1314-ling-local-warm-20260531-183610/ling-2.6-flash-jangtq2-crack_summary.json`
+
+Verdict: green for strict no-sign Osaurus app multi-turn tool/cache scope.
+
+- Turn 1 required tool call: exact `line_count` args `red\ngreen\nblue`.
+- Turn 2 no-tool answer: visible coherent answer, no unexpected tool call, no
+  protocol leak, no length-stop fake pass.
+- Turn 3 required tool after assistant/tool history: exact `line_count` args
+  `one\ntwo`.
+- Topology: 32 layers, 4 KV layers, 28 arrays/SSM companion layers,
+  `requires_disk_backed_restore=true`, `requires_ssm_companion_state=true`,
+  `companion=ssm`, `turbo_quant_kv_layer_count=0`.
+- Warm reuse proof: `block_disk_hits=1`, `ssm_companion_hits=1`, and
+  `companion_hits=1`; visible answer speed was 10 tokens in 1.171s, about
+  8.5 tok/s.
 
 ZAYA was not found in the local model search roots used for this pass.
 
