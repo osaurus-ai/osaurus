@@ -110,4 +110,55 @@ struct ProviderPresetsTests {
                 == "https://api.deepseek.com/v1/chat/completions"
         )
     }
+
+    @Test func minimaxPreset_configurationMatchesOfficialAPI() throws {
+        let config = ProviderPreset.minimax.configuration
+
+        #expect(config.name == "MiniMax")
+        #expect(config.host == "api.minimax.io")
+        #expect(config.providerProtocol == .https)
+        #expect(config.port == nil)
+        #expect(config.basePath == "/v1")
+        #expect(config.authType == .apiKey)
+        #expect(config.providerType == .openaiLegacy)
+    }
+
+    @Test func minimaxPreset_includesSeedManualModels() throws {
+        let config = ProviderPreset.minimax.configuration
+
+        #expect(config.defaultManualModelIds.contains("MiniMax-M3"))
+        #expect(config.defaultManualModelIds.contains("MiniMax-M2.7"))
+        #expect(config.defaultManualModelIds.contains("MiniMax-M2"))
+    }
+
+    @Test func minimaxPreset_isListedAsKnownPreset() throws {
+        #expect(ProviderPreset.knownPresets.contains(.minimax))
+    }
+
+    @Test func matching_providerWithMiniMaxHost_resolvesToMiniMaxPreset() throws {
+        let provider = RemoteProvider(
+            name: "My MiniMax",
+            host: "api.minimax.io",
+            basePath: "/v1",
+            authType: .apiKey,
+            providerType: .openaiLegacy
+        )
+
+        #expect(ProviderPreset.matching(provider: provider) == .minimax)
+    }
+
+    @Test func minimaxPreset_chatEndpointResolvesToChatCompletions() throws {
+        let provider = RemoteProvider(
+            name: "MiniMax",
+            host: ProviderPreset.minimax.configuration.host,
+            basePath: ProviderPreset.minimax.configuration.basePath,
+            authType: .apiKey,
+            providerType: ProviderPreset.minimax.configuration.providerType
+        )
+
+        #expect(
+            provider.url(for: provider.providerType.chatEndpoint)?.absoluteString
+                == "https://api.minimax.io/v1/chat/completions"
+        )
+    }
 }

@@ -79,11 +79,11 @@ public struct ShareArtifactTool: OsaurusTool {
         }
 
         let path = nonEmpty(json["path"])
-        let rawContent = nonEmpty(json["content"])
+        let providedContent = nonEmpty(json["content"])
         let filename = nonEmpty(json["filename"])
         let description = nonEmpty(json["description"])
 
-        guard path != nil || rawContent != nil else {
+        guard path != nil || providedContent != nil else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
@@ -92,6 +92,15 @@ public struct ShareArtifactTool: OsaurusTool {
                 tool: name
             )
         }
+
+        // Path mode wins when both are supplied. Models routinely mirror the
+        // file path into `content` (or pass placeholder text) alongside a real
+        // `path`; if we honored that content the downstream parser would write
+        // the literal string as the artifact body and ship a broken file.
+        // Treat `content` as absent whenever a `path` is present so the file is
+        // actually copied. This matches the tool contract ("Omit `content`
+        // entirely when using `path`").
+        let rawContent = path == nil ? providedContent : nil
 
         if rawContent != nil {
             guard filename != nil else {
