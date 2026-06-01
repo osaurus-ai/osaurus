@@ -6,7 +6,9 @@ from partial rows.
 
 ## Code State
 
-- Current Osaurus PR head after Step proof-harness hardening:
+- Current Osaurus PR head after the latest Step proof-boundary refresh:
+  `9804bb474ad73cd107a493ccaba2e9b3f5c964c1`.
+- Earlier Osaurus PR head after Step proof-harness hardening:
   `31911e2319b324250bca3f3660a75d2d182e55a9`.
 - Earlier Osaurus PR head after the ZAYA evidence refresh:
   `dceaf9edf85ffe0d20a0b142b6dbe585b4874828`.
@@ -223,6 +225,21 @@ Superseded failed warm attempt:
   after turn 1 remained in flight under the separate 74 GB Step CRACK-v8 job;
   it records the pre-call request/health/cache files and is a blocked
   contested-machine artifact, not a green or red model verdict.
+- Current Osaurus PR head after the latest Step proof-boundary refresh:
+  `9804bb474ad73cd107a493ccaba2e9b3f5c964c1`.
+  Source guards `assert-osaurus-vmlx-pr-readiness.sh`,
+  `assert-osaurus-no-forced-behavior-pr.sh`, and
+  `assert-tool-choice-required-routing.sh` passed on the same `eb116ef...`
+  vMLX pin. A fresh no-sign app run used
+  `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, a fresh `OSAURUS_TEST_ROOT`, and a
+  one-model root containing `Step-3.7-Flash-JANG_2L`; `/v1/models` served
+  `step-3.7-flash-jang_2l`. Artifact
+  `/tmp/osaurus-post1314-9804bb47-step-jang2l-full-20260601-140957` was
+  stopped after more than five minutes with `/health` still healthy, one
+  in-flight request, no turn-1 response artifact, and the external
+  `Step-3.7-Flash-JANG_K-CRACK-v8` job still consuming about 74 GB RSS. The
+  artifact contains an explicit failed `SUMMARY.json`; treat it as
+  resource-blocked, not as a parser/coherency failure and not as a green row.
 - GitHub CI on `eda7ac94` passed:
   `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and
   `update_release_draft`.

@@ -2,7 +2,10 @@
 
 Date: 2026-06-01
 
-Current Osaurus PR head after Step proof-harness hardening:
+Current Osaurus PR head after the latest Step proof-boundary refresh:
+`9804bb474ad73cd107a493ccaba2e9b3f5c964c1`.
+
+Earlier Osaurus PR head after Step proof-harness hardening:
 `31911e2319b324250bca3f3660a75d2d182e55a9`.
 
 Earlier Osaurus PR head after the ZAYA evidence refresh:
@@ -227,6 +230,24 @@ Step JANG_K spelling. A fresh current-head no-sign app attempt at
 after turn 1 stayed in flight under the same external 74 GB Step CRACK-v8 job;
 it has the pre-call request/health/cache artifacts but no response and is not a
 model pass or fail.
+
+The `9804bb47` refresh reran the cheap production source guards and another
+fresh no-sign app attempt without touching signing/keychain paths:
+`assert-osaurus-vmlx-pr-readiness.sh`,
+`assert-osaurus-no-forced-behavior-pr.sh`, and
+`assert-tool-choice-required-routing.sh` passed on the `eb116ef...` pin. The
+no-sign app at
+`build/DerivedData-post1314-step-template-eb116ef/Build/Products/Release/osaurus.app`
+was launched with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, a fresh
+`OSAURUS_TEST_ROOT`, and a model root containing only
+`Step-3.7-Flash-JANG_2L`; `/v1/models` served `step-3.7-flash-jang_2l`.
+Artifact `/tmp/osaurus-post1314-9804bb47-step-jang2l-full-20260601-140957`
+was stopped after more than five minutes with `/health` still healthy, one
+in-flight request, no turn-1 response artifact, and the external
+`Step-3.7-Flash-JANG_K-CRACK-v8` job still consuming about 74 GB RSS. The
+artifact now contains an explicit failed `SUMMARY.json`. This is recorded as a
+resource-blocked current-head attempt, not a model pass and not a model
+coherency/parser failure.
 
 Final fix boundary:
 
