@@ -207,15 +207,42 @@ Superseded failed warm attempt:
   was stopped after running past the useful proof window with one in-flight
   request. Both attempts ran while a separate Step CRACK process was consuming
   about 74 GB RSS, but neither is a pass.
-- Step JANG_2L strict harness:
-  `/tmp/osaurus-post1314-step37-jang2l-eb116ef-cold-20260601-125612` timed out
-  on turn 1 after 240s, also under the same machine contention. No summary JSON
-  was produced, so this attempt does not supersede the earlier passing
-  JANG_2L rows above.
+- Current Osaurus PR head after the stale Step cache-mode test fix:
+  `eda7ac94cd78b54846db850a44fa7f1f2dcacb4d`.
+- GitHub CI on `eda7ac94` passed:
+  `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and
+  `update_release_draft`.
+- Current Step JANG_2L strict partial artifact:
+  `/tmp/osaurus-post1314-eda7ac94-step-jang2l-20260601-132614`.
+  This no-sign app row used `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, a fresh
+  `OSAURUS_TEST_ROOT`, and explicit `OSU_MODELS_DIR`; `/v1/models` served
+  `step-3.7-flash-jang_2l`. The full harness did not finish and has no
+  summary JSON because it was stopped after running too long under the separate
+  Step CRACK workload. The completed turn files are still useful evidence:
+  turn 1 returned exact structured `line_count` args `red\ngreen\nblue` with
+  `finish_reason=tool_calls`, zero completion tokens, and no visible prose;
+  turn 2 returned visible content `Three lines were counted.` with
+  `finish_reason=stop`, no tool call, and no protocol leak.
+- Current Step JANG_2L direct turn-3 artifact:
+  `/tmp/osaurus-post1314-eda7ac94-step-jang2l-turn3-direct-20260601-134409`.
+  This focused no-sign app probe replayed the same assistant/tool history and
+  sent the missing required turn. It passed with exact structured
+  `line_count` args `one\ntwo`, `finish=tool_calls`, one tool call,
+  no visible prose, zero completion tokens, and 3.83s elapsed.
+- Current Step JANG_2L topology/cache after the direct row:
+  `/tmp/osaurus-post1314-step-turn3-cache-after.json` reported 45 layers,
+  12 KV layers, 33 rotating KV layers, `requires_disk_backed_restore=true`,
+  paged-incompatible, `turbo_quant_kv_layer_count=0`, and `disk_l2_stores=1`.
+  This current refresh does not claim a fresh warm disk-L2 hit; the older
+  pre-`eb116ef...` warm artifacts above remain the warm L2-hit proof.
 - Current verdict:
-  `eb116ef...` source/wiring is green, but fresh current-pin Step live proof is
-  blocked by timeout/slow decode in the current machine state. Do not promote
-  Step JANG_K or current-pin Step JANG_2L live rows from these attempts.
+  `eb116ef...` source/wiring is green, CI is green at `eda7ac94`, and current
+  no-sign app evidence covers Step JANG_2L required-tool turn 1, visible no-tool
+  turn 2, and required-tool-after-history turn 3 without protocol leakage or
+  fake sampler/prompt fixes. Because the current full harness was split by the
+  long-running turn-2 path under machine contention, do not overstate this as a
+  single green current-head `*_summary.json` row. Step JANG_K remains blocked by
+  timeout/slow decode and is not promoted by this refresh.
 
 ## Proven Live Row: LFM2.5 MXFP4
 

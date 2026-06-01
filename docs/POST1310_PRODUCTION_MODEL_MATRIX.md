@@ -192,12 +192,25 @@ multi-turn required/none/required tool behavior, no visible protocol leakage,
 no incoherent loop, no length-stop fake pass on the accepted rows, Step mixed
 KV/rotating topology, disk-backed restore requirement, and warm disk-L2 reuse.
 
-Current `eb116ef...` refresh boundary: source and tokenizer guards passed, but
-fresh no-sign app Step JANG_2L live proof did not complete turn 1 within the
-240s harness timeout while another Step CRACK process was consuming about
-74 GB RSS. No summary JSON was produced for the current attempt
-`/tmp/osaurus-post1314-step37-jang2l-eb116ef-cold-20260601-125612`, so this
-refresh does not supersede the older passing Step JANG_2L live artifacts.
+Current `eda7ac94` / vMLX `eb116ef...` refresh boundary: source, tokenizer,
+readiness, no-forced-behavior, and GitHub CI checks passed. A fresh no-sign app
+strict Step JANG_2L row ran while another Step CRACK process was consuming about
+74 GB RSS and did not finish the full three-turn harness, so there is no single
+current-head `*_summary.json` green row. The partial strict artifact
+`/tmp/osaurus-post1314-eda7ac94-step-jang2l-20260601-132614` did complete turn 1
+and turn 2: turn 1 produced exact structured `line_count` args
+`red\ngreen\nblue`, `finish_reason=tool_calls`, no visible prose, and zero
+completion tokens; turn 2 answered visibly with `Three lines were counted.` and
+no tool call or protocol leak. Because turn 3 was missing from that harness, a
+focused no-sign app direct turn-3 probe
+`/tmp/osaurus-post1314-eda7ac94-step-jang2l-turn3-direct-20260601-134409`
+replayed the same assistant/tool history and passed with exact structured
+`line_count` args `one\ntwo`, `finish=tool_calls`, no visible prose, and zero
+completion tokens in 3.83s. `/health` after the direct row was healthy with no
+in-flight request. `/admin/cache-stats` showed 45 layers, 12 KV layers,
+33 rotating KV layers, `requires_disk_backed_restore=true`, paged-incompatible,
+`turbo_quant_kv_layer_count=0`, and `disk_l2_stores=1`; this current refresh
+does not claim a fresh warm disk-L2 hit.
 
 Final fix boundary:
 
