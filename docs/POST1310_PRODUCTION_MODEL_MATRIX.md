@@ -526,7 +526,7 @@ recorded for future repeat-depth work.
 ### MiniMax M2.7 Small JANGTQ
 
 Local copy used for attempted proof:
-`/Users/eric/.mlxstudio/models/jangq-ai/MiniMax-M2.7-Small-JANGTQ`
+`/Users/eric/.mlxstudio/models/JANGQ-AI/MiniMax-M2.7-Small-JANGTQ`
 
 Attempt artifact:
 `/tmp/osaurus-post1314-minimax-small-cold-20260531-185719`
