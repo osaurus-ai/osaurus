@@ -116,11 +116,21 @@ Current final-head verdict: not promoted by this matrix.
 Attempted artifact directory:
 `/tmp/osaurus-post1314-step37-jang2l-3043cc98-cold-20260531-170148`
 
+Fresh bounded retry artifact:
+`/tmp/osaurus-post1314-step37-jang2l-bounded-20260531-175434`
+
 The row was started against the final app and loaded
 `step-3.7-flash-jang_2l`, but it stayed in-flight for several minutes without
 writing a turn response summary. The request and app were killed to clear the
 machine. Therefore this final matrix does not claim Step 3.7 JANG_2L live
 tool/cache readiness.
+
+The fresh bounded retry reached runtime as well: `/health` reported
+`current_model=step-3.7-flash-jang_2l`, `loaded=["step-3.7-flash-jang_2l"]`,
+and `inflight={"step-3.7-flash-jang_2l":1}` while the app consumed CPU. The
+strict harness timed out waiting for the first `/v1/chat/completions` response
+after 300 seconds, before any turn response JSON was written. This is a current
+Step decode/runtime latency or hang blocker, not a tool-parser pass.
 
 Older Step 3.7 artifacts from earlier local work showed strict tool behavior and
 L2 reuse but very poor no-sign Osaurus decode speed. Those older rows are not
@@ -128,11 +138,37 @@ used as final-head merge proof.
 
 ## LFM2.5 MXFP4 and MXFP8
 
-Current final-head verdict: not promoted by this final rerun.
+Current final-head verdict: green for the same strict no-sign Osaurus app
+multi-turn tool/cache scope as JANG_2L.
 
-Older artifacts existed for MXFP4/MXFP8 strict tool rows, but they were not
-rerun after the final `3043cc98...` vMLX pin and no-rail LFM change. This matrix
-does not claim sibling MXFP4/MXFP8 warm cache production readiness.
+MXFP4 cold artifact:
+`/tmp/osaurus-post1314-lfm-mxfp4-cold-20260531-175253/lfm2.5-8b-a1b-mxfp4_summary.json`
+
+MXFP4 warm artifact:
+`/tmp/osaurus-post1314-lfm-mxfp4-warm-20260531-175323/lfm2.5-8b-a1b-mxfp4_summary.json`
+
+MXFP8 cold artifact:
+`/tmp/osaurus-post1314-lfm-mxfp8-cold-20260531-175341/lfm2.5-8b-a1b-mxfp8_summary.json`
+
+MXFP8 warm artifact:
+`/tmp/osaurus-post1314-lfm-mxfp8-warm-20260531-175405/lfm2.5-8b-a1b-mxfp8_summary.json`
+
+Confirmed for both MXFP4 and MXFP8:
+
+- Turn 1 required tool call: exact `line_count` args `red\ngreen\nblue`.
+- Turn 2 no-tool answer: visible coherent answer, no unexpected tool call, no
+  protocol leak, no length-stop fake pass.
+- Turn 3 required tool after assistant/tool history: exact `line_count` args
+  `one\ntwo`.
+- Topology: 24 layers, 6 KV layers, 18 Mamba/SSM companion layers,
+  `requires_disk_backed_restore=true`, `requires_ssm_companion_state=true`,
+  `companion=ssm`, `turbo_quant_kv_layer_count=0`.
+- MXFP4 warm reuse proof: `block_disk_hits=1`, `ssm_companion_hits=1`, and
+  `companion_hits=1`; visible answer speed was 123 tokens in 1.377s, about
+  89.3 tok/s.
+- MXFP8 warm reuse proof: `block_disk_hits=1`, `ssm_companion_hits=1`, and
+  `companion_hits=1`; visible answer speed was 128 tokens in 2.299s, about
+  55.7 tok/s.
 
 ## TurboQuant KV Boundary
 
@@ -147,6 +183,31 @@ This matrix does not prove TurboQuant KV for Step or LFM.
 The server settings/source guards prove topology-gated engine-selected
 TurboQuant wiring and UI/runtime settings; they do not prove live TurboQuant KV
 for LFM.
+
+## Expanded Family Boundary
+
+An expanded no-sign app launch served additional local model ids when pointed at
+`/tmp/osaurus-post1314-expanded-modelroot`: `qwen3.6-35b-a3b-jangtq-crack`,
+`nemotron-omni-nano-jangtq-crack`, `ling-2.6-flash-jangtq2-crack`,
+`gemma-4-26b-a4b-it-jang_4m-crack`, and `minimax-m2.7-small-jangtq`.
+Those rows are not promoted by this PR evidence.
+
+The Qwen35 strict harness attempt
+`/tmp/osaurus-post1314-expanded-qwen35-cold-20260531-174411` did not reach model
+decode. The app accepted the HTTP connection but `/health` continued to report
+no loaded model and no in-flight request. A process sample at
+`/tmp/osaurus-sample-qwen-stall.txt` showed both the model picker rebuild and
+the chat request blocked in metadata/capability reads:
+`VLMDetection.isVLM`, `ModelMediaCapabilities.from(directory:modelId:)`, and
+`Data(contentsOf:)`/`_fcntl_overlay_open`. A single-model Qwen LaunchServices
+retry reproduced the same metadata-read stall; sample:
+`/tmp/osaurus-sample-qwen-single-stall.txt`.
+
+Shell reads of the same Qwen and Nemotron `config.json` files from
+`/Volumes/EricsLLMDrive` were instantaneous, so this is recorded as a current
+no-sign app external-drive metadata access/capability detection blocker, not a
+Qwen parser, reasoning, cache, or decode verdict. ZAYA was not found in the
+local model search roots used for this pass.
 
 ## API and UI Boundary
 
