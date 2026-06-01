@@ -655,13 +655,13 @@ struct MLXBatchAdapterTests {
             ModelRuntime.cacheKVModeTag(
                 for: settings.cache,
                 modelName: "JANGQ-AI/Step-3.7-Flash-JANG_2L"
-            ) == "turbo(3,3)"
+            ) == "fp16"
         )
         #expect(
             ModelRuntime.cacheKVModeTag(
                 for: settings.cache,
                 modelName: "step-3.7-flash-jang_2l"
-            ) == "turbo(3,3)"
+            ) == "fp16"
         )
         #expect(
             ModelRuntime.cacheKVModeTag(
@@ -673,7 +673,7 @@ struct MLXBatchAdapterTests {
                     turboQuantKVLayerCount: 0,
                     rotatingKVLayerCount: 33
                 )
-            ) == "turbo(3,3)"
+            ) == "fp16"
         )
         #expect(
             ModelRuntime.cacheKVModeTag(
@@ -685,7 +685,7 @@ struct MLXBatchAdapterTests {
                     turboQuantKVLayerCount: 0,
                     rotatingKVLayerCount: 33
                 )
-            ) == "turbo(3,3)"
+            ) == "fp16"
         )
         #expect(
             ModelRuntime.cacheKVModeTag(
