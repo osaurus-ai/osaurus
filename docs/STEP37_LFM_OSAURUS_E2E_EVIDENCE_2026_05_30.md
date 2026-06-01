@@ -240,6 +240,15 @@ Superseded failed warm attempt:
   `Step-3.7-Flash-JANG_K-CRACK-v8` job still consuming about 74 GB RSS. The
   artifact contains an explicit failed `SUMMARY.json`; treat it as
   resource-blocked, not as a parser/coherency failure and not as a green row.
+  Isolation artifact
+  `/tmp/osaurus-post1314-920fa406-step-probe-20260601-141746` then sent a tiny
+  plain chat request (`Reply with ok.`, `max_tokens=8`, no tools) through the
+  same no-sign app and one-model root. It also stayed in flight with an empty
+  response while the app remained healthy. Sample
+  `/tmp/osaurus-post1314-920fa406-step-plain-sample.txt` showed
+  `TokenIterator.next()` waiting in
+  `mlx::core::scheduler::Scheduler::wait_for_one()`, so the current blocked
+  row is below Osaurus chat/autodetect/tool-parser wiring.
 - GitHub CI on `eda7ac94` passed:
   `shellcheck`, `swiftlint`, `test-cli`, `test-core`, and
   `update_release_draft`.

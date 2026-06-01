@@ -249,6 +249,17 @@ artifact now contains an explicit failed `SUMMARY.json`. This is recorded as a
 resource-blocked current-head attempt, not a model pass and not a model
 coherency/parser failure.
 
+Additional isolation artifact:
+`/tmp/osaurus-post1314-920fa406-step-probe-20260601-141746`. The same no-sign
+app and one-model root served `step-3.7-flash-jang_2l`; a tiny plain chat
+request (`Reply with ok.`, `max_tokens=8`, no tools) also stayed in flight with
+an empty response file under the active external Step CRACK-v8 job. Sample
+`/tmp/osaurus-post1314-920fa406-step-plain-sample.txt` showed the request inside
+`TokenIterator.next()` / `mlx::core::scheduler::Scheduler::wait_for_one()`.
+That isolates the current live blocker below chat/autodetect/tool-parser
+wiring: plain decode cannot complete on this machine while the external Step
+job owns the memory/GPU lane.
+
 Final fix boundary:
 
 - Osaurus disables the single-slot compiled batch-decode trace for Step 3.7 in
