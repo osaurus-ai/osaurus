@@ -5153,6 +5153,9 @@
         }
       }
     },
+    "Control what anonymous data Osaurus collects." : {
+
+    },
     "Controls how the AI reasons and calls tools. Lower temperature improves reliability." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -20745,6 +20748,9 @@
 
     },
     "Share anonymous usage data" : {
+
+    },
+    "Share Anonymous Usage Data" : {
 
     },
     "Share Link" : {
