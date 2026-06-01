@@ -65,6 +65,48 @@ delta routing, tool-choice routing, no hidden sampler defaults, no forced
 reasoning or close-token behavior, and keychain-free proof lanes. They are source
 guards unless a live artifact is listed below.
 
+## Live Endpoint Smoke
+
+Current PR head: `43970ed1ffcc9cae01a07efa3897a2b652dcf61c`.
+
+Qwen endpoint artifact:
+`/tmp/osaurus-post1314-qwen-endpoint-smoke-20260531-193244/endpoint-smoke/SUMMARY.json`
+
+The Qwen endpoint smoke used the same no-sign app build with
+`OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, a fresh `OSAURUS_TEST_ROOT`, and local
+model root `/tmp/osaurus-post1314-qwen-endpoint-smoke-20260531-193244/models`.
+Served model id: `qwen3.6-35b-a3b-jangtq-crack`.
+
+Passed live endpoints:
+
+- OpenAI-compatible `/v1/chat/completions`, non-streaming.
+- OpenAI-compatible `/v1/chat/completions`, SSE streaming.
+- OpenResponses `/v1/responses`, non-streaming.
+- OpenResponses `/v1/responses`, SSE streaming.
+- Anthropic Messages `/v1/messages`, non-streaming.
+- Ollama `/api/chat`, non-streaming.
+- Ollama `/api/generate`, non-streaming.
+
+Every passed endpoint returned visible text, had no protocol marker leakage, did
+not length-stop into a fake pass, and did not loop. App health after the row was
+healthy with no in-flight request. Cache telemetry after the endpoint row showed
+`disk_l2_hits=2`, `ssm_companion_hits=2`, and `companion_hits=2` for the Qwen
+hybrid topology: 40 layers, 10 KV layers, 30 Mamba/SSM companion layers,
+`requires_disk_backed_restore=true`, `requires_ssm_companion_state=true`, and
+`turbo_quant_kv_layer_count=0`.
+
+LFM endpoint boundary artifact:
+`/tmp/osaurus-post1314-endpoint-smoke-ls-20260531-192859/endpoint-smoke-256/SUMMARY.json`
+
+The same endpoint smoke against `lfm2.5-8b-a1b-jang_2l` is not promoted as a
+full endpoint-visible-chat proof: OpenAI streaming, OpenResponses
+non-streaming/streaming, and Ollama chat produced visible text without protocol
+leaks, but OpenAI non-streaming and Ollama generate spent the output budget on
+reasoning/empty visible output. This is recorded as a model/rail behavior
+boundary, not hidden or counted as a pass. LFM remains promoted by the stricter
+multi-turn tool/cache rows below, where required tool turns close the reasoning
+rail and follow-up tool-result turns produce visible answers.
+
 ## LFM2.5 JANG_2L
 
 Verdict: green for the final PR scope: live no-sign Osaurus app, strict
