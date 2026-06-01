@@ -869,20 +869,6 @@ public actor ModelRuntime {
             config.enableDiskCache = false
             config.diskCacheDir = nil
         }
-        if ModelFamilyNames.isLFM2Family(modelName) {
-            // Current live Osaurus rows prove LFM2.5 JANG_2L tool/history
-            // behavior and topology on cold/full-prefill paths, but the
-            // warm disk hit path is not stable yet: the required-tool turn
-            // after assistant/tool history can answer prose instead of
-            // emitting the required function call. Keep LFM2's in-memory
-            // SSM companion topology available, but exclude it from
-            // automatic cross-session L2 restore until a dedicated warm
-            // disk-cache row proves the exact topology. This is a
-            // conservative compatibility gate, not a prompt/sampler/parser
-            // coercion.
-            config.enableDiskCache = false
-            config.diskCacheDir = nil
-        }
         return config
     }
 

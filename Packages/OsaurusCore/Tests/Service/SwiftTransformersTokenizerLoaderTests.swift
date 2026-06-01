@@ -1184,8 +1184,11 @@ struct SwiftTransformersTokenizerLoaderTests {
             )
         }
         #expect(!decoded.contains("Today's date:"), "Decoded: \(decoded)")
+        #expect(
+            decoded.hasSuffix("<|im_start|>assistant\n"),
+            "LFM required-tool turns must not inject a synthetic thinking rail. Decoded: \(decoded)"
+        )
         #expect(!decoded.contains("<think>"), "Decoded: \(decoded)")
-        #expect(decoded.hasSuffix("<|im_start|>assistant\n"), "Decoded: \(decoded)")
     }
 
     @Test func step37LocalTokenizerUsesRequiredToolFallbackAndClosesThinkingRail() async throws {
