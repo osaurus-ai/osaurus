@@ -190,7 +190,7 @@ An expanded no-sign app launch served additional local model ids when pointed at
 `/tmp/osaurus-post1314-expanded-modelroot`: `qwen3.6-35b-a3b-jangtq-crack`,
 `nemotron-omni-nano-jangtq-crack`, `ling-2.6-flash-jangtq2-crack`,
 `gemma-4-26b-a4b-it-jang_4m-crack`, and `minimax-m2.7-small-jangtq`.
-Those rows are not promoted by this PR evidence.
+The external-drive model-root path itself is not promoted by this PR evidence.
 
 The Qwen35 strict harness attempt
 `/tmp/osaurus-post1314-expanded-qwen35-cold-20260531-174411` did not reach model
@@ -205,9 +205,63 @@ retry reproduced the same metadata-read stall; sample:
 
 Shell reads of the same Qwen and Nemotron `config.json` files from
 `/Volumes/EricsLLMDrive` were instantaneous, so this is recorded as a current
-no-sign app external-drive metadata access/capability detection blocker, not a
-Qwen parser, reasoning, cache, or decode verdict. ZAYA was not found in the
-local model search roots used for this pass.
+no-sign app external-drive metadata access/capability detection blocker.
+
+Copying the Qwen and Nemotron bundles into `/Users/eric/.mlxstudio/models`
+removed that metadata access blocker and let the same no-sign app reach real
+runtime/decode. Those local-storage rows are promoted below.
+
+### Qwen3.6 35B A3B JANGTQ
+
+Local copy used for proof:
+`/Users/eric/.mlxstudio/models/dealignai/Qwen3.6-35B-A3B-JANGTQ-CRACK`
+
+Cold artifact:
+`/tmp/osaurus-post1314-qwen35-local-cold-20260531-181616/qwen3.6-35b-a3b-jangtq-crack_summary.json`
+
+Warm artifact:
+`/tmp/osaurus-post1314-qwen35-local-warm-20260531-181632/qwen3.6-35b-a3b-jangtq-crack_summary.json`
+
+Verdict: green for strict no-sign Osaurus app multi-turn tool/cache scope.
+
+- Turn 1 required tool call: exact `line_count` args `red\ngreen\nblue`.
+- Turn 2 no-tool answer: visible coherent answer, no unexpected tool call, no
+  protocol leak, no length-stop fake pass.
+- Turn 3 required tool after assistant/tool history: exact `line_count` args
+  `one\ntwo`.
+- Topology: 40 layers, 10 KV layers, 30 Mamba/SSM companion layers,
+  `requires_disk_backed_restore=true`, `requires_ssm_companion_state=true`,
+  `companion=ssm`, `turbo_quant_kv_layer_count=0`.
+- Warm reuse proof: `block_disk_hits=1`, `ssm_companion_hits=1`, and
+  `companion_hits=1`; visible answer speed was 9 tokens in 0.741s, about
+  12.1 tok/s.
+
+### Nemotron Omni Nano JANGTQ
+
+Local copy used for proof:
+`/Users/eric/.mlxstudio/models/dealignai/Nemotron-Omni-Nano-JANGTQ-CRACK`
+
+Cold artifact:
+`/tmp/osaurus-post1314-nemo-local-cold-20260531-181738/nemotron-omni-nano-jangtq-crack_summary.json`
+
+Warm artifact:
+`/tmp/osaurus-post1314-nemo-local-warm-20260531-181754/nemotron-omni-nano-jangtq-crack_summary.json`
+
+Verdict: green for strict no-sign Osaurus app multi-turn tool/cache scope.
+
+- Turn 1 required tool call: exact `line_count` args `red\ngreen\nblue`.
+- Turn 2 no-tool answer: visible coherent answer, no unexpected tool call, no
+  protocol leak, no assistant-header loop, no length-stop fake pass.
+- Turn 3 required tool after assistant/tool history: exact `line_count` args
+  `one\ntwo`.
+- Topology: 29 layers, 6 KV layers, 23 Mamba/SSM companion layers,
+  `requires_disk_backed_restore=true`, `requires_ssm_companion_state=true`,
+  `companion=ssm`, `turbo_quant_kv_layer_count=0`.
+- Warm reuse proof: `block_disk_hits=1`, `ssm_companion_hits=1`, and
+  `companion_hits=1`; visible answer speed was 6 tokens in 0.391s, about
+  15.4 tok/s.
+
+ZAYA was not found in the local model search roots used for this pass.
 
 ## API and UI Boundary
 
