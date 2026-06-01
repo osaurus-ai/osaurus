@@ -211,7 +211,7 @@ Boundary:
   request budget requirement, not hidden runtime behavior.
 - This row proves LFM2.5 MXFP4. It does not prove LFM MXFP8 or LFM JANG_2L.
 
-## Proven Live Row: Step 3.7 JANGTQ_K
+## Historical Proven Live Row: Step 3.7 JANGTQ_K
 
 - Model id: `step-3.7-flash-jangtq_k`.
 - Model root: `/tmp/osaurus-step37-modelroot-jang-and-tqk`.
@@ -273,6 +273,9 @@ Boundary:
   JANGTQ_K, while batch diagnostics record TurboQuant compression events. Treat
   this as tool/reasoning/topology/disk-L2 proof, not as a claim that all Step
   rotating layers use TurboQuant KV.
+- This section is retained as historical Step JANGTQ_K evidence. The June 1
+  repair section above promotes Step JANG_2L only, and does not add a new
+  current-head Step JANGTQ_K proof.
 
 ## 2026-05-31 Current-Head Retest Boundary
 
@@ -301,9 +304,9 @@ Boundary:
   It confirms current app/tool/topology wiring but does not replace the
   2026-05-30 full three-turn and warm L2 proof artifacts above.
 
-## Current Step TurboQuant KV Policy Proof
+## Historical Step TurboQuant KV Policy Proof
 
-- The current vMLX pin `60b888659e1196995fa57f7af91d982e5948a680` includes the
+- The earlier vMLX pin `60b888659e1196995fa57f7af91d982e5948a680` included the
   Step cache construction fix from the earlier pinned history: when
   `GenerateParameters.kvMode = .turboQuant`, full-attention layers remain
   `KVCacheSimple` even when Osaurus also supplies `defaultMaxKVSize`. Without
@@ -331,14 +334,18 @@ Boundary:
 
 Step JANG_2L:
 
-- Superseded older partial attempts with the final artifact
+- Superseded older partial attempts with the June 1 final artifacts
+  `/tmp/osaurus-post1314-step37-compiled-off-tool-cache-20260601-012335/step-3.7-flash-jang_2l_summary.json`
+  and
+  `/tmp/osaurus-post1314-step37-compiled-off-warm-cache-20260601-012404/step-3.7-flash-jang_2l_summary.json`,
+  which report `passed: true` and `failed_checks: []` for strict
+  required/none/required multi-turn tool behavior plus warm disk-L2 reuse.
+- The older artifact
   `/tmp/osaurus-step37-final-430481c-step-jang2l-tool-20260530-204607/step-3.7-flash-jang_2l_summary.json`,
-  which reports `passed: true` and `failed_checks: []` for strict
-  required/none/required multi-turn tool behavior.
+  also reported `passed: true`, but it is no longer the current final proof.
 - Current-head 2026-05-31 smoke also confirmed one-turn required-tool behavior
   through the no-sign app while the device was contended by a separate Step MLX
-  job. Treat the final 2026-05-30 artifact as the full matrix proof and the
-  2026-05-31 row as current-head smoke confirmation.
+  job. Treat the June 1 artifacts above as the current full matrix proof.
 
 Step JANGTQ_K:
 

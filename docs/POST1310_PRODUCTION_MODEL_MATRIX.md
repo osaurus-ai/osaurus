@@ -256,20 +256,20 @@ Fresh resident-speed split artifact:
 Step JANGTQ_K bounded artifact:
 `/tmp/osaurus-post1314-step37-jangtqk-resident-20260531-205347`
 
-The row was started against the final app and loaded
+The superseded pre-fix row was started against the final app and loaded
 `step-3.7-flash-jang_2l`, but it stayed in-flight for several minutes without
 writing a turn response summary. The request and app were killed to clear the
-machine. Therefore this final matrix does not claim Step 3.7 JANG_2L live
-tool/cache readiness.
+machine. This is retained as the observed failure before the compiled
+batch-decode exclusion, not as the current verdict.
 
-The fresh bounded retry reached runtime as well: `/health` reported
+The superseded bounded retry reached runtime as well: `/health` reported
 `current_model=step-3.7-flash-jang_2l`, `loaded=["step-3.7-flash-jang_2l"]`,
 and `inflight={"step-3.7-flash-jang_2l":1}` while the app consumed CPU. The
 strict harness timed out waiting for the first `/v1/chat/completions` response
-after 300 seconds, before any turn response JSON was written. This is a current
-Step decode/runtime latency or hang blocker, not a tool-parser pass.
+after 300 seconds, before any turn response JSON was written. This is a pre-fix
+Step decode/runtime latency or hang artifact, not a tool-parser pass.
 
-The LaunchServices retry used the no-sign app with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`,
+The superseded LaunchServices retry used the no-sign app with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`,
 a fresh `OSAURUS_TEST_ROOT`, and a model root containing only
 `Step-3.7-Flash-JANG_2L`. `/v1/models` served `step-3.7-flash-jang_2l`; the
 strict required/none/required harness then timed out on turn 1 after 420
@@ -280,18 +280,19 @@ Step topology as 45 layers, 12 KV layers, 33 rotating KV layers,
 `requires_disk_backed_restore=true`, `is_paged_incompatible=true`, and
 `turbo_quant_kv_layer_count=0`; cache counters stayed zero because generation
 never completed. The captured process sample points at `generateLoopTask` /
-`TokenIterator.next`, so the live blocker is decode/runtime progress, not model
-discovery, source parser dispatch, or a signing/keychain issue.
+`TokenIterator.next`, so that artifact isolated decode/runtime progress rather
+than model discovery, source parser dispatch, or signing/keychain.
 
-A tiny no-tool sanity request against the same no-sign app path did complete:
+A superseded tiny no-tool sanity request against the same no-sign app path did complete:
 `Reply with exactly: ok` returned visible content `ok`, `finish_reason=stop`,
 and healthy `/health` with no in-flight request afterward. However, it took
 118.09 seconds to emit 2 completion tokens from a 5-token prompt. This proves the
-Step 3.7 JANG_2L path is not completely dead, but it also confirms the remaining
-blocker is unacceptable live decode/runtime speed. It is not a prompt/tool
-parser leak and it is not solved by extending tool-harness timeouts.
+pre-fix Step 3.7 JANG_2L path was not completely dead, but also confirmed
+unacceptable live decode/runtime speed before the compiled batch-decode
+exclusion. It was not a prompt/tool parser leak and was not solved by extending
+tool-harness timeouts.
 
-The resident-speed split removes the remaining ambiguity that this was only a
+The superseded resident-speed split removed the ambiguity that this was only a
 cold-load artifact. Using the same no-sign app, `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`,
 a fresh `OSAURUS_TEST_ROOT`, and a model root containing only
 `Step-3.7-Flash-JANG_2L`, two consecutive two-token requests were sent through
@@ -302,8 +303,9 @@ the row was healthy with no in-flight request, and `/admin/cache-stats` showed
 `disk_l2_hits=1`, `disk_l2_misses=2`, `disk_l2_stores=4`, 45 layers, 12 KV
 layers, 33 rotating KV layers, `requires_disk_backed_restore=true`, and
 `turbo_quant_kv_layer_count=0`. This proves the problem is not model discovery,
-server endpoint routing, keychain/signing, or the first cold load alone; the
-resident Step JANG_2L runtime path is still far too slow for production.
+server endpoint routing, keychain/signing, or the first cold load alone. It is
+superseded by the June 1 final smoke, where resident two-token generation took
+0.148s.
 
 `Step-3.7-Flash-JANG_K` is still not claimed. The only local matching directory
 found at `/Volumes/EricsLLMDrive/jangq-ai/Step-3.7-Flash-JANG_K` is `0B`, so
@@ -315,7 +317,7 @@ JANGTQ_K metadata (`profile=JANGTQ_K`, 55 shards, 126 routed TQ triplets,
 mixed routed expert bits gate/up/down = 2/2/4). A bounded no-sign Osaurus app
 retry served `step-3.7-flash-jangtq_k`, but the first two-token chat request
 timed out at 300s and the model was not resident afterward. This row is also
-not promoted by the current Osaurus app proof. Prior JANG-side provenance says
+not promoted by this final Step JANG_2L repair proof. Prior JANG-side provenance says
 JANGTQ_K is the coherent Step target, but it still needs a current Osaurus
 load/runtime fix and fresh no-sign app proof before this matrix can claim it.
 
@@ -362,14 +364,17 @@ Confirmed for both MXFP4 and MXFP8:
 This matrix does not prove TurboQuant KV for Step or LFM.
 
 - LFM JANG_2L topology reports `turbo_quant_kv_layer_count=0`.
-- Step JANG_2L was not promoted by the final live row.
+- Step JANG_2L final rows report `turbo_quant_kv_layer_count=0`.
 - LFM is hybrid/paged-incompatible in these rows, so the proven behavior is
   native KV plus disk-backed restore and SSM companion cache reuse, not a forced
   global TurboQuant KV path.
+- Step JANG_2L is a mixed KV/rotating topology in these rows, so the proven
+  behavior is native KV/rotating cache plus disk-backed restore and disk-L2
+  reuse, not a claim that Step rotating layers are using TurboQuant KV.
 
 The server settings/source guards prove topology-gated engine-selected
 TurboQuant wiring and UI/runtime settings; they do not prove live TurboQuant KV
-for LFM.
+for LFM or Step.
 
 ## Expanded Family Boundary
 
