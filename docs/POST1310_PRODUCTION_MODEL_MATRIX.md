@@ -48,6 +48,14 @@ Passed on the final vMLX pin:
   `ToolTests/lfm2ProcessorAcceptsObservedFunctionlineRequiredToolOutput`,
   `ToolTests/lfm2ProcessorAcceptsObservedFunctionNameArgTagOutput`, and
   `ToolTests/lfm2ParserDoesNotCoercePlainCodeFenceIntoToolCall`.
+- vMLX focused Step 3.7 source guard:
+  `Step37ParserDispatchTests` passed 11/11 on the pinned vMLX checkout. It
+  covers Step parser aliases, Qwen-style reasoning aliases, multiline XML tool
+  argument extraction, Step JANG capability routing, assistant-tail thinking
+  fallback behavior, native XML required-tool fallback rendering, Step3p7
+  wrapper config decoding, mixed full/sliding cache topology, TurboQuant KV only
+  for full-attention layers, JANGTQ per-layer group-size inheritance, and NVFP4
+  attention side-tensor sanitization.
 - Osaurus source tests:
   `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening` and
   `SwiftTransformersTokenizerLoaderTests/lfm2LocalTokenizerUsesStrictRequiredToolFallback`.
@@ -163,6 +171,9 @@ Attempted artifact directory:
 Fresh bounded retry artifact:
 `/tmp/osaurus-post1314-step37-jang2l-bounded-20260531-175434`
 
+Fresh LaunchServices no-sign retry artifact:
+`/tmp/osaurus-post1314-step37-open-20260531-200006`
+
 The row was started against the final app and loaded
 `step-3.7-flash-jang_2l`, but it stayed in-flight for several minutes without
 writing a turn response summary. The request and app were killed to clear the
@@ -175,6 +186,20 @@ and `inflight={"step-3.7-flash-jang_2l":1}` while the app consumed CPU. The
 strict harness timed out waiting for the first `/v1/chat/completions` response
 after 300 seconds, before any turn response JSON was written. This is a current
 Step decode/runtime latency or hang blocker, not a tool-parser pass.
+
+The LaunchServices retry used the no-sign app with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`,
+a fresh `OSAURUS_TEST_ROOT`, and a model root containing only
+`Step-3.7-Flash-JANG_2L`. `/v1/models` served `step-3.7-flash-jang_2l`; the
+strict required/none/required harness then timed out on turn 1 after 420
+seconds, before any response summary was written. `/health` at timeout remained
+healthy with `current_model=step-3.7-flash-jang_2l` and
+`inflight={"step-3.7-flash-jang_2l":1}`. `/admin/cache-stats` reported the live
+Step topology as 45 layers, 12 KV layers, 33 rotating KV layers,
+`requires_disk_backed_restore=true`, `is_paged_incompatible=true`, and
+`turbo_quant_kv_layer_count=0`; cache counters stayed zero because generation
+never completed. The captured process sample points at `generateLoopTask` /
+`TokenIterator.next`, so the live blocker is decode/runtime progress, not model
+discovery, source parser dispatch, or a signing/keychain issue.
 
 Older Step 3.7 artifacts from earlier local work showed strict tool behavior and
 L2 reuse but very poor no-sign Osaurus decode speed. Those older rows are not
@@ -408,15 +433,16 @@ ZAYA was not found in the local model search roots used for this pass.
 
 The live artifacts above use the real OpenAI-compatible `/v1/chat/completions`,
 `/health`, `/v1/models`, and `/admin/cache-stats` surfaces through the no-sign
-app. Source guards cover OpenResponses, OpenAI SSE reasoning deltas, Anthropic
-thinking deltas, Ollama/OpenAI logging nil-default behavior, server panel
-settings wiring, HTTP cancellation, tool-choice routing, and chat UI reasoning
-routing.
+app. The Qwen endpoint smoke above additionally proves live
+OpenAI-compatible chat, OpenResponses, Anthropic Messages, Ollama chat, and
+Ollama generate behavior through the no-sign app on the current PR head. Source
+guards cover OpenAI SSE reasoning deltas, Anthropic thinking deltas,
+Ollama/OpenAI logging nil-default behavior, server panel settings wiring, HTTP
+cancellation, tool-choice routing, and chat UI reasoning routing.
 
-No fresh visual UI screenshot was captured in this final pass, and no live
-Ollama/Anthropic/OpenResponses endpoint E2E row was run here. Do not describe
-those as live-proven; describe them as source-guarded unless a later artifact is
-added.
+No fresh visual UI screenshot was captured in this final pass. Do not describe
+non-Qwen endpoint behavior as live-proven unless a later artifact is added; the
+LFM endpoint smoke is intentionally recorded above as a mixed/boundary row.
 
 ## VL Boundary
 
