@@ -1,14 +1,21 @@
 # Step 3.7 / LFM Osaurus E2E Evidence - 2026-05-30
 
-This document records the current no-sign Osaurus app proof for the Step/LFM
-vMLX pin. It deliberately separates proven rows from partial rows.
+This document records the no-sign Osaurus app proof for the Step/LFM lane and
+later bounded MiniMax/ZAYA additions. It deliberately separates proven rows
+from partial rows.
 
 ## Code State
 
-- vMLX pin: `60b888659e1196995fa57f7af91d982e5948a680`.
+- Final Osaurus PR head after the ZAYA evidence refresh:
+  `dceaf9edf85ffe0d20a0b142b6dbe585b4874828`.
+- Final vMLX pin in Osaurus:
+  `3043cc98d7c2a0fd9df34376e6b42beec5517516`.
+- Historical Step/LFM vMLX proof pin used by the first rows in this file:
+  `60b888659e1196995fa57f7af91d982e5948a680`.
 - vMLX fixes:
-  - Current pin `60b888659e1196995fa57f7af91d982e5948a680` includes the
-    prior Step runtime/cache work plus the LFM required-tool thinking-tail fix.
+  - The historical `60b888659e1196995fa57f7af91d982e5948a680` pin includes the
+    Step runtime/cache work plus the LFM required-tool thinking-tail fix used
+    by the first proof rows.
   - LFM required-tool fallback closes the native thinking rail only when
     `tool_choice` is explicit required/named, so required tool turns do not
     spend the output budget in hidden reasoning before emitting a call. Optional

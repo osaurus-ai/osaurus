@@ -2,17 +2,16 @@
 
 Date: 2026-06-01
 
-Current Osaurus PR head after the final Step boundary refresh:
-the commit containing this section.
+Final Osaurus PR head after the ZAYA evidence refresh:
+`dceaf9edf85ffe0d20a0b142b6dbe585b4874828`.
 
-Osaurus PR head used for the Qwen/Nemotron proof before this final Ling doc
-refresh:
+Osaurus PR head used for the Qwen/Nemotron proof before the later Ling,
+MiniMax, Step, and ZAYA evidence refreshes:
 `63f8ee52ef44eb2a988594d2065ffaf70a07024a`.
 
-The live no-sign app proof was run from the same local PR worktree after the
-final vMLX pin and LFM no-rail changes were applied, before those local changes
-were pushed to the PR branch. Individual artifact paths below are the source of
-truth for the exact live rows.
+Live no-sign app proofs were run from this PR worktree as the matrix was built
+up across several commits. Individual artifact paths below are the source of
+truth for the exact live rows and the row-specific PR head where listed.
 
 vMLX pin in Osaurus: `3043cc98d7c2a0fd9df34376e6b42beec5517516`.
 
@@ -78,7 +77,8 @@ guards unless a live artifact is listed below.
 
 ## Live Endpoint Smoke
 
-Current PR head: `43970ed1ffcc9cae01a07efa3897a2b652dcf61c`.
+PR head used for this Qwen endpoint artifact:
+`43970ed1ffcc9cae01a07efa3897a2b652dcf61c`.
 
 Qwen endpoint artifact:
 `/tmp/osaurus-post1314-qwen-endpoint-smoke-20260531-193244/endpoint-smoke/SUMMARY.json`
