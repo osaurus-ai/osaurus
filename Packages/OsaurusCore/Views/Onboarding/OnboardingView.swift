@@ -25,6 +25,7 @@ public enum OnboardingStep: Int, CaseIterable {
     case sandboxSetup
     case choosePlugins
     case walkthrough
+    case consent
 }
 
 // MARK: - Navigation Direction
@@ -53,6 +54,7 @@ public struct OnboardingView: View {
     @StateObject private var sandboxSetupState = SandboxSetupState()
     @StateObject private var choosePluginsState = ChoosePluginsState()
     @StateObject private var walkthroughState = WalkthroughState()
+    @StateObject private var consentState = ConsentState()
 
     // Identity and sandbox are no longer surfaced as their own steps —
     // they're configured implicitly on completion (see `finishOnboarding`).
@@ -229,6 +231,8 @@ public struct OnboardingView: View {
             ChoosePluginsBody(state: choosePluginsState)
         case .walkthrough:
             WalkthroughBody(state: walkthroughState)
+        case .consent:
+            ConsentBody(state: consentState)
         }
     }
 
@@ -271,8 +275,18 @@ public struct OnboardingView: View {
         case .walkthrough:
             WalkthroughCTA(
                 state: walkthroughState,
-                onFinish: { finishOnboarding(via: .walkthroughFinish) }
+                onContinue: { advance(to: .consent) }
             )
+        case .consent:
+            ConsentCTA(onFinish: {
+                // Record the consent choice *before* finishing: granting
+                // flushes the funnel events buffered during onboarding,
+                // declining drops them. `finishOnboarding` then fires
+                // `onboarding_completed`, which is sent or dropped per the
+                // choice just made.
+                TelemetryService.shared.setEnabled(consentState.shareUsageData)
+                finishOnboarding(via: .finishButton)
+            })
         }
     }
 
@@ -305,6 +319,11 @@ public struct OnboardingView: View {
             })
         case .walkthrough:
             EmptyView()
+        case .consent:
+            // No skip — the toggle (default on) is the choice, and the CTA
+            // commits it. Closing via the X leaves consent undecided, so
+            // nothing is sent.
+            EmptyView()
         }
     }
 
@@ -319,6 +338,7 @@ public struct OnboardingView: View {
         case .sandboxSetup: return "Add a safety net"
         case .choosePlugins: return "Add a few tools"
         case .walkthrough: return "A quick tour"
+        case .consent: return "One last thing"
         }
     }
 
@@ -331,6 +351,7 @@ public struct OnboardingView: View {
         case .sandboxSetup: return nil
         case .choosePlugins: return nil
         case .walkthrough: return nil
+        case .consent: return nil
         }
     }
 
@@ -352,6 +373,8 @@ public struct OnboardingView: View {
             return {
                 walkthroughState.handleBack { advance(to: .choosePlugins, direction: .backward) }
             }
+        case .consent:
+            return { advance(to: .walkthrough, direction: .backward) }
         }
     }
 
@@ -375,12 +398,12 @@ public struct OnboardingView: View {
     // MARK: - Step indicator
 
     /// 1-indexed position in the global progress dots, or `nil` to hide the
-    /// indicator. Welcome has no progress (it's the title screen) and the
-    /// Walkthrough has its own internal page indicator inside the body —
-    /// showing both at once (global "4 of 4" plus internal "1 of 4") just
-    /// reads as duplicated dots.
+    /// indicator. Welcome has no progress (it's the title screen); the
+    /// Walkthrough has its own internal page indicator inside the body
+    /// (showing both at once just reads as duplicated dots); and the consent
+    /// step is a terminal screen that sits outside the numbered flow.
     private func progressIndex(for step: OnboardingStep) -> Int? {
-        if step == .walkthrough { return nil }
+        if step == .walkthrough || step == .consent { return nil }
         guard let idx = Self.progressSteps.firstIndex(of: step) else { return nil }
         return idx + 1
     }
@@ -436,8 +459,9 @@ public struct OnboardingView: View {
     }
 
     private func finishOnboarding(via: OnboardingTelemetry.Completion) {
-        // Record where the user left and how: `walkthroughFinish` is a real
-        // completion, `closeButton` at an earlier step is the drop-off point.
+        // Record where the user left and how: `finishButton` (the consent
+        // step's CTA) is a real completion, `closeButton` at an earlier step
+        // is the drop-off point.
         OnboardingTelemetry.completed(lastStep: currentStep, via: via)
 
         // If the user created an agent in step 2, drop them into chat

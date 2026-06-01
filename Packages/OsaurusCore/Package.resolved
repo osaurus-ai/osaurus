@@ -1,5 +1,5 @@
 {
-  "originHash" : "800592e10dc43e3501acf8645c92ed446ccd73f88eaf20a1abbd805d349a2ae3",
+  "originHash" : "e8deb2096331f63dfac4442519fc373b67576c37b33955ab2cc85592407b60f7",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "b51e53c3b04372c1ed1906b0ec3ba45733953ef4",
         "version" : "9.5.0"
+      }
+    },
+    {
+      "identity" : "aptabase-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/aptabase/aptabase-swift.git",
+      "state" : {
+        "revision" : "cfd67fac2a228d448d9d2ac92ffc71589cc3ef00",
+        "version" : "0.3.11"
       }
     },
     {

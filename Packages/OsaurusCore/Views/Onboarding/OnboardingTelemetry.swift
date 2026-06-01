@@ -34,9 +34,15 @@ enum OnboardingTelemetry {
         )
     }
 
-    /// Onboarding closed. `via` separates a genuine finish (walkthrough) from
-    /// an early close (X button); `lastStep` is the step they were on when
-    /// they left — the early-close drop-off point.
+    /// Onboarding closed. `via` separates a genuine finish (the consent
+    /// step's CTA) from an early close (X button); `lastStep` is the step
+    /// they were on when they left — the early-close drop-off point.
+    ///
+    /// Note: because consent is the last step and events only send once
+    /// consent is granted, a `closeButton` completion is only ever *sent*
+    /// when the user reached consent and then granted it — earlier X-outs
+    /// leave consent undecided and are dropped. The event still carries the
+    /// distinction for the consent-page-reached case.
     static func completed(lastStep: OnboardingStep, via: Completion) {
         TelemetryService.shared.track(
             "onboarding_completed",
@@ -45,7 +51,9 @@ enum OnboardingTelemetry {
     }
 
     enum Completion: String {
-        case walkthroughFinish = "walkthrough_finish"
+        /// Reached the consent step and tapped its final CTA.
+        case finishButton = "finish_button"
+        /// Closed early via the header X button.
         case closeButton = "close_button"
     }
 }
@@ -63,6 +71,7 @@ extension OnboardingStep {
         case .sandboxSetup: return "sandbox_setup"
         case .choosePlugins: return "choose_plugins"
         case .walkthrough: return "walkthrough"
+        case .consent: return "consent"
         }
     }
 }

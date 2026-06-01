@@ -26,13 +26,28 @@ public final class TelemetryService {
         private static let trackingMode: TrackingMode = .asRelease
     #endif
 
-    /// `UserDefaults` flag the future onboarding consent screen will toggle.
-    /// Absent (first run) defaults to enabled; the consent UI flips it and
-    /// every `track()` call respects it with no other code changes.
+    /// `UserDefaults` flag the onboarding consent screen toggles. Three
+    /// states, keyed off presence/value (see `consent`): absent = the user
+    /// hasn't decided yet, `true` = granted, `false` = declined.
     private static let consentKey = "telemetryEnabled"
 
     /// Whether `configure()` successfully initialized the SDK with a key.
     private var started = false
+
+    /// Events recorded before the user makes a consent decision are held
+    /// here and only sent if they later grant consent (the consent screen is
+    /// the last onboarding step, so the whole funnel happens pre-decision).
+    /// In-memory only — a session that quits without consent simply drops
+    /// them, which is the intended "no consent, no data" behaviour. Bounded
+    /// so a user who never reaches the consent screen can't grow it without
+    /// limit across repeated re-tracking.
+    private var pending: [PendingEvent] = []
+    private static let maxPending = 64
+
+    private struct PendingEvent {
+        let name: String
+        let props: [String: Value]
+    }
 
     private init() {}
 
@@ -57,21 +72,71 @@ public final class TelemetryService {
 
     // MARK: - Consent
 
-    public var isEnabled: Bool {
-        UserDefaults.standard.object(forKey: Self.consentKey) as? Bool ?? true
+    /// The user's consent decision, derived from `consentKey`.
+    private enum Consent {
+        /// No choice made yet — events are buffered until one is.
+        case undecided
+        case granted
+        case declined
     }
 
+    private var consent: Consent {
+        guard let decided = UserDefaults.standard.object(forKey: Self.consentKey) as? Bool else {
+            return .undecided
+        }
+        return decided ? .granted : .declined
+    }
+
+    /// Whether the user has granted consent. `false` while undecided so
+    /// callers can't read this as "tracking is live" before a choice.
+    public var isEnabled: Bool {
+        if case .granted = consent { return true }
+        return false
+    }
+
+    /// Record the consent decision. Called by the onboarding consent screen.
+    /// Granting flushes everything buffered during onboarding; declining
+    /// drops it. Both paths make all future `track()` calls send or no-op
+    /// with no other code changes.
     public func setEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: Self.consentKey)
+        if enabled {
+            flushPending()
+        } else {
+            pending.removeAll()
+        }
+    }
+
+    private func flushPending() {
+        guard started else {
+            // No SDK (no key) — nothing can be sent; discard so we don't
+            // hold a stale buffer.
+            pending.removeAll()
+            return
+        }
+        for event in pending {
+            Aptabase.shared.trackEvent(event.name, with: event.props)
+        }
+        pending.removeAll()
     }
 
     // MARK: - Tracking
 
     /// Track an event with optional properties. No-ops when telemetry is
-    /// unconfigured (no key) or disabled via consent.
+    /// unconfigured (no key). Before the user decides on consent the event is
+    /// buffered and only sent if they later grant it; once granted events go
+    /// out immediately; once declined they're dropped.
     public func track(_ event: String, _ props: [String: Value] = [:]) {
-        guard started, isEnabled else { return }
-        Aptabase.shared.trackEvent(event, with: props)
+        guard started else { return }
+        switch consent {
+        case .granted:
+            Aptabase.shared.trackEvent(event, with: props)
+        case .undecided:
+            guard pending.count < Self.maxPending else { return }
+            pending.append(PendingEvent(name: event, props: props))
+        case .declined:
+            break
+        }
     }
 
     // MARK: - Key resolution

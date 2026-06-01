@@ -262,11 +262,13 @@ struct WalkthroughBody: View {
 
 struct WalkthroughCTA: View {
     @ObservedObject var state: WalkthroughState
-    let onFinish: () -> Void
+    /// Advance past the walkthrough to the final consent step. The flow no
+    /// longer finishes here — the consent screen now owns the last CTA.
+    let onContinue: () -> Void
 
     var body: some View {
         if state.isLastPage {
-            OnboardingBrandButton(title: "Start using Osaurus", action: onFinish)
+            OnboardingBrandButton(title: "Continue", action: onContinue)
                 .frame(width: OnboardingMetrics.ctaWidthCompact)
         } else {
             OnboardingBrandButton(title: "Next", action: { state.advance(by: 1) })
@@ -283,7 +285,7 @@ struct WalkthroughCTA: View {
             let state = WalkthroughState()
             return VStack {
                 WalkthroughBody(state: state).frame(height: 460)
-                WalkthroughCTA(state: state, onFinish: {})
+                WalkthroughCTA(state: state, onContinue: {})
             }
             .frame(width: OnboardingMetrics.windowWidth, height: 620)
         }
