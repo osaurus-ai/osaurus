@@ -93,13 +93,10 @@ public struct ShareArtifactTool: OsaurusTool {
             )
         }
 
-        // Path mode wins when both are supplied. Models routinely mirror the
-        // file path into `content` (or pass placeholder text) alongside a real
-        // `path`; if we honored that content the downstream parser would write
-        // the literal string as the artifact body and ship a broken file.
-        // Treat `content` as absent whenever a `path` is present so the file is
-        // actually copied. This matches the tool contract ("Omit `content`
-        // entirely when using `path`").
+        // Path mode wins when both are supplied: models often mirror the file
+        // path into `content` alongside a real `path`. Honoring that content
+        // would write the literal string as the artifact body and ship a broken
+        // file, so drop `content` whenever `path` is present.
         let rawContent = path == nil ? providedContent : nil
 
         if rawContent != nil {

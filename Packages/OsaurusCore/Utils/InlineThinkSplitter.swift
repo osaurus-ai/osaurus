@@ -49,7 +49,7 @@ struct InlineThinkSplitter {
         while !work.isEmpty {
             let token = insideThink ? closeToken : openToken
             if let range = work.range(of: token) {
-                let before = String(work[work.startIndex..<range.lowerBound])
+                let before = String(work[work.startIndex ..< range.lowerBound])
                 if !before.isEmpty {
                     segments.append(insideThink ? .reasoning(before) : .content(before))
                 }
@@ -60,7 +60,7 @@ struct InlineThinkSplitter {
                 // be the start of the token we're still hunting for.
                 let keep = Self.partialTokenSuffixLength(of: work, token: token)
                 let splitIndex = work.index(work.endIndex, offsetBy: -keep)
-                let emit = String(work[work.startIndex..<splitIndex])
+                let emit = String(work[work.startIndex ..< splitIndex])
                 if !emit.isEmpty {
                     segments.append(insideThink ? .reasoning(emit) : .content(emit))
                 }
@@ -93,7 +93,7 @@ struct InlineThinkSplitter {
         var k = maxK
         while k > 0 {
             var matches = true
-            for i in 0..<k where textChars[textChars.count - k + i] != tokenChars[i] {
+            for i in 0 ..< k where textChars[textChars.count - k + i] != tokenChars[i] {
                 matches = false
                 break
             }
