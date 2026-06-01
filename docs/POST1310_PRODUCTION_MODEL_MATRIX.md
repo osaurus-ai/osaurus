@@ -2,8 +2,12 @@
 
 Date: 2026-05-31
 
-Osaurus branch head while testing: `38d10f681fd916bcad643916b4ab8b7b3c0e5e70`
-with local PR changes.
+Osaurus PR head containing this evidence:
+`a59e5a4079aaddce18ec868342c2c3ebfe21e111`.
+
+The live no-sign app proof was run from the same local PR worktree after the
+final vMLX pin and LFM no-rail changes were applied, before those local changes
+were committed as `a59e5a4079aaddce18ec868342c2c3ebfe21e111`.
 
 vMLX pin in Osaurus: `3043cc98d7c2a0fd9df34376e6b42beec5517516`.
 
