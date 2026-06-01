@@ -8,7 +8,9 @@ from partial rows.
 
 - Final Osaurus PR head after the ZAYA evidence refresh:
   `dceaf9edf85ffe0d20a0b142b6dbe585b4874828`.
-- Final vMLX pin in Osaurus:
+- Current local vMLX pin after the Step required-template refresh:
+  `eb116ef735d9445cfac30b6a3346ff162483122e`.
+- Previous final vMLX pin in Osaurus before the current refresh:
   `3043cc98d7c2a0fd9df34376e6b42beec5517516`.
 - Historical Step/LFM vMLX proof pin used by the first rows in this file:
   `60b888659e1196995fa57f7af91d982e5948a680`.
@@ -25,6 +27,11 @@ from partial rows.
   - Step required-tool fallback closes the native thinking rail before the
     explicit function-call contract so `tool_choice: required` does not remain
     trapped in hidden reasoning.
+  - The current `eb116ef...` vMLX refresh tightens the Step fallback for
+    explicit `tool_choice: required` after history: the final current-turn user
+    value is repeated as the exact native Step XML tool call shape, so a later
+    required call cannot legally reuse the previous `red/green/blue` argument
+    or emit prose instead of the tool call.
 - Osaurus fix: local JANGTQ sidecar preflight accepts bundles that declare
   `format: "jangtq"` with `jangtq_runtime.safetensors` even when
   `weight_format` is absent.
@@ -36,10 +43,10 @@ from partial rows.
   templates through the Step fallback, disables Step thinking only for explicit
   required tool choice, and preserves normal optional-tool behavior otherwise.
 - Osaurus cache policy: engine-selected TurboQuant KV remains topology-gated.
-  Full simple-KV models can use TurboQuant KV. Step 3.7 is the explicit mixed
-  full-attention + SWA exception: vMLX converts only `KVCacheSimple`
-  full-attention layers to TurboQuant KV and preserves `RotatingKVCache`
-  sliding layers for disk-backed restore. LFM SSM/Mamba hybrid cache still uses
+  Full simple-KV models can use TurboQuant KV. Step 3.7 is now conservative
+  native/fp16 by default in Osaurus because current no-sign app rows prove
+  mixed full-attention + SWA disk-backed topology but do not prove warm
+  tool-history TurboQuant-KV stability. LFM SSM/Mamba hybrid cache still uses
   native KV plus disk-backed restore and SSM companion state.
 
 ## No-Sign / No-Keychain Boundary
@@ -169,8 +176,46 @@ Superseded failed warm attempt:
   `requires_disk_backed_restore=true`, paged-incompatible, and
   `turbo_quant_kv_layer_count=0`.
 - Boundary:
-  this promotes Step JANG_2L only. Step JANG_K is not claimed because the only
-  local directory is empty. Step JANGTQ_K is not claimed by this repair row.
+  this promotes Step JANG_2L only for the listed pre-`eb116ef...` artifacts.
+  Step JANG_K is not claimed by this repair row; current non-empty CRACK
+  bundles exist, but the fresh `eb116ef...` attempts below timed out before
+  producing a green live row. Step JANGTQ_K is not claimed by this repair row.
+
+## 2026-06-01 Current Refresh: Step Required-Template Pin `eb116ef`
+
+- vMLX main pin:
+  `eb116ef735d9445cfac30b6a3346ff162483122e`.
+- Osaurus no-sign app:
+  `build/DerivedData-post1314-step-template-eb116ef/Build/Products/Release/osaurus.app`.
+- Source proof:
+  `Step37ParserDispatchTests` passed in vMLX before the pin was updated.
+  `SwiftTransformersTokenizerLoaderTests/step37LocalTokenizerUsesRequiredToolFallbackAndClosesThinkingRail`
+  passed in Osaurus against the pinned checkout. `RuntimePolicySourceTests`
+  passed 75/75 against the same pin. The vMLX readiness, PR hygiene,
+  server-settings/runtime, tool-choice, keychain-free, and no-forced-behavior
+  guards also passed.
+- No-sign/keychain boundary:
+  the app was built with `CODE_SIGNING_ALLOWED=NO`,
+  `CODE_SIGNING_REQUIRED=NO`, `CODE_SIGN_IDENTITY=`, and
+  `AD_HOC_CODE_SIGNING_ALLOWED=NO`, then launched with
+  `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, fresh `OSAURUS_TEST_ROOT`, and
+  explicit `OSU_MODELS_DIR`.
+- Step JANG_K CRACK-v5 direct probe:
+  `/tmp/osaurus-post1314-step37-jangk-crackv5-eb116ef-direct1-20260601-125242`
+  timed out after 180s before returning turn 1. The strict harness attempt
+  `/tmp/osaurus-post1314-step37-jangk-crackv5-eb116ef-cold-20260601-124101`
+  was stopped after running past the useful proof window with one in-flight
+  request. Both attempts ran while a separate Step CRACK process was consuming
+  about 74 GB RSS, but neither is a pass.
+- Step JANG_2L strict harness:
+  `/tmp/osaurus-post1314-step37-jang2l-eb116ef-cold-20260601-125612` timed out
+  on turn 1 after 240s, also under the same machine contention. No summary JSON
+  was produced, so this attempt does not supersede the earlier passing
+  JANG_2L rows above.
+- Current verdict:
+  `eb116ef...` source/wiring is green, but fresh current-pin Step live proof is
+  blocked by timeout/slow decode in the current machine state. Do not promote
+  Step JANG_K or current-pin Step JANG_2L live rows from these attempts.
 
 ## Proven Live Row: LFM2.5 MXFP4
 
@@ -326,13 +371,12 @@ Boundary:
 - That test proves the vMLX TurboQuant hook is constrained to `KVCacheSimple`
   full-attention layers and explicitly preserves `RotatingKVCache`,
   `DeepseekV4Cache`, `MambaCache`, and `CacheList` paths.
-- Osaurus `ModelRuntime.shouldUseTurboQuantByDefault` now enables
-  engine-selected TurboQuant only for Step topologies with KV layers and no
-  Mamba/arrays/hybrid-pool/rotating-wrapper/ZAYA-CCA companion state. The guard
-  still keeps DSV4, ZAYA/ZAYA-VL, Gemma, SSM/CCA/hybrid-pool families, and
-  unknown path-dependent topologies native by default.
-- Focused Osaurus tests now expect `turbo(3,3)` for known Step JANG_2L and
-  Step JANGTQ_K topology tags, and source guards pin the Step exception text.
+- Osaurus `ModelRuntime.shouldUseTurboQuantByDefault` now keeps Step 3.7
+  native/fp16 by default until a current warm tool-history TurboQuant-KV row is
+  green. The guard still keeps DSV4, ZAYA/ZAYA-VL, Gemma,
+  SSM/CCA/hybrid-pool families, and unknown path-dependent topologies native by
+  default.
+- Focused Osaurus source tests pin the current Step native/fp16 policy text.
 - Boundary: this is a source/topology and focused-test proof for the policy
   itself. The no-sign app artifacts above are the measured live evidence for
   Step tool behavior, token/s, topology, and warm disk-L2 reuse.

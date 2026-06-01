@@ -948,21 +948,12 @@ public actor ModelRuntime {
         // a row proves TurboQuant for that exact topology. TurboQuant KV is
         // not a substitute for SSM/CCA/CSA/HSA/SWA companion-state restore.
         //
-        // Step 3.7 is the narrow exception for mixed full-attention + SWA:
-        // vMLX's TurboQuant hook converts only KVCacheSimple full-attention
-        // layers and preserves RotatingKVCache sliding layers, so the disk
-        // coordinator still owns SWA restore while full KV layers get the
-        // proven TQ codec.
+        // Step 3.7 mixes full-attention KV layers with rotating/SWA layers.
+        // Current no-sign Osaurus warm rows prove disk L2 restore on that
+        // topology, but not TurboQuant-KV decode stability after tool history,
+        // so engine-selected defaults must leave Step live KV native/fp16.
         if ModelFamilyNames.isStepFamily(modelName) {
-            if let cacheTopology {
-                return cacheTopology.kvLayerCount > 0
-                    && cacheTopology.mambaLayerCount == 0
-                    && cacheTopology.arraysLayerCount == 0
-                    && cacheTopology.hybridPoolLayerCount == 0
-                    && cacheTopology.rotatingWrapperLayerCount == 0
-                    && cacheTopology.zayaCCALayerCount == 0
-            }
-            return true
+            return false
         }
 
         if ModelFamilyNames.isDSV4Family(modelName)

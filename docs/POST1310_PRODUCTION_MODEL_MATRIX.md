@@ -13,10 +13,19 @@ Live no-sign app proofs were run from this PR worktree as the matrix was built
 up across several commits. Individual artifact paths below are the source of
 truth for the exact live rows and the row-specific PR head where listed.
 
-vMLX pin in Osaurus: `3043cc98d7c2a0fd9df34376e6b42beec5517516`.
+Current local vMLX pin in Osaurus after the Step required-template refresh:
+`eb116ef735d9445cfac30b6a3346ff162483122e`.
+
+Previous fully pushed/CI-green PR head used `3043cc98d7c2a0fd9df34376e6b42beec5517516`.
+Rows below keep their original artifact paths and proof boundaries; do not
+reinterpret older live rows as fresh proof for the `eb116ef...` pin unless a
+current artifact explicitly says so.
 
 No-sign app used for live proof:
 `/tmp/osaurus-post1314-nosign-3043cc98/Build/Products/Release/osaurus.app`
+
+Current no-sign app built for the `eb116ef...` refresh:
+`build/DerivedData-post1314-step-template-eb116ef/Build/Products/Release/osaurus.app`
 
 Model root used for live proof: `/tmp/osaurus-post1310-modelroot`
 
@@ -37,9 +46,18 @@ The fresh app launch served these model ids through `/v1/models`:
 - `lfm2.5-8b-a1b-mxfp8`
 - `step-3.7-flash-jang_2l`
 
-`Step-3.7-Flash-JANG_K` is not claimed in this matrix. The only local matching
-directory found earlier was empty, so it was not served by the final app model
-root and was not tested.
+Current `eb116ef...` Step refresh served these ids from a fresh no-sign
+keychain-free app root:
+
+- `step-3.7-flash-jang_2l`
+- `step-3.7-flash-jang_k-crack`
+- `step-3.7-flash-jang_k-crack-v5`
+
+`Step-3.7-Flash-JANG_K` is not promoted by the current refresh. Valid non-empty
+local CRACK bundles now exist under `/Users/eric/models/dealign.ai`, but the
+current no-sign app attempts timed out before returning turn 1 while a separate
+heavy Step CRACK process was consuming about 74 GB RSS. Treat JANG_K as blocked
+for current Osaurus merge proof, not green.
 
 ## Source and Guard Coverage
 
@@ -51,16 +69,19 @@ Passed on the final vMLX pin:
   `ToolTests/lfm2ProcessorAcceptsObservedFunctionNameArgTagOutput`, and
   `ToolTests/lfm2ParserDoesNotCoercePlainCodeFenceIntoToolCall`.
 - vMLX focused Step 3.7 source guard:
-  `Step37ParserDispatchTests` passed 11/11 on the pinned vMLX checkout. It
+  `Step37ParserDispatchTests` passed on the pinned vMLX checkout. It
   covers Step parser aliases, Qwen-style reasoning aliases, multiline XML tool
   argument extraction, Step JANG capability routing, assistant-tail thinking
-  fallback behavior, native XML required-tool fallback rendering, Step3p7
+  fallback behavior, native XML required-tool fallback rendering, exact
+  current-turn required-tool value repetition after history, Step3p7
   wrapper config decoding, mixed full/sliding cache topology, TurboQuant KV only
   for full-attention layers, JANGTQ per-layer group-size inheritance, and NVFP4
   attention side-tensor sanitization.
 - Osaurus source tests:
-  `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening` and
-  `SwiftTransformersTokenizerLoaderTests/lfm2LocalTokenizerUsesStrictRequiredToolFallback`.
+  `RuntimePolicySourceTests` passed 75/75 on the `eb116ef...` pin, and
+  `SwiftTransformersTokenizerLoaderTests/step37LocalTokenizerUsesRequiredToolFallbackAndClosesThinkingRail`
+  passed on the same pin. Earlier LFM tokenizer/source guards remain covered by
+  the previous proof rows.
 - Osaurus guard bundle:
   `assert-keychain-free-proof-path.sh`,
   `assert-server-settings-runtime-wiring.sh`,
@@ -166,10 +187,17 @@ session.
 
 ## Step 3.7 Flash JANG_2L
 
-Current final-head verdict: green for strict no-sign Osaurus app
+Historical final-head verdict before the `eb116ef...` refresh: green for strict no-sign Osaurus app
 multi-turn required/none/required tool behavior, no visible protocol leakage,
 no incoherent loop, no length-stop fake pass on the accepted rows, Step mixed
 KV/rotating topology, disk-backed restore requirement, and warm disk-L2 reuse.
+
+Current `eb116ef...` refresh boundary: source and tokenizer guards passed, but
+fresh no-sign app Step JANG_2L live proof did not complete turn 1 within the
+240s harness timeout while another Step CRACK process was consuming about
+74 GB RSS. No summary JSON was produced for the current attempt
+`/tmp/osaurus-post1314-step37-jang2l-eb116ef-cold-20260601-125612`, so this
+refresh does not supersede the older passing Step JANG_2L live artifacts.
 
 Final fix boundary:
 
@@ -231,10 +259,9 @@ Confirmed in both accepted strict rows:
 - App health after rows: healthy, no in-flight request, requested model
   resident and current.
 
-Boundary: this final proof promotes `Step-3.7-Flash-JANG_2L` only. It does not
-promote `Step-3.7-Flash-JANG_K`, because the only local matching directory is
-empty, and it does not promote `Step-3.7-Flash-JANGTQ_K`, which the user
-explicitly deprioritized for this lane.
+Boundary: the older final proof promotes `Step-3.7-Flash-JANG_2L` only for that
+pre-`eb116ef...` app artifact. It does not promote the current `eb116ef...`
+refresh live row, `Step-3.7-Flash-JANG_K`, or `Step-3.7-Flash-JANGTQ_K`.
 
 Superseded failed/partial artifacts are retained below for traceability.
 
@@ -307,9 +334,16 @@ server endpoint routing, keychain/signing, or the first cold load alone. It is
 superseded by the June 1 final smoke, where resident two-token generation took
 0.148s.
 
-`Step-3.7-Flash-JANG_K` is still not claimed. The only local matching directory
-found at `/Volumes/EricsLLMDrive/jangq-ai/Step-3.7-Flash-JANG_K` is `0B`, so
-there is no real bundle to serve or test in this matrix.
+`Step-3.7-Flash-JANG_K` is still not claimed. Current local non-empty CRACK
+bundles exist at `/Users/eric/models/dealign.ai/Step-3.7-Flash-JANG_K-CRACK`
+and `/Users/eric/models/dealign.ai/Step-3.7-Flash-JANG_K-CRACK-v5`, and the
+current no-sign app served `step-3.7-flash-jang_k-crack-v5`. A direct first-turn
+required-tool probe at
+`/tmp/osaurus-post1314-step37-jangk-crackv5-eb116ef-direct1-20260601-125242`
+timed out after 180s, and the strict harness attempt
+`/tmp/osaurus-post1314-step37-jangk-crackv5-eb116ef-cold-20260601-124101`
+was stopped after it ran past the useful proof window with one in-flight request.
+This is blocked current live proof, not a green row.
 
 `Step-3.7-Flash-JANGTQ_K` exists locally at
 `/Volumes/EricsLLMDrive/jangq-ai/Step-3.7-Flash-JANGTQ_K` and has the expected
@@ -373,8 +407,11 @@ This matrix does not prove TurboQuant KV for Step or LFM.
   reuse, not a claim that Step rotating layers are using TurboQuant KV.
 
 The server settings/source guards prove topology-gated engine-selected
-TurboQuant wiring and UI/runtime settings; they do not prove live TurboQuant KV
-for LFM or Step.
+TurboQuant wiring and UI/runtime settings. On the current `eb116ef...` Osaurus
+patch, Step 3.7 is deliberately native/fp16 by default because its mixed
+full-attention plus rotating/SWA topology has not produced a current warm
+tool-history TurboQuant-KV stability proof. This is conservative runtime policy,
+not a hidden sampler or prompt workaround.
 
 ## Expanded Family Boundary
 
