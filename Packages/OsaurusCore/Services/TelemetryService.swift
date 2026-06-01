@@ -42,14 +42,33 @@ public final class TelemetryService {
     /// so a user who never reaches the consent screen can't grow it without
     /// limit across repeated re-tracking.
     private var pending: [PendingEvent] = []
-    private static let maxPending = 64
+    static let maxPending = 64
 
     private struct PendingEvent {
         let name: String
         let props: [String: Value]
     }
 
-    private init() {}
+    /// Where the consent decision is persisted. Injectable so unit tests
+    /// can use an isolated suite instead of polluting `.standard`.
+    private let defaults: UserDefaults
+
+    /// Performs the actual event send. Production points at the Aptabase
+    /// SDK; tests inject a capture closure so the consent + buffering
+    /// behaviour can be verified without the SDK (and without a real key).
+    private let emit: (String, [String: Value]) -> Void
+
+    /// Default init wires `emit` to the Aptabase SDK and consent to
+    /// `.standard`; `shared` uses it. The parameters exist purely as a
+    /// testing seam — `init` is `internal`, so the app (which links
+    /// OsaurusCore as a product) still can't construct its own instance.
+    init(
+        defaults: UserDefaults = .standard,
+        emit: @escaping (String, [String: Value]) -> Void = { Aptabase.shared.trackEvent($0, with: $1) }
+    ) {
+        self.defaults = defaults
+        self.emit = emit
+    }
 
     // MARK: - Lifecycle
 
@@ -70,6 +89,14 @@ public final class TelemetryService {
         track("app_launched")
     }
 
+    /// Marks the service as configured without initializing the Aptabase
+    /// SDK, so unit tests can exercise the consent + buffering logic
+    /// (`track` early-returns until `started`). `internal`, so it's
+    /// invisible to the app and reachable only from `@testable` tests.
+    func markStartedForTesting() {
+        started = true
+    }
+
     // MARK: - Consent
 
     /// The user's consent decision, derived from `consentKey`.
@@ -81,7 +108,7 @@ public final class TelemetryService {
     }
 
     private var consent: Consent {
-        guard let decided = UserDefaults.standard.object(forKey: Self.consentKey) as? Bool else {
+        guard let decided = defaults.object(forKey: Self.consentKey) as? Bool else {
             return .undecided
         }
         return decided ? .granted : .declined
@@ -99,7 +126,7 @@ public final class TelemetryService {
     /// drops it. Both paths make all future `track()` calls send or no-op
     /// with no other code changes.
     public func setEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: Self.consentKey)
+        defaults.set(enabled, forKey: Self.consentKey)
         if enabled {
             flushPending()
         } else {
@@ -115,7 +142,7 @@ public final class TelemetryService {
             return
         }
         for event in pending {
-            Aptabase.shared.trackEvent(event.name, with: event.props)
+            emit(event.name, event.props)
         }
         pending.removeAll()
     }
@@ -130,7 +157,7 @@ public final class TelemetryService {
         guard started else { return }
         switch consent {
         case .granted:
-            Aptabase.shared.trackEvent(event, with: props)
+            emit(event, props)
         case .undecided:
             guard pending.count < Self.maxPending else { return }
             pending.append(PendingEvent(name: event, props: props))
