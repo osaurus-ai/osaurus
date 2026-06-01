@@ -174,6 +174,9 @@ Fresh bounded retry artifact:
 Fresh LaunchServices no-sign retry artifact:
 `/tmp/osaurus-post1314-step37-open-20260531-200006`
 
+Fresh tiny no-tool sanity artifact:
+`/tmp/osaurus-post1314-step37-simple-20260531-202306`
+
 The row was started against the final app and loaded
 `step-3.7-flash-jang_2l`, but it stayed in-flight for several minutes without
 writing a turn response summary. The request and app were killed to clear the
@@ -200,6 +203,14 @@ Step topology as 45 layers, 12 KV layers, 33 rotating KV layers,
 never completed. The captured process sample points at `generateLoopTask` /
 `TokenIterator.next`, so the live blocker is decode/runtime progress, not model
 discovery, source parser dispatch, or a signing/keychain issue.
+
+A tiny no-tool sanity request against the same no-sign app path did complete:
+`Reply with exactly: ok` returned visible content `ok`, `finish_reason=stop`,
+and healthy `/health` with no in-flight request afterward. However, it took
+118.09 seconds to emit 2 completion tokens from a 5-token prompt. This proves the
+Step 3.7 JANG_2L path is not completely dead, but it also confirms the remaining
+blocker is unacceptable live decode/runtime speed. It is not a prompt/tool
+parser leak and it is not solved by extending tool-harness timeouts.
 
 Older Step 3.7 artifacts from earlier local work showed strict tool behavior and
 L2 reuse but very poor no-sign Osaurus decode speed. Those older rows are not
