@@ -912,6 +912,19 @@ struct MLXBatchAdapterTests {
                 maxBatchSize: 8
             )
         )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "JANGQ-AI/Step-3.7-Flash-JANG_2L",
+                maxBatchSize: 1
+            ),
+            "Step 3.7 is proven on vmlx's uncompiled BatchEngine path; Osaurus must not route it through the compiled B=1 trace until that path is separately proven"
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "JANGQ-AI/Step-3.7-Flash-JANGTQ_K",
+                maxBatchSize: 1
+            )
+        )
     }
 
     @Test func registry_shutdownNonexistentIsNoop() async {

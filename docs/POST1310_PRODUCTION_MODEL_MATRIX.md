@@ -1,9 +1,9 @@
 # Post-1310 Production Model Matrix
 
-Date: 2026-05-31
+Date: 2026-06-01
 
 Current Osaurus PR head after the final Step boundary refresh:
-`138dd898d31d4baf132167da54dac32fa7ef5b0e`.
+the commit containing this section.
 
 Osaurus PR head used for the Qwen/Nemotron proof before this final Ling doc
 refresh:
@@ -166,7 +166,77 @@ session.
 
 ## Step 3.7 Flash JANG_2L
 
-Current final-head verdict: not promoted by this matrix.
+Current final-head verdict: green for strict no-sign Osaurus app
+multi-turn required/none/required tool behavior, no visible protocol leakage,
+no incoherent loop, no length-stop fake pass on the accepted rows, Step mixed
+KV/rotating topology, disk-backed restore requirement, and warm disk-L2 reuse.
+
+Final fix boundary:
+
+- Osaurus disables the single-slot compiled batch-decode trace for Step 3.7 in
+  `MLXBatchAdapter.shouldEnableCompiledBatchDecode`. This is a narrow runtime
+  route fix, not a prompt, parser, sampler, or repetition-penalty workaround.
+- Focused test:
+  `MLXBatchAdapterTests/compiledBatchDecodeDisabledForKnownUnsafeSoloModels`
+  passed with Step JANG_2L and Step JANGTQ_K pinned as explicit exceptions.
+- Source guard:
+  `assert-osaurus-no-forced-behavior-pr.sh` passed after the patch, including
+  the no hidden sampler/default, no forced reasoning, no parser repair, and no
+  decode close/open-token bias checks.
+
+No-sign app used for the final Step proof:
+`build/DerivedData-step37-uncompiled-fix-b1f8b8f1/Build/Products/Release/osaurus.app`
+
+Keychain/signing boundary for the final Step proof:
+
+- Built with `scripts/live-proof/build-keychain-free-osaurus.sh`.
+- Build settings included `CODE_SIGNING_ALLOWED=NO`,
+  `CODE_SIGNING_REQUIRED=NO`, `CODE_SIGN_IDENTITY=`, and
+  `AD_HOC_CODE_SIGNING_ALLOWED=NO`.
+- Final seal was local ad-hoc only.
+- Launched with `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, a fresh
+  `OSAURUS_TEST_ROOT`, and `OSU_MODELS_DIR` pointing at a root containing only
+  `Step-3.7-Flash-JANG_2L`.
+- `/v1/models` served the exact id `step-3.7-flash-jang_2l`.
+
+Final smoke artifact:
+`/tmp/osaurus-post1314-step37-compiled-off-20260601-012207`
+
+The final smoke proved the old resident-speed blocker was removed on the patched
+app path: cold two-token request returned `\nok` in 19.56s including load, and
+the immediately following resident two-token request returned `\nok` in 0.148s.
+
+Final strict cold/tool/topology artifact:
+`/tmp/osaurus-post1314-step37-compiled-off-tool-cache-20260601-012335/step-3.7-flash-jang_2l_summary.json`
+
+Final warm disk-L2 artifact:
+`/tmp/osaurus-post1314-step37-compiled-off-warm-cache-20260601-012404/step-3.7-flash-jang_2l_summary.json`
+
+Confirmed in both accepted strict rows:
+
+- Turn 1 required tool call: exact `line_count` args
+  `red\ngreen\nblue`, no visible content, no protocol leak.
+- Turn 2 no-tool answer: visible coherent answer
+  `Three lines were counted.`, no tool call, no protocol leak,
+  `finish=stop`, no length-stop fake pass.
+- Turn 3 required tool after assistant/tool history: exact `line_count` args
+  `one\ntwo`, no visible content, no protocol leak.
+- Warm visible answer speed: 6 completion tokens in 0.510s, about
+  11.77 tok/s.
+- Topology: 45 layers, 12 KV layers, 33 rotating KV layers,
+  `requires_disk_backed_restore=true`, paged-incompatible, and
+  `turbo_quant_kv_layer_count=0`.
+- Warm reuse proof: `block_disk_hits=1`, no new block-disk misses, and
+  `block_disk_stores=5`.
+- App health after rows: healthy, no in-flight request, requested model
+  resident and current.
+
+Boundary: this final proof promotes `Step-3.7-Flash-JANG_2L` only. It does not
+promote `Step-3.7-Flash-JANG_K`, because the only local matching directory is
+empty, and it does not promote `Step-3.7-Flash-JANGTQ_K`, which the user
+explicitly deprioritized for this lane.
+
+Superseded failed/partial artifacts are retained below for traceability.
 
 Attempted artifact directory:
 `/tmp/osaurus-post1314-step37-jang2l-3043cc98-cold-20260531-170148`
@@ -250,8 +320,8 @@ JANGTQ_K is the coherent Step target, but it still needs a current Osaurus
 load/runtime fix and fresh no-sign app proof before this matrix can claim it.
 
 Older Step 3.7 artifacts from earlier local work showed strict tool behavior and
-L2 reuse but very poor no-sign Osaurus decode speed. Those older rows are not
-used as final-head merge proof.
+L2 reuse but very poor no-sign Osaurus decode speed. They are superseded by the
+compiled-batch-decode exclusion proof above.
 
 ## LFM2.5 MXFP4 and MXFP8
 

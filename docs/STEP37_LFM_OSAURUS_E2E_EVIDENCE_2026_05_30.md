@@ -121,6 +121,50 @@ Superseded failed warm attempt:
 - Visible generation throughput was recorded: 6 completion tokens in
   0.745120167 seconds, about 8.05 tok/s.
 
+## 2026-06-01 Current-Head Repair: Step 3.7 JANG_2L Osaurus App Path
+
+- Osaurus fix:
+  `MLXBatchAdapter.shouldEnableCompiledBatchDecode` now keeps Step 3.7 off the
+  single-slot compiled batch-decode trace, matching the proven vMLX BatchEngine
+  route. This is a runtime route fix, not prompt coercion, parser repair,
+  hidden sampling, or repetition rescue.
+- Focused test:
+  `MLXBatchAdapterTests/compiledBatchDecodeDisabledForKnownUnsafeSoloModels`
+  passed after the Step exception was added.
+- Guard:
+  `assert-osaurus-no-forced-behavior-pr.sh` passed after the patch.
+- No-sign app:
+  `build/DerivedData-step37-uncompiled-fix-b1f8b8f1/Build/Products/Release/osaurus.app`.
+- Keychain/signing boundary:
+  built through `scripts/live-proof/build-keychain-free-osaurus.sh`, with
+  `CODE_SIGNING_ALLOWED=NO`, `CODE_SIGNING_REQUIRED=NO`,
+  `CODE_SIGN_IDENTITY=`, `AD_HOC_CODE_SIGNING_ALLOWED=NO`, and only a local
+  ad-hoc seal. The live run used `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, a
+  fresh `OSAURUS_TEST_ROOT`, and a model root containing only
+  `Step-3.7-Flash-JANG_2L`.
+- Smoke artifact:
+  `/tmp/osaurus-post1314-step37-compiled-off-20260601-012207`. Cold two-token
+  request returned `\nok` in 19.56s including load; immediate resident two-token
+  request returned `\nok` in 0.148s.
+- Strict cold/topology artifact:
+  `/tmp/osaurus-post1314-step37-compiled-off-tool-cache-20260601-012335/step-3.7-flash-jang_2l_summary.json`.
+- Strict warm disk-L2 artifact:
+  `/tmp/osaurus-post1314-step37-compiled-off-warm-cache-20260601-012404/step-3.7-flash-jang_2l_summary.json`.
+- Final verdict:
+  both strict rows passed with `failed_checks=[]`. Turn 1 produced exact
+  `line_count` args `red\ngreen\nblue`; turn 2 answered visibly
+  `Three lines were counted.` with `finish=stop`, no tool call, no protocol
+  leak, and no length-stop fake pass; turn 3 produced exact `line_count` args
+  `one\ntwo` after assistant/tool history. The warm row proved disk reuse with
+  `block_disk_hits=1`, no new misses, and `block_disk_stores=5`.
+- Topology:
+  45 layers, 12 KV layers, 33 rotating KV layers,
+  `requires_disk_backed_restore=true`, paged-incompatible, and
+  `turbo_quant_kv_layer_count=0`.
+- Boundary:
+  this promotes Step JANG_2L only. Step JANG_K is not claimed because the only
+  local directory is empty. Step JANGTQ_K is not claimed by this repair row.
+
 ## Proven Live Row: LFM2.5 MXFP4
 
 - Model id: `lfm2.5-8b-a1b-mxfp4`.
