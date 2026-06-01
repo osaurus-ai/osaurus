@@ -333,6 +333,33 @@ repeat and the strict warm-hit row both passed exact tool behavior and disk L2
 reuse, so Gemma is promoted for the accepted rows, but the flake remains
 recorded for future repeat-depth work.
 
+### MiniMax M2.7 Small JANGTQ
+
+Local copy used for attempted proof:
+`/Users/eric/.mlxstudio/models/jangq-ai/MiniMax-M2.7-Small-JANGTQ`
+
+Attempt artifact:
+`/tmp/osaurus-post1314-minimax-small-cold-20260531-185719`
+
+Verdict: blocked for live no-sign Osaurus app readiness in this matrix.
+
+The no-sign app served `minimax-m2.7-small-jangtq` and reached runtime. During
+the strict required-tool harness, `/health` reported
+`current_model=minimax-m2.7-small-jangtq`, `loaded=["minimax-m2.7-small-jangtq"]`,
+and `inflight={"minimax-m2.7-small-jangtq":1}`. `/admin/cache-stats` reported
+62 KV layers and no rotating/SSM/ZAYA companion layers. The row then remained
+inside the MLX generation path for more than ten minutes without writing the
+first response JSON. The sampled stack in
+`sample-minimax-live.txt` shows `generateLoopTask`, `TokenIterator.next`,
+`TokenIterator.step`, `maybeQuantizeCacheForStep`, and MLX/Metal evaluation.
+
+The row was stopped deliberately to avoid wasting the machine on a non-usable
+decode/performance path. This is not a parser pass and not a cache proof. The
+fact that the topology is full KV also means the original command's
+`requires_disk_backed_restore` expectation was not the right MiniMax cache gate;
+a future MiniMax retry should use the correct full-KV cache/TurboQuant
+expectation and a bounded first-token/decode-speed gate.
+
 ZAYA was not found in the local model search roots used for this pass.
 
 ## API and UI Boundary
