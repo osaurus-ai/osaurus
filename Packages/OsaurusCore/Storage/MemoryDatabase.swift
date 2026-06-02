@@ -1199,11 +1199,29 @@ public final class MemoryDatabase: @unchecked Sendable {
             }
         )
         guard !keys.isEmpty else { return [] }
+
+        // Delete in bounded chunks. A single `DELETE ... WHERE id IN (?, ?, …)`
+        // with one bound parameter per evicted fact can exceed SQLite's
+        // compile-time host-parameter cap (SQLITE_MAX_VARIABLE_NUMBER, 999 on
+        // the system SQLite) and bloat the SQL text once a large backlog is
+        // eligible. Chunking keeps every statement well under the limit;
+        // wrapping the chunks in one transaction keeps the eviction atomic.
         let ids = keys.map { $0.id }
-        let placeholders = ids.enumerated().map { "?\($0.offset + 1)" }.joined(separator: ",")
-        _ = try executeUpdate("DELETE FROM pinned_facts WHERE id IN (\(placeholders))") { stmt in
-            for (i, id) in ids.enumerated() {
-                Self.bindText(stmt, index: Int32(i + 1), value: id)
+        let chunkSize = 500
+        try inTransaction { connection in
+            var start = 0
+            while start < ids.count {
+                let chunk = Array(ids[start ..< min(start + chunkSize, ids.count)])
+                let placeholders = chunk.indices.map { "?\($0 + 1)" }.joined(separator: ",")
+                try Self.executeUpdate(
+                    on: connection,
+                    "DELETE FROM pinned_facts WHERE id IN (\(placeholders))"
+                ) { stmt in
+                    for (i, id) in chunk.enumerated() {
+                        Self.bindText(stmt, index: Int32(i + 1), value: id)
+                    }
+                }
+                start += chunkSize
             }
         }
         return keys
