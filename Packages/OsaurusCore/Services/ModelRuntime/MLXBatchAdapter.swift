@@ -888,6 +888,7 @@ struct MLXBatchAdapter {
         maxBatchSize == 1
             && !Hy3ReasoningProfile.matches(modelId: modelName)
             && !ModelFamilyNames.isMiniMaxFamily(modelName)
+            && !ModelFamilyNames.isStepFamily(modelName)
     }
 
     // MARK: - Submission

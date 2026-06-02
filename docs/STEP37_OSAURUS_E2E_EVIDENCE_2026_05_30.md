@@ -1,9 +1,52 @@
 # Step 3.7 Osaurus E2E Evidence - 2026-05-30
 
-Current vMLX pin: `60b888659e1196995fa57f7af91d982e5948a680`
+Current vMLX pin: `25f8111552005fdc6ef12cd2c8298a782d4e2052`
 
 This note records the final no-sign Osaurus proof for the Step 3.7 lane. It does
 not claim LFM, MXFP4/MXFP8, or VL rows unless explicitly listed below.
+
+## 2026-06-01 Final Step Parser/Cache Refresh
+
+Final no-sign app:
+`build/DerivedData-post1314-step-parser-25f8111/Build/Products/Release/osaurus.app`.
+
+Launch/proof boundary:
+
+- Built with `scripts/live-proof/build-keychain-free-osaurus.sh`.
+- Build settings included `CODE_SIGNING_ALLOWED=NO`,
+  `CODE_SIGNING_REQUIRED=NO`, `CODE_SIGN_IDENTITY=`, and
+  `AD_HOC_CODE_SIGNING_ALLOWED=NO`.
+- Final seal was local ad-hoc only with `/usr/bin/codesign --sign -
+  --timestamp=none`; no identity, certificate, notary, `security` command, or
+  password/keychain prompt was used.
+- Launched through LaunchServices with `launchctl` env:
+  `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`,
+  `OSAURUS_TEST_ROOT=/tmp/osaurus-post1314-step-final-root/state-open`, and
+  `OSU_MODELS_DIR=/tmp/osaurus-post1314-step-final-root/models`.
+- `/v1/models` served `step-3.7-flash-jang_2l` and
+  `step-3.7-flash-jang_k`.
+
+Final strict Step JANG_2L artifact:
+`/tmp/osaurus-post1314-25f8111-step-jang2l-final-20260601-191743/step-3.7-flash-jang_2l_summary.json`.
+
+Final strict Step JANG_K artifact with warm disk-L2 restore:
+`/tmp/osaurus-post1314-25f8111-step-jangk-restart-l2-20260601-192211/step-3.7-flash-jang_k_summary.json`.
+
+Both final rows reported `passed=true`, `failed_checks=[]`. They prove strict
+required/none/required multi-turn `line_count` behavior through the real
+Osaurus app path: exact turn 1 args `red\ngreen\nblue`, exact turn 3 args
+`one\ntwo`, visible no-tool follow-up, no protocol leak, no incoherent loop, no
+length-stop fake pass, healthy `/health` after the row, and token/s recorded
+for the visible generation turn. Topology is 45 layers with 12 KV layers and 33
+rotating KV layers, `requires_disk_backed_restore=true`, paged-incompatible,
+and `turbo_quant_kv_layer_count=0`. The final JANG_K restart row proves disk L2
+restore with `block_disk_hits +1`, `block_disk_misses 0`, and
+`block_disk_stores +5`.
+
+The final vMLX fix is narrow: Step JANG_K emitted a Step-native bare XML
+function envelope beginning with `<function=line_count>` after tool history.
+The parser now buffers and parses that envelope. This is not a sampler,
+repetition-penalty, close-token, synthetic reasoning, or prompt-coercion fix.
 
 ## Build and launch
 

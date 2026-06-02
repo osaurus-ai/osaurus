@@ -317,12 +317,24 @@
         /// config. `SandboxConfiguration.network` is the single VM-wide
         /// switch (the VM is shared across agents); it mirrors the
         /// provisioning agent's `AutonomousExecConfig.sandboxNetworkEnabled`
-        /// via `AgentManager.updateAutonomousExec`. Anything other than the
-        /// explicit "none" sentinel keeps egress on (default "outbound"),
-        /// so existing installs are unaffected. `nonisolated` + pure so the
-        /// regression test can exercise it without booting a VM.
+        /// both when the UI toggle flips (`AgentManager.updateAutonomousExec`)
+        /// and at every boot (`reconcileNetworkFromActiveAgent`, which keeps
+        /// the agent toggle authoritative and heals a stale `sandbox.json`).
+        /// Anything other than the explicit "none" sentinel keeps egress on
+        /// (default "outbound"), so existing installs are unaffected.
+        /// `nonisolated` + pure so the regression test can exercise it
+        /// without booting a VM.
         nonisolated static func networkEnabled(from config: SandboxConfiguration) -> Bool {
             config.network != "none"
+        }
+
+        /// Pure mapping from a provisioning agent's `sandboxNetworkEnabled`
+        /// to the VM-wide `network` string. Factored out of
+        /// `reconcileNetworkFromActiveAgent` so the boot-time reconcile policy
+        /// is testable without a VM, `AgentManager`, or disk. Inverse of
+        /// `networkEnabled(from:)`.
+        nonisolated static func reconciledNetwork(agentNetworkEnabled enabled: Bool) -> String {
+            enabled ? "outbound" : "none"
         }
 
         /// Build the `LinuxContainer.Configuration` closure that's shared
@@ -457,11 +469,44 @@
             }
         }
 
+        /// Mirror the active (provisioning) agent's `sandboxNetworkEnabled`
+        /// onto the VM-wide `SandboxConfiguration.network` so the value the VM
+        /// boots from matches the toggle the user controls. Writes through
+        /// `SandboxConfigurationStore.save` (cache-coherent) only when the two
+        /// actually differ, so steady-state boots pay just a load + compare.
+        /// Defaults to egress-on when the agent has no autonomous-exec config,
+        /// matching `AutonomousExecConfig.sandboxNetworkEnabled`'s default.
+        private func reconcileNetworkFromActiveAgent() async {
+            let enabled: Bool = await MainActor.run {
+                let id = AgentManager.shared.activeAgent.id
+                return AgentManager.shared.effectiveAutonomousExec(for: id)?
+                    .sandboxNetworkEnabled ?? true
+            }
+            let desired = Self.reconciledNetwork(agentNetworkEnabled: enabled)
+            var config = SandboxConfigurationStore.load()
+            if config.network != desired {
+                config.network = desired
+                SandboxConfigurationStore.save(config)
+            }
+        }
+
         public func provision() async throws {
             guard _availability?.isAvailable == true else {
                 throw SandboxError.unavailable
             }
             _removedByUser = false
+
+            // Self-heal a desynced egress switch before reading it. The VM
+            // boots from the shared `SandboxConfiguration.network`, but the
+            // toggle users actually see + edit is the per-agent
+            // `sandboxNetworkEnabled`. Those two stores only sync at the
+            // instant the toggle is flipped, so a `sandbox.json` left at
+            // "none" (early-build provisioning, the container-level toggle, or
+            // another agent's flip) keeps egress off forever while the active
+            // agent's own setting says on — with no way to fix it from the
+            // agent UI. Mirroring the provisioning agent's preference here
+            // makes that toggle authoritative on every boot.
+            await reconcileNetworkFromActiveAgent()
 
             let config = SandboxConfigurationStore.load()
             let isRestart = hasRequiredAssets

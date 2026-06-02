@@ -474,7 +474,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "60b888659e1196995fa57f7af91d982e5948a680"
+        let expectedRuntimeHardenedRevision = "25f8111552005fdc6ef12cd2c8298a782d4e2052"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -787,8 +787,14 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             runtime.contains("ModelFamilyNames.isStepFamily(modelName)")
-                && runtime.contains("Step 3.7 is the narrow exception"),
-            "Step 3.7 must be the explicit mixed-SWA exception: only its proven full-attention KV layers default to TurboQuant while rotating layers stay disk-backed"
+                && runtime.contains("return false")
+                && runtime.contains("Step 3.7 mixes full-attention KV layers with rotating/SWA layers"),
+            "Step 3.7 mixed-SWA topology must stay native/fp16 by default until a warm tool-history row proves TurboQuant-KV stability"
+        )
+        #expect(
+            !runtime.contains("warm disk hit path is not stable yet")
+                && !runtime.contains("ModelFamilyNames.isLFM2Family(modelName) {\n            // Current live Osaurus rows prove LFM2.5"),
+            "LFM2 must not carry the temporary disk-restore disable gate once required-tool history stability is fixed in vMLX"
         )
         let mlxService = try Self.source("Services/Inference/MLXService.swift")
         #expect(
