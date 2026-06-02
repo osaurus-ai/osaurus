@@ -145,11 +145,19 @@ public enum SkillStore {
             return
         }
 
-        var dirName = skill.directoryName ?? skill.xplaceholder_agentSkillsNamex
-        if dirName.isEmpty {
-            dirName = "skill-\(skill.id.uuidString.prefix(8).lowercased())"
+        let slug = skill.xplaceholder_agentSkillsNamex
+        var skillDir = skillsDirectory().appendingPathComponent(slug)
+
+        if let oldName = skill.directoryName, oldName != slug {
+            let oldDir = skillsDirectory().appendingPathComponent(oldName)
+            let oldExists = FileManager.default.fileExists(atPath: oldDir.path)
+            let targetExists = FileManager.default.fileExists(atPath: skillDir.path)
+            if oldExists && !targetExists {
+                try? FileManager.default.moveItem(at: oldDir, to: skillDir)
+            } else if oldExists {
+                skillDir = oldDir
+            }
         }
-        let skillDir = skillsDirectory().appendingPathComponent(dirName)
 
         do {
             try FileManager.default.createDirectory(at: skillDir, withIntermediateDirectories: true)
