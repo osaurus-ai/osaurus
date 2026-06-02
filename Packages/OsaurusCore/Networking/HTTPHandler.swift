@@ -4259,6 +4259,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// Concurrency ceiling for simultaneous HTTP inference requests, keyed to
+    /// the batch engine's effective `maxConcurrentSequences`. Sized with
+    /// headroom so normal concurrent use is never throttled, but a pathological
+    /// fan-out (hundreds of streams) is refused with `503` before it
+    /// oversubscribes MLX / unified memory.
+    static func httpInferenceAdmissionLimit() -> Int {
+        let snapshot = ServerRuntimeSettingsStore.snapshot()
+        let batch = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+            in: .standard,
+            runtime: snapshot
+        )
+        return max(batch, 1) * 8 + 4
+    }
+
     private func handleChatCompletions(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -4372,6 +4386,41 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let priorMessages = req.messages
         let persistOnSuccess = !persistDisabled
 
+        // HTTP inference admission control. A real concurrency ceiling keyed to
+        // the batch engine's capacity so a burst of concurrent streams can't
+        // fan out unbounded into MLX and oversubscribe unified memory. When
+        // saturated we return 503 + Retry-After instead of admitting the work.
+        // Acquired here (synchronously, on the channel) and released in the
+        // generation task's `defer` on every exit path below.
+        let admissionLimit = Self.httpInferenceAdmissionLimit()
+        guard HTTPInferenceAdmission.shared.tryAcquire(limit: admissionLimit) else {
+            let body = Self.errorBody(
+                .openai(type: "server_overloaded"),
+                message:
+                    "Server is at inference capacity (\(admissionLimit) concurrent requests). Retry shortly."
+            )
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .serviceUnavailable,
+                headers: [
+                    ("Content-Type", "application/json; charset=utf-8"),
+                    ("Retry-After", "1"),
+                ] + stateRef.value.corsHeaders,
+                body: body
+            )
+            logRequest(
+                method: "POST",
+                path: "/chat/completions",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 503,
+                startTime: startTime,
+                errorMessage: "inference admission saturated (limit \(admissionLimit))"
+            )
+            return
+        }
+
         if wantsSSE {
             let writer = SSEResponseWriter()
             let cors = stateRef.value.corsHeaders
@@ -4410,6 +4459,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
+                defer { HTTPInferenceAdmission.shared.release() }
                 let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
                 var emittedSemanticDelta = false
                 func markSemanticDeltaIfConnected() {
@@ -4761,6 +4811,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
             }
             runRequestTask(priority: .userInitiated) {
+                defer { HTTPInferenceAdmission.shared.release() }
                 do {
                     httpTrace.mark("http_task_start")
                     wasResidentBeforeComplete.value = await ModelRuntime.shared.isResident(name: model)
@@ -5830,6 +5881,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return row
             }
 
+            // Diagnostics surface (hang/overload triage without scraping logs):
+            // HTTP admission depth, distillation queue, sandbox state, the last
+            // recovered MLX error, live chat count, vector-index failures, and
+            // the last RAM feasibility verdict.
+            let httpInflight = HTTPInferenceAdmission.shared.inflightCount
+            let httpLimit = Self.httpInferenceAdmissionLimit()
+            let chatActive = await InferenceLoadCoordinator.shared.activeCount
+            let distill = await DistillationCoordinator.shared.snapshot()
+            let indexFailures = await MemorySearchService.shared.indexFailures()
+            let sandboxStatus = await MainActor.run {
+                String(describing: SandboxManager.State.shared.status)
+            }
+            let mlxLastError: Any = MLXErrorRecovery.lastError as Any? ?? NSNull()
+            let ramSnapshot = await ModelRuntime.shared.lastRAMFeasibilitySnapshot()
+            let ramFeasibility: Any
+            if let f = ramSnapshot {
+                ramFeasibility =
+                    [
+                        "model": f.modelName,
+                        "verdict": f.verdict.rawValue,
+                        "incoming_weights_bytes": f.incomingWeightsBytes,
+                        "resident_weights_bytes": f.residentWeightsBytes,
+                        "kv_headroom_bytes": f.kvHeadroomBytes,
+                        "projected_bytes": f.projectedBytes,
+                        "physical_memory_bytes": f.physicalMemoryBytes,
+                        "soft_limit_bytes": f.softLimitBytes,
+                        "hard_limit_bytes": f.hardLimitBytes,
+                    ] as [String: Any]
+            } else {
+                ramFeasibility = NSNull()
+            }
+
             let memoryConfig = MemoryConfigurationStore.load()
             let obj: [String: Any] = [
                 "status": "healthy",
@@ -5840,7 +5923,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "resident_models": residentModels,
                 "memory_enabled": memoryConfig.enabled,
                 "memory_database_open": MemoryDatabase.shared.isOpen,
+                "http_inflight": httpInflight,
+                "http_inference_limit": httpLimit,
+                "chat_active": chatActive,
+                "distillation": ["queued": distill.queued, "active": distill.active],
+                "sandbox_status": sandboxStatus,
+                "mlx_last_error": mlxLastError,
+                "index_failures": indexFailures,
+                "ram_feasibility": ramFeasibility,
             ]
+
+            // A served /health means the process is alive and responsive —
+            // clear any crash-loop safe mode and bring skipped subsystems back.
+            await MainActor.run { LaunchGuard.noteHealthyHealthCheck() }
             let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
             let headers: [(String, String)] =

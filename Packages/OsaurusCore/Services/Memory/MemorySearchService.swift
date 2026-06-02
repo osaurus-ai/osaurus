@@ -57,7 +57,50 @@ public actor MemorySearchService {
     /// (conversationId, chunkIndex). Built lazily.
     private var transcriptKeyMap: [String: (conversationId: String, chunkIndex: Int)] = [:]
 
+    /// Count of vector-index write failures observed since launch. A non-zero
+    /// value means SQL and the vector index may have diverged — search could
+    /// silently miss rows the SQL source of truth still has. Surfaced via
+    /// `indexFailures()` for `/health`.
+    private var indexFailureCount: Int = 0
+    /// Debounced reconcile task. On an index failure we schedule a full
+    /// `rebuildIndex()` (which rebuilds every bucket from the encrypted SQL
+    /// source of truth) so an isolated write failure self-heals instead of
+    /// silently degrading search. Debounced so a burst of failures coalesces
+    /// into a single rebuild.
+    private var pendingReconcileTask: Task<Void, Never>?
+    /// Wallclock delay before a scheduled reconcile fires. Long enough to
+    /// coalesce a burst, short enough that a degraded index recovers promptly.
+    private static let reconcileDebounceSeconds: UInt64 = 30
+
     private init() {}
+
+    /// Number of vector-index write failures observed since launch.
+    public func indexFailures() -> Int { indexFailureCount }
+
+    /// Record an index write failure and schedule a debounced full rebuild so
+    /// the vector index reconciles against the SQL source of truth.
+    private func recordIndexFailure(_ context: String) {
+        indexFailureCount += 1
+        MemoryLogger.search.error(
+            "index failure (#\(self.indexFailureCount)) in \(context); scheduling reconcile rebuild"
+        )
+        scheduleReconcile()
+    }
+
+    private func scheduleReconcile() {
+        pendingReconcileTask?.cancel()
+        pendingReconcileTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.reconcileDebounceSeconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            await self.rebuildIndex()
+            await self.clearPendingReconcile()
+        }
+    }
+
+    private func clearPendingReconcile() {
+        pendingReconcileTask = nil
+    }
 
     private static let sharedAgentBucket = ""
 
@@ -145,6 +188,7 @@ public actor MemorySearchService {
             _ = try await db.addDocument(text: fact.content, id: id)
         } catch {
             MemoryLogger.search.error("indexPinnedFact failed for \(fact.id): \(error)")
+            recordIndexFailure("indexPinnedFact")
         }
     }
 
@@ -157,6 +201,7 @@ public actor MemorySearchService {
             episodeKeyMap[id.uuidString] = episode.id
         } catch {
             MemoryLogger.search.error("indexEpisode failed for #\(episode.id): \(error)")
+            recordIndexFailure("indexEpisode")
         }
     }
 
@@ -168,6 +213,7 @@ public actor MemorySearchService {
             transcriptKeyMap[id.uuidString] = (turn.conversationId, turn.chunkIndex)
         } catch {
             MemoryLogger.search.error("indexTranscriptTurn failed: \(error)")
+            recordIndexFailure("indexTranscriptTurn")
         }
     }
 

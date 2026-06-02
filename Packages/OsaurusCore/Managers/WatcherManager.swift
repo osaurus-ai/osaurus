@@ -244,6 +244,26 @@ public final class WatcherManager {
         phases[watcherId] = .idle
     }
 
+    /// Freeze the manager for app termination: tear down the FSEvent stream
+    /// and cancel every debounce + execution task so a filesystem change can't
+    /// dispatch a new LLM run mid-teardown. Lightweight and synchronous — safe
+    /// to call at the top of the quit chain. Idempotent.
+    public func stop() {
+        stopEventStream()
+
+        for (_, task) in debouncers {
+            task.cancel()
+        }
+        debouncers.removeAll()
+
+        for (_, task) in executionTasks {
+            task.cancel()
+        }
+        executionTasks.removeAll()
+        runningTasks.removeAll()
+        phases.removeAll()
+    }
+
     // MARK: - FSEvents Management
 
     /// Start monitoring all enabled watchers

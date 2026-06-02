@@ -91,7 +91,16 @@ public actor OsaurusServer: Sendable {
         print("[Osaurus] OsaurusServer started on http://\(config.host):\(config.port)")
     }
 
-    public func stop(gracefully: Bool = true) async {
+    /// Stop the server.
+    ///
+    /// - Returns: `true` if the `EventLoopGroup` fully shut down (and was
+    ///   released), `false` if the graceful shutdown exceeded its budget and
+    ///   the group was deliberately left rooted to finish on its own. Callers
+    ///   on the quit path use this to decide whether it is safe to drop their
+    ///   reference to the actor (issue #860: dropping a still-running group
+    ///   trips NIO's `EventLoopGroup is still running` precondition at exit).
+    @discardableResult
+    public func stop(gracefully: Bool = true) async -> Bool {
         if let ch = self.channel {
             _ = try? await ch.close()
             self.channel = nil
@@ -128,13 +137,16 @@ public actor OsaurusServer: Sendable {
             if completed {
                 self.group = nil
                 print("[Osaurus] OsaurusServer stopped")
+                return true
             } else {
                 print(
                     "[Osaurus] OsaurusServer graceful shutdown exceeded \(budget)s budget; proceeding (group left to finish)"
                 )
+                return false
             }
         } else {
             print("[Osaurus] OsaurusServer stopped")
+            return true
         }
     }
 

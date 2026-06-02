@@ -178,14 +178,29 @@ final class ServerController: ObservableObject {
 
         print("[Osaurus] Ensuring NIO server shutdown before app termination")
         RelayTunnelManager.shared.disconnectAll()
+        // Stop mDNS on the quit path too — `stopServer` does this, but
+        // `ensureShutdown` is the only teardown the AppDelegate calls, so
+        // without this an advertised service could linger past quit.
+        BonjourAdvertiser.shared.stopAdvertising()
         isRunning = false
         serverHealth = .stopping
 
         if let server = serverActor {
             // Termination path: use the bounded (`gracefully: false`) shutdown
             // so a lingering SSE child channel can't stall quit.
-            await server.stop(gracefully: false)
-            serverActor = nil
+            let completed = await server.stop(gracefully: false)
+            // Only drop our reference when the EventLoopGroup actually shut
+            // down. On timeout the group is still running; releasing the actor
+            // here would let it (and its group) deinit mid-shutdown and trip
+            // NIO's `EventLoopGroup is still running` precondition (issue
+            // #860). Keep it rooted — the process is exiting anyway.
+            if completed {
+                serverActor = nil
+            } else {
+                print(
+                    "[Osaurus] NIO group still draining at quit; keeping serverActor rooted to avoid mid-shutdown dealloc"
+                )
+            }
         }
 
         localNetworkAddress = "127.0.0.1"

@@ -22,6 +22,48 @@
 //
 
 import Foundation
+import os
+
+/// Synchronous HTTP-layer admission gate for inference requests.
+///
+/// `ServerController.activeRequestCount` is UI-only and `ModelLease` /
+/// `InferenceLoadCoordinator` track *liveness*, not *backpressure*: nothing
+/// stops N concurrent `/v1/chat/completions` streams from each spawning a Task
+/// that fans into MLX, oversubscribing the batch engine and unified memory.
+///
+/// This is a plain token counter (no async hop — the NIO channel handler is
+/// synchronous) keyed to the batch engine's `maxConcurrentSequences`. When the
+/// in-flight count is at the ceiling, the HTTP layer returns `503` with a
+/// `Retry-After` instead of admitting unbounded work.
+public final class HTTPInferenceAdmission: @unchecked Sendable {
+    public static let shared = HTTPInferenceAdmission()
+
+    private let state = OSAllocatedUnfairLock(initialState: 0)
+
+    init() {}
+
+    /// Try to admit one inference request. Returns `true` when admitted — the
+    /// caller MUST pair it with exactly one `release()` on every exit path —
+    /// or `false` when the gate is saturated.
+    public func tryAcquire(limit: Int) -> Bool {
+        let ceiling = max(1, limit)
+        return state.withLock { inflight in
+            guard inflight < ceiling else { return false }
+            inflight += 1
+            return true
+        }
+    }
+
+    public func release() {
+        state.withLock { inflight in
+            inflight = max(0, inflight - 1)
+        }
+    }
+
+    public var inflightCount: Int {
+        state.withLock { $0 }
+    }
+}
 
 public actor InferenceLoadCoordinator {
     public static let shared = InferenceLoadCoordinator()

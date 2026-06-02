@@ -1516,6 +1516,77 @@ struct RuntimePolicySourceTests {
             body.contains("Quit watchdog fired"),
             "a global quit watchdog must force the termination reply if the teardown chain wedges"
         )
+
+        // Reentrancy guard: a second/racing quit must early-return without
+        // spawning a duplicate teardown chain + watchdog.
+        #expect(
+            body.contains("if isTerminating"),
+            "applicationShouldTerminate must guard against re-entry with isTerminating"
+        )
+        #expect(
+            body.contains("isTerminating = true"),
+            "applicationShouldTerminate must latch isTerminating on first entry"
+        )
+        // The only `hasRepliedToTermination = false` allowed is the stored
+        // property's default initializer; resetting it on entry would defeat
+        // the reentrancy guard, so there must be exactly one occurrence.
+        #expect(
+            body.components(separatedBy: "hasRepliedToTermination = false").count - 1 == 1,
+            "the reply flag must not be reset on entry — that would defeat the reentrancy guard"
+        )
+
+        // Reordering: the must-not-orphan steps (cancel generations, child
+        // process / NIO / VM teardown) must run BEFORE the abandonable
+        // MLX/memory tail, so a watchdog firing only ever cuts GPU/memory.
+        let cancelGen = try #require(body.range(of: "await ModelRuntime.shared.cancelAllGenerations()"))
+        let liveExec = try #require(body.range(of: "await LiveExecRegistry.shared.terminateAll()"))
+        let ensureShutdown = try #require(body.range(of: "await self.serverController.ensureShutdown()"))
+        let flush = try #require(body.range(of: "await MemoryService.shared.flushAllPending"))
+
+        #expect(
+            cancelGen.lowerBound < ensureShutdown.lowerBound,
+            "generations must be cancelled (ending SSE) before NIO shutdown so the server can drain"
+        )
+        #expect(
+            liveExec.lowerBound < flush.lowerBound,
+            "orphan-prone child processes must be killed before the abandonable memory/MLX tail"
+        )
+        #expect(
+            ensureShutdown.lowerBound < clearRuntime.lowerBound,
+            "network/VM teardown must run before the abandonable MLX clearAll tail"
+        )
+    }
+
+    @Test("NIO server stop reports completion so the group isn't dropped mid-shutdown")
+    func nioServerStopReportsCompletion() throws {
+        let server = try Self.source("Networking/OsaurusServer.swift")
+        // `stop` must return whether the EventLoopGroup actually shut down.
+        #expect(
+            server.contains("func stop(gracefully: Bool = true) async -> Bool"),
+            "OsaurusServer.stop must return whether shutdown completed"
+        )
+
+        let controller = try Self.source("Networking/ServerController.swift")
+        let start = try #require(controller.range(of: "func ensureShutdown() async"))
+        let end = try #require(
+            controller.range(of: "init()", range: start.upperBound ..< controller.endIndex)
+        )
+        let body = String(controller[start.lowerBound ..< end.lowerBound])
+
+        // On timeout the actor (and its EventLoopGroup) must stay rooted — only
+        // drop it when shutdown actually completed (issue #860).
+        #expect(
+            body.contains("let completed = await server.stop(gracefully: false)"),
+            "ensureShutdown must capture whether the bounded NIO shutdown completed"
+        )
+        #expect(
+            body.contains("if completed {") && body.contains("serverActor = nil"),
+            "ensureShutdown must only release serverActor when the group fully shut down"
+        )
+        #expect(
+            body.contains("BonjourAdvertiser.shared.stopAdvertising()"),
+            "ensureShutdown must also stop mDNS advertising on the quit path"
+        )
     }
 
     @Test("live proof keychain-disabled mode keeps app startup off user Keychain")

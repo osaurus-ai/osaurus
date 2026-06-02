@@ -119,6 +119,11 @@ public actor ModelRuntime {
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
 
+    /// Result of the most recent pre-load RAM feasibility check. Surfaced via
+    /// `lastRAMFeasibilitySnapshot()` so `/health` and the model picker can
+    /// show why a load was refused or flagged as tight without re-scanning.
+    private var lastRAMFeasibility: RAMFeasibility?
+
     /// Every in-flight generation wrapper task, keyed by a monotonic id.
     /// `ModelLease` is the authoritative "is anyone still using the model"
     /// signal; these records exist so shutdown / same-model unload can
@@ -487,12 +492,15 @@ public actor ModelRuntime {
         // passes and cancel ALL tracked generation wrapper tasks, then wait
         // for every leased model to drain before we touch any container.
         await cancelAllGenerations()
+        var hasStuckLease = false
         for name in modelCache.keys {
             if quit {
                 // Force-proceed fallback: a never-released lease (a producer
                 // that ignored cancellation) returns `false` here after the
-                // cap instead of hanging the quit chain forever.
-                await ModelLease.shared.waitForZero(name, timeoutSeconds: 2.0)
+                // cap instead of hanging the quit chain forever. We record
+                // it so we can skip the buffer free below — see the UAF note.
+                let drained = await ModelLease.shared.waitForZero(name, timeoutSeconds: 2.0)
+                if !drained { hasStuckLease = true }
             } else {
                 await ModelLease.shared.waitForZero(name)
             }
@@ -500,6 +508,27 @@ public actor ModelRuntime {
 
         let loadingRecords = loadingTasks.map { ($0.key, $0.value) }
         await cancelAndDrainLoadingTasks(loadingRecords, quit: quit)
+
+        // Quit-path use-after-free guard: `ModelLease` exists precisely to
+        // stop us from freeing a model's Metal buffers while a generation
+        // still references them (`notifyExternalReferencesNonZeroOnDealloc`).
+        // If a holder ignored cancellation and the lease never drained, the
+        // safe move on the way out is NOT to free anything: calling
+        // `disableCaching()` / `Stream.gpu.synchronize()` against a live,
+        // stuck command buffer is either a UAF or a hang. The process is
+        // terminating, so let the OS reclaim GPU memory on `exit()` instead
+        // of a partial container free. (`cancelAllGenerations` already shut
+        // down every BatchEngine, so no new GPU work can be scheduled.)
+        if quit && hasStuckLease {
+            genLog.error(
+                "clearAll(quit:) detected a stuck model lease — skipping buffer free; OS will reclaim GPU on exit"
+            )
+            loadingTasks.removeAll()
+            supersededLoadingTaskIDs.removeAll()
+            currentModelName = nil
+            cachedConfig = nil
+            return
+        }
 
         for holder in modelCache.values {
             holder.container.disableCaching()
@@ -564,6 +593,113 @@ public actor ModelRuntime {
 
     private static func flexibleResidentBudgetBytes() -> Int64 {
         Int64(Double(ProcessInfo.processInfo.physicalMemory) * 0.70)
+    }
+
+    /// Snapshot of the most recent pre-load RAM feasibility assessment.
+    public struct RAMFeasibility: Sendable, Equatable {
+        public enum Verdict: String, Sendable, Equatable {
+            /// Comfortably within budget.
+            case ok
+            /// Above the soft (warn) threshold but below the hard ceiling —
+            /// loaded anyway, but resident pressure is high.
+            case tight
+            /// Above the hard ceiling — the load was refused.
+            case refused
+        }
+        public let modelName: String
+        public let verdict: Verdict
+        public let incomingWeightsBytes: Int64
+        public let residentWeightsBytes: Int64
+        public let kvHeadroomBytes: Int64
+        public let projectedBytes: Int64
+        public let physicalMemoryBytes: Int64
+        public let softLimitBytes: Int64
+        public let hardLimitBytes: Int64
+        public let timestamp: Date
+    }
+
+    /// Fraction of physical RAM above which a load is flagged `tight` (warn).
+    private static let ramSoftThreshold = 0.70
+    /// Fraction of physical RAM above which a load is `refused`.
+    private static let ramHardThreshold = 0.90
+
+    /// Estimated KV-cache + activation headroom an incoming load needs beyond
+    /// its static weights. We don't know the exact context length up front, so
+    /// scale modestly with weight size and floor it so even a small model
+    /// reserves something. Intentionally conservative — the goal is to catch
+    /// "this clearly won't fit" before the OS jetsams us, not to be exact.
+    private static func estimatedKVHeadroomBytes(forWeights weights: Int64) -> Int64 {
+        let scaled = Int64(Double(weights) * 0.20)
+        let floor: Int64 = 512 * 1024 * 1024
+        return max(scaled, floor)
+    }
+
+    /// Public read of the last feasibility assessment for `/health` + UI.
+    public func lastRAMFeasibilitySnapshot() -> RAMFeasibility? {
+        lastRAMFeasibility
+    }
+
+    /// Pre-load RAM feasibility gate. Records `lastRAMFeasibility` for
+    /// observability and throws when the projected footprint exceeds the hard
+    /// ceiling. Applies to all eviction policies.
+    private func checkRAMFeasibility(
+        modelName: String,
+        incomingWeightsBytes: Int64,
+        excludingResident excludedName: String?
+    ) throws {
+        let physical = Int64(ProcessInfo.processInfo.physicalMemory)
+        guard physical > 0, incomingWeightsBytes > 0 else { return }
+
+        let resident = residentWeightBytes(excluding: excludedName)
+        let kvHeadroom = Self.estimatedKVHeadroomBytes(forWeights: incomingWeightsBytes)
+        let projected = resident + incomingWeightsBytes + kvHeadroom
+        let softLimit = Int64(Double(physical) * Self.ramSoftThreshold)
+        let hardLimit = Int64(Double(physical) * Self.ramHardThreshold)
+
+        let verdict: RAMFeasibility.Verdict
+        if projected > hardLimit {
+            verdict = .refused
+        } else if projected > softLimit {
+            verdict = .tight
+        } else {
+            verdict = .ok
+        }
+
+        lastRAMFeasibility = RAMFeasibility(
+            modelName: modelName,
+            verdict: verdict,
+            incomingWeightsBytes: incomingWeightsBytes,
+            residentWeightsBytes: resident,
+            kvHeadroomBytes: kvHeadroom,
+            projectedBytes: projected,
+            physicalMemoryBytes: physical,
+            softLimitBytes: softLimit,
+            hardLimitBytes: hardLimit,
+            timestamp: Date()
+        )
+
+        switch verdict {
+        case .ok:
+            break
+        case .tight:
+            genLog.error(
+                "loadContainer: RAM tight for \(modelName, privacy: .public) projected=\(projected, privacy: .public) soft=\(softLimit, privacy: .public) physical=\(physical, privacy: .public)"
+            )
+        case .refused:
+            genLog.error(
+                "loadContainer: refusing \(modelName, privacy: .public) — projected footprint \(projected, privacy: .public)B exceeds hard limit \(hardLimit, privacy: .public)B (physical \(physical, privacy: .public)B)"
+            )
+            let projGB = String(format: "%.1f", Double(projected) / 1_073_741_824)
+            let physGB = String(format: "%.1f", Double(physical) / 1_073_741_824)
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Not enough memory to load \(modelName): needs ~\(projGB) GB (weights + KV headroom) but this Mac has \(physGB) GB. Free up RAM, choose a smaller/more-quantized model, or close other models."
+                ]
+            )
+        }
     }
 
     private func residentWeightBytes(excluding excludedName: String? = nil) -> Int64 {
@@ -706,12 +842,12 @@ public actor ModelRuntime {
         // gets a clear error and the server stays up.
         try Self.validateUnsupportedPlainDSV4AffineJANG(at: localURL, name: name)
         try await Self.ensureJANGTQSidecar(at: localURL, modelId: id, name: name)
-        let weightsBytes: Int64
-        if policy == .manualMultiModel {
-            weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
-        } else {
-            weightsBytes = 0
-        }
+        // Compute the incoming bundle's on-disk weight size for *every* policy.
+        // Previously only `manualMultiModel` did this (strict left it 0), which
+        // meant the resident-RAM accounting — and the pre-load feasibility gate
+        // below — were blind under the default strict policy. The value also
+        // feeds `mlxCacheLimit()` and the `/health` + model-picker surfaces.
+        let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
         genLog.info(
             "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public)"
         )
@@ -724,6 +860,17 @@ public actor ModelRuntime {
             )
         }
         try Task.checkCancellation()
+
+        // Pre-load RAM feasibility gate (all policies). After strict eviction /
+        // flexible budget trimming above, `resident` reflects what will still
+        // be alive when this load lands. If projected footprint blows past the
+        // hard ceiling, refuse with a clear error instead of letting the OS
+        // jetsam/OOM-kill us mid-load. A softer threshold only warns.
+        try checkRAMFeasibility(
+            modelName: name,
+            incomingWeightsBytes: weightsBytes,
+            excludingResident: name
+        )
 
         // Tool-call format + reasoning parser are stamped automatically by
         // vmlx-swift's LLM/VLM factories from `jang_config.json` capabilities

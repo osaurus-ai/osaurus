@@ -240,6 +240,25 @@ public final class ScheduleManager {
         runningTasks.removeValue(forKey: scheduleId)
     }
 
+    /// Freeze the manager for app termination: cancel the next-run timer, all
+    /// in-flight execution tasks, and remove the timezone observer so nothing
+    /// can dispatch a new LLM run mid-teardown. Lightweight and synchronous —
+    /// safe to call at the top of the quit chain. Idempotent.
+    public func stop() {
+        cancelTimer()
+
+        if let observer = timezoneObserver {
+            NotificationCenter.default.removeObserver(observer)
+            timezoneObserver = nil
+        }
+
+        for (_, task) in executionTasks {
+            task.cancel()
+        }
+        executionTasks.removeAll()
+        runningTasks.removeAll()
+    }
+
     // MARK: - Timer Management
 
     /// Cancel the current timer task
