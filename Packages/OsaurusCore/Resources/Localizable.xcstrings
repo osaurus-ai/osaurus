@@ -10003,6 +10003,22 @@
         }
       }
     },
+    "Help improve Osaurus" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hilf mit, Osaurus zu verbessern"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "帮助改进 Osaurus"
+          }
+        }
+      }
+    },
     "Help me add a cloud AI provider." : {
       "localizations" : {
         "de" : {
@@ -13569,6 +13585,22 @@
     "No access keys for this agent yet." : {
 
     },
+    "No accounts or device profiles" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine Konten oder Geräteprofile"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无账户或设备标识"
+          }
+        }
+      }
+    },
     "No accounts, no profiles" : {
       "localizations" : {
         "de" : {
@@ -13647,6 +13679,22 @@
     },
     "No chats yet" : {
 
+    },
+    "No chats, prompts, files, or keys" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine Chats, Eingaben, Dateien oder Schlüssel"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不含聊天记录、提示词、文件或密钥"
+          }
+        }
+      }
     },
     "No checklist items parsed." : {
       "localizations" : {
@@ -14391,6 +14439,22 @@
         }
       }
     },
+    "Not Now" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht jetzt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂不"
+          }
+        }
+      }
+    },
     "Not Provisioned" : {
       "localizations" : {
         "de" : {
@@ -14438,6 +14502,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "笔记"
+          }
+        }
+      }
+    },
+    "Nothing is tied to you" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nichts ist mit dir verknüpft"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "数据不会与你关联"
           }
         }
       }
@@ -15132,6 +15212,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "奥龙身份恢复"
+          }
+        }
+      }
+    },
+    "Osaurus can send anonymous, aggregated usage data to help us understand how it's used and where people run into friction." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus kann anonyme, aggregierte Nutzungsdaten senden, damit wir verstehen, wie die App genutzt wird und wo Nutzer auf Probleme stoßen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 可以发送匿名的汇总使用数据，帮助我们了解应用的使用方式以及用户在哪里遇到问题。"
           }
         }
       }
@@ -20897,6 +20993,22 @@
         }
       }
     },
+    "Share Anonymous Data" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anonyme Daten teilen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共享匿名数据"
+          }
+        }
+      }
+    },
     "Share Anonymous Usage Data" : {
       "localizations" : {
         "de" : {
@@ -25554,6 +25666,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "你"
+          }
+        }
+      }
+    },
+    "You can change this anytime in Settings → Privacy." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Du kannst dies jederzeit unter Einstellungen → Datenschutz ändern."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你可以随时在「设置 → 隐私」中更改此设置。"
           }
         }
       }

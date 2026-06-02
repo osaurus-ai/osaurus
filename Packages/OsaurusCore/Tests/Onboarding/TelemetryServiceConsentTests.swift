@@ -114,6 +114,28 @@ struct TelemetryServiceConsentTests {
         #expect(sink.names.isEmpty)
     }
 
+    // MARK: - Existing-user consent prompt gating
+
+    @Test func needsConsentDecision_is_true_only_when_started_and_undecided() {
+        let (service, _, cleanup) = makeService()
+        defer { cleanup() }
+
+        // No key resolved yet → nothing to consent to, so don't prompt.
+        #expect(service.needsConsentDecision == false)
+
+        // Configured but no decision recorded → this is the upgrading user we
+        // want to ask exactly once.
+        service.markStartedForTesting()
+        #expect(service.needsConsentDecision == true)
+
+        // Any decision resolves it — never prompt again.
+        service.setEnabled(true)
+        #expect(service.needsConsentDecision == false)
+
+        service.setEnabled(false)
+        #expect(service.needsConsentDecision == false)
+    }
+
     // MARK: - Buffer is bounded
 
     @Test func buffer_is_capped_and_keeps_the_earliest_events() {

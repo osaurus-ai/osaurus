@@ -121,6 +121,18 @@ public final class TelemetryService {
         return false
     }
 
+    /// True when telemetry is live (a key resolved at launch) *and* the user
+    /// has never made a consent decision. The onboarding consent step covers
+    /// new users; this lets the app prompt users who upgraded from a build
+    /// without that step exactly once, so we never start sending without an
+    /// explicit choice. False on keyless builds (nothing to consent to) and
+    /// the moment any decision — grant or decline — is recorded.
+    public var needsConsentDecision: Bool {
+        guard started else { return false }
+        if case .undecided = consent { return true }
+        return false
+    }
+
     /// Record the consent decision. Called by the onboarding consent screen.
     /// Granting flushes everything buffered during onboarding; declining
     /// drops it. Both paths make all future `track()` calls send or no-op
