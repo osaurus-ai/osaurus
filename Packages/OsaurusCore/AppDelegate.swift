@@ -509,27 +509,38 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// (`needsConsentDecision`), so it shows at most once and never to users
     /// who already chose.
     ///
-    /// Rendered in the toast overlay scope — a screen-level transparent panel
-    /// that's always up after launch — so the prompt appears regardless of
-    /// which window the user lands on. Any dismissal (the "Not Now" button or
-    /// a tap outside) records a decline: we treat "didn't say yes" as off.
+    /// Hosted in the user's landing app window (chat overlay, else management)
+    /// so it behaves like an app modal and recedes when Osaurus is deactivated,
+    /// falling back to the screen-level toast overlay only if no app window is
+    /// up. Any dismissal (the "Not Now" button or a tap outside) records a
+    /// decline: we treat "didn't say yes" as off.
     @MainActor
     private func maybePromptForTelemetryConsent() {
         let telemetry = TelemetryService.shared
-        // TEMP PREVIEW — forces the prompt on every launch so the UI can be
-        // eyeballed regardless of the saved consent state. REVERT before
-        // committing: uncomment the two `needsConsentDecision` guards below.
-        let previewTelemetryPrompt = true
-        guard previewTelemetryPrompt || telemetry.needsConsentDecision else { return }
+        guard telemetry.needsConsentDecision else { return }
 
         Task { @MainActor in
-            // Let the toast overlay host mount and the initial window settle
-            // so the alert has somewhere to render and isn't lost in the
-            // launch churn.
+            // Let the initial window settle so the alert has somewhere to
+            // render and isn't lost in the launch churn.
             try? await Task.sleep(nanoseconds: 900_000_000)  // 900ms
-            guard previewTelemetryPrompt || telemetry.needsConsentDecision else { return }
+            guard telemetry.needsConsentDecision else { return }
 
-            let scope: ThemedAlertScope = .toastOverlay
+            // Host the prompt inside whatever app window the user landed on
+            // (chat overlay, else management) so it behaves like an app modal —
+            // recedes when Osaurus is deactivated — rather than the toast
+            // overlay panel, which sits at status-bar level across all spaces
+            // and would hover above other apps. The toast scope is only a
+            // last-resort fallback if no app window is up.
+            let scope: ThemedAlertScope
+            if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
+                ChatWindowManager.shared.windowExists(id: chatId)
+            {
+                scope = .chat(chatId)
+            } else if WindowManager.shared.isVisible(.management) {
+                scope = .management
+            } else {
+                scope = .toastOverlay
+            }
             let requestId = UUID()
             ThemedAlertCenter.shared.present(
                 ThemedAlertRequest(
