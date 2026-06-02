@@ -2,6 +2,45 @@
 
 Date: 2026-06-01
 
+Final updated-branch Osaurus PR head after GitHub "update branch" and the
+runtime top-p projection source-guard repair:
+`5f7c108ac055dd1b99d03cef7663a14763c7dbac`.
+
+Final updated-branch no-sign app:
+`build/DerivedData-post1314-final-5f7c108a/Build/Products/Release/osaurus.app`.
+
+Final updated-branch live proof used `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, a
+fresh `OSAURUS_TEST_ROOT=/tmp/osaurus-post1314-final-5f7c108a-live-open-20260601-222454/state`,
+and `OSU_MODELS_DIR=/tmp/osaurus-post1314-step-final-root/models`. The app was
+launched through LaunchServices after setting those env vars with `launchctl`.
+The proof lane did not invoke `security`, notarytool, Developer ID signing,
+signing identities, or a password/keychain prompt. The app stayed healthy after
+the final rows with no in-flight requests.
+
+Final updated-branch served model ids:
+`step-3.7-flash-jang_2l` and `step-3.7-flash-jang_k`.
+
+Final updated-branch Step JANG_K parser/topology artifact:
+`/tmp/osaurus-post1314-final-5f7c108a-jangk-20260601-222508/step-3.7-flash-jang_k_summary.json`.
+
+Final updated-branch Step JANG_K restart/L2-hit artifact:
+`/tmp/osaurus-post1314-final-5f7c108a-jangk-l2hit-20260601-222546/step-3.7-flash-jang_k_summary.json`.
+
+Final updated-branch Step JANG_2L parser/topology artifact:
+`/tmp/osaurus-post1314-final-5f7c108a-jang2l-20260601-222604/step-3.7-flash-jang_2l_summary.json`.
+
+These updated-branch rows supersede the older `25f8111...` app proof directly
+below. On the exact `5f7c108a...` app, Step JANG_K and Step JANG_2L both pass
+the strict required/none/required multi-turn tool harness with exact
+`line_count` arguments on turn 1 (`red\ngreen\nblue`) and turn 3 (`one\ntwo`),
+visible no-tool follow-up answers, no protocol leaks, no incoherent loop, no
+length-stop fake pass, and token/s recorded for visible generation. Both rows
+report the expected Step mixed cache topology: 45 layers, 12 KV layers, 33
+rotating KV layers, `requires_disk_backed_restore=true`,
+`paged_incompatible=true`, and `turbo_quant_kv_layer_count=0`. The JANG_K
+restart row proves actual disk L2 reuse with `block_disk_hits=1`,
+`block_disk_misses=0`, and `block_disk_stores=5`.
+
 Current local Osaurus PR head before the final vMLX repin commit:
 `1bc3202c0ccc36f791d27ef7ce7943eba0b691b8`.
 
