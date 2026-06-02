@@ -121,16 +121,15 @@ public actor RemoteProviderService: ToolCapableService {
             || GeminiFlashImageProfile.matches(modelId: modelName)
     }
 
+    /// Thin delegates over `RemoteReasoningPolicy`, which is the single source of
+    /// truth for remote reasoning behavior. Kept on the service so existing call
+    /// sites and pinned tests continue to work unchanged.
     static func allowsChatCompletionsReasoningObject(
         providerType: RemoteProviderType,
         host: String
     ) -> Bool {
-        switch providerType {
-        case .openaiLegacy:
-            return !host.lowercased().contains("openai.com")
-        case .azureOpenAI, .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
-            return false
-        }
+        RemoteReasoningPolicy.resolve(providerType: providerType, host: host, model: "")
+            .allowsReasoningObject
     }
 
     static func chatCompletionsReasoningEffort(
@@ -138,92 +137,27 @@ public actor RemoteProviderService: ToolCapableService {
         host: String,
         effort: String?
     ) -> String? {
-        guard
-            let effort = effort?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-            !effort.isEmpty
-        else {
-            return nil
-        }
-
-        switch providerType {
-        case .openaiLegacy, .azureOpenAI:
-            if host.lowercased().contains("deepseek") {
-                let acceptedDeepSeekEfforts: Set<String> = ["low", "medium", "high", "max", "xhigh"]
-                return acceptedDeepSeekEfforts.contains(effort) ? effort : nil
-            }
-            return effort
-        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
-            return effort
-        }
+        RemoteReasoningPolicy.acceptedEffort(providerType: providerType, host: host, effort: effort)
     }
 
     /// Whether the target provider requires `reasoning_content` to be echoed
-    /// back on assistant messages in multi-round conversations.
-    ///
-    /// DeepSeek-family models inline the previous turn's `reasoning_content`
-    /// between `<think>…</think>` in their prompt template; dropping it
-    /// busts the server's KV cache at the first reasoning token (issue #959,
-    /// reproduced against a local ds4 server with `deepseek-v4-flash`).
-    /// Matched by host or model id so this works for the hosted API, local
-    /// ds4-style servers (`localhost:PORT`), and OpenAI-compat aggregators
-    /// serving a DeepSeek model. Everything else gets stripped to avoid
-    /// unknown-field rejections on strict schemas.
+    /// back on assistant messages in multi-round conversations (DeepSeek). See
+    /// `RemoteReasoningPolicy.Outbound` for the full rationale.
     static func echoesReasoningContent(
         providerType: RemoteProviderType,
         host: String,
         model: String
     ) -> Bool {
-        switch providerType {
-        case .openaiLegacy, .azureOpenAI:
-            return host.range(of: "deepseek", options: .caseInsensitive) != nil
-                || model.range(of: "deepseek", options: .caseInsensitive) != nil
-        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
-            return false
-        }
+        RemoteReasoningPolicy.resolve(providerType: providerType, host: host, model: model)
+            .outbound == .echoField
     }
 
-    /// Translate the local DSV4 `reasoningEffort` value into the on-the-wire
-    /// fields the target remote provider actually understands.
-    ///
-    /// `DSV4ReasoningProfile` exposes three modes — `instruct`, `high`, `max` —
-    /// but DeepSeek's public chat API only accepts `reasoning_effort` of
-    /// `high`/`max` (plus `low`/`medium`/`xhigh` aliases) and toggles reasoning
-    /// via a separate `thinking: { type: "enabled"|"disabled" }` object. Other
-    /// OpenAI-compatible hosts that may serve DSV4-style IDs (e.g. OpenRouter)
-    /// will also reject `instruct`, so we strip it everywhere; the `thinking`
-    /// field is DeepSeek-specific and only injected for DeepSeek hosts to avoid
-    /// 422s on strict schemas.
-    ///
-    /// Direct/off aliases (`instruct`, `no_think`, `none`, etc.) are internal
-    /// local-runtime controls, not portable OpenAI-compatible wire values. They
-    /// are stripped for every remote model; DSV4 on DeepSeek additionally gets
-    /// the provider-specific `thinking.disabled` object.
     static func dsv4RemoteEffort(
         host: String,
         model: String,
         effort: String?
     ) -> (effort: String?, thinking: ThinkingConfig?) {
-        guard
-            let normalized = effort?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased(), !normalized.isEmpty
-        else {
-            return (nil, nil)
-        }
-
-        let isDirectRailEffort: Bool
-        switch normalized {
-        case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
-            isDirectRailEffort = true
-        default:
-            isDirectRailEffort = false
-        }
-        guard isDirectRailEffort else { return (normalized, nil) }
-        let thinking =
-            host.lowercased().contains("deepseek")
-                && DSV4ReasoningProfile.matches(modelId: model)
-            ? ThinkingConfig(type: "disabled") : nil
-        return (nil, thinking)
+        RemoteReasoningPolicy.dsv4Effort(host: host, model: model, effort: effort)
     }
 
     static func remoteChatReasoningControls(
@@ -232,13 +166,8 @@ public actor RemoteProviderService: ToolCapableService {
         model: String,
         effort: String?
     ) -> (effort: String?, thinking: ThinkingConfig?) {
-        let translated = Self.dsv4RemoteEffort(host: host, model: model, effort: effort)
-        let providerAcceptedEffort = Self.chatCompletionsReasoningEffort(
-            providerType: providerType,
-            host: host,
-            effort: translated.effort
-        )
-        return (providerAcceptedEffort, translated.thinking)
+        RemoteReasoningPolicy.resolve(providerType: providerType, host: host, model: model)
+            .controls(effort: effort)
     }
 
     static func effectiveRequestProviderType(
@@ -913,6 +842,11 @@ public actor RemoteProviderService: ToolCapableService {
         /// (streamWithTools, for the inline tool-call detection fallback).
         var accumulatedContent: String = ""
 
+        /// Non-nil only for providers that inline reasoning as `<think>` in the
+        /// content rail (MiniMax). When set, content deltas are split so the
+        /// think block lands on the reasoning channel instead of leaking.
+        var thinkSplitter: InlineThinkSplitter?
+
         let stopSequences: [String]
         let trackContent: Bool
 
@@ -1420,10 +1354,32 @@ public actor RemoteProviderService: ToolCapableService {
         if state.accumulatedToolCalls.isEmpty,
             let delta = chunk.choices.first?.delta.content, !delta.isEmpty
         {
-            let (truncated, hitStop) = applyStopSequences(delta, stopSequences: state.stopSequences)
-            state.recordYield(truncated)
-            yield(truncated)
-            if hitStop { return .finishNormal }
+            if var splitter = state.thinkSplitter {
+                // MiniMax-style inline `<think>`: route reasoning to the Think
+                // panel and only the visible remainder to the content rail.
+                let segments = splitter.process(delta)
+                state.thinkSplitter = splitter
+                for segment in segments {
+                    switch segment {
+                    case .reasoning(let reasoning):
+                        if !reasoning.isEmpty { yield(StreamingReasoningHint.encode(reasoning)) }
+                    case .content(let visible):
+                        guard !visible.isEmpty else { continue }
+                        let (truncated, hitStop) = applyStopSequences(
+                            visible,
+                            stopSequences: state.stopSequences
+                        )
+                        state.recordYield(truncated)
+                        yield(truncated)
+                        if hitStop { return .finishNormal }
+                    }
+                }
+            } else {
+                let (truncated, hitStop) = applyStopSequences(delta, stopSequences: state.stopSequences)
+                state.recordYield(truncated)
+                yield(truncated)
+                if hitStop { return .finishNormal }
+            }
         }
 
         // Emit on finish_reason — applies whether or not there's a tool call.
@@ -1452,6 +1408,19 @@ public actor RemoteProviderService: ToolCapableService {
         finishMarker: String,
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) {
+        // Drain any think-splitter tail (a partial tag that never completed, or
+        // an unclosed `<think>` block) before the stream finishes.
+        if var splitter = state.thinkSplitter {
+            for segment in splitter.flush() {
+                switch segment {
+                case .reasoning(let reasoning):
+                    if !reasoning.isEmpty { continuation.yield(StreamingReasoningHint.encode(reasoning)) }
+                case .content(let visible):
+                    if !visible.isEmpty { continuation.yield(visible) }
+                }
+            }
+        }
+
         switch resolveAccumulatedToolCall(
             from: state.accumulatedToolCalls,
             finishMarker: finishMarker
@@ -1575,6 +1544,16 @@ public actor RemoteProviderService: ToolCapableService {
                 }
 
                 var state = StreamingState(stopSequences: stopSequences, trackContent: trackContent)
+                // MiniMax-style providers inline reasoning as <think> in the
+                // content rail; install the splitter so it routes to the Think
+                // panel instead of leaking the tags into the visible message.
+                if RemoteReasoningPolicy.resolve(
+                    providerType: self.provider.providerType,
+                    host: self.provider.host,
+                    model: modelName
+                ).inbound == .inlineThink {
+                    state.thinkSplitter = InlineThinkSplitter()
+                }
 
                 // Inlined SSE event loop. Each yield from a per-provider
                 // handler reaches the consumer in the same task hop as the
@@ -2221,16 +2200,15 @@ public actor RemoteProviderService: ToolCapableService {
             let geminiRequest = request.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
         case .openaiLegacy, .azureOpenAI, .osaurus:
-            // OpenAI-compat wire. DeepSeek-family models need `reasoning_content`
-            // echoed back (see `echoesReasoningContent`); strip elsewhere.
+            // OpenAI-compat wire. RemoteReasoningPolicy decides how prior-turn
+            // reasoning is re-sent: strip (default), keep `reasoning_content`
+            // (DeepSeek), or fold it back into `<think>` content (MiniMax).
             var outbound = request
-            if !Self.echoesReasoningContent(
+            outbound.messages = RemoteReasoningPolicy.resolve(
                 providerType: requestProviderType,
                 host: provider.host,
                 model: request.model
-            ) {
-                outbound.messages = Self.strippingReasoningContent(from: outbound.messages)
-            }
+            ).transformOutbound(outbound.messages)
             bodyData = try encoder.encode(outbound)
         }
         urlRequest.httpBody = bodyData
@@ -2244,22 +2222,11 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     /// Returns a copy of `messages` with `reasoning_content` cleared.
-    /// Unchanged messages are returned as-is to avoid needless allocations.
+    /// Delegates to `RemoteReasoningPolicy` (the single source of truth).
     static func strippingReasoningContent(
         from messages: [ChatMessage]
     ) -> [ChatMessage] {
-        messages.map { msg in
-            guard msg.reasoning_content != nil else { return msg }
-            return ChatMessage(
-                role: msg.role,
-                content: msg.content,
-                tool_calls: msg.tool_calls,
-                tool_call_id: msg.tool_call_id,
-                reasoning_content: nil,
-                reasoning_item_id: msg.reasoning_item_id,
-                reasoning_encrypted: msg.reasoning_encrypted
-            )
-        }
+        RemoteReasoningPolicy.strippingReasoning(messages)
     }
 
     /// Parse response based on provider type

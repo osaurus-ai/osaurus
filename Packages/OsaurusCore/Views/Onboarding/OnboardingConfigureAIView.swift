@@ -144,7 +144,7 @@ final class ConfigureAIState: ObservableObject {
     static let onboardingPresets: [ProviderPreset] = [
         .openai, .openrouter,
         .ollama,
-        .anthropic, .atlasCloud, .google, .deepseek, .xai, .venice,
+        .anthropic, .atlasCloud, .google, .deepseek, .minimax, .xai, .venice,
         .custom,
     ]
 

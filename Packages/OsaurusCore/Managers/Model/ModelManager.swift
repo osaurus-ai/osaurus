@@ -619,6 +619,17 @@ extension ModelManager {
         // MARK: Top Picks
 
         curated(
+            id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
+            description:
+                "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
+            isTopSuggestion: true,
+            downloadSizeBytes: 8_732_780_803,
+            modelType: "lfm2_moe",
+            releasedAt: date("2026-05-29"),
+            useCase: .general
+        ),
+
+        curated(
             id: "OsaurusAI/gemma-4-E2B-it-4bit",
             description: "Smallest multimodal Gemma 4 model. Runs on any Mac.",
             downloadSizeBytes: 4_392_120_539,

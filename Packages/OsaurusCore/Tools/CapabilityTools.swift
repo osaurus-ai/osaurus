@@ -36,7 +36,8 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
     let name = "capabilities_search"
     let description =
         "Find additional tools or skills the current schema does not include. "
-        + "Use ONLY when your existing tools cannot do the task — your initial set was pre-selected for relevance. "
+        + "Your initial set was pre-selected for relevance, so check it first; "
+        + "but when no listed tool fits the request, use this to find one rather than giving up or guessing. "
         + "Returns ranked IDs (e.g. `tool/sandbox_exec`, `skill/plot-data`) you then pass to `capabilities_load`. "
         + "Example: `{\"query\": \"convert csv to json\"}`."
 

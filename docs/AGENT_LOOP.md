@@ -100,7 +100,7 @@ Project type is auto-detected from manifests (defined in [`FolderContext.swift`]
 
 ### Folder tool inventory
 
-Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift) when the folder is selected. Tools that operate on the filesystem all enforce the same path contract: paths must be relative to the working folder, and after `..`/`.` standardisation must stay strictly under it. `share_artifact` is NOT in this table — it lives as a global built-in (see below) so it's available in every chat.
+Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift) when the folder is selected. Tools that operate on the filesystem all enforce the same path contract: a path is taken relative to the working folder, but an absolute path is also accepted as long as it resolves (after `..`/`.` standardisation) to the working folder or somewhere strictly under it; paths outside it are rejected. `share_artifact` is NOT in this table — it lives as a global built-in (see below) so it's available in every chat.
 
 **Core (always registered):**
 
@@ -198,6 +198,64 @@ Every persisted [`ChatSessionData`](../Packages/OsaurusCore/Models/Chat/ChatSess
 ### HTTP API divergence (intentional)
 
 The OpenAI-compatible HTTP endpoint is **stateless** — there's no Osaurus session id on the request, so it cannot reuse `SessionToolStateStore.loadedToolNames`, run a real LLM-driven preflight, or freeze a per-session schema snapshot. To keep the schema predictable for HTTP callers (and to avoid paying a preflight LLM call on every request), the HTTP path deliberately bypasses [`SystemPromptComposer.resolveTools`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) and uses bare `ToolRegistry.alwaysLoadedSpecs(mode:)`. Manual-mode user picks, mid-session `capabilities_load` additions, and the inline `clarify` UI are chat-only. This is **by design** — see the comment block in [`HTTPHandler.swift`](../Packages/OsaurusCore/Networking/HTTPHandler.swift) before "fixing" it.
+
+---
+
+## Harness Task State (`AgentTaskState`)
+
+Small local models (≈1B active) used as both planner and executor in a free
+loop fail at the bookkeeping, not the choices: every turn they have to
+reconstruct from raw tool text *where they are*, *what the last result was*,
+and *what the next valid move is*. The win came from moving that bookkeeping
+into the loop and making results structured rather than prose.
+
+Two changes, one component:
+
+1. **Results are actionable objects, not prose.** A `file_read` on a directory
+   returns a `kind: "listing"` envelope with `entries[]` (each carrying a
+   ready-to-use `path`), not an ASCII tree. Descending is a field copy
+   (`entries[i].path`), not a comprehension task. File reads carry `kind:
+   "file"`; missing paths return the `not_found` kind. See
+   [Tool Contract — structured result kinds](TOOL_CONTRACT.md#structured-actionable-result-kinds).
+
+2. **A task-state machine in the harness.** [`AgentTaskState`](../Packages/OsaurusCore/Services/Chat/AgentTaskState.swift)
+   classifies each result (`classify(_:)` → empty/partial/populated listing,
+   file content, not-found, error, other) and:
+   - **De-dupes still-fresh re-reads.** A read whose `(name, canonical args)`
+     was already satisfied this message replays the **exact** prior envelope
+     (never a budget-collapsed form) instead of re-executing. A write/edit to a
+     path **invalidates** that path's fresh read — both sides canonicalize
+     through one shared `canonicalPath(_:)` — so the normal `read → edit →
+     read-to-verify` pattern is never short-circuited with stale content.
+   - **Emits a next-step nudge** for the next turn, driven by a data table:
+     populated listing → "copy an entry's `path`"; empty → "don't invent an
+     entry"; truncated → "use `file_search`"; not-found → "pick from the last
+     listing". The nudge is **system-attributed** (`[System Notice] …`, like
+     the tool-budget notice). The listing nudge is **reactive, not proactive**:
+     it fires only after **two listings without an intervening read** (the
+     model is observed wandering), so a capable model that descends immediately
+     after the first listing never sees it — no backseat-driving for a model
+     that already inferred the next step. It then keeps firing while the model
+     stays stuck (no upper silence cap). Only a **successful file read** resets
+     the wandering counter; a `not_found` does not (a failed read is not
+     progress), so interleaved failed reads can't mask wandering — and
+     `not_found` fires its own reactive nudge in parallel. (The two listings
+     are not asserted to be distinct paths; a different spelling of the same
+     dir would also count, but the nudge is benign.)
+
+   **The nudge is a nudge, not the mechanism.** The structured `entries[]` must
+   carry the descent on its own — validated by a bias-disabled gate
+   (`AgentTaskStateTests.transcript_listThenRead_descendsWithoutBias`) that
+   requires the model to descend and read within a fixed turn budget with the
+   note **off**. If it only works with the note on, the structure failed.
+
+**Scope.** All three tool-call loops share the component:
+`ChatSession.send` (chat), the HTTP `/v1/chat/completions` agent loop, and the
+plugin completion loop. Within-message dedupe/bias is reset by `beginMessage()`.
+Cross-*user-message* survival of `lastListing` (so "what's on my desktop"
+carries into a later "read the file") is **`ChatSession`-only** — the HTTP and
+plugin loops are stateless across requests by design (see the divergence note
+above), so their `AgentTaskState` lives for the single request/invocation.
 
 ---
 

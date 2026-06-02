@@ -211,8 +211,27 @@ enum PreflightCompanions {
     /// section. Skill lines come before sibling tools in each block —
     /// the trailing nudge tells the model to load the skill first since
     /// the skill explains when each sibling tool is appropriate.
-    static func render(_ companions: [PluginCompanion]) -> String? {
+    /// - Parameter compact: when `true` (small-/tiny-context models), drop
+    ///   the per-tool descriptions and the full usage nudge and emit one
+    ///   pointer line per plugin instead. Naming + fully describing tools
+    ///   that are NOT in the schema is a hallucination surface, and on a
+    ///   tiny context window the full listing crowds out the user's turn —
+    ///   so small models get just enough to know more exists. The flag is
+    ///   the session-constant size class, so it never flips mid-session
+    ///   (KV-cache safe).
+    static func render(_ companions: [PluginCompanion], compact: Bool = false) -> String? {
         guard !companions.isEmpty else { return nil }
+        if compact {
+            let plugins = companions.map { $0.pluginDisplay }
+            let list = plugins.joined(separator: ", ")
+            return """
+                ## Plugin Companions
+
+                More tools from the \(list) plugin\(plugins.count == 1 ? "" : "s") \
+                are available but not in your schema. If you need one, find it \
+                with `capabilities_search` and load it with `capabilities_load`.
+                """
+        }
         let body = companions.map(renderBlock).joined(separator: "\n\n")
         return """
             ## Plugin Companions
@@ -253,7 +272,7 @@ enum PreflightCompanions {
         - Load: `capabilities_load({"ids": ["skill/<name>", "tool/<name>"]})`. Batch ids you'll need together in one call.
         - Order: load the skill first when one is listed — it explains when each sibling tool is appropriate.
         - One-shot: a successful `capabilities_load` adds the tool/skill to your schema for the rest of the conversation. Do NOT call `capabilities_load` again for an id you've already loaded.
-        - Use: after loading, call the tool directly by its name (e.g. `browser_open_login(...)`) just like any tool you already had — there is no separate "activate" step.
+        - Use: after loading, call the tool directly by its name — `<tool_name>(...)`, just like any tool you already had — there is no separate "activate" step. Until you load it, a companion tool is NOT callable; do not emit a call for a name that isn't in your schema.
         """
 
     // MARK: - Skill Suggestions

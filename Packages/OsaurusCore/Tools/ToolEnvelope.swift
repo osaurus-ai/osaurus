@@ -37,6 +37,12 @@ public enum ToolEnvelope {
         /// The tool ran and failed for a runtime reason (process exit, file
         /// missing, network error). Default catch-all for thrown errors.
         case executionError = "execution_error"
+        /// A referenced path (file or directory) does not exist. Distinct
+        /// from `executionError` so the harness can classify it as a
+        /// not-found transition and steer the next step (pick from the
+        /// last listing / list the parent) instead of letting the model
+        /// re-derive it. Not retryable as-is — the path must change.
+        case notFound = "not_found"
         /// The model called a tool that does not exist in the registry.
         case toolNotFound = "tool_not_found"
         /// The tool exists but cannot run right now (e.g. sandbox still
@@ -122,6 +128,69 @@ public enum ToolEnvelope {
         success(tool: tool, result: ["text": text], warnings: warnings)
     }
 
+    /// Build a directory-listing success envelope: a structured, actionable
+    /// shape (NOT prose). `entries` is a list of `{name, path, type}` dicts
+    /// where each `path` is a ready-to-use argument for the next `file_read`
+    /// call — the model copies a field instead of parsing a glyph tree. The
+    /// `kind: "listing"` tag lets the harness branch on result type (listing
+    /// vs file content vs not-found) without the model interpreting anything.
+    /// Pretty trees are a presentation concern rendered from `entries` in the
+    /// UI; they are never handed to the model.
+    public static func listing(
+        tool: String? = nil,
+        path: String,
+        entries: [[String: Any]],
+        truncated: Bool,
+        warnings: [String]? = nil
+    ) -> String {
+        let result: [String: Any] = [
+            "kind": "listing",
+            "path": path,
+            "entries": entries,
+            "entry_count": entries.count,
+            "truncated": truncated,
+        ]
+        // A truncated listing is incomplete, so it must NOT be used as a
+        // find-by-name substrate: concluding "absent" from a partial dump is a
+        // silent data-loss bug. Steer find-by-name to `file_search` at the
+        // result level (route-agnostic, visible on the same turn) when the
+        // caller hasn't supplied its own warnings.
+        let effectiveWarnings = (truncated && (warnings?.isEmpty ?? true)) ? [Self.truncatedListingWarning] : warnings
+        return success(tool: tool, result: result, warnings: effectiveWarnings)
+    }
+
+    /// Steer attached to a truncated listing: the entries are incomplete, so a
+    /// specific file must be found via `file_search`, not by scanning the
+    /// partial set.
+    public static let truncatedListingWarning =
+        "Listing truncated; entries are incomplete. To find a specific file by name, call "
+        + "`file_search` with `target:\"files\"` and a token from the name — do not conclude a "
+        + "file is absent from this partial list."
+
+    /// Build a filename-search success envelope: the same structured,
+    /// actionable `entries[]` shape as `listing` (so the model copies a
+    /// `path`), tagged `kind: "search"` so it is distinguishable from a
+    /// directory listing. `query` echoes what was actually matched (post mode
+    /// correction / broadening). The tool returns ALL candidates and never
+    /// picks among them — which match satisfies the request is the model's
+    /// judgement.
+    public static func search(
+        tool: String? = nil,
+        query: String,
+        entries: [[String: Any]],
+        truncated: Bool,
+        warnings: [String]? = nil
+    ) -> String {
+        let result: [String: Any] = [
+            "kind": "search",
+            "query": query,
+            "entries": entries,
+            "match_count": entries.count,
+            "truncated": truncated,
+        ]
+        return success(tool: tool, result: result, warnings: warnings)
+    }
+
     /// Map any thrown error (or generic NSError from registry rejection)
     /// to a structured failure envelope. Used by the chat / HTTP / plugin
     /// tool-call catch sites so the model gets a meaningful `kind` instead
@@ -156,14 +225,14 @@ public enum ToolEnvelope {
                 )
             case .fileNotFound(let path):
                 return failure(
-                    kind: .executionError,
+                    kind: .notFound,
                     message: "File not found: \(path)",
                     tool: tool,
                     retryable: false
                 )
             case .directoryNotFound(let path):
                 return failure(
-                    kind: .executionError,
+                    kind: .notFound,
                     message: "Directory not found: \(path)",
                     tool: tool,
                     retryable: false
@@ -287,7 +356,7 @@ public enum ToolEnvelope {
 
     private static func defaultRetryable(for kind: Kind) -> Bool {
         switch kind {
-        case .rejected, .toolNotFound, .userDenied: return false
+        case .rejected, .toolNotFound, .userDenied, .notFound: return false
         case .invalidArgs, .timeout, .executionError, .unavailable: return true
         }
     }

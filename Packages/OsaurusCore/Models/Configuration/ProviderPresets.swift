@@ -18,6 +18,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     case google
     case xai
     case deepseek
+    case minimax
     case venice
     case openrouter
     case ollama
@@ -35,6 +36,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .google: return "Google"
         case .xai: return "xAI"
         case .deepseek: return "DeepSeek"
+        case .minimax: return "MiniMax"
         case .venice: return "Venice AI"
         case .openrouter: return "OpenRouter"
         case .ollama: return "Ollama"
@@ -52,6 +54,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .google: return "Gemini models"
         case .xai: return "Grok models"
         case .deepseek: return "deepseek-v4-pro / v4-flash"
+        case .minimax: return "MiniMax M-series models"
         case .venice: return "Privacy-first AI"
         case .openrouter: return "Multi-provider"
         case .ollama: return "Run models locally via Ollama"
@@ -69,6 +72,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .google: return "globe"
         case .xai: return "bolt.fill"
         case .deepseek: return "cpu"
+        case .minimax: return "m.square.fill"
         case .venice: return "lock.shield.fill"
         case .openrouter: return "arrow.triangle.branch"
         case .ollama: return "shippingbox.fill"
@@ -86,6 +90,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .google: return [Color(red: 0.26, green: 0.52, blue: 0.96), Color(red: 0.18, green: 0.38, blue: 0.85)]
         case .xai: return [Color(red: 0.1, green: 0.1, blue: 0.1), Color(red: 0.2, green: 0.2, blue: 0.2)]
         case .deepseek: return [Color(red: 0.18, green: 0.36, blue: 0.95), Color(red: 0.34, green: 0.52, blue: 0.98)]
+        case .minimax: return [Color(red: 0.93, green: 0.27, blue: 0.23), Color(red: 0.83, green: 0.15, blue: 0.18)]
         case .venice: return [Color(red: 0.83, green: 0.66, blue: 0.33), Color(red: 0.72, green: 0.53, blue: 0.17)]
         case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
         case .ollama: return [Color(red: 0.36, green: 0.36, blue: 0.4), Color(red: 0.22, green: 0.22, blue: 0.26)]
@@ -103,6 +108,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .google: return "https://aistudio.google.com/apikey"
         case .xai: return "https://console.x.ai/"
         case .deepseek: return "https://platform.deepseek.com/api_keys"
+        case .minimax: return "https://platform.minimax.io/user-center/basic-information/interface-key"
         case .venice: return "https://venice.ai/settings/api"
         case .openrouter: return "https://openrouter.ai/keys"
         case .ollama: return "https://ollama.com/download"
@@ -126,6 +132,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .azureOpenAI: return "https://learn.microsoft.com/azure/ai-foundry/openai/"
         case .atlasCloud: return "https://www.atlascloud.ai/docs/en/models/get-start"
         case .deepseek: return "https://api-docs.deepseek.com/"
+        case .minimax: return "https://platform.minimax.io/docs/api-reference/api-overview"
         case .venice: return "https://docs.venice.ai"
         case .ollama: return "https://github.com/ollama/ollama"
         default: return nil
@@ -177,6 +184,13 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
                 "Go to the DeepSeek Platform API keys page",
                 "Sign in or create an account",
                 "Create a new API key",
+                "Copy and paste it here",
+            ]
+        case .minimax:
+            return [
+                "Go to the MiniMax platform API keys page",
+                "Sign in or create an account",
+                "Create a new secret key",
                 "Copy and paste it here",
             ]
         case .ollama:
@@ -288,6 +302,24 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
                 basePath: "/v1",
                 authType: .apiKey,
                 providerType: .openaiLegacy
+            )
+        case .minimax:
+            return ProviderPresetConfiguration(
+                name: "MiniMax",
+                host: "api.minimax.io",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1",
+                authType: .apiKey,
+                providerType: .openaiLegacy,
+                defaultManualModelIds: [
+                    "MiniMax-M3",
+                    "MiniMax-M2.7",
+                    "MiniMax-M2.7-highspeed",
+                    "MiniMax-M2.5",
+                    "MiniMax-M2.1",
+                    "MiniMax-M2",
+                ]
             )
         case .venice:
             return ProviderPresetConfiguration(

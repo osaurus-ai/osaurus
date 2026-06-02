@@ -1304,15 +1304,95 @@ final class NativeToolCallRowView: NSView {
         guard !trimmed.isEmpty else {
             return ""
         }
-        if let payload = ToolEnvelope.successPayload(result) as? [String: Any],
-            let text = payload["text"] as? String
-        {
-            return text
+        if let payload = ToolEnvelope.successPayload(result) as? [String: Any] {
+            // Directory listings are structured (`kind: "listing"`) — the
+            // model acts on `entries`, but the UI renders a readable tree
+            // from the same structure (presentation, not the model's input).
+            if payload["kind"] as? String == "listing",
+                let entries = payload["entries"] as? [[String: Any]]
+            {
+                let path = payload["path"] as? String ?? "."
+                let truncated = payload["truncated"] as? Bool ?? false
+                return markdownForListing(path: path, entries: entries, truncated: truncated)
+            }
+            // Filename-search results (`kind: "search"`) share the actionable
+            // `entries[]` shape; render the candidate list like a listing.
+            if payload["kind"] as? String == "search",
+                let entries = payload["entries"] as? [[String: Any]]
+            {
+                let query = payload["query"] as? String ?? ""
+                let truncated = payload["truncated"] as? Bool ?? false
+                return markdownForSearch(query: query, entries: entries, truncated: truncated)
+            }
+            if let text = payload["text"] as? String {
+                return text
+            }
         }
         if let pretty = JSONFormatter.prettyPrintedJSONIfValid(trimmed) {
             return "```json\n\(pretty)\n```"
         }
         return trimmed
+    }
+
+    /// Render a structured directory listing as an indented tree for display.
+    /// Entry `path` values are relative to the working root (or absolute
+    /// sandbox paths); we strip the listed root prefix and indent by the
+    /// remaining depth so the card reads like a tree without the model ever
+    /// seeing one.
+    private static func markdownForListing(
+        path: String,
+        entries: [[String: Any]],
+        truncated: Bool
+    ) -> String {
+        if entries.isEmpty {
+            return "`\(path)` — (empty directory)"
+        }
+        let countLabel = entries.count == 1 ? "1 entry" : "\(entries.count) entries"
+        var lines: [String] = ["`\(path)` — \(countLabel)"]
+        let prefix: String = {
+            guard path != ".", !path.isEmpty else { return "" }
+            return path.hasSuffix("/") ? path : path + "/"
+        }()
+        for entry in entries {
+            guard let entryPath = entry["path"] as? String else { continue }
+            let isDir = (entry["type"] as? String) == "directory"
+            var display = entryPath
+            if !prefix.isEmpty, display.hasPrefix(prefix) {
+                display = String(display.dropFirst(prefix.count))
+            }
+            let depth = max(0, display.components(separatedBy: "/").count - 1)
+            let indent = String(repeating: "  ", count: depth)
+            let leaf = (display as NSString).lastPathComponent
+            lines.append("\(indent)- \(leaf)\(isDir ? "/" : "")")
+        }
+        if truncated {
+            lines.append("… (listing truncated — use `file_search` to find a specific file)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Render a structured filename-search result (`kind: "search"`) as a flat
+    /// candidate list. Mirrors `markdownForListing` but keyed on the query
+    /// rather than a directory path; the model picks among the candidates.
+    private static func markdownForSearch(
+        query: String,
+        entries: [[String: Any]],
+        truncated: Bool
+    ) -> String {
+        if entries.isEmpty {
+            return "No files matched `\(query)`"
+        }
+        let countLabel = entries.count == 1 ? "1 match" : "\(entries.count) matches"
+        var lines: [String] = ["`\(query)` — \(countLabel)"]
+        for entry in entries {
+            guard let entryPath = entry["path"] as? String else { continue }
+            let isDir = (entry["type"] as? String) == "directory"
+            lines.append("- \(entryPath)\(isDir ? "/" : "")")
+        }
+        if truncated {
+            lines.append("… (search truncated — narrow the path or use a more specific token)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func applyHeight() {

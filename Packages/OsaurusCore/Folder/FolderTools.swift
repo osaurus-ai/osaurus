@@ -312,6 +312,79 @@ enum FolderToolHelpers {
             retryable: false
         )
     }
+
+    // MARK: - Filename search matching
+
+    /// True when a filename pattern contains glob metacharacters (`*` / `?`).
+    /// Shared by the host and sandbox `target:"files"` routes so both decide
+    /// substring-vs-glob identically: a bare word is a case-insensitive
+    /// substring, a pattern with wildcards is a case-insensitive glob.
+    static func patternHasGlobMetacharacters(_ pattern: String) -> Bool {
+        pattern.contains("*") || pattern.contains("?")
+    }
+
+    // MARK: - Search traversal guards
+
+    /// Build-artifact directories pruned during a recursive host search.
+    /// Deliberately conservative: only directories that never hold user
+    /// documents, so pruning can't hide real files in a home/Desktop-rooted
+    /// workspace. Hidden dirs (`.git`, `.build`, `.venv`, …) are already
+    /// dropped by `.skipsHiddenFiles`; this catches the non-hidden ones.
+    static let prunedSearchDirectories: Set<String> = ["node_modules", "Pods", "DerivedData"]
+
+    /// Maximum number of filesystem entries a single host search pulls from
+    /// the enumerator before stopping and reporting truncation. A
+    /// deterministic worst-case traversal bound so a low/zero-match query
+    /// over a huge tree can't walk the entire subtree (and blow past the
+    /// registry's 120s wall-clock cap with no results). Filename matching at
+    /// this count is sub-second; content reads stay separately bounded by
+    /// `maxContentSearchFileBytes` + the binary-extension skip.
+    static let maxSearchEntriesVisited = 20_000
+
+    /// Shared prune step for a recursive host search enumerator. When
+    /// `fileURL` is a directory, prunes build-artifact subtrees (via
+    /// `skipDescendants()`) and returns true so the caller skips it; returns
+    /// false for regular files so the caller proceeds to match/read them.
+    static func pruneSearchDirectory(
+        _ fileURL: URL,
+        isDirectory: Bool,
+        enumerator: FileManager.DirectoryEnumerator?
+    ) -> Bool {
+        guard isDirectory else { return false }
+        if prunedSearchDirectories.contains(fileURL.lastPathComponent) {
+            enumerator?.skipDescendants()
+        }
+        return true
+    }
+
+    /// Cancellation + visit-budget gate for one search enumerator step,
+    /// shared by both host search loops. Throws `CancellationError` when the
+    /// surrounding task is cancelled (so a timed-out search stops instead of
+    /// walking on as a background zombie), counts the visited entry, and
+    /// returns false once `limit` is exceeded so the caller can stop and mark
+    /// the result truncated.
+    static func searchStepWithinBudget(visited: inout Int, limit: Int) throws -> Bool {
+        try Task.checkCancellation()
+        visited += 1
+        return visited <= limit
+    }
+
+    /// Per-file size cap for a content search. Files larger than this are
+    /// skipped before being read into memory, so a workspace full of large
+    /// media / data files doesn't load each one only to fail UTF-8 decode.
+    static let maxContentSearchFileBytes = 2 * 1024 * 1024
+
+    /// Extensions skipped by a content search before any read: obvious
+    /// binary/media/archive/office-binary types that can't yield a useful
+    /// text substring match. The UTF-8 decode `nil`-skip remains the backstop.
+    static let contentSearchSkippedExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "heic", "ico", "icns",
+        "mov", "mp4", "m4v", "avi", "mkv", "webm",
+        "mp3", "wav", "aac", "m4a", "flac", "ogg",
+        "zip", "gz", "tar", "tgz", "bz2", "xz", "7z", "rar", "dmg",
+        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "key", "numbers", "pages",
+        "bin", "exe", "dll", "so", "dylib", "o", "a", "class", "wasm",
+    ]
 }
 
 // MARK: - Core Tools
@@ -386,6 +459,80 @@ struct FileTreeTool: OsaurusTool {
     /// separately-registered tool.
     func treeText(for targetURL: URL, maxDepth: Int) -> String {
         buildTree(targetURL, maxDepth: maxDepth)
+    }
+
+    /// Structured directory listing for `targetURL` (already resolved and
+    /// known to be a directory). Returns entries whose `path` is relative to
+    /// the working root, so the model can copy a `path` field straight into
+    /// the next `file_read` call instead of parsing a glyph tree. Honors the
+    /// same ignore/secret/cap rules as `buildTree`. `truncated` is true when
+    /// the file cap or a per-directory file cap dropped entries.
+    func entries(for targetURL: URL, maxDepth: Int) -> (entries: [[String: Any]], truncated: Bool) {
+        var out: [[String: Any]] = []
+        var fileCount = 0
+        var truncated = false
+        let maxFiles = Self.maxFiles
+        let maxFilesPerDir = Self.maxFilesPerDir
+        let ignorePatterns = FolderToolHelpers.detectProjectType(rootPath).ignorePatterns
+        let rootStandardized = rootPath.standardized.path
+
+        func relativePath(_ url: URL) -> String {
+            let p = url.standardized.path
+            if p == rootStandardized { return "." }
+            if p.hasPrefix(rootStandardized + "/") {
+                return String(p.dropFirst(rootStandardized.count + 1))
+            }
+            return url.lastPathComponent
+        }
+
+        func traverse(_ currentURL: URL, depth: Int) {
+            guard depth <= maxDepth else { return }
+            let fm = FileManager.default
+            guard
+                let contents = try? fm.contentsOfDirectory(
+                    at: currentURL,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: [.skipsHiddenFiles]
+                )
+            else { return }
+
+            let sorted = contents.sorted { a, b in
+                let aIsDir = (try? a.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                let bIsDir = (try? b.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                if aIsDir != bIsDir { return aIsDir }
+                return a.lastPathComponent.lowercased() < b.lastPathComponent.lowercased()
+            }
+
+            var filesShownHere = 0
+            for item in sorted {
+                guard fileCount < maxFiles else {
+                    truncated = true
+                    return
+                }
+                let name = item.lastPathComponent
+                if FolderToolHelpers.shouldIgnore(name, patterns: ignorePatterns) { continue }
+                if FolderToolHelpers.shouldRefuseSecret(fileURL: item) { continue }
+
+                let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                if isDir {
+                    out.append(["name": name, "path": relativePath(item), "type": "directory"])
+                    if depth < maxDepth {
+                        traverse(item, depth: depth + 1)
+                    }
+                } else {
+                    if filesShownHere >= maxFilesPerDir {
+                        truncated = true
+                        continue
+                    }
+                    out.append(["name": name, "path": relativePath(item), "type": "file"])
+                    filesShownHere += 1
+                    fileCount += 1
+                }
+            }
+        }
+
+        traverse(targetURL, depth: 1)
+        return (out, truncated)
     }
 
     /// File-count ceiling — caps how many leaf files the tree enumerates.
@@ -640,8 +787,13 @@ struct FileReadTool: OsaurusTool {
         // envelope as `file_read` since that's the only file tool now.
         if isDirectory.boolValue {
             let maxDepth = coerceInt(args["max_depth"]) ?? 3
-            let listing = FileTreeTool(rootPath: rootPath).treeText(for: fileURL, maxDepth: maxDepth)
-            return ToolEnvelope.success(tool: name, text: listing)
+            let listing = FileTreeTool(rootPath: rootPath).entries(for: fileURL, maxDepth: maxDepth)
+            return ToolEnvelope.listing(
+                tool: name,
+                path: relativePath,
+                entries: listing.entries,
+                truncated: listing.truncated
+            )
         }
 
         let sheetName: String?
@@ -737,6 +889,7 @@ struct FileReadTool: OsaurusTool {
             text = output
         }
         var result: [String: Any] = [
+            "kind": "file",
             "text": text,
             "path": relativePath,
             "start_line": validStart,
@@ -1417,7 +1570,8 @@ struct FileSearchTool: OsaurusTool {
     let description =
         "Search files in the working directory. With `target=\"content\"` (default) it finds text by "
         + "case-insensitive substring match, returning matching lines with file paths and line numbers. "
-        + "With `target=\"files\"` it finds files by name glob (e.g. `*.swift`). Use this rather than a "
+        + "With `target=\"files\"` it finds files by name (case-insensitive substring, e.g. `q4` matches "
+        + "`q4_sales_report.xlsx`; use `*`/`?` for a glob like `*.swift`). Use this rather than a "
         + "shell `grep` / `rg` / `find`."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -1427,7 +1581,8 @@ struct FileSearchTool: OsaurusTool {
                 "type": .string("string"),
                 "description": .string(
                     "When `target=\"content\"`: text to find (case-insensitive substring). "
-                        + "When `target=\"files\"`: filename glob (e.g. `*.swift`, `test_*`)."
+                        + "When `target=\"files\"`: filename to find (case-insensitive substring, e.g. "
+                        + "`q4`; use `*`/`?` for a glob like `*.swift`, `test_*`)."
                 ),
             ]),
             "target": .object([
@@ -1460,9 +1615,14 @@ struct FileSearchTool: OsaurusTool {
     ])
 
     private let rootPath: URL
+    /// Entries pulled from the enumerator before a search stops and reports
+    /// truncation. Defaults to the shared budget; injectable so tests can
+    /// exercise the bound without creating tens of thousands of files.
+    private let maxEntriesVisited: Int
 
-    init(rootPath: URL) {
+    init(rootPath: URL, maxEntriesVisited: Int = FolderToolHelpers.maxSearchEntriesVisited) {
         self.rootPath = rootPath
+        self.maxEntriesVisited = maxEntriesVisited
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -1501,11 +1661,15 @@ struct FileSearchTool: OsaurusTool {
 
         let searchURL = try FolderToolHelpers.resolvePath(searchPath, rootPath: rootPath)
 
-        // `target="files"`: filename-glob find (no content read). Mirrors
+        // `target="files"`: filename find (no content read). Mirrors
         // `sandbox_search_files(target:"files")` so the unified family can
-        // locate files by name on either filesystem.
+        // locate files by name on either filesystem. The tool does the
+        // deterministic search mechanics (broaden-on-empty) and returns ALL
+        // candidates as structured `entries[]`; which match satisfies the
+        // request is the model's judgement, never auto-picked here.
         if target == "files" {
-            return findFilesByName(root: searchURL, glob: pattern, maxResults: maxResults)
+            let found = try searchFilesByName(root: searchURL, query: pattern, maxResults: maxResults)
+            return filesSearchEnvelope(originalQuery: pattern, found: found)
         }
 
         var results: [String] = []
@@ -1528,22 +1692,40 @@ struct FileSearchTool: OsaurusTool {
             return FolderToolHelpers.secretRefusalEnvelope(relativePath: searchPath, tool: name)
         }
 
+        var budgetTruncated = false
+
         if isDirectory.boolValue {
             // Search directory recursively
             let enumerator = FileManager.default.enumerator(
                 at: searchURL,
-                includingPropertiesForKeys: [.isRegularFileKey],
+                includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
                 options: [.skipsHiddenFiles]
             )
 
+            var visited = 0
             while let fileURL = enumerator?.nextObject() as? URL {
                 guard totalMatches < maxResults else { break }
-
-                // Check if regular file
                 guard
-                    let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
-                    resourceValues.isRegularFile == true
-                else { continue }
+                    try FolderToolHelpers.searchStepWithinBudget(
+                        visited: &visited,
+                        limit: maxEntriesVisited
+                    )
+                else {
+                    budgetTruncated = true
+                    break
+                }
+
+                let resourceValues = try? fileURL.resourceValues(forKeys: [
+                    .isRegularFileKey, .isDirectoryKey,
+                ])
+                if FolderToolHelpers.pruneSearchDirectory(
+                    fileURL,
+                    isDirectory: resourceValues?.isDirectory == true,
+                    enumerator: enumerator
+                ) {
+                    continue
+                }
+                guard resourceValues?.isRegularFile == true else { continue }
 
                 // Combined-mode secret denylist: never return contents of
                 // a non-hidden secret (`server.pem`, `id_rsa`, …). `.env`
@@ -1579,9 +1761,28 @@ struct FileSearchTool: OsaurusTool {
         }
 
         if results.isEmpty {
+            // Mode correction (deterministic, no NL parsing): a content search
+            // that finds nothing is the classic "wanted files, grepped bodies"
+            // mistake. Run the files-mode search; if it finds candidates,
+            // return them so the reasonable-but-wrong `target` succeeds at the
+            // model's actual intent. Only fires on empty content, so it never
+            // overrides a real content hit.
+            let fallback = try searchFilesByName(root: searchURL, query: pattern, maxResults: maxResults)
+            if !fallback.entries.isEmpty {
+                let note =
+                    "(no content matches for '\(pattern)'; showing files named like '\(fallback.matchedQuery)')"
+                return ToolEnvelope.search(
+                    tool: name,
+                    query: fallback.matchedQuery,
+                    entries: fallback.entries,
+                    truncated: fallback.truncated,
+                    warnings: fallback.truncated ? [note, Self.searchBudgetWarning] : [note]
+                )
+            }
+            let base = "No matches found for '\(pattern)'"
             return ToolEnvelope.success(
                 tool: name,
-                text: "No matches found for '\(pattern)'"
+                text: budgetTruncated ? base + Self.budgetTruncationNote : base
             )
         }
 
@@ -1590,56 +1791,192 @@ struct FileSearchTool: OsaurusTool {
 
         if totalMatches >= maxResults {
             output += "\n\n(results truncated at \(maxResults))"
+        } else if budgetTruncated {
+            output += Self.budgetTruncationNote
         }
 
         return ToolEnvelope.success(tool: name, text: output)
     }
 
-    /// Filename-glob find under `root` (recursive, hidden + secret files
-    /// skipped), returning matching relative paths as a host-style text
-    /// envelope. The glob supports `*` and `.`; matching is anchored to the
-    /// full basename. Mirrors the sandbox `find … -name` behaviour.
-    private func findFilesByName(root: URL, glob: String, maxResults: Int) -> String {
-        let regex =
-            "^"
-            + NSRegularExpression.escapedPattern(for: glob)
+    /// Appended when a search stops at `maxEntriesVisited` rather than from
+    /// running out of matches, so the model knows the result is incomplete
+    /// because the tree was too large — and what to do about it.
+    private static let budgetTruncationNote =
+        "\n\n(search stopped after scanning the entry limit; narrow the `path` "
+        + "or use a more specific pattern)"
+
+    /// One files-mode search pass: collect basename matches under `root`
+    /// (recursive, hidden + secret files skipped, build-artifact dirs pruned)
+    /// as structured `{name, path, type}` entries. A bare pattern is a
+    /// case-insensitive substring of the basename; a pattern with `*`/`?` is a
+    /// case-insensitive glob anchored to the full basename. Mirrors the
+    /// sandbox `find … -iname` behaviour. `truncated` is true when the walk
+    /// stopped at the visit budget rather than from running out of matches.
+    private func collectFileMatches(root: URL, glob: String, maxResults: Int) throws
+        -> (entries: [[String: Any]], truncated: Bool)
+    {
+        let regexBody =
+            NSRegularExpression.escapedPattern(for: glob)
             .replacingOccurrences(of: "\\*", with: ".*")
             .replacingOccurrences(of: "\\?", with: ".")
-            + "$"
+        let regex =
+            FolderToolHelpers.patternHasGlobMetacharacters(glob) ? "^\(regexBody)$" : regexBody
 
-        var matches: [String] = []
+        var entries: [[String: Any]] = []
+        var budgetTruncated = false
         let enumerator = FileManager.default.enumerator(
             at: root,
-            includingPropertiesForKeys: [.isRegularFileKey],
+            includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
             options: [.skipsHiddenFiles]
         )
+        var visited = 0
         while let fileURL = enumerator?.nextObject() as? URL {
-            guard matches.count < maxResults else { break }
+            guard entries.count < maxResults else { break }
             guard
-                let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
-                resourceValues.isRegularFile == true
-            else { continue }
+                try FolderToolHelpers.searchStepWithinBudget(
+                    visited: &visited,
+                    limit: maxEntriesVisited
+                )
+            else {
+                budgetTruncated = true
+                break
+            }
+            let resourceValues = try? fileURL.resourceValues(forKeys: [
+                .isRegularFileKey, .isDirectoryKey,
+            ])
+            if FolderToolHelpers.pruneSearchDirectory(
+                fileURL,
+                isDirectory: resourceValues?.isDirectory == true,
+                enumerator: enumerator
+            ) {
+                continue
+            }
+            guard resourceValues?.isRegularFile == true else { continue }
             if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) { continue }
-            let name = fileURL.lastPathComponent
-            guard name.range(of: regex, options: .regularExpression) != nil else { continue }
+            let entryName = fileURL.lastPathComponent
+            guard entryName.range(of: regex, options: [.regularExpression, .caseInsensitive]) != nil
+            else { continue }
             let relativePath =
                 fileURL.path.hasPrefix(rootPath.path)
                 ? String(fileURL.path.dropFirst(rootPath.path.count + 1))
-                : name
-            matches.append(relativePath)
+                : entryName
+            entries.append(["name": entryName, "path": relativePath, "type": "file"])
         }
-
-        if matches.isEmpty {
-            return ToolEnvelope.success(tool: name, text: "No files found matching '\(glob)'")
-        }
-        var output = "Found \(matches.count) file(s):\n\n" + matches.joined(separator: "\n")
-        if matches.count >= maxResults {
-            output += "\n\n(results truncated at \(maxResults))"
-        }
-        return ToolEnvelope.success(tool: name, text: output)
+        return (entries, budgetTruncated)
     }
 
+    /// The result of a files-mode search after any broadening: the candidate
+    /// entries, the query actually matched (post-broaden), whether the walk
+    /// hit the visit budget, and an optional human note describing broadening.
+    private struct FileSearchOutcome {
+        let entries: [[String: Any]]
+        let matchedQuery: String
+        let truncated: Bool
+        let note: String?
+    }
+
+    /// Files-mode search with bounded broaden-on-empty. Runs the query as
+    /// given; if it finds nothing AND the query has multiple tokens, retries
+    /// with the longest token, then the next-longest — at most 2 retries —
+    /// returning the first non-empty candidate set. The tokenizer is dumb on
+    /// purpose (length-sorted alphanumeric tokens); no natural-language
+    /// cleverness. Never decides which match the user meant.
+    private func searchFilesByName(root: URL, query: String, maxResults: Int) throws
+        -> FileSearchOutcome
+    {
+        let first = try collectFileMatches(root: root, glob: query, maxResults: maxResults)
+        let empty = FileSearchOutcome(
+            entries: [],
+            matchedQuery: query,
+            truncated: first.truncated,
+            note: nil
+        )
+        if !first.entries.isEmpty {
+            return FileSearchOutcome(
+                entries: first.entries,
+                matchedQuery: query,
+                truncated: first.truncated,
+                note: nil
+            )
+        }
+
+        let tokens = Self.broadeningTokens(query)
+        guard tokens.count > 1 else { return empty }
+        for token in tokens.prefix(2) where token != query {
+            let broadened = try collectFileMatches(root: root, glob: token, maxResults: maxResults)
+            if !broadened.entries.isEmpty {
+                return FileSearchOutcome(
+                    entries: broadened.entries,
+                    matchedQuery: token,
+                    truncated: broadened.truncated,
+                    note: "(no match for '\(query)'; broadened to '\(token)')"
+                )
+            }
+        }
+        return empty
+    }
+
+    /// Split a filename query into distinctive tokens for broaden-on-empty,
+    /// longest first (the distinctive token is usually the longest). Splits on
+    /// whitespace / `_` / `-` / `.` and drops tokens with no alphanumerics
+    /// (so a bare `*` never becomes a broaden target).
+    private static func broadeningTokens(_ query: String) -> [String] {
+        let separators = CharacterSet(charactersIn: " \t\n_-.")
+        return query.components(separatedBy: separators)
+            .filter { token in token.contains(where: { $0.isLetter || $0.isNumber }) }
+            .sorted { $0.count > $1.count }
+    }
+
+    /// Wrap a files-mode search outcome into a `kind:"search"` envelope. On a
+    /// non-empty result the candidates are returned for the model to pick
+    /// among; on empty (after any broadening) it returns no candidates plus a
+    /// steer to list the parent directory or ask the user — the tool never
+    /// guesses which file was meant.
+    private func filesSearchEnvelope(originalQuery: String, found: FileSearchOutcome) -> String {
+        if found.entries.isEmpty {
+            let steer =
+                "No files matched '\(originalQuery)'. List the parent directory with `file_read` "
+                + "to see what's there, or ask the user which file they mean."
+            return ToolEnvelope.search(
+                tool: name,
+                query: originalQuery,
+                entries: [],
+                truncated: found.truncated,
+                warnings: found.truncated ? [steer, Self.searchBudgetWarning] : [steer]
+            )
+        }
+        var warnings: [String] = []
+        if let note = found.note { warnings.append(note) }
+        if found.truncated { warnings.append(Self.searchBudgetWarning) }
+        return ToolEnvelope.search(
+            tool: name,
+            query: found.matchedQuery,
+            entries: found.entries,
+            truncated: found.truncated,
+            warnings: warnings.isEmpty ? nil : warnings
+        )
+    }
+
+    /// Warning-array form of `budgetTruncationNote` (no leading newlines) for
+    /// the structured `search` envelope.
+    private static let searchBudgetWarning =
+        "Search stopped after scanning the entry limit; results may be incomplete — narrow the "
+        + "`path` or use a more specific token."
+
     private func searchFile(_ url: URL, pattern: String, maxResults: Int) -> [String]? {
+        // Skip obvious binaries by extension and any file over the size cap
+        // before loading it into memory; the UTF-8 decode below is the final
+        // backstop for misnamed or unexpectedly-large text.
+        if FolderToolHelpers.contentSearchSkippedExtensions.contains(
+            url.pathExtension.lowercased()
+        ) {
+            return nil
+        }
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+            size > FolderToolHelpers.maxContentSearchFileBytes
+        {
+            return nil
+        }
         guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
 
         let relativePath =

@@ -79,11 +79,11 @@ public struct ShareArtifactTool: OsaurusTool {
         }
 
         let path = nonEmpty(json["path"])
-        let rawContent = nonEmpty(json["content"])
+        let providedContent = nonEmpty(json["content"])
         let filename = nonEmpty(json["filename"])
         let description = nonEmpty(json["description"])
 
-        guard path != nil || rawContent != nil else {
+        guard path != nil || providedContent != nil else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
@@ -92,6 +92,12 @@ public struct ShareArtifactTool: OsaurusTool {
                 tool: name
             )
         }
+
+        // Path mode wins when both are supplied: models often mirror the file
+        // path into `content` alongside a real `path`. Honoring that content
+        // would write the literal string as the artifact body and ship a broken
+        // file, so drop `content` whenever `path` is present.
+        let rawContent = path == nil ? providedContent : nil
 
         if rawContent != nil {
             guard filename != nil else {

@@ -193,6 +193,16 @@ public enum ProviderCredentialInstructionsCatalog {
                 storageAuthType: .apiKey,
                 presetId: preset.rawValue
             )
+        case .minimax:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("MiniMax"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Get a key from platform.minimax.io."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
         case .xai:
             return ProviderCredentialInstructions(
                 providerType: providerType,

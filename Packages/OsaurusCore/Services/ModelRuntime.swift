@@ -2545,7 +2545,8 @@ public actor ModelRuntime {
     }
 
     private static func isStepJANGTQName(_ value: String) -> Bool {
-        let normalized = value
+        let normalized =
+            value
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: "_", with: "-")

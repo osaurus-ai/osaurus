@@ -42,6 +42,44 @@ which is sugar for `result: { "text": "..." }`. The chat UI's tool-call
 card detects this pattern and renders the text verbatim as markdown
 instead of a JSON code block.
 
+### Structured, actionable result kinds
+
+Results the agent loop needs to route on carry a discriminated `kind` so the
+harness — not the model — decides the next move. The model acts by copying a
+field, not by parsing prose:
+
+- **Directory listing** (`file_read` on a directory, host + sandbox), built via
+  `ToolEnvelope.listing(...)`:
+
+  ```json
+  {
+    "ok": true,
+    "result": {
+      "kind": "listing",
+      "path": "Desktop",
+      "entries": [
+        { "name": "notes.txt", "path": "Desktop/notes.txt", "type": "file" },
+        { "name": "photos",    "path": "Desktop/photos",    "type": "directory" }
+      ],
+      "entry_count": 2,
+      "truncated": false
+    }
+  }
+  ```
+
+  Each `entries[i].path` is a ready-to-use `path` argument for the next
+  `file_read` — descending is a field copy. There is **no tree string** in the
+  model-facing result; the chat UI renders a tree from `entries`, and
+  `ContextBudgetManager` collapses an old listing to `"<N> entries in <path>"`.
+  `entry_count` / `truncated` drive the loop's empty/partial/populated bias.
+
+- **File content** (`file_read` on a file) carries `"kind": "file"` alongside
+  `text`, `path`, and the line/byte metadata.
+
+`AgentTaskState.classify(_:)` reads these discriminators (`listing` →
+empty/partial/populated, `file` → file content, `not_found` failures →
+not-found) to drive the agent loop. See `docs/AGENT_LOOP.md`.
+
 ## Failure envelope
 
 ```json
@@ -72,9 +110,16 @@ instead of a JSON code block.
 | `rejected`         | blocked by configured policy                                   | `false`             |
 | `user_denied`      | user clicked Deny on an interactive approval                   | `false`             |
 | `timeout`          | tool ran past its time budget                                  | `true`              |
-| `execution_error`  | tool ran but failed (process exited non-zero, file missing...) | `true`              |
+| `execution_error`  | tool ran but failed (process exited non-zero, etc.)            | `true`              |
+| `not_found`        | a referenced path (file or directory) does not exist           | `false`             |
 | `unavailable`      | tool exists but can't run right now (sandbox booting, etc.)    | `true`              |
 | `tool_not_found`   | model called a tool the registry doesn't have                  | `false`             |
+
+`not_found` is distinct from `execution_error` so the agent loop's task-state
+machine (`AgentTaskState`, see `docs/AGENT_LOOP.md`) can classify a missing
+path as a not-found transition and steer the next step (pick a `path` from the
+last listing, or list the parent) rather than treating it as a generic runtime
+failure. `FolderToolError.fileNotFound` / `.directoryNotFound` both map here.
 
 ---
 

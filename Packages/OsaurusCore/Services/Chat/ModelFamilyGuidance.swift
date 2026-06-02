@@ -10,10 +10,19 @@
 //    - GLM/Qwen are usually well-behaved; a small reminder is enough.
 //    - DeepSeek/DSV4 can narrate a tool plan instead of emitting DSML, so
 //      it gets a compact act-now reminder.
-//    - Everything else gets nothing — silence is a feature.
+//    - LFM2 (Liquid) is a small-active MoE that, without an obedience
+//      counterweight, over-applies the prohibition sections (codeStyle /
+//      riskAware) and refuses or hedges. It gets a persistence block.
+//    - Everything else gets a minimal default obedience block. An
+//      unguided model paired with the always-on prohibition sections
+//      reads as net-restrictive (refuses more) and, when it does act
+//      with no fitting tool, fabricates. The default block is the
+//      smallest counterweight that keeps it obedient without encouraging
+//      tool enumeration (it explicitly says "only call tools that exist").
 //
-//  Each family gets a tightly-targeted block instead of one universal
-//  addendum that satisfies no one and inflates every prompt.
+//  Each family gets a tightly-targeted block; the default block is kept
+//  minimal so it does not inflate every prompt the way a full universal
+//  agentic addendum would.
 //
 //  The blocks are static strings so they survive the prompt-caching path.
 //  Resolution is a case-insensitive substring match on the model id, with
@@ -28,6 +37,7 @@ enum ModelFamily: String, Sendable {
     case googleGemma
     case glmQwen
     case deepSeek
+    case lfm2
     case other
 }
 
@@ -50,24 +60,45 @@ enum ModelFamilyGuidance {
         for (family, markers) in groups where markers.contains(where: raw.contains) {
             return family
         }
+        // LFM2 uses the precise name matcher (rejects adjacent future
+        // families like `lfm21`) rather than a bare substring so it stays
+        // consistent with the rest of the runtime's family detection.
+        if ModelFamilyNames.isLFM2Family(raw) {
+            return .lfm2
+        }
         return .other
     }
 
-    /// The guidance block for a family, or nil when no extra guidance is warranted.
-    /// Blocks are intentionally short — the goal is targeted nudges, not a manual.
-    static func guidance(for family: ModelFamily) -> String? {
+    /// The guidance block for a family. Every family — including `.other` —
+    /// now returns a block: the family-specific ones target known failure
+    /// modes, and the default block is the minimal obedience counterweight
+    /// for unrecognised families (Apple Foundation, etc.) so they are not
+    /// left with only the prohibition sections. Blocks are intentionally
+    /// short — targeted nudges, not a manual. Non-optional: every family
+    /// resolves to a block now, so the "skip the row" decision lives one
+    /// level up in `guidance(forModelId:)` (which still returns nil for a
+    /// blank id).
+    static func guidance(for family: ModelFamily) -> String {
         switch family {
         case .gptCodex: return gptCodexGuidance
         case .googleGemma: return googleGemmaGuidance
         case .glmQwen: return glmQwenGuidance
         case .deepSeek: return deepSeekGuidance
-        case .other: return nil
+        case .lfm2: return lfm2Guidance
+        case .other: return defaultGuidance
         }
     }
 
     /// Convenience: resolve and return guidance for a model id in one call.
+    /// Returns `nil` for a nil/blank id (the fresh-preview state before a
+    /// model is picked) — the default obedience block is for known-but-
+    /// unrecognised models, not "no model yet", and emitting it speculatively
+    /// would bias the budget popover before the model is even chosen.
     static func guidance(forModelId modelId: String?) -> String? {
-        guidance(for: family(for: modelId))
+        guard let raw = modelId?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty
+        else { return nil }
+        return guidance(for: family(for: raw))
     }
 
     // MARK: - Family blocks
@@ -184,5 +215,44 @@ enum ModelFamilyGuidance {
         - Use only tools present in the schema for this request. If the needed \
         capability is missing, use the listed discovery path or tell the user \
         exactly what is unavailable.
+        """
+
+    /// LFM2 / Liquid: small-active MoE that hedges and refuses when it sees
+    /// the prohibition sections (codeStyle / riskAware) without an obedience
+    /// counterweight. This block restores the "you have tools, act when you
+    /// can" framing. The live-data/anti-fabrication push lives once in
+    /// `SystemPromptTemplates.groundingDirective` (which always co-fires when
+    /// this block does), so it is intentionally not repeated here.
+    static let lfm2Guidance = """
+        # Reminders
+
+        - You have tools. When a listed tool can satisfy the request, call it — \
+        do not decline, and do not just describe what you would do.
+        - Only call tools that exist in your schema. If a needed capability is \
+        missing, use `capabilities_search` to find it, work around it, or tell \
+        the user plainly — never invent a tool name.
+        - For local, reversible work (reading, editing a file, running a test), \
+        just proceed. Ask a clarifying question only when guessing wrong would \
+        change the result.
+        - Keep going until the task is done, then stop — don't add extra steps \
+        to look thorough.
+        """
+
+    /// Default block for unrecognised families (Apple Foundation and any
+    /// future model). The smallest obedience counterweight that offsets the
+    /// always-on prohibition sections without encouraging tool enumeration:
+    /// the "only call tools that exist" line is what keeps an unguided model
+    /// from listing or inventing tool names. Live-data/anti-fabrication is
+    /// owned by `SystemPromptTemplates.groundingDirective` (always co-fires),
+    /// so it is intentionally not repeated here.
+    static let defaultGuidance = """
+        # Reminders
+
+        - Use a listed tool when it improves correctness or grounds a claim. \
+        Don't decline a request you have the tools to satisfy.
+        - Only call tools that exist in your schema. If a capability is missing, \
+        search for it, work around it, or tell the user — never invent a tool name.
+        - For local, reversible work, just proceed; ask only when guessing wrong \
+        would change the result.
         """
 }
