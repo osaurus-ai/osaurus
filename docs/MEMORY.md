@@ -275,6 +275,8 @@ Agents can search their own memory via the built-in `search_memory(scope, query)
 
 The v1 scopes `working`, `summaries`, `all`, and `graph` are gone — `working` was subsumed by `pinned`, `summaries` was renamed to `episodes`, and `all` / `graph` are no longer exposed. The relevance gate already picks the right slice for context injection; the tool exists for explicit recall the agent decides it needs.
 
+**Opt-in per agent.** The `search_memory` tool is gated by `Agent.settings.searchMemoryEnabled` (default **off**), surfaced as **Memory Recall** under Configure → Features. It is decoupled from the **Memory** toggle (`disableMemory`): Memory controls passive context injection and transcript recording, while Memory Recall controls only mid-session active lookups. An agent can read injected memory without exposing the recall tool, or vice versa.
+
 ---
 
 ## Managing Memory

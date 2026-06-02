@@ -397,6 +397,85 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    // MARK: - Per-agent built-in tool gates
+
+    /// With default agent settings (every feature gate off, including the
+    /// self-scheduling opt-in) the `render_chart` / `speak` / `search_memory`
+    /// built-ins and the scheduler trio are all stripped from the auto-mode
+    /// schema — that's the lean default surface.
+    @Test
+    func autoMode_stripsGatedBuiltInsByDefault() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            let names = Set(
+                SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .none)
+                    .map { $0.function.name }
+            )
+            #expect(!names.contains("render_chart"))
+            #expect(!names.contains("speak"))
+            #expect(!names.contains("search_memory"))
+            // Self-scheduling defaults off → scheduler trio stripped.
+            #expect(!names.contains("schedule_next_run"))
+            #expect(!names.contains("cancel_next_run"))
+            #expect(!names.contains("notify"))
+        }
+    }
+
+    /// Enabling each per-agent gate surfaces the matching built-in; the
+    /// self-scheduling opt-in surfaces the scheduler trio independently of
+    /// the schedule-mode picker.
+    @Test
+    func autoMode_includesGatedBuiltInsWhenEnabled() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            let manager = AgentManager.shared
+            guard var agent = manager.agent(for: agentId) else {
+                Issue.record("agent vanished")
+                return
+            }
+            agent.settings.renderChartEnabled = true
+            agent.settings.speakEnabled = true
+            agent.settings.searchMemoryEnabled = true
+            agent.settings.selfSchedulingEnabled = true
+            manager.update(agent)
+
+            let names = Set(
+                SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .none)
+                    .map { $0.function.name }
+            )
+            #expect(names.contains("render_chart"))
+            #expect(names.contains("speak"))
+            #expect(names.contains("search_memory"))
+            // Self-scheduling on → scheduler trio present.
+            #expect(names.contains("schedule_next_run"))
+            #expect(names.contains("cancel_next_run"))
+            #expect(names.contains("notify"))
+        }
+    }
+
+    /// The self-scheduling gate is decoupled from the schedule-mode picker:
+    /// an ambient-mode agent that hasn't opted into self-scheduling still has
+    /// the scheduler trio stripped.
+    @Test
+    func autoMode_scheduleModeDoesNotImplySelfScheduling() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            let manager = AgentManager.shared
+            guard var agent = manager.agent(for: agentId) else {
+                Issue.record("agent vanished")
+                return
+            }
+            agent.settings.schedule = AgentScheduleSettings.defaults(for: .ambient)
+            agent.settings.selfSchedulingEnabled = false
+            manager.update(agent)
+
+            let names = Set(
+                SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .none)
+                    .map { $0.function.name }
+            )
+            #expect(!names.contains("schedule_next_run"))
+            #expect(!names.contains("cancel_next_run"))
+            #expect(!names.contains("notify"))
+        }
+    }
+
     // MARK: - canonicalToolOrder
 
     @Test
