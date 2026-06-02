@@ -792,7 +792,9 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             !runtime.contains("warm disk hit path is not stable yet")
-                && !runtime.contains("ModelFamilyNames.isLFM2Family(modelName) {\n            // Current live Osaurus rows prove LFM2.5"),
+                && !runtime.contains(
+                    "ModelFamilyNames.isLFM2Family(modelName) {\n            // Current live Osaurus rows prove LFM2.5"
+                ),
             "LFM2 must not carry the temporary disk-restore disable gate once required-tool history stability is fixed in vMLX"
         )
         let mlxService = try Self.source("Services/Inference/MLXService.swift")
@@ -1446,8 +1448,8 @@ struct RuntimePolicySourceTests {
             "cancelActiveGeneration() must still exist for shutdown / clearAll cancellation paths"
         )
         #expect(
-            runtime.contains("if let modelName, record.modelName != modelName { return }"),
-            "ModelRuntime.unload(name:) must not cancel a generation belonging to a different model"
+            runtime.contains("modelName == nil || record.modelName == modelName"),
+            "cancelActiveGeneration(for:) must scope cancellation to the requested model (nil = cancel all)"
         )
         #expect(
             runtime.contains("await cancelActiveGeneration(for: name)"),
@@ -1490,7 +1492,7 @@ struct RuntimePolicySourceTests {
         let body = String(appDelegate[start.lowerBound ..< end.lowerBound])
 
         let stopSessions = try #require(body.range(of: "ChatWindowManager.shared.stopAllSessions()"))
-        let clearRuntime = try #require(body.range(of: "await ModelRuntime.shared.clearAll()"))
+        let clearRuntime = try #require(body.range(of: "await ModelRuntime.shared.clearAll(quit: true)"))
         let replyTerminate = try #require(
             body.range(of: "NSApp.reply(toApplicationShouldTerminate: true)")
         )
@@ -1498,6 +1500,22 @@ struct RuntimePolicySourceTests {
         #expect(stopSessions.lowerBound < clearRuntime.lowerBound)
         #expect(clearRuntime.lowerBound < replyTerminate.lowerBound)
         #expect(body.contains("return .terminateLater"))
+
+        // Hang audit: the teardown must be bounded (every step wrapped in a
+        // deadline) and must always reply via a watchdog-guarded one-shot so
+        // a stuck step can never strand the app in "quitting".
+        #expect(
+            body.contains("runWithDeadline"),
+            "applicationShouldTerminate steps must be bounded by runWithDeadline so a stuck await can't hang quit"
+        )
+        #expect(
+            body.contains("replyToTerminationOnce()"),
+            "termination reply must funnel through the watchdog-guarded one-shot"
+        )
+        #expect(
+            body.contains("Quit watchdog fired"),
+            "a global quit watchdog must force the termination reply if the teardown chain wedges"
+        )
     }
 
     @Test("live proof keychain-disabled mode keeps app startup off user Keychain")

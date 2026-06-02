@@ -60,7 +60,14 @@ public final class WatcherManager {
 
     private init() {
         refresh()
-        startAllEnabledWatchers()
+        // Defer watcher startup off the launch-critical path. `.shared` is
+        // constructed as a stored property of the App struct, before
+        // `applicationDidFinishLaunching`; `startAllEnabledWatchers`
+        // installs FSEvent streams and does synchronous directory
+        // fingerprinting that must not run on the main thread during launch.
+        Task { @MainActor [weak self] in
+            self?.startAllEnabledWatchers()
+        }
         print("[Osaurus] WatcherManager initialized with \(watchers.count) watchers")
     }
 

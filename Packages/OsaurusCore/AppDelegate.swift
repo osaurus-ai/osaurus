@@ -274,6 +274,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await serverController.startServer()
         }
 
+        // Let the Bonjour-expose Combine sink honor live restarts only after
+        // the initial bind completes. Until then an early `AgentManager`
+        // emission would otherwise restart the server mid-launch (hang audit).
+        Task { @MainActor in
+            await serverStartupTask.value
+            serverController.markLaunchComplete()
+        }
+
         Task.detached(priority: .utility) {
             try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
         }
@@ -754,32 +762,112 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // We also always stop the sandbox (which in turn stops the
         // HostAPIBridgeServer) so its 2-thread EL group can't leak
         // past quit even when no sandbox container was started.
+        //
+        // Hang audit: the teardown below is a *bounded* best-effort chain.
+        // Every step is wrapped in `runWithDeadline` so a single stuck
+        // await — a never-released model lease, a wedged Linux VM, a NIO
+        // graceful shutdown blocked on a long-lived SSE stream, a hung
+        // memory distill — can't strand the app in a permanent "quitting"
+        // state. A global watchdog guarantees `reply(true)` always fires
+        // (even if the chain itself wedges), so the process can always exit
+        // instead of forcing the user to hard-kill it.
+        hasRepliedToTermination = false
+
+        // Global watchdog: hard ceiling on the entire quit. Independent of
+        // the ordered chain below, so it fires even if a step blocks the
+        // chain's own continuations. 15s is comfortably above the sum of
+        // the common-case steps while still bounding the worst case.
         Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(15 * 1_000_000_000))
+            if !hasRepliedToTermination {
+                log.error("Quit watchdog fired after 15s — forcing termination reply")
+            }
+            replyToTerminationOnce()
+        }
+
+        Task { @MainActor in
+            // Cheap, synchronous UI / background-task teardown first.
             ChatWindowManager.shared.stopAllSessions()
             BackgroundTaskManager.shared.cancelAllTasks()
-            MCPProviderManager.shared.disconnectAll()
             RemoteProviderManager.shared.disconnectAll()
-            // Best-effort: drain any debounced memory sessions before
-            // MLX / NIO / SQLCipher shutdown so the user doesn't lose
-            // pending_signals to the 60s debounce race.
-            await MemoryService.shared.flushAllPending(timeoutSeconds: 5)
-            // Unconditional: ensureShutdown is idempotent when already clean.
-            await serverController.ensureShutdown()
-            await MCPServerManager.shared.stopAll()
-            await ModelRuntime.shared.clearAll()
-            do {
-                try await SandboxManager.shared.stopContainer()
-            } catch {
-                NSLog("[Osaurus] Sandbox stop failed: \(error)")
+
+            // Cancel in-flight model generations early. This ends the SSE
+            // producers that keep NIO child channels open, so the graceful
+            // server shutdown below can drain promptly. Buffers are NOT
+            // freed here — `clearAll(quit:)` does that after the lease drain.
+            await runWithDeadline(seconds: 3) {
+                await ModelRuntime.shared.cancelAllGenerations()
             }
+
+            // Best-effort: drain debounced memory sessions before MLX / NIO
+            // shutdown so the user doesn't lose pending signals to the 60s
+            // debounce race. Bounded internally (5s) and here (belt + braces).
+            await runWithDeadline(seconds: 6) {
+                await MemoryService.shared.flushAllPending(timeoutSeconds: 5)
+            }
+
+            // Unconditional: ensureShutdown is idempotent when already clean.
+            // The NIO graceful shutdown is itself bounded inside
+            // `stop(gracefully: false)`; the outer deadline is a backstop.
+            await runWithDeadline(seconds: 8) {
+                await self.serverController.ensureShutdown()
+            }
+
+            await runWithDeadline(seconds: 3) {
+                await MCPServerManager.shared.stopAll()
+            }
+
+            // Kill orphan-prone child processes before exit: live exec jobs
+            // (background `shell_run` / `sandbox_exec`) and MCP stdio runners.
+            await runWithDeadline(seconds: 3) {
+                await LiveExecRegistry.shared.terminateAll()
+            }
+            await runWithDeadline(seconds: 3) {
+                await MCPProviderManager.shared.shutdownAllStdioRunners()
+            }
+
+            // Free MLX / GPU buffers. `quit: true` caps the lease drain and
+            // skips the cooperative cold-load join so a stuck generation or
+            // in-flight load can't hang exit.
+            await runWithDeadline(seconds: 6) {
+                await ModelRuntime.shared.clearAll(quit: true)
+            }
+
+            await runWithDeadline(seconds: 4) {
+                do {
+                    try await SandboxManager.shared.stopContainer()
+                } catch {
+                    NSLog("[Osaurus] Sandbox stop failed: \(error)")
+                }
+            }
+
             // Belt-and-suspenders: if the sandbox was never provisioned,
             // `stopContainer` still stops the bridge, but if the bridge
             // was started through some other path in a future refactor
             // we want its EL group torn down regardless.
-            await HostAPIBridgeServer.shared.stop()
-            NSApp.reply(toApplicationShouldTerminate: true)
+            await runWithDeadline(seconds: 3) {
+                await HostAPIBridgeServer.shared.stop()
+            }
+
+            replyToTerminationOnce()
         }
         return .terminateLater
+    }
+
+    /// Tracks whether the termination reply has already been sent so the
+    /// ordered teardown chain and the global quit watchdog can race to call
+    /// `reply(true)` without double-replying. `@MainActor`-isolated, so the
+    /// two `@MainActor` tasks accessing it are serialized — no lock needed.
+    private var hasRepliedToTermination = false
+
+    /// Send `NSApp.reply(toApplicationShouldTerminate: true)` exactly once.
+    /// Idempotent: whichever of the teardown chain or the watchdog reaches
+    /// this first wins; subsequent calls are no-ops.
+    @MainActor
+    private func replyToTerminationOnce() {
+        guard !hasRepliedToTermination else { return }
+        hasRepliedToTermination = true
+        NSApp.reply(toApplicationShouldTerminate: true)
     }
 
     public func applicationWillTerminate(_ notification: Notification) {

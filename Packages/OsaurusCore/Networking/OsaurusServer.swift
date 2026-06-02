@@ -10,6 +10,7 @@ import LocalAuthentication
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+import os
 
 public actor OsaurusServer: Sendable {
     private final class LazyAPIKeyValidatorSnapshot: @unchecked Sendable {
@@ -96,12 +97,45 @@ public actor OsaurusServer: Sendable {
             self.channel = nil
         }
         if let g = self.group {
-            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-                g.shutdownGracefully { _ in cont.resume() }
+            // `shutdownGracefully` waits for every in-flight child channel
+            // to close. A long-lived SSE stream whose producer hasn't been
+            // cancelled yet can keep one open, so on the quit path (where
+            // callers pass `gracefully: false`) we cap the wait. On timeout
+            // we DON'T null `group`: the shutdown is still in flight and the
+            // group is rooted by the `ServerController` singleton, so it is
+            // never deinitialized at process exit — that avoids the NIO
+            // "EventLoopGroup is still running" precondition (issue #860)
+            // while still unblocking quit.
+            let budget: Double = gracefully ? 8.0 : 2.5
+            let completed = await withCheckedContinuation {
+                (cont: CheckedContinuation<Bool, Never>) in
+                let resolved = OSAllocatedUnfairLock(initialState: false)
+                @Sendable func claim() -> Bool {
+                    resolved.withLock { done in
+                        if done { return false }
+                        done = true
+                        return true
+                    }
+                }
+                g.shutdownGracefully { _ in
+                    if claim() { cont.resume(returning: true) }
+                }
+                Task {
+                    try? await Task.sleep(nanoseconds: UInt64(budget * 1_000_000_000))
+                    if claim() { cont.resume(returning: false) }
+                }
             }
-            self.group = nil
+            if completed {
+                self.group = nil
+                print("[Osaurus] OsaurusServer stopped")
+            } else {
+                print(
+                    "[Osaurus] OsaurusServer graceful shutdown exceeded \(budget)s budget; proceeding (group left to finish)"
+                )
+            }
+        } else {
+            print("[Osaurus] OsaurusServer stopped")
         }
-        print("[Osaurus] OsaurusServer stopped")
     }
 
     // MARK: - Validator Construction

@@ -31,9 +31,22 @@ public actor ModelLease {
     /// when it drops to zero so `activeNames()` is cheap.
     private var counts: [String: Int] = [:]
 
+    /// A parked `waitForZero` caller. `timeoutTask` (if any) fires the
+    /// timed variant's deadline; it is cancelled the moment the waiter is
+    /// resumed by a release so a drained lease never leaves a timer running.
+    private struct Waiter {
+        let id: UInt64
+        let continuation: CheckedContinuation<Void, Never>
+        let timeoutTask: Task<Void, Never>?
+    }
+
     /// Per-model continuations waiting for the count to reach zero. Keyed by
     /// model name; resumed in FIFO order when the last lease is released.
-    private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var waiters: [String: [Waiter]] = [:]
+
+    /// Monotonic id source so the timed variant can find and remove its own
+    /// waiter on timeout without disturbing other parked callers.
+    private var nextWaiterID: UInt64 = 0
 
     private init() {}
 
@@ -61,7 +74,27 @@ public actor ModelLease {
 
     private func wakeWaiters(for name: String) {
         guard let pending = waiters.removeValue(forKey: name) else { return }
-        for continuation in pending { continuation.resume() }
+        for waiter in pending {
+            waiter.timeoutTask?.cancel()
+            waiter.continuation.resume()
+        }
+    }
+
+    /// Called by the timed variant's deadline task. Removes only the waiter
+    /// with `id` (if it's still parked) and resumes it so the timed caller
+    /// returns `false`. A no-op if the lease already drained and the release
+    /// path resumed/removed it first.
+    private func timeoutWaiter(name: String, id: UInt64) {
+        guard var pending = waiters[name],
+            let index = pending.firstIndex(where: { $0.id == id })
+        else { return }
+        let waiter = pending.remove(at: index)
+        if pending.isEmpty {
+            waiters.removeValue(forKey: name)
+        } else {
+            waiters[name] = pending
+        }
+        waiter.continuation.resume()
     }
 
     // MARK: - Eviction-side gating
@@ -73,15 +106,55 @@ public actor ModelLease {
     /// simply re-suspends until the count actually stabilises at zero.
     public func waitForZero(_ name: String) async {
         while (counts[name] ?? 0) > 0 {
+            let id = nextWaiterID
+            nextWaiterID &+= 1
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 // Re-check atomically inside the actor before parking.
                 if (counts[name] ?? 0) == 0 {
                     continuation.resume()
                 } else {
-                    waiters[name, default: []].append(continuation)
+                    waiters[name, default: []].append(
+                        Waiter(id: id, continuation: continuation, timeoutTask: nil)
+                    )
                 }
             }
         }
+    }
+
+    /// Bounded variant of `waitForZero` for the app-quit path. Suspends until
+    /// no leases are held on `name` OR until `timeoutSeconds` elapses,
+    /// whichever comes first.
+    ///
+    /// - Returns: `true` if the count reached zero, `false` on timeout. On
+    ///   timeout the waiter is removed (and the deadline timer is the only
+    ///   thing that resumes it), so a stuck/never-released lease can't hang
+    ///   quit. Unlike the untimed variant this does not loop — a single
+    ///   bounded wait is exactly what teardown wants.
+    @discardableResult
+    public func waitForZero(_ name: String, timeoutSeconds: Double) async -> Bool {
+        if (counts[name] ?? 0) == 0 { return true }
+
+        let id = nextWaiterID
+        nextWaiterID &+= 1
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            if (counts[name] ?? 0) == 0 {
+                continuation.resume()
+                return
+            }
+            let timeoutTask = Task { [weak self] in
+                try? await Task.sleep(
+                    nanoseconds: UInt64(max(0, timeoutSeconds) * 1_000_000_000)
+                )
+                guard !Task.isCancelled else { return }
+                await self?.timeoutWaiter(name: name, id: id)
+            }
+            waiters[name, default: []].append(
+                Waiter(id: id, continuation: continuation, timeoutTask: timeoutTask)
+            )
+        }
+
+        return (counts[name] ?? 0) == 0
     }
 
     // MARK: - Inspection

@@ -53,11 +53,18 @@ public final class ScheduleManager {
         // Load schedules from disk
         refresh()
 
-        // Check for missed schedules on startup
-        checkForMissedSchedules()
-
-        // Schedule the next timer
+        // Schedule the next timer (cheap — just arms a Task.sleep).
         scheduleNextTimer()
+
+        // Check for missed schedules on startup. Deferred to a later
+        // main-actor turn so it doesn't run synchronously on the
+        // launch-critical path while `.shared` is being constructed
+        // (the App struct builds this property before
+        // `applicationDidFinishLaunching`). `checkForMissedSchedules`
+        // can immediately dispatch LLM work, which must not block launch.
+        Task { @MainActor [weak self] in
+            self?.checkForMissedSchedules()
+        }
 
         // Listen for timezone changes
         timezoneObserver = NotificationCenter.default.addObserver(

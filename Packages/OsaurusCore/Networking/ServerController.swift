@@ -51,6 +51,12 @@ final class ServerController: ObservableObject {
     private var serverActor: OsaurusServer?
     private var agentsCancellable: AnyCancellable?
 
+    /// Flipped once `applicationDidFinishLaunching` finishes its server
+    /// wiring. The Bonjour-expose Combine sink consults this so it never
+    /// triggers a `restartServer()` while the launch sequence is still
+    /// bringing the server up (mid-launch server churn — see hang audit).
+    private var isLaunchComplete = false
+
     // Singleton holder to allow async access to the current controller instance when injected as EnvironmentObject
     @MainActor
     private struct ServerControllerHolder {
@@ -77,6 +83,13 @@ final class ServerController: ObservableObject {
     }
 
     // MARK: - Public Methods
+
+    /// Marks launch as complete. Called by the AppDelegate at the end of
+    /// `applicationDidFinishLaunching` so the Bonjour-expose Combine sink may
+    /// begin honoring live config changes with a restart.
+    func markLaunchComplete() {
+        isLaunchComplete = true
+    }
 
     /// Starts the server with current configuration
     func startServer() async {
@@ -169,7 +182,9 @@ final class ServerController: ObservableObject {
         serverHealth = .stopping
 
         if let server = serverActor {
-            await server.stop(gracefully: true)
+            // Termination path: use the bounded (`gracefully: false`) shutdown
+            // so a lingering SSE child channel can't stall quit.
+            await server.stop(gracefully: false)
             serverActor = nil
         }
 
@@ -187,8 +202,8 @@ final class ServerController: ObservableObject {
         }
         // Read-only load. The legacy → vmlx migration (which writes to
         // `~/.osaurus/config/`) is intentionally deferred to
-        // `bootstrapRuntimeSettings()` so a fresh install stays
-        // pristine until after the storage migrator's gate runs.
+        // `bootstrapRuntimeSettings()` so a fresh install stays pristine
+        // until the AppDelegate explicitly runs it during launch.
         if let existing = ServerRuntimeSettingsStore.load() {
             self.runtimeSettings = existing
         }
@@ -208,7 +223,12 @@ final class ServerController: ObservableObject {
                     self.runtimeSettings.network.host = "0.0.0.0"
                     self.saveConfiguration()
                     ServerRuntimeSettingsStore.save(self.runtimeSettings)
-                    if self.isRunning {
+                    // Only restart for a live config change *after* launch has
+                    // settled. During launch the initial auto-start already
+                    // reads the updated config, so restarting here would be
+                    // redundant server churn racing the launch sequence — the
+                    // mid-launch restart the hang audit flagged.
+                    if self.isRunning && self.isLaunchComplete {
                         await self.restartServer()
                     }
                 }

@@ -163,6 +163,19 @@ public actor LiveExecRegistry {
         entriesSubject.send(entries)
     }
 
+    /// Quit-path teardown: SIGKILL every still-running live exec (background
+    /// `shell_run` / `sandbox_exec` jobs) then drop all entries. `clearAll()`
+    /// alone only clears the UI snapshot — it leaves the underlying child
+    /// processes to be reaped by the OS, which can orphan them briefly after
+    /// a force-quit. `graceSeconds: 0` sends SIGKILL immediately.
+    public func terminateAll(graceSeconds: Int = 0) async {
+        let live = Array(entries.values)
+        for entry in live {
+            await entry.terminate(graceSeconds)
+        }
+        clearAll()
+    }
+
     private func dropAfterGrace(toolCallId: String) {
         pendingDrops.removeValue(forKey: toolCallId)
         guard entries.removeValue(forKey: toolCallId) != nil else { return }

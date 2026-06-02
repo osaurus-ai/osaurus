@@ -119,15 +119,19 @@ public actor ModelRuntime {
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
 
-    /// Most recently launched generation wrapper task. `ModelLease` is the
-    /// authoritative "is anyone still using the model" signal; this record only
-    /// exists so shutdown / same-model unload can defensively kill a task that
-    /// was cancelled mid-setup before its lease became visible.
+    /// Every in-flight generation wrapper task, keyed by a monotonic id.
+    /// `ModelLease` is the authoritative "is anyone still using the model"
+    /// signal; these records exist so shutdown / same-model unload can
+    /// defensively cancel tasks that were cancelled mid-setup before their
+    /// lease became visible. Tracking *all* concurrent streams (not just the
+    /// most recent) means quit can cancel every in-flight request directly
+    /// instead of relying solely on the lease drain.
     private struct ActiveGenerationRecord {
         let modelName: String
         let task: Task<Void, Never>
     }
-    private var activeGenerationTask: ActiveGenerationRecord?
+    private var activeGenerationTasks: [UInt64: ActiveGenerationRecord] = [:]
+    private var nextGenerationTaskID: UInt64 = 0
 
     private init() {}
 
@@ -285,17 +289,44 @@ public actor ModelRuntime {
 
     // MARK: - Model lifecycle
 
-    /// Defensive helper: cancels and awaits the most recently launched
-    /// generation task. With `ModelLease` enforcing per-stream lifetime
-    /// the unload paths already wait on `waitForZero(name)` first, so this
-    /// only catches the rare race where a task was launched but never made
-    /// it to `acquire`. Callers should still treat the lease as authoritative.
+    /// Defensive helper: cancels and awaits every tracked generation task
+    /// (optionally filtered to one model). With `ModelLease` enforcing
+    /// per-stream lifetime the unload paths already wait on
+    /// `waitForZero(name)` first, so this primarily catches the rare race
+    /// where a task was launched but never made it to `acquire`, and — at
+    /// quit — guarantees *all* concurrent streams are cancelled, not just
+    /// the most recent. Callers should still treat the lease as authoritative.
     private func cancelActiveGeneration(for modelName: String? = nil) async {
-        guard let record = activeGenerationTask else { return }
-        if let modelName, record.modelName != modelName { return }
-        record.task.cancel()
-        _ = await record.task.value
-        activeGenerationTask = nil
+        let records = activeGenerationTasks.filter { _, record in
+            modelName == nil || record.modelName == modelName
+        }
+        guard !records.isEmpty else { return }
+        for (_, record) in records { record.task.cancel() }
+        for (_, record) in records { _ = await record.task.value }
+        for id in records.keys { activeGenerationTasks.removeValue(forKey: id) }
+    }
+
+    /// Allocate a monotonic id for a new generation wrapper task.
+    private func allocateGenerationTaskID() -> UInt64 {
+        nextGenerationTaskID &+= 1
+        return nextGenerationTaskID
+    }
+
+    /// Remove a generation record once its wrapper task finishes on its own
+    /// (success or cancellation), so the tracking dictionary doesn't grow
+    /// unbounded across a long-lived process.
+    private func clearGenerationTask(id: UInt64) {
+        activeGenerationTasks.removeValue(forKey: id)
+    }
+
+    /// Quit-path helper: cancel every in-flight generation across all models
+    /// without evicting containers or freeing buffers. Run early in the
+    /// termination sequence so SSE producers stop and the HTTP server's
+    /// graceful shutdown can drain its child channels; `clearAll(quit:)`
+    /// performs the full container/GPU teardown afterward.
+    func cancelAllGenerations() async {
+        await MLXBatchAdapter.Registry.shared.shutdownAll()
+        await cancelActiveGeneration()
     }
 
     /// Cancel the active decode for `name` without evicting the loaded
@@ -312,7 +343,10 @@ public actor ModelRuntime {
         return nextLoadingTaskID
     }
 
-    private func cancelAndDrainLoadingTasks(_ records: [(String, LoadingTaskRecord)]) async {
+    private func cancelAndDrainLoadingTasks(
+        _ records: [(String, LoadingTaskRecord)],
+        quit: Bool = false
+    ) async {
         guard !records.isEmpty else { return }
 
         for (name, record) in records {
@@ -322,11 +356,22 @@ public actor ModelRuntime {
             record.task.cancel()
         }
 
-        for (_, record) in records {
-            if let holder = try? await record.task.value,
-                supersededLoadingTaskIDs.contains(record.id)
-            {
-                holder.container.disableCaching()
+        // The join below (`await record.task.value`) can block for the full
+        // remaining weight-materialization of a cold load — Swift
+        // cancellation is cooperative and `loadModelContainer` only checks
+        // it before/after the MLX load. On the normal eviction path we pay
+        // that to disable caching on the superseded holder; at *quit* we
+        // skip the join (and the intermediate GPU fence) so a load in
+        // progress can't stall process exit. The OS reclaims GPU resources
+        // on exit, and `clearAll(quit:)` still issues a final, watchdog-
+        // bounded `Stream.gpu.synchronize()`.
+        if !quit {
+            for (_, record) in records {
+                if let holder = try? await record.task.value,
+                    supersededLoadingTaskIDs.contains(record.id)
+                {
+                    holder.container.disableCaching()
+                }
             }
         }
 
@@ -337,8 +382,10 @@ public actor ModelRuntime {
             supersededLoadingTaskIDs.remove(record.id)
         }
 
-        Stream.gpu.synchronize()
-        Memory.clearCache()
+        if !quit {
+            Stream.gpu.synchronize()
+            Memory.clearCache()
+        }
     }
 
     private func cancelLoadingTask(name: String, loadID: UInt64) async {
@@ -425,20 +472,34 @@ public actor ModelRuntime {
         }
     }
 
-    func clearAll() async {
+    /// Tear down all loaded/loading models and free GPU buffers.
+    ///
+    /// - Parameter quit: when `true`, every otherwise-unbounded wait is
+    ///   capped so a stuck lease or in-flight cold load can't hang app
+    ///   termination. The lease drain uses the timed `waitForZero` variant
+    ///   and the cold-load drain skips its cooperative join. Callers on the
+    ///   normal (settings-change / GC) path leave this `false` for the full,
+    ///   correctness-first teardown.
+    func clearAll(quit: Bool = false) async {
         await ModelResidencyManager.shared.cancelAll()
 
         // Shut down every BatchEngine so they stop scheduling new forward
-        // passes, then cancel the latest tracked wrapper task and wait for
-        // every leased model to drain before we touch any container.
-        await MLXBatchAdapter.Registry.shared.shutdownAll()
-        await cancelActiveGeneration()
+        // passes and cancel ALL tracked generation wrapper tasks, then wait
+        // for every leased model to drain before we touch any container.
+        await cancelAllGenerations()
         for name in modelCache.keys {
-            await ModelLease.shared.waitForZero(name)
+            if quit {
+                // Force-proceed fallback: a never-released lease (a producer
+                // that ignored cancellation) returns `false` here after the
+                // cap instead of hanging the quit chain forever.
+                await ModelLease.shared.waitForZero(name, timeoutSeconds: 2.0)
+            } else {
+                await ModelLease.shared.waitForZero(name)
+            }
         }
 
         let loadingRecords = loadingTasks.map { ($0.key, $0.value) }
-        await cancelAndDrainLoadingTasks(loadingRecords)
+        await cancelAndDrainLoadingTasks(loadingRecords, quit: quit)
 
         for holder in modelCache.values {
             holder.container.disableCaching()
@@ -1290,6 +1351,7 @@ public actor ModelRuntime {
         // finishes (success or cancellation). The adapter's producer task
         // forwards Swift cancellation into the upstream stream.
         let innerProducer = prepared.genTask
+        let genID = allocateGenerationTaskID()
         let activeTask = Task<Void, Never> {
             await withTaskCancellationHandler {
                 await innerProducer.value
@@ -1298,8 +1360,9 @@ public actor ModelRuntime {
             }
             await ModelLease.shared.release(modelName)
             await self.scheduleIdleResidency(for: modelName)
+            self.clearGenerationTask(id: genID)
         }
-        activeGenerationTask = ActiveGenerationRecord(modelName: modelName, task: activeTask)
+        activeGenerationTasks[genID] = ActiveGenerationRecord(modelName: modelName, task: activeTask)
 
         return GenerationEventMapper.map(events: prepared.stream, modelName: modelName, trace: trace)
     }
