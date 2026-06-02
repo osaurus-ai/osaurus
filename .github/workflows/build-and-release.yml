@@ -122,6 +122,7 @@ jobs:
           DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
           DEVELOPER_ID_NAME: ${{ secrets.DEVELOPER_ID_NAME }}
           APTABASE_APP_KEY: ${{ secrets.APTABASE_APP_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: bash scripts/build/build_arm64.sh
 
       - name: Verify App Signing
@@ -144,6 +145,17 @@ jobs:
 
       - name: Package dSYMs
         run: bash scripts/build/package_dsyms.sh
+
+      # Upload symbols to Sentry so production crashes symbolicate. Best-effort:
+      # the script no-ops if the Sentry secrets aren't configured. Tag-only so we
+      # don't push debug files for throwaway workflow_dispatch builds.
+      - name: Upload dSYMs to Sentry
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: bash scripts/build/upload_dsyms_sentry.sh
 
       - name: Get Release Notes from Draft
         id: changelog

@@ -178,7 +178,7 @@ It's **consent-gated and opt-out**: nothing leaves your Mac without your consent
 
 ### Crash reporting
 
-The same single opt-in also enables **crash and app-hang reporting** via [Sentry](https://sentry.io). It's limited to crash and hang diagnostics — no performance tracing, profiling, screenshots, or personal information; we drop the user object and device hostname from every event, on top of disabling PII. Crash reporting starts only when you've opted in and a DSN is configured, and stops when you opt out. Like analytics, it's off by default in source builds.
+The same single opt-in also enables **crash and app-hang reporting** via [Sentry](https://sentry.io). It's limited to crash and hang diagnostics — no performance tracing, profiling, failed-request capture, network breadcrumbs, screenshots, or personal information; we drop the user object and device hostname from every event, on top of disabling PII. Crash reporting starts only when you've opted in and a DSN is configured, and stops when you opt out. Like analytics, it's off by default in source builds.
 
 ### Local development
 
