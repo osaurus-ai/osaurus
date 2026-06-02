@@ -1780,6 +1780,30 @@ extension FloatingInputCard {
         isSandboxEnabled && (sandboxState.status == .starting || sandboxState.isProvisioning)
     }
 
+    /// Active step's progress (0–100) when it reports a real fraction (cold-path
+    /// download / unpack); `nil` for indeterminate phases, where the chip
+    /// shows a bare spinner.
+    private var sandboxProgressPercent: Int? {
+        guard isSandboxLoading, let progress = sandboxState.provisioningProgress else { return nil }
+        return Int((progress * 100).rounded())
+    }
+
+    /// True during the cold-path runtime fetch (kernel/initfs download + image
+    /// pull/unpack); warm boots skip these steps.
+    private var isSandboxDownloadingRuntime: Bool {
+        guard isSandboxLoading, let step = sandboxState.journey?.currentStepID else { return false }
+        switch step {
+        case .downloadKernel, .downloadInitFS, .createContainer:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var sandboxChipLabel: LocalizedStringKey {
+        isSandboxDownloadingRuntime ? "Downloading runtime…" : "Sandbox"
+    }
+
     private var isSandboxRunning: Bool {
         sandboxState.status.isRunning
     }
@@ -1894,6 +1918,10 @@ extension FloatingInputCard {
         if let failure = sandboxFailure, isSandboxEnabled {
             return "Sandbox unavailable: \(failure.message)\nClick to open Sandbox settings."
         } else if isSandboxLoading {
+            // Name the live phase (e.g. "Downloading initfs…") when available.
+            if let phase = sandboxState.provisioningPhase, !phase.isEmpty {
+                return "\(phase) — click to view progress."
+            }
             return "Sandbox is starting up — click to view progress."
         } else if isCombinedMode {
             base =
@@ -1948,7 +1976,7 @@ extension FloatingInputCard {
                     .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                     .foregroundColor(sandboxChipAccent)
 
-                Text("Sandbox", bundle: .module)
+                Text(sandboxChipLabel, bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(
                         isSandboxFailed
@@ -1959,6 +1987,14 @@ extension FloatingInputCard {
                     )
                     .lineLimit(1)
                     .opacity(isSandboxLoading ? sandboxPulseAmount : 1.0)
+
+                // Inline cold-path download/unpack progress.
+                if let pct = sandboxProgressPercent {
+                    Text(verbatim: "\(pct)%")
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .monospacedDigit()
+                }
 
                 // Network-off badge: only meaningful once the sandbox is
                 // settled, so suppress it while loading or failed (those
