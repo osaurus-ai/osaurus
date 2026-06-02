@@ -462,10 +462,24 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 
 - **Custom System Prompts** — Define unique instructions for each agent
 - **Automated Capabilities** — Tools, skills, and methods are automatically selected via RAG search based on the task
+- **Per-Agent Feature Gates** — Configure → Features groups every capability by purpose and keeps extra ones off by default to keep the tool list lean (see below)
 - **Visual Themes** — Assign a custom theme that activates with the agent
 - **Generation Settings** — Configure default model, temperature, and max tokens
 - **Import/Export** — Share agents as JSON files for backup or sharing
 - **Live Switching** — Click to activate a agent, theme updates automatically
+
+**Feature Gates (Configure → Features):** stored on `Agent.settings`; [`SystemPromptComposer.resolveTools`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips the matching tools when a gate is off (auto mode). Capabilities are grouped by purpose; extra ones default **off** to reduce token cost.
+
+| Group | Setting | Toggle | Default | Gates |
+|---|---|---|---|---|
+| Model Access | `disableTools` (inverted) | Tools | on | All tool use |
+| Model Access | `disableMemory` (inverted) | Memory | on | Passive memory injection + recording |
+| Output | `renderChartEnabled` | Charts | off | `render_chart` |
+| Output | `speakEnabled` | Voice | off | `speak` |
+| Memory & Recall | `searchMemoryEnabled` | Memory Recall | off | `search_memory` |
+| Autonomy | `selfSchedulingEnabled` | Self-scheduling | off | `schedule_next_run` / `cancel_next_run` / `notify` + scheduling UI |
+| Data | `dbEnabled` | Database | off | `db_*` tools + DB tabs |
+| Code Execution | sandbox settings | Autonomous Execution / Plugin Creation / Sandbox Network / Read Secret Files | off | Sandbox capabilities (visible but disabled when the container isn't running) |
 
 **Agent Properties:**
 | Property | Description |
