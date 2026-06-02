@@ -382,7 +382,7 @@ public final class AgentDatabase: @unchecked Sendable {
     // MARK: - Lifecycle
 
     public func open() throws {
-        StorageMigrationCoordinator.blockingAwaitReady()
+        StorageMutationGate.blockingAwaitNotMutating()
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.agentDirectory(for: agentId))

@@ -2,22 +2,21 @@
 //  AtomicBool.swift
 //  osaurus
 //
-//  Tiny lock-free Bool wrapper used by `StorageMigrationCoordinator`
-//  for the synchronous fast path on `blockingAwaitReady()`.
+//  Tiny lock-free Bool wrapper used by `StorageMutationGate`
+//  for the synchronous fast path on `blockingAwaitNotMutating()`.
 //
 //  We use `OSAllocatedUnfairLock<Bool>` rather than a raw atomic
 //  primitive because:
 //   - It's part of the Apple SDK (no extra SwiftPM dep, available
 //     on macOS 13+).
 //   - The contention pattern is "many readers, near-zero writers"
-//     (writes happen on the main actor when migration completes
-//     or rotation flips), where the unfair-lock cost is dominated
-//     by the same memory barrier a `ManagedAtomic<Bool>` would
-//     emit.
+//     (writes happen on the main actor when a key rotation begins
+//     or ends), where the unfair-lock cost is dominated by the same
+//     memory barrier a `ManagedAtomic<Bool>` would emit.
 //
 //  Callers that need a richer atomic API should reach for
 //  `swift-atomics` directly — this type is intentionally just two
-//  methods so the StorageMigrationCoordinator gate stays auditable.
+//  methods so the StorageMutationGate stays auditable.
 //
 
 import Foundation

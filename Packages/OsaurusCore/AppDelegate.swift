@@ -175,19 +175,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Detect repeated startup crashes and enter safe mode if needed
         LaunchGuard.checkOnLaunch()
 
-        // CRITICAL SEQUENCING: run the at-rest encryption migrator
-        // BEFORE any database opens. Without this gate
-        // `MemoryDatabase.shared.open()` below would try SQLCipher
-        // against still-plaintext files and fail key verification,
-        // leaving the app in a degraded state on first launch after
-        // upgrade. We block the launch flow synchronously while the
-        // overlay shows progress; the run loop is pumped so SwiftUI
-        // updates keep painting.
-        StorageMigrationCoordinator.blockingAwaitReady()
-
-        // Deferred from `ServerController.init()` to keep
-        // `~/.osaurus/` pristine until the storage gate has stamped
-        // `.storage-version`. See `bootstrapRuntimeSettings()`.
+        // Migrate legacy → vmlx runtime settings. Deferred out of
+        // `ServerController.init()` so it doesn't run before the app
+        // is fully launched. See `bootstrapRuntimeSettings()`.
         serverController.bootstrapRuntimeSettings()
 
         // Wire up the periodic SQLite maintenance ticker (PRAGMA
@@ -300,13 +290,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // MemorySearchService.initialize() needs it for reverse maps.
         // MetalGate serializes CoreML/MLX at runtime; this task is only held
         // for startup sequencing of orphan recovery + activity tracking below.
-        //
-        // The `blockingAwaitReady()` call above already gated the
-        // launch flow on the storage migrator, so by the time this
-        // Task runs the migrator is guaranteed done. Each
-        // `*Database.shared.open()` also calls the gate
-        // defensively (no-op fast path) for the plugin/HTTP entry
-        // points that don't go through this Task.
+        // Databases are created/opened already SQLCipher-encrypted via
+        // `EncryptedSQLiteOpener`; each `*Database.shared.open()` only parks
+        // on `StorageMutationGate` while a key rotation is in flight.
         let embeddingInitTask = Task.detached(priority: .utility) {
             guard StorageKeyManager.shared.hasCachedKey else {
                 MemoryLogger.database.error(

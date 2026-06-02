@@ -53,12 +53,10 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     // MARK: - Lifecycle
 
     public func open() throws {
-        // Defensive gate: production flow already awaits the
-        // migrator in `AppDelegate.applicationDidFinishLaunching`,
-        // but tests + future headless entry points may call
-        // `open()` directly. Sync gate is a no-op once the
-        // migrator's done.
-        StorageMigrationCoordinator.blockingAwaitReady()
+        // Defensive gate: parks only while a key rotation is
+        // re-encrypting databases so we can't open a half-rekeyed
+        // file with the wrong key. No-op fast path otherwise.
+        StorageMutationGate.blockingAwaitNotMutating()
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.chatHistory())

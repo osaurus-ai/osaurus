@@ -1,13 +1,12 @@
 //
-//  StorageMigratorTargetFilterTests.swift
+//  StorageDatabaseCatalogTests.swift
 //  OsaurusCoreTests
 //
 //  Pins the production safety net in
-//  `StorageMigrator.databaseTargets()` that filters out plugin
+//  `StorageDatabaseCatalog.databaseTargets()` that filters out plugin
 //  IDs created by leaked test runs (`com.test.*`). Without this
-//  filter, the Storage settings panel surfaces a scary "key
-//  doesn't match the encrypted databases" banner full of test
-//  UUIDs that the user can't action.
+//  filter, key rotation / plaintext export would enumerate test
+//  UUIDs the user never created.
 //
 
 import CryptoKit
@@ -17,7 +16,7 @@ import Testing
 @testable import OsaurusCore
 
 @Suite(.serialized)
-struct StorageMigratorTargetFilterTests {
+struct StorageDatabaseCatalogTests {
 
     private static func setUpTempRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -36,7 +35,7 @@ struct StorageMigratorTargetFilterTests {
 
     /// Drop a fake plugin DB at `Tools/<id>/data/data.db` so it
     /// looks like the real thing to `databaseTargets()`. Only the
-    /// path needs to exist — the migrator decides whether to enroll
+    /// path needs to exist — the catalog decides whether to enroll
     /// the target purely from the directory layout.
     private static func seedPluginDB(rootDir: URL, pluginId: String) throws {
         let dataDir =
@@ -52,12 +51,12 @@ struct StorageMigratorTargetFilterTests {
 
     @Test
     func isLeakedTestPluginId_recognisesComTestPrefix() {
-        #expect(StorageMigrator.isLeakedTestPluginId("com.test.ratelimit.ABCD"))
-        #expect(StorageMigrator.isLeakedTestPluginId("com.test.minimal"))
-        #expect(StorageMigrator.isLeakedTestPluginId("com.test."))
-        #expect(!StorageMigrator.isLeakedTestPluginId("com.acme.weather"))
-        #expect(!StorageMigrator.isLeakedTestPluginId("ai.osaurus.skill"))
-        #expect(!StorageMigrator.isLeakedTestPluginId(""))
+        #expect(StorageDatabaseCatalog.isLeakedTestPluginId("com.test.ratelimit.ABCD"))
+        #expect(StorageDatabaseCatalog.isLeakedTestPluginId("com.test.minimal"))
+        #expect(StorageDatabaseCatalog.isLeakedTestPluginId("com.test."))
+        #expect(!StorageDatabaseCatalog.isLeakedTestPluginId("com.acme.weather"))
+        #expect(!StorageDatabaseCatalog.isLeakedTestPluginId("ai.osaurus.skill"))
+        #expect(!StorageDatabaseCatalog.isLeakedTestPluginId(""))
     }
 
     // MARK: - databaseTargets() filtering
@@ -72,7 +71,7 @@ struct StorageMigratorTargetFilterTests {
             try Self.seedPluginDB(rootDir: root, pluginId: "com.test.ratelimit.\(UUID().uuidString)")
             try Self.seedPluginDB(rootDir: root, pluginId: "com.test.minimal")
 
-            let targets = StorageMigrator.databaseTargets()
+            let targets = StorageDatabaseCatalog.databaseTargets()
             let pluginLabels = targets.map(\.label).filter { $0.hasPrefix("plugin ") }
 
             #expect(
@@ -95,12 +94,7 @@ struct StorageMigratorTargetFilterTests {
             // Leave the Tools dir empty — only core targets should be
             // enrolled. This catches accidental over-broad filters
             // that drop "chat history" / "memory" / etc.
-            //
-            // `scheduler` was added in the Agent DB / self-scheduling
-            // work (spec §3): the cross-agent `scheduler.sqlite` is
-            // a first-class core target so the Storage settings panel
-            // can rotate its key alongside the other four.
-            let targets = StorageMigrator.databaseTargets()
+            let targets = StorageDatabaseCatalog.databaseTargets()
             let labels = Set(targets.map(\.label))
             #expect(labels == ["chat history", "memory", "methods", "tool index", "scheduler"])
         }

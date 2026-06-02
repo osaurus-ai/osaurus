@@ -220,16 +220,13 @@ final class ServerController: ObservableObject {
     /// `loadOrMigrate()` just returns the on-disk value without
     /// writing.
     ///
-    /// Must be invoked from the AppDelegate immediately after
-    /// `StorageMigrationCoordinator.blockingAwaitReady()` returns.
-    /// `init()` skips this because `ServerController` is constructed
-    /// as a stored property of the AppDelegate (i.e. before
-    /// `applicationDidFinishLaunching`), and the migration's first-run
-    /// `save()` would otherwise create `config/server-runtime.json`
-    /// in `~/.osaurus/` *before* the storage migrator's
-    /// `isPristineInstall()` check, flipping a true fresh install
-    /// out of the pristine fast path and painting the "Securing your
-    /// data" overlay over onboarding.
+    /// Invoked from the AppDelegate during
+    /// `applicationDidFinishLaunching`. `init()` skips this because
+    /// `ServerController` is constructed as a stored property of the
+    /// AppDelegate (i.e. before launch), and the migration's
+    /// first-run `save()` would otherwise create
+    /// `config/server-runtime.json` in `~/.osaurus/` before the app
+    /// is fully up.
     func bootstrapRuntimeSettings() {
         self.runtimeSettings = ServerRuntimeSettingsStore.loadOrMigrate()
     }

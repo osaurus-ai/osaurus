@@ -128,7 +128,6 @@ public enum EvalBootstrap {
         OsaurusPaths.overrideRoot = root
 
         #if DEBUG
-            StorageMigrationCoordinator.shared._setReadyForTesting()
             StorageKeyManager.shared._setKeyForTesting(
                 SymmetricKey(data: Data(repeating: 0xA5, count: 32))
             )
@@ -139,9 +138,7 @@ public enum EvalBootstrap {
 
     public static func run(_ plan: EvalBootstrapPlan) async {
         if plan.loadInstalledPlugins {
-            await withHeadlessStorageMigrationGate {
-                await PreflightEvaluator.loadInstalledPlugins()
-            }
+            await PreflightEvaluator.loadInstalledPlugins()
             return
         }
 
@@ -153,10 +150,6 @@ public enum EvalBootstrap {
     /// Bring up the search indices used by `CapabilitySearchEvaluator`
     /// without scanning or dlopen-ing installed native plugins.
     private static func initializeSearchIndices(_ scope: EvalSearchIndexBootstrapScope) async {
-        await withHeadlessStorageMigrationGate {
-            await StorageMigrationCoordinator.shared.awaitReady()
-        }
-
         if scope.tools {
             try? ToolDatabase.shared.open()
             await ToolSearchService.shared.initialize()
@@ -175,25 +168,6 @@ public enum EvalBootstrap {
         }
     }
 
-    /// The eval executable is a headless CLI, but `awaitReady()` is shared with
-    /// the app and normally creates a SwiftUI migration panel when work is
-    /// needed. Temporarily marking the process as CI reuses the existing
-    /// Core-side no-panel branch while still running the real migrator and
-    /// preserving the storage gate's fail-closed behaviour.
-    private static func withHeadlessStorageMigrationGate(
-        _ operation: @escaping @MainActor () async -> Void
-    ) async {
-        let previousCI = getenv("CI").map { String(cString: $0) }
-        setenv("CI", "true", 1)
-        defer {
-            if let previousCI {
-                setenv("CI", previousCI, 1)
-            } else {
-                unsetenv("CI")
-            }
-        }
-        await operation()
-    }
 }
 
 public extension EvalSuite {

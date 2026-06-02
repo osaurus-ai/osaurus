@@ -89,10 +89,9 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     public func open() throws {
         // See `ChatHistoryDatabase.open()` for the gate rationale —
-        // every production-side `*Database.open()` defensively
-        // awaits the storage migrator so we can't race SQLCipher
-        // against still-plaintext files.
-        StorageMigrationCoordinator.blockingAwaitReady()
+        // every `*Database.open()` parks while a key rotation is in
+        // flight so we can't open a half-rekeyed file.
+        StorageMutationGate.blockingAwaitNotMutating()
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.memory())

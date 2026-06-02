@@ -58,11 +58,11 @@ enum ChatHistoryWriter {
             return
         }
 
-        // Gate on the storage migration before opening SQLCipher.
-        // No-op fast-path once the AppDelegate has awaited it; this
-        // is here for completeness so background HTTP / plugin paths
-        // that hit `persist` very early can't race the migrator.
-        StorageMigrationCoordinator.blockingAwaitReady()
+        // Park if a key rotation is re-encrypting databases before
+        // opening SQLCipher. No-op fast path otherwise; here so a
+        // background HTTP / plugin path that hits `persist` during a
+        // rotation can't open a half-rekeyed file.
+        StorageMutationGate.blockingAwaitNotMutating()
 
         let db = ChatHistoryDatabase.shared
         do {

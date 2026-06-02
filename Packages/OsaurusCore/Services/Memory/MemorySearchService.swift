@@ -26,11 +26,9 @@
 //
 //  Encryption: each per-agent directory is intended to be wrapped by
 //  `EncryptedVecturaStorage` once the VecturaKit storage adapter
-//  protocol is wired through. Until then the rebuild-on-launch
-//  fallback is documented in `Storage/StorageMigrator.swift` — we
-//  rebuild from the encrypted source SQL on each major upgrade so
-//  the plaintext vector files are always derivable from data at
-//  rest that *is* encrypted.
+//  protocol is wired through. Until then we rebuild from the
+//  encrypted source SQL so the plaintext vector files are always
+//  derivable from data at rest that *is* encrypted.
 //
 
 import Foundation

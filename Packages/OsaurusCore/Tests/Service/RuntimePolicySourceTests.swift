@@ -200,11 +200,10 @@ struct RuntimePolicySourceTests {
         #expect(storageKey.contains("public var hasCachedKey: Bool"))
 
         let appDelegate = try Self.source("AppDelegate.swift")
-        // The migrator used to be the implicit key-cache warmer via its
-        // own `currentKey()` call, but `runIfNeeded` short-circuits on
-        // launches with no pending migration. The explicit prewarm must
-        // stay off the launch-critical main-actor path so a slow Keychain
-        // read cannot prevent the local HTTP server from binding.
+        // The storage key cache is warmed by an explicit prewarm that
+        // must stay off the launch-critical main-actor path so a slow
+        // Keychain read cannot prevent the local HTTP server from
+        // binding.
         #expect(!appDelegate.contains("try? StorageKeyManager.shared.prewarmCurrentKey()"))
         #expect(appDelegate.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
         #expect(appDelegate.contains("Task.detached(priority: .utility)"))
@@ -1505,7 +1504,6 @@ struct RuntimePolicySourceTests {
     func liveProofKeychainDisabledModeKeepsStartupOffUserKeychain() throws {
         let paths = try Self.source("Utils/OsaurusPaths.swift")
         let storage = try Self.source("Identity/StorageKeyManager.swift")
-        let storageMigration = try Self.source("Views/Storage/StorageMigrationOverlay.swift")
         let appDelegate = try Self.source("AppDelegate.swift")
         let keychainHelper = try Self.source("Services/Keychain/KeychainQueryHelpers.swift")
         let agentSecrets = try Self.source("Services/Keychain/AgentSecretsKeychain.swift")
@@ -1517,8 +1515,6 @@ struct RuntimePolicySourceTests {
         #expect(storage.contains("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"))
         #expect(storage.contains("generateInMemoryKey()"))
         #expect(storage.contains("if Self.disablesKeychainForProcess"))
-        #expect(storageMigration.contains("if StorageKeyManager.disablesKeychainForProcess"))
-        #expect(storageMigration.contains("without touching the user's at-rest migration/keychain"))
         #expect(appDelegate.contains("private var keychainDisabledTestMode"))
         #expect(appDelegate.contains("private var keychainDisabledUIPresentationMode"))
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
