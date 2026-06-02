@@ -228,4 +228,53 @@ struct EnsureJANGTQSidecarTests {
         #expect(threw?.code == 4)
         #expect(threw?.domain == "ModelRuntime")
     }
+
+    @Test func stepJANGTQUsesSidecarSentinelWithoutMetadataFetch() async throws {
+        let dir = try makeBundle(weightFormat: nil, withSidecar: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let tracker = FetchTracker()
+        let fetcher: @Sendable (URL, URL) async throws -> Void = { url, dest in
+            await tracker.record(url, dest)
+        }
+
+        try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
+            try await ModelRuntime.ensureJANGTQSidecar(
+                at: dir,
+                modelId: "step-3.7-flash-jangtq_k",
+                name: "Step-3.7-Flash-JANGTQ_K"
+            )
+        }
+
+        let count = await tracker.count
+        #expect(count == 0)
+    }
+
+    @Test func stepJANGTQMissingSidecarFailsWithoutAutoFetch() async throws {
+        let dir = try makeBundle(weightFormat: nil, withSidecar: false)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let tracker = FetchTracker()
+        let fetcher: @Sendable (URL, URL) async throws -> Void = { url, dest in
+            await tracker.record(url, dest)
+        }
+
+        var threw: NSError?
+        do {
+            try await ModelRuntime.$sidecarFetcherForTests.withValue(fetcher) {
+                try await ModelRuntime.ensureJANGTQSidecar(
+                    at: dir,
+                    modelId: "step-3.7-flash-jangtq_k",
+                    name: "Step-3.7-Flash-JANGTQ_K"
+                )
+            }
+        } catch let e as NSError {
+            threw = e
+        }
+
+        let count = await tracker.count
+        #expect(count == 0)
+        #expect(threw?.domain == "ModelRuntime")
+        #expect(threw?.code == 2)
+    }
 }

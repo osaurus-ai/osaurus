@@ -19,6 +19,111 @@ public enum AgentRelayStatus: Equatable {
     case error(String)
 }
 
+// MARK: - Public URL Probe
+
+/// Captures the public-route verdict separately from tunnel auth so callers can
+/// keep the UI out of a false-green state until the HTTPS route works.
+struct RelayPublicRouteCheckResult: Equatable, Sendable {
+    let reachable: Bool
+    let statusCode: Int?
+    let failureDescription: String?
+}
+
+/// Performs the cheap public `/health` request that proves the relay hostname
+/// can actually proxy back to the local Osaurus server.
+struct RelayPublicURLProbe: Sendable {
+    typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
+    private static let timeout: TimeInterval = 8
+    private let transport: Transport
+
+    init(transport: @escaping Transport) {
+        self.transport = transport
+    }
+
+    static func live() -> RelayPublicURLProbe {
+        RelayPublicURLProbe { request in
+            let config = URLSessionConfiguration.ephemeral
+            config.waitsForConnectivity = false
+            config.timeoutIntervalForRequest = timeout
+            config.timeoutIntervalForResource = timeout
+            let session = URLSession(configuration: config)
+            defer { session.finishTasksAndInvalidate() }
+            return try await session.data(for: request)
+        }
+    }
+
+    static func makeHealthRequest(baseURL: String) -> URLRequest? {
+        guard let base = URL(string: baseURL),
+            let scheme = base.scheme?.lowercased(),
+            scheme == "https" || scheme == "http",
+            base.host?.isEmpty == false
+        else { return nil }
+        let healthURL = base.appendingPathComponent("health")
+        var request = URLRequest(url: healthURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = timeout
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("OsaurusRelayHealthCheck/1", forHTTPHeaderField: "User-Agent")
+        return request
+    }
+
+    func check(
+        baseURL: String,
+        attempts: Int = 3,
+        retryDelayNanoseconds: UInt64 = 1_000_000_000
+    ) async -> RelayPublicRouteCheckResult {
+        guard let request = Self.makeHealthRequest(baseURL: baseURL) else {
+            return RelayPublicRouteCheckResult(
+                reachable: false,
+                statusCode: nil,
+                failureDescription: "Public link URL is invalid."
+            )
+        }
+
+        let maxAttempts = max(1, attempts)
+        var lastResult = RelayPublicRouteCheckResult(
+            reachable: false,
+            statusCode: nil,
+            failureDescription: "Public link check did not run."
+        )
+
+        for attempt in 1 ... maxAttempts {
+            guard !Task.isCancelled else { return lastResult }
+
+            do {
+                let (_, response) = try await transport(request)
+                let statusCode = (response as? HTTPURLResponse)?.statusCode
+                if statusCode == 200 {
+                    return RelayPublicRouteCheckResult(
+                        reachable: true,
+                        statusCode: statusCode,
+                        failureDescription: nil
+                    )
+                }
+                lastResult = RelayPublicRouteCheckResult(
+                    reachable: false,
+                    statusCode: statusCode,
+                    failureDescription: "Public link health check returned HTTP \(statusCode ?? 0)."
+                )
+            } catch {
+                lastResult = RelayPublicRouteCheckResult(
+                    reachable: false,
+                    statusCode: nil,
+                    failureDescription: "Public link check failed: \(error.localizedDescription)"
+                )
+            }
+
+            if attempt < maxAttempts, retryDelayNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: retryDelayNanoseconds)
+                guard !Task.isCancelled else { return lastResult }
+            }
+        }
+
+        return lastResult
+    }
+}
+
 // MARK: - Relay Frame Types
 
 private struct RelayRequestFrame: Decodable {
@@ -84,6 +189,11 @@ public final class RelayTunnelManager: ObservableObject {
     private var addressToAgentId: [String: UUID] = [:]
     /// Set before expecting a `challenge` frame; consumed when the nonce arrives.
     private var pendingNonceHandler: ((String) -> Void)?
+    /// Public-link checks run after relay auth so green UI means the public
+    /// HTTPS route, not just the WebSocket auth handshake, is usable.
+    private let publicURLProbe = RelayPublicURLProbe.live()
+    private var publicCheckTasks: [UUID: Task<Void, Never>] = [:]
+    private var pendingPublicCheckURLs: [UUID: String] = [:]
 
     private init() {
         configuration = RelayConfigurationStore.load()
@@ -144,6 +254,7 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandler = nil
+        cancelAllPublicChecks()
         for id in agentStatuses.keys {
             agentStatuses[id] = .disconnected
         }
@@ -295,7 +406,7 @@ public final class RelayTunnelManager: ObservableObject {
 
             if let agent = findAgent(byAddress: lower) {
                 addressToAgentId[lower] = agent.id
-                agentStatuses[agent.id] = .connected(url: url)
+                beginPublicRouteCheck(for: agent.id, url: url)
             }
         }
     }
@@ -314,6 +425,7 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandler = nil
+        cancelAllPublicChecks()
     }
 
     private func handleAgentAdded(_ json: [String: Any]) {
@@ -325,7 +437,7 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.insert(lower)
         if let agent = findAgent(byAddress: lower) {
             addressToAgentId[lower] = agent.id
-            agentStatuses[agent.id] = .connected(url: url)
+            beginPublicRouteCheck(for: agent.id, url: url)
         }
     }
 
@@ -334,6 +446,7 @@ public final class RelayTunnelManager: ObservableObject {
         let lower = address.lowercased()
         authenticatedAgents.remove(lower)
         if let agentId = addressToAgentId.removeValue(forKey: lower) {
+            cancelPublicCheck(for: agentId)
             agentStatuses[agentId] = .disconnected
         }
     }
@@ -576,6 +689,7 @@ public final class RelayTunnelManager: ObservableObject {
         let lower = address.lowercased()
         authenticatedAgents.remove(lower)
         addressToAgentId.removeValue(forKey: lower)
+        cancelPublicCheck(for: agentId)
     }
 
     /// Attempt to auto-assign a cryptographic identity if the agent is missing one.
@@ -596,6 +710,7 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandler = nil
+        cancelAllPublicChecks()
 
         for id in configuration.enabledAgentIds {
             if agentStatuses[id] != .disconnected {
@@ -654,5 +769,58 @@ public final class RelayTunnelManager: ObservableObject {
         return AgentManager.shared.agents.first { agent in
             agent.agentAddress?.lowercased() == lower
         }
+    }
+
+    private func beginPublicRouteCheck(for agentId: UUID, url: String) {
+        agentStatuses[agentId] = .connecting
+        pendingPublicCheckURLs[agentId] = url
+        publicCheckTasks[agentId]?.cancel()
+
+        let probe = publicURLProbe
+        publicCheckTasks[agentId] = Task { [weak self] in
+            let result = await probe.check(baseURL: url)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.finishPublicRouteCheck(for: agentId, url: url, result: result)
+            }
+        }
+    }
+
+    private func finishPublicRouteCheck(
+        for agentId: UUID,
+        url: String,
+        result: RelayPublicRouteCheckResult
+    ) {
+        publicCheckTasks[agentId] = nil
+
+        guard configuration.isEnabled(for: agentId),
+            pendingPublicCheckURLs[agentId] == url,
+            isConnected,
+            webSocketTask != nil
+        else { return }
+
+        pendingPublicCheckURLs[agentId] = nil
+        if result.reachable {
+            agentStatuses[agentId] = .connected(url: url)
+        } else {
+            let message =
+                result.failureDescription
+                ?? "Public link check failed before the relay could reach the local server."
+            agentStatuses[agentId] = .error(message)
+        }
+    }
+
+    private func cancelPublicCheck(for agentId: UUID) {
+        publicCheckTasks[agentId]?.cancel()
+        publicCheckTasks[agentId] = nil
+        pendingPublicCheckURLs[agentId] = nil
+    }
+
+    private func cancelAllPublicChecks() {
+        for task in publicCheckTasks.values {
+            task.cancel()
+        }
+        publicCheckTasks.removeAll()
+        pendingPublicCheckURLs.removeAll()
     }
 }

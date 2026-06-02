@@ -37,6 +37,24 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(resolved?.resolvingSymlinksInPath().path == realModel.resolvingSymlinksInPath().path)
     }
 
+    @Test("Sharded symlinked model resolves from bounded sentinel")
+    func shardedSymlinkLayoutResolvesFromBoundedSentinel() throws {
+        let (root, realModel) = try makeRoot(layout: .symlinked)
+        try FileManager.default.createDirectory(at: realModel, withIntermediateDirectories: true)
+        try Data(#"{"model_type":"step3"}"#.utf8).write(
+            to: realModel.appendingPathComponent("config.json")
+        )
+        try Data("dummy".utf8).write(
+            to: realModel.appendingPathComponent("model-00001-of-00045.safetensors")
+        )
+
+        let resolved = ModelRuntime.resolveLocalModelDirectory(
+            forModelId: "OsaurusAI/TestModel",
+            in: root
+        )
+        #expect(resolved?.resolvingSymlinksInPath().path == realModel.resolvingSymlinksInPath().path)
+    }
+
     @Test("Missing config.json returns nil even when safetensors exist")
     func missingConfigRejects() throws {
         let (root, realModel) = try makeRoot()
@@ -136,6 +154,20 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(throws: Error.self) {
             try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "Generic-mislabeled")
         }
+    }
+
+    @Test("JANGTQ format stamp with sidecar passes even when weight_format is absent")
+    func jangtq_formatStampWithSidecar_passes() throws {
+        let dir = try makeIsolatedDir()
+        // Step 3.7 JANGTQ_K bundles can declare the runtime via
+        // `format: "jangtq"` while omitting the older top-level
+        // `weight_format` key. vmlx infers the JANGTQ route from the
+        // sidecar/codebook; Osaurus preflight must not block that valid
+        // bundle shape.
+        let json = #"{"format":"jangtq"}"#
+        try Data(json.utf8).write(to: dir.appendingPathComponent("jang_config.json"))
+        try Data("dummy".utf8).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
+        try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "Step-3.7-JANGTQ_K")
     }
 
     /// Genuine bf16 dense bundle: stamp says bf16 AND no sidecar. This is

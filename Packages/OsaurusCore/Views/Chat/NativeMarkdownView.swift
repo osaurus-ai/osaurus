@@ -368,11 +368,18 @@ final class NativeMarkdownView: NSView {
         let textChanged = blocks != lastBlocks
         let widthChanged = abs(width - lastWidth) > 0.5
         let themeChanged = themeFingerprint != lastThemeFingerprint
+        // A demoted text segment (was the last/streaming segment, now followed
+        // by newer text after a code block) keeps the same blocks but flips to
+        // `isStreaming: false`. Without tracking this we'd early-return and skip
+        // the `exitStreamingMode()` below, leaving its cursor + idle timer alive
+        // — the "two blinking cursors at once" bug.
+        let streamingChanged = isStreaming != lastIsStreaming
 
-        guard textChanged || widthChanged || themeChanged else { return }
+        guard textChanged || widthChanged || themeChanged || streamingChanged else { return }
 
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
+        lastIsStreaming = isStreaming
 
         removeSegmentViews()
         let tv = ensureTextView(width: width, theme: theme)
@@ -646,14 +653,15 @@ final class NativeMarkdownView: NSView {
         var prevAnchor: NSLayoutYAxisAnchor = topAnchor
         var prevOffset: CGFloat = 4
 
-        // The streaming cursor lives on exactly one nested text segment —
-        // the last one in document order. Other text segments configure
-        // with `isStreaming: false` so they don't blink alongside it.
+        // The streaming cursor is a text-view overlay, so it can only live on a
+        // `.textGroup` segment — and only on the *trailing* one. If the document
+        // currently ends in a non-text segment (a code block / table / image /
+        // math that is still streaming), the preceding text is already settled;
+        // parking the cursor there would put it ahead of the segment that's
+        // actually growing. In that case no text segment blinks.
         let lastTextSegmentId: String? = {
-            for seg in segments.reversed() {
-                if case .textGroup = seg.kind { return seg.id }
-            }
-            return nil
+            guard case .textGroup = segments.last?.kind else { return nil }
+            return segments.last?.id
         }()
 
         for seg in segments {

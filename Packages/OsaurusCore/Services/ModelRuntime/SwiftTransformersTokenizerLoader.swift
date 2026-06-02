@@ -51,6 +51,12 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         + String(UnicodeScalar(0x2581)!) + "sentence"
         + String(UnicodeScalar(0xFF5C)!) + ">"
 
+    private static let step37Bos =
+        "<" + String(UnicodeScalar(0xFF5C)!)
+        + "begin" + String(UnicodeScalar(0x2581)!) + "of"
+        + String(UnicodeScalar(0x2581)!) + "sentence"
+        + String(UnicodeScalar(0xFF5C)!) + ">"
+
     private static let gemma3FunctionToolMinimal = #"""
         {{ bos_token }}
         {%- set loop_messages = messages -%}
@@ -253,6 +259,12 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         let hasDSV4Sentinel =
             !hasZayaVLVisionSentinel
             && upstream.bosToken == Self.dsv4Bos
+        let hasStep37Sentinels =
+            upstream.bosToken == Self.step37Bos
+            && upstream.eosToken == "<|im_end|>"
+            && upstream.convertTokenToId("<|im_start|>") != nil
+            && upstream.convertTokenToId("<tool_call>") != nil
+            && upstream.convertTokenToId("<im_patch>") != nil
         if hasLagunaSentinel
             && (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
         {
@@ -295,6 +307,20 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             return try fallback(
                 label: "LFM2ToolMinimal",
                 template: MLXLMCommon.ChatTemplateFallbacks.lfm2ToolMinimal,
+                messages: messages,
+                tools: chatTemplateTools,
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
+            )
+        }
+        if hasStep37Sentinels,
+            (!(chatTemplateTools?.isEmpty ?? true)
+                || (adjustedContext?["enable_thinking"] as? Bool) == false),
+            (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
+            return try fallback(
+                label: "Step37Minimal",
+                template: MLXLMCommon.ChatTemplateFallbacks.step37Minimal,
                 messages: messages,
                 tools: chatTemplateTools,
                 additionalContext: adjustedContext,

@@ -169,6 +169,16 @@ struct MLXServiceRuntimePolicyTests {
         )
     }
 
+    @Test func stepToolSupportDoesNotRequireBundleMetadataPreflight() {
+        #expect(
+            MLXService.supportsLocalToolCalling(
+                modelName: "JANGQ-AI/Step-3.7-Flash-JANGTQ_K",
+                modelId: "step-3.7-flash-jangtq_k",
+                modelDirectory: nil
+            ) == true
+        )
+    }
+
     private static func lineCountTool() -> OsaurusCore.Tool {
         OsaurusCore.Tool(
             type: "function",

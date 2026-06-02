@@ -1368,6 +1368,9 @@ final class PluginHostContext: @unchecked Sendable {
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
             var toolSpecs = prep.enriched.tools
+            // Per-invocation harness state (plugin completions are one-shot
+            // across requests). Provides within-run dedupe + post-listing nudge.
+            let taskState = AgentTaskState()
 
             for iteration in 1 ... prep.options.maxIterations {
                 let effective = prep.budgetManager?.trimMessages(messages) ?? messages
@@ -1392,6 +1395,22 @@ final class PluginHostContext: @unchecked Sendable {
                         // then appends only the tool-result messages per call.
                         messages.append(choice.message)
                         for tc in calls {
+                            // Dedupe a still-fresh re-read: replay the exact
+                            // held envelope instead of re-running the read.
+                            if let held = taskState.heldResult(
+                                name: tc.function.name,
+                                argsJSON: tc.function.arguments
+                            ) {
+                                messages.append(
+                                    ChatMessage(
+                                        role: "tool",
+                                        content: held,
+                                        tool_calls: nil,
+                                        tool_call_id: tc.id
+                                    )
+                                )
+                                continue
+                            }
                             let processed = await Self.processToolCall(
                                 toolName: tc.function.name,
                                 argumentsJSON: tc.function.arguments,
@@ -1406,6 +1425,18 @@ final class PluginHostContext: @unchecked Sendable {
                             if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
                             messages.append(processed.toolMessage)
                             toolCallsExecuted.append(processed.toolCallExecuted)
+                            taskState.record(
+                                name: tc.function.name,
+                                argsJSON: tc.function.arguments,
+                                result: processed.toolMessage.content ?? ""
+                            )
+                        }
+                        // System-attributed next-step nudge for the next
+                        // iteration (non-load-bearing).
+                        if let bias = taskState.nextStepBias() {
+                            messages.append(
+                                ChatMessage(role: "user", content: "[System Notice] " + bias)
+                            )
                         }
                         continue
                     }
@@ -1534,6 +1565,9 @@ final class PluginHostContext: @unchecked Sendable {
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
             var toolSpecs = prep.enriched.tools
+            // Per-invocation harness state (plugin completions are one-shot
+            // across requests). Provides within-run dedupe + post-listing nudge.
+            let taskState = AgentTaskState()
             // Captured token-usage stats from the underlying inference layer
             // so the final stream result mirrors non-stream `complete`'s
             // usage block, and so the last `usage` delta the plugin sees
@@ -1655,6 +1689,7 @@ final class PluginHostContext: @unchecked Sendable {
                         toolCallsExecuted: &toolCallsExecuted,
                         sharedArtifacts: &sharedArtifacts,
                         prep: prep,
+                        taskState: taskState,
                         emit: emit
                     )
                     continue
@@ -1673,6 +1708,7 @@ final class PluginHostContext: @unchecked Sendable {
                         toolCallsExecuted: &toolCallsExecuted,
                         sharedArtifacts: &sharedArtifacts,
                         prep: prep,
+                        taskState: taskState,
                         emit: emit
                     )
                     continue
@@ -1733,6 +1769,7 @@ final class PluginHostContext: @unchecked Sendable {
         toolCallsExecuted: inout [[String: String]],
         sharedArtifacts: inout [[String: Any]],
         prep: PreparedInference,
+        taskState: AgentTaskState,
         emit: ([String: Any]) -> Void
     ) async {
         for inv in invocations {
@@ -1746,6 +1783,40 @@ final class PluginHostContext: @unchecked Sendable {
                 ]
             ]
             emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
+
+            // Dedupe a still-fresh re-read: replay the exact held envelope
+            // instead of re-running the read. Still pair an assistant
+            // tool_call message with the tool result so history stays valid.
+            if let held = taskState.heldResult(name: inv.toolName, argsJSON: inv.jsonArguments) {
+                emit(
+                    Self.chunkPayload(
+                        id: cid,
+                        delta: ["role": "tool", "tool_call_id": callId, "content": held]
+                    )
+                )
+                messages.append(
+                    ChatMessage(
+                        role: "assistant",
+                        content: lastContent.isEmpty ? nil : lastContent,
+                        tool_calls: [
+                            ToolCall(
+                                id: callId,
+                                type: "function",
+                                function: ToolCallFunction(
+                                    name: inv.toolName,
+                                    arguments: inv.jsonArguments
+                                )
+                            )
+                        ],
+                        tool_call_id: nil
+                    )
+                )
+                messages.append(
+                    ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
+                )
+                lastContent = ""
+                continue
+            }
 
             let processed = await Self.processToolCall(
                 toolName: inv.toolName,
@@ -1769,12 +1840,21 @@ final class PluginHostContext: @unchecked Sendable {
             toolCallsExecuted.append(processed.toolCallExecuted)
             messages.append(processed.assistantMessage)
             messages.append(processed.toolMessage)
+            taskState.record(
+                name: inv.toolName,
+                argsJSON: inv.jsonArguments,
+                result: processed.result
+            )
             // Only the FIRST invocation in the batch consumes the streamed
             // assistant prose — subsequent calls in the same completion
             // share the same response, so we clear lastContent after the
             // first tool to avoid duplicating prose into every assistant
             // tool-call message.
             lastContent = ""
+        }
+        // System-attributed next-step nudge for the next iteration.
+        if let bias = taskState.nextStepBias() {
+            messages.append(ChatMessage(role: "user", content: "[System Notice] " + bias))
         }
     }
 

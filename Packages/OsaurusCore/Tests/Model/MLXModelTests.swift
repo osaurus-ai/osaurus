@@ -53,6 +53,30 @@ struct MLXModelTests {
         #expect(model.isDownloaded == true)
     }
 
+    @Test func step37DownloadedModelIsTextOnlyForPickerEvenWithVisionConfig() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let model = MLXModel(
+            id: "JANGQ-AI/Step-3.7-Flash-JANGTQ_K",
+            name: "Step-3.7-Flash-JANGTQ_K",
+            description: "",
+            downloadURL: "https://example.com/repo",
+            rootDirectory: tempDir
+        )
+
+        let dir = model.localDirectory
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"model_type":"step3","vision_config":{"hidden_size":1024}}"#.utf8)
+            .write(to: dir.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: dir.appendingPathComponent("tokenizer.json"))
+        try Data([0x00]).write(to: dir.appendingPathComponent("model-00001-of-00001.safetensors"))
+
+        #expect(model.isDownloaded)
+        #expect(!model.isVLM)
+    }
+
     @Test func isDownloaded_falseWhenMissingConfig() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)

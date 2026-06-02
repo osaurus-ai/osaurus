@@ -262,6 +262,22 @@ struct ModelManagerTests {
         #expect(resolved.path == flatBundle.path)
     }
 
+    @Test func scanLocalModels_detectsShardedIndexWithoutListingAllWeights() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("osu-sharded-scan-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let repo = root.appendingPathComponent("JANGQ-AI").appendingPathComponent("Step-3.7-Flash-JANGTQ_K")
+        try fm.createDirectory(at: repo, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: repo.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: repo.appendingPathComponent("tokenizer.json"))
+        try Data("{}".utf8).write(to: repo.appendingPathComponent("model.safetensors.index.json"))
+
+        let detected = ModelManager.scanLocalModels(at: root)
+        #expect(detected.map(\.id).contains("JANGQ-AI/Step-3.7-Flash-JANGTQ_K"))
+    }
+
     @Test func deleteModel_removesDirectoryAndResetsState() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)

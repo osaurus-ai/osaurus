@@ -25,7 +25,7 @@ public struct ShareArtifactTool: OsaurusTool {
         + "Pass `path` to share an existing file (under your working folder, or under your sandbox home / "
         + "`/workspace/...`), or `content` + `filename` to share inline text/markdown without writing to disk first. "
         + "If unsure where you wrote a file, list it first with `sandbox_search_files(target=\"files\", pattern=\"<name>\")` "
-        + "(sandbox) or `file_tree`/`file_search` (folder mode). Required: at least one of `path` or `content`."
+        + "(sandbox) or `file_read`/`file_search` (folder mode). Required: at least one of `path` or `content`."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -79,11 +79,11 @@ public struct ShareArtifactTool: OsaurusTool {
         }
 
         let path = nonEmpty(json["path"])
-        let rawContent = nonEmpty(json["content"])
+        let providedContent = nonEmpty(json["content"])
         let filename = nonEmpty(json["filename"])
         let description = nonEmpty(json["description"])
 
-        guard path != nil || rawContent != nil else {
+        guard path != nil || providedContent != nil else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
@@ -92,6 +92,12 @@ public struct ShareArtifactTool: OsaurusTool {
                 tool: name
             )
         }
+
+        // Path mode wins when both are supplied: models often mirror the file
+        // path into `content` alongside a real `path`. Honoring that content
+        // would write the literal string as the artifact body and ship a broken
+        // file, so drop `content` whenever `path` is present.
+        let rawContent = path == nil ? providedContent : nil
 
         if rawContent != nil {
             guard filename != nil else {

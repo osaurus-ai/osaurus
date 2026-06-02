@@ -76,7 +76,6 @@ extension SessionCapability {
         "sandbox_exec",
         "sandbox_execute_code",
         "sandbox_write_file",
-        "sandbox_edit_file",
     ]
 
     private static func isCodeTool(_ name: String) -> Bool {

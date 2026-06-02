@@ -719,13 +719,34 @@ enum PreflightCapabilitySearch {
             )
         }
 
-        // Merge LLM picks (post-guardrail) with folder-suggested tools.
-        // Order: LLM picks first (they reflect user intent for THIS
-        // turn), then folder tools that weren't already picked. Dedupe
-        // so a tool that the LLM happened to surface from the same
+        // Folder-suggested tools must clear the SAME pure-cosine guardrail
+        // as LLM picks before injection. `rankFolderInjection` already
+        // applies the hybrid fused-score floor, but BM25 lexical overlap can
+        // let a semantically-unrelated tool through — e.g. a workspace that
+        // happens to hold a `.xlsx` injecting spreadsheet tools for a
+        // "what's the weather?" query. The cosine floor drops those
+        // egregious mismatches so an irrelevant plugin's tools (and its
+        // companion section) never pollute the schema. Skipped when empty so
+        // we don't pay an embed call for nothing.
+        let folderGuardedNames: [String]
+        if folderSuggestedNames.isEmpty {
+            folderGuardedNames = []
+        } else {
+            folderGuardedNames = await applyEmbeddingGuardrail(
+                query: query,
+                picks: folderSuggestedNames,
+                nameToDesc: nameToDesc,
+                embedder: embedder
+            )
+        }
+
+        // Merge LLM picks (post-guardrail) with folder-suggested tools
+        // (post-guardrail). Order: LLM picks first (they reflect user intent
+        // for THIS turn), then folder tools that weren't already picked.
+        // Dedupe so a tool that the LLM happened to surface from the same
         // plugin doesn't appear twice. When the LLM picked nothing the
-        // folder names carry through unchanged.
-        let selectedNames = mergeUnique(llmGuardedNames, folderSuggestedNames)
+        // guarded folder names carry through unchanged.
+        let selectedNames = mergeUnique(llmGuardedNames, folderGuardedNames)
         guard !selectedNames.isEmpty else { return (.empty, diagnostic) }
 
         let result = await buildPreflightResult(

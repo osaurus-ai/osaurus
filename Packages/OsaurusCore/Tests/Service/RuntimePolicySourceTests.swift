@@ -339,10 +339,12 @@ struct RuntimePolicySourceTests {
         #expect(keychain.contains("public static func secretIDs(agentId: UUID) -> [String]"))
 
         let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
-        let sandboxStart = try #require(composer.range(of: "if executionMode.usesSandboxTools"))
+        let sandboxStart = try #require(
+            composer.range(of: "if !effectiveToolsOff, executionMode.usesSandboxTools")
+        )
         let sandboxEnd = try #require(
             composer.range(
-                of: "} else if let folder = executionMode.folderContext",
+                of: "} else if !effectiveToolsOff, let folder = executionMode.folderContext",
                 range: sandboxStart.upperBound ..< composer.endIndex
             )
         )
@@ -472,7 +474,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "84c8bb653a50cd48b4af7f5cdce04d3f16e6ed95"
+        let expectedRuntimeHardenedRevision = "60b888659e1196995fa57f7af91d982e5948a680"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -480,7 +482,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4 matrix; an internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix; an internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -782,6 +784,19 @@ struct RuntimePolicySourceTests {
                 && runtime.contains("ModelFamilyNames.isZayaVLFamily(modelName)")
                 && runtime.contains("Self.isKnownHybridModel(name: modelName)"),
             "Engine-selected TurboQuant must stay off by default for DSV4, ZAYA/ZAYA-VL, and hybrid topologies until exact rows prove it"
+        )
+        #expect(
+            runtime.contains("ModelFamilyNames.isStepFamily(modelName)")
+                && runtime.contains("Step 3.7 is the narrow exception"),
+            "Step 3.7 must be the explicit mixed-SWA exception: only its proven full-attention KV layers default to TurboQuant while rotating layers stay disk-backed"
+        )
+        let mlxService = try Self.source("Services/Inference/MLXService.swift")
+        #expect(
+            mlxService.contains("ModelFamilyNames.isStepFamily(modelId)")
+                && mlxService.contains("Step 3.7 currently runs through vMLX's Step text runtime")
+                && mlxService.contains("Step 3.7 tool parsing/template selection is owned by the pinned")
+                && mlxService.contains("return ModelMediaCapabilities.from(modelId: modelId)"),
+            "Step 3.7 runtime policy must stay text-only/tool-capable and must not block preflight on external bundle metadata until Step VLM is wired and proven"
         )
     }
 
@@ -1530,6 +1545,35 @@ struct RuntimePolicySourceTests {
                 "loadModelContainer(\n                from: localURL,\n                using: tokenizerLoader\n            )"
             ),
             "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.default, including load-time memory caps, mmap safetensors, and JANGTQ prestack/alignment"
+        )
+    }
+
+    @Test("ModelRuntime keeps weight-size directory scans out of the default load path")
+    func modelRuntimeWeightSizePreflightIsManualMultiModelOnly() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let start = try #require(runtime.range(of: "private static func computeWeightsSizeBytes"))
+        let end =
+            runtime.range(of: "private static func findLocalDirectory", range: start.upperBound ..< runtime.endIndex)?
+            .lowerBound
+            ?? runtime.endIndex
+        let body = String(runtime[start.lowerBound ..< end])
+
+        #expect(body.contains("contentsOfDirectory("))
+        #expect(
+            !body.contains("enumerator("),
+            "Weight-size preflight must not recursively walk huge model bundles or symlinked cache folders on the request path."
+        )
+
+        let loadStart = try #require(runtime.range(of: "func loadContainer(id: String, name: String)"))
+        let loadEnd = try #require(
+            runtime.range(of: "let loadID = allocateLoadingTaskID()", range: loadStart.upperBound ..< runtime.endIndex)
+        )
+        let loadPreflight = String(runtime[loadStart.lowerBound ..< loadEnd.lowerBound])
+        #expect(loadPreflight.contains("if policy == .manualMultiModel"))
+        #expect(loadPreflight.contains("weightsBytes = Self.computeWeightsSizeBytes(at: localURL)"))
+        #expect(
+            loadPreflight.contains("} else {\n            weightsBytes = 0"),
+            "Default single-model loads must not block on directory size scans before vmlx starts loading."
         )
     }
 

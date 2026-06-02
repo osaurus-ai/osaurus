@@ -77,4 +77,12 @@ public enum ChatExecutionContext {
     /// credential files when the user explicitly opts in. Only consulted
     /// when `hostReadOnlyScope` is non-nil.
     @TaskLocal public static var allowHostSecretReads: Bool = false
+
+    /// Sandbox identity for combined mode, letting the unified host
+    /// `file_*` tools serve an absolute `/workspace/...` path from the
+    /// Linux sandbox (path-routed file access). Bound by
+    /// `ToolRegistry.execute` only in combined sandbox + host-read mode;
+    /// `nil` everywhere else, so plain folder and plain sandbox modes are
+    /// untouched.
+    @TaskLocal public static var sandboxReadBridge: SandboxReadBridge?
 }

@@ -153,6 +153,16 @@ public enum ProviderCredentialInstructionsCatalog {
                 storageAuthType: .apiKey,
                 presetId: preset.rawValue
             )
+        case .atlasCloud:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("AtlasCloud"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Use an AtlasCloud API key from the AtlasCloud console."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
         case .google:
             return ProviderCredentialInstructions(
                 providerType: providerType,
@@ -180,6 +190,16 @@ public enum ProviderCredentialInstructionsCatalog {
                 authMethod: .apiKey,
                 getKeyURL: getKeyURL,
                 keyFormatHint: L("Get a key from platform.deepseek.com."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
+        case .minimax:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("MiniMax"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Get a key from platform.minimax.io."),
                 storageAuthType: .apiKey,
                 presetId: preset.rawValue
             )

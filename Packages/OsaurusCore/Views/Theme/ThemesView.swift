@@ -5,6 +5,7 @@
 //  Theme gallery and management view with import/export functionality
 //
 
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -72,6 +73,10 @@ struct ThemesView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
+                            // Community gallery discovery banner
+                            communityThemesBanner
+                                .transition(.opacity)
+
                             // Active theme indicator
                             if let activeTheme = themeManager.activeCustomTheme {
                                 activeThemeSection(activeTheme)
@@ -615,6 +620,70 @@ struct ThemesView: View {
                         .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
                 )
         )
+    }
+
+    // MARK: - Community Themes Banner
+
+    /// Footer call-to-action linking out to the community theme gallery.
+    /// Placed at the end of the list so it reads as "get more" rather than
+    /// competing with the header's primary Import / Create actions.
+    private var communityThemesBanner: some View {
+        Button(action: openCommunityThemes) {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [theme.accentColor.opacity(0.18), theme.accentColor.opacity(0.06)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 44, height: 44)
+
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Browse Community Themes", bundle: .module)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text("Discover and install more themes shared by the Osaurus community", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(theme.secondaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help(Text("Open osaurus.ai/themes", bundle: .module))
+    }
+
+    private func openCommunityThemes() {
+        if let url = URL(string: "https://osaurus.ai/themes") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     // MARK: - Actions

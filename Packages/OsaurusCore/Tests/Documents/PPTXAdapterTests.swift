@@ -69,6 +69,54 @@ struct PPTXAdapterTests {
         #expect(document.security.externalReferences.first?.urlString == "https://example.com/deck-context")
     }
 
+    @Test func parse_preservesSlideTableCellsAndStructureAnchors() async throws {
+        let fixture = try makePresentationFixture(
+            fileExtension: "pptx",
+            slides: [1: ["Regional forecast"]],
+            slideOrder: [1],
+            tables: [
+                1: [
+                    [
+                        ["Region", "Revenue"],
+                        ["North", "1200"],
+                        ["South", "900"],
+                        ["West", ""],
+                    ]
+                ]
+            ],
+            compression: .stored
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let document = try await PPTXAdapter().parse(url: fixture.url, sizeLimit: 100_000)
+        let presentation = try #require(document.representation.underlying as? PresentationDocument)
+        let table = try #require(presentation.slides.first?.tables.first)
+
+        #expect(table.rows.count == 4)
+        #expect(table.columnCount == 2)
+        #expect(table.rows[0].cells.map(\.text) == ["Region", "Revenue"])
+        #expect(table.rows[2].cells.map(\.text) == ["South", "900"])
+        #expect(table.rows[3].cells.map(\.text) == ["West", ""])
+        #expect(table.rows[1].cells[0].paragraphIndexes.isEmpty == false)
+        #expect(table.rows[3].cells[1].paragraphIndexes.isEmpty)
+        #expect(document.textFallback.contains("Regional forecast"))
+        #expect(document.textFallback.contains("Region"))
+        #expect(document.textFallback.contains("1200"))
+
+        let tableElement = try #require(document.structure.elements(kind: .table).first)
+        let cells = document.structure.elements(kind: .tableCell)
+        #expect(document.structure.elements(kind: .tableRow).count == 4)
+        #expect(cells.count == 8)
+        #expect(tableElement.anchor.metadata["rowCount"] == "4")
+        #expect(tableElement.anchor.metadata["columnCount"] == "2")
+        #expect(cells.map(\.text).contains("Revenue"))
+        let north = try #require(cells.first { $0.text == "North" })
+        #expect(north.anchor.sourceRange?.start.slideIndex == 0)
+        #expect(north.anchor.sourceRange?.start.rowIndex == 1)
+        #expect(north.anchor.sourceRange?.start.columnIndex == 0)
+        #expect(north.anchor.textRange?.endUTF16Offset ?? 0 <= document.textFallback.utf16.count)
+    }
+
     @Test func parse_marksPOTXAsTemplate() async throws {
         let fixture = try makePresentationFixture(
             fileExtension: "potx",
@@ -269,6 +317,7 @@ struct PPTXAdapterTests {
         slides: [Int: [String]],
         slideOrder: [Int],
         notes: [Int: [String]] = [:],
+        tables: [Int: [[[String]]]] = [:],
         hiddenSlides: Set<Int> = [],
         externalTargets: [String] = [],
         externalRelationships: [RelationshipFixture] = [],
@@ -288,7 +337,13 @@ struct PPTXAdapterTests {
             entries.append(
                 (
                     "ppt/slides/slide\(number).xml",
-                    Data(slideXML(paragraphs, isHidden: hiddenSlides.contains(number)).utf8)
+                    Data(
+                        slideXML(
+                            paragraphs,
+                            tables: tables[number] ?? [],
+                            isHidden: hiddenSlides.contains(number)
+                        ).utf8
+                    )
                 )
             )
             let slideRelationships = slideRelationshipsXML(
@@ -387,7 +442,7 @@ struct PPTXAdapterTests {
         """
     }
 
-    private func slideXML(_ paragraphs: [String], isHidden: Bool = false) -> String {
+    private func slideXML(_ paragraphs: [String], tables: [[[String]]] = [], isHidden: Bool = false) -> String {
         let showAttribute = isHidden ? #" show="0""# : ""
         return """
             <?xml version="1.0" encoding="UTF-8"?>
@@ -395,6 +450,7 @@ struct PPTXAdapterTests {
               <p:cSld>
                 <p:spTree>
                   \(paragraphs.map(textShapeXML).joined(separator: "\n"))
+                  \(tables.map(tableXML).joined(separator: "\n"))
                 </p:spTree>
               </p:cSld>
             </p:sld>
@@ -423,6 +479,44 @@ struct PPTXAdapterTests {
             </a:p>
           </p:txBody>
         </p:sp>
+        """
+    }
+
+    private func tableXML(_ rows: [[String]]) -> String {
+        """
+        <p:graphicFrame>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+              <a:tbl>
+                <a:tblPr/>
+                <a:tblGrid>
+                  \((0 ..< (rows.map(\.count).max() ?? 0)).map { _ in #"<a:gridCol w="2000000"/>"# }.joined(separator: "\n        "))
+                </a:tblGrid>
+                \(rows.map(tableRowXML).joined(separator: "\n        "))
+              </a:tbl>
+            </a:graphicData>
+          </a:graphic>
+        </p:graphicFrame>
+        """
+    }
+
+    private func tableRowXML(_ cells: [String]) -> String {
+        """
+        <a:tr h="370840">
+          \(cells.map(tableCellXML).joined(separator: "\n  "))
+        </a:tr>
+        """
+    }
+
+    private func tableCellXML(_ text: String) -> String {
+        """
+        <a:tc>
+          <a:txBody>
+            <a:p>
+              <a:r><a:t>\(escapeXML(text))</a:t></a:r>
+            </a:p>
+          </a:txBody>
+        </a:tc>
         """
     }
 

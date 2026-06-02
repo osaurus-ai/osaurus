@@ -3,6 +3,57 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.6</title>
+            <pubDate>Mon, 01 Jun 2026 06:46:08 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.6</sparkle:version>
+            <sparkle:shortVersionString>0.19.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.6/Osaurus-0.19.6.dmg" length="50442649" type="application/octet-stream" sparkle:edSignature="YEJdBjnykQVnmf36/jqRvMkvyEcvdBpkJ003pc1XWBCL5UTk8u0nIvZRgDknRqJfNrF2QPIQZFjLwIXEgOoiDQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🚀 Features
+
+- added MiniMax provider (#1316) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.5...0.19.6
+]]></description>
+        </item>
+        <item>
+            <title>0.19.5</title>
+            <pubDate>Mon, 01 Jun 2026 02:11:38 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.5</sparkle:version>
+            <sparkle:shortVersionString>0.19.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.5/Osaurus-0.19.5.dmg" length="50431167" type="application/octet-stream" sparkle:edSignature="Bg0oS1MoQZ8yFmEl9mXHo8PzY998K+u4AoaLN7FKxg50JtcGlxr0uWo2O7AMyMrQHKA2isoDR5ttTnUaN81rBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Consolidate Step 3.7 and LFM runtime proof (#1310) by @jjang-ai
+- Prove XLSX file\_read preview metadata (#1312) by @mimeding
+- [codex] Add AtlasCloud provider preset (#1304) by @mimeding
+- Bound raw file\_read previews (#1306) by @mimeding
+- [codex] Audit high-fidelity read\_file coverage (#1305) by @mimeding
+- Preserve PPTX slide table structure (#1307) by @mimeding
+- [codex] Validate relay public URL before showing connected (#1302) by @mimeding
+
+## 🚀 Features
+
+- added stateful agent folder ops (#1313) by @tpae
+
+## 🧰 Maintenance
+
+- minor UI improvements (#1315) by @tpae
+- combined sandbox file operations into unified file operations (#1311) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.4...0.19.5
+]]></description>
+        </item>
+        <item>
             <title>0.19.4</title>
             <pubDate>Sat, 30 May 2026 13:15:18 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

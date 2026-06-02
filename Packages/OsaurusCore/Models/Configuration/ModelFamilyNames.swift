@@ -58,6 +58,18 @@ enum ModelFamilyNames {
         ) != nil
     }
 
+    /// StepFun Step 3.5 / 3.7 bundles. Step 3.7 VLM-wrapped local
+    /// JANG/JANGTQ models expose the Step 3.5-compatible text runtime and
+    /// native template, but explicit required-tool calls need the corrected
+    /// Step fallback template instead of the native always-open thinking rail.
+    static func isStepFamily(_ modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.range(
+            of: #"(^|/|[\-_])step($|[\-_/\.0-9])"#,
+            options: .regularExpression
+        ) != nil
+    }
+
     /// DeepSeek-V4 / DSV4 Flash bundles (`model_type=deepseek_v4`).
     /// Match both public repo forms (`DeepSeek-V4-...`) and shorthand
     /// runtime names (`DSV4-...`, `deepseekv4-...`) while avoiding

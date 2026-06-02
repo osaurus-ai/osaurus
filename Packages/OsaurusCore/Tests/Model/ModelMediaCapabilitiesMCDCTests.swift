@@ -64,6 +64,12 @@ struct ModelMediaCapabilitiesMCDCTests {
         )
     }
 
+    @Test("Step 3.7 text runtime does not advertise media")
+    func step37TextRuntimeDoesNotAdvertiseMedia() {
+        #expect(ModelMediaCapabilities.from(modelId: "JANGQ-AI/Step-3.7-Flash-JANG_2L") == .textOnly)
+        #expect(ModelMediaCapabilities.from(modelId: "step-3.7-flash-jangtq_k") == .textOnly)
+    }
+
     // MARK: - D2: Qwen 2/2.5/3 VL (image + video)
 
     @Test("D2: Qwen2-VL → .imageVideo")

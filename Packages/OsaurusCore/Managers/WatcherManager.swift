@@ -643,10 +643,10 @@ public final class WatcherManager {
 
         if iteration == 1 {
             prompt +=
-                "\n\nChanges were detected in the watched folder. Use `file_tree` and other file tools to inspect the current state of the directory and take action.\n"
+                "\n\nChanges were detected in the watched folder. Use `file_read` (which lists a directory when given one) and other file tools to inspect the current state of the directory and take action.\n"
         } else {
             prompt +=
-                "\n\nThis is a follow-up check after a previous organizing pass. Quickly verify the directory state with a single `file_tree` call. If everything looks organized, return immediately without further inspection. Only take action if you see clearly unorganized files.\n"
+                "\n\nThis is a follow-up check after a previous organizing pass. Quickly verify the directory state with a single `file_read` call on the folder. If everything looks organized, return immediately without further inspection. Only take action if you see clearly unorganized files.\n"
         }
 
         prompt +=

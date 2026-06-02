@@ -4,8 +4,8 @@
 //
 //  Pins the folder path contract in `FolderToolHelpers.resolvePath`. The
 //  contract is load-bearing for combined sandbox + host-read mode: the
-//  host read tools (`file_read` / `file_search` / `file_tree`) must stay
-//  strictly under the selected folder root. Lexical `..` containment was
+//  host read tools (`file_read` / `file_search`) must stay strictly
+//  under the selected folder root. Lexical `..` containment was
 //  already enforced; these tests lock in symlink-safe containment so a
 //  symlink *inside* the root can't be followed out of scope on read.
 //

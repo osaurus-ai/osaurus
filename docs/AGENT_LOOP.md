@@ -100,20 +100,19 @@ Project type is auto-detected from manifests (defined in [`FolderContext.swift`]
 
 ### Folder tool inventory
 
-Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift) when the folder is selected. Tools that operate on the filesystem all enforce the same path contract: paths must be relative to the working folder, and after `..`/`.` standardisation must stay strictly under it. `share_artifact` is NOT in this table — it lives as a global built-in (see below) so it's available in every chat.
+Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift) when the folder is selected. Tools that operate on the filesystem all enforce the same path contract: a path is taken relative to the working folder, but an absolute path is also accepted as long as it resolves (after `..`/`.` standardisation) to the working folder or somewhere strictly under it; paths outside it are rejected. `share_artifact` is NOT in this table — it lives as a global built-in (see below) so it's available in every chat.
 
 **Core (always registered):**
 
 | Tool            | Description                                                  |
 | --------------- | ------------------------------------------------------------ |
-| `file_tree`     | List directory structure with project-aware ignore patterns. Use this instead of `ls`/`tree` in `shell_run`. |
-| `file_read`     | Read text with line ranges and XLSX workbooks with bounded sheet previews. Use this instead of `cat`/`head`/`tail`. |
+| `file_read`     | Read a file (line ranges, `tail_lines`/`max_chars`, bounded XLSX sheet previews) **or** list a directory (with `max_depth`, project-aware ignore patterns) — the path decides. Use this instead of `cat`/`head`/`tail`/`ls`/`tree`. |
 | `file_write`    | Create or overwrite files. Use this instead of `echo`/`cat` heredoc. |
 | `file_edit`     | Surgical exact-string replacement. Use this instead of `sed`/`awk`. |
-| `file_search`   | ripgrep-style search across the folder. Use this instead of `grep`/`rg`/`find`. |
+| `file_search`   | ripgrep-style content search, or `target="files"` filename-glob find. Use this instead of `grep`/`rg`/`find`. |
 | `shell_run`     | Execute a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, tests, git, installs, and any work that can't be expressed via the dedicated `file_*` tools. |
 
-The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — `mv`, `cp`, `rm`, and `mkdir` go through `shell_run` so the model picks "shell command" once instead of differentiating four near-identical tool names. Multi-step orchestration goes through `shell_run` chains.
+The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — `mv`, `cp`, `rm`, and `mkdir` go through `shell_run` so the model picks "shell command" once instead of differentiating four near-identical tool names. Multi-step orchestration goes through `shell_run` chains. The standalone `file_tree` was folded into `file_read` (pass a directory path to get a listing) so the path argument carries the file-vs-directory decision.
 
 `shell_run` lives in the core set so it's available for every folder mount, regardless of whether a project type was detected; the folder-section prompt names it unconditionally and the registration matrix has to follow.
 
@@ -145,7 +144,7 @@ public enum ExecutionMode: Sendable {
 
 `ExecutionMode` is what the system prompt composer, tool registry, and memory layer all key off when deciding which tools and instructions to surface. The single resolver is [`ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)`](../Packages/OsaurusCore/Tools/ToolRegistry.swift) and its priority is **sandbox > host folder > none**: if the user has both an open folder and the autonomous-exec toggle on (with `sandbox_exec` registered), the sandbox wins — but the folder now rides along as `.sandbox(hostRead: ctx)` instead of being dropped. Plugin and HTTP entry points use the same resolver so the same agent gets the same mode regardless of how it's invoked.
 
-**Combined mode (`.sandbox(hostRead: ctx)`).** The agent gets the host workspace tree/manifest/git status in context plus the read-only host read tools (`file_tree` / `file_read` / `file_search`, scoped to the folder root). Host write/edit/shell/git stay hidden; all execution runs in the sandbox VM, which has **no mount** of the host workspace (asserted in `SandboxManager.validatedWorkspaceMountSource`). The system prompt emits a read-only workspace section and a two-filesystem block that tells the agent to `file_read` host content and carry it into the sandbox rather than expecting `sandbox_exec` to see the workspace. Security: the no-mount invariant fully contains untrusted *code*, but the trusted agent is the read→exec bridge by design, so three residual risks remain — agent-as-bridge exfiltration, prompt injection from read content, and in-scope secrets. Scope enforcement + secret-file refusal (`.env`/keys/credentials, overridable per session) mitigate the latter two; v1 keeps sandbox **network-on**, so the exfiltration residual is documented rather than closed.
+**Combined mode (`.sandbox(hostRead: ctx)`).** The agent gets the host workspace tree/manifest/git status in context plus the read-only host read tools (`file_read` / `file_search`, scoped to the folder root; `file_read` also lists directories). Host write/edit/shell/git stay hidden; all execution runs in the sandbox VM, which has **no mount** of the host workspace (asserted in `SandboxManager.validatedWorkspaceMountSource`). The system prompt emits a read-only workspace section and a two-filesystem block that tells the agent to `file_read` host content and carry it into the sandbox rather than expecting `sandbox_exec` to see the workspace. Security: the no-mount invariant fully contains untrusted *code*, but the trusted agent is the read→exec bridge by design, so three residual risks remain — agent-as-bridge exfiltration, prompt injection from read content, and in-scope secrets. Scope enforcement + secret-file refusal (`.env`/keys/credentials, overridable per session) mitigate the latter two; v1 keeps sandbox **network-on**, so the exfiltration residual is documented rather than closed.
 
 In sandbox mode, the composer also reads the agent's `~/SOUL.md` and emits it as a static `## SOUL` section between persona and the operational directives. This is the agent-authored complement to the user-authored persona slot — see the [Sandbox Guide](SANDBOX.md) for the full contract. Folder mode does not get a SOUL section; folder agents are short-lived and project-bound.
 
@@ -199,6 +198,64 @@ Every persisted [`ChatSessionData`](../Packages/OsaurusCore/Models/Chat/ChatSess
 ### HTTP API divergence (intentional)
 
 The OpenAI-compatible HTTP endpoint is **stateless** — there's no Osaurus session id on the request, so it cannot reuse `SessionToolStateStore.loadedToolNames`, run a real LLM-driven preflight, or freeze a per-session schema snapshot. To keep the schema predictable for HTTP callers (and to avoid paying a preflight LLM call on every request), the HTTP path deliberately bypasses [`SystemPromptComposer.resolveTools`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) and uses bare `ToolRegistry.alwaysLoadedSpecs(mode:)`. Manual-mode user picks, mid-session `capabilities_load` additions, and the inline `clarify` UI are chat-only. This is **by design** — see the comment block in [`HTTPHandler.swift`](../Packages/OsaurusCore/Networking/HTTPHandler.swift) before "fixing" it.
+
+---
+
+## Harness Task State (`AgentTaskState`)
+
+Small local models (≈1B active) used as both planner and executor in a free
+loop fail at the bookkeeping, not the choices: every turn they have to
+reconstruct from raw tool text *where they are*, *what the last result was*,
+and *what the next valid move is*. The win came from moving that bookkeeping
+into the loop and making results structured rather than prose.
+
+Two changes, one component:
+
+1. **Results are actionable objects, not prose.** A `file_read` on a directory
+   returns a `kind: "listing"` envelope with `entries[]` (each carrying a
+   ready-to-use `path`), not an ASCII tree. Descending is a field copy
+   (`entries[i].path`), not a comprehension task. File reads carry `kind:
+   "file"`; missing paths return the `not_found` kind. See
+   [Tool Contract — structured result kinds](TOOL_CONTRACT.md#structured-actionable-result-kinds).
+
+2. **A task-state machine in the harness.** [`AgentTaskState`](../Packages/OsaurusCore/Services/Chat/AgentTaskState.swift)
+   classifies each result (`classify(_:)` → empty/partial/populated listing,
+   file content, not-found, error, other) and:
+   - **De-dupes still-fresh re-reads.** A read whose `(name, canonical args)`
+     was already satisfied this message replays the **exact** prior envelope
+     (never a budget-collapsed form) instead of re-executing. A write/edit to a
+     path **invalidates** that path's fresh read — both sides canonicalize
+     through one shared `canonicalPath(_:)` — so the normal `read → edit →
+     read-to-verify` pattern is never short-circuited with stale content.
+   - **Emits a next-step nudge** for the next turn, driven by a data table:
+     populated listing → "copy an entry's `path`"; empty → "don't invent an
+     entry"; truncated → "use `file_search`"; not-found → "pick from the last
+     listing". The nudge is **system-attributed** (`[System Notice] …`, like
+     the tool-budget notice). The listing nudge is **reactive, not proactive**:
+     it fires only after **two listings without an intervening read** (the
+     model is observed wandering), so a capable model that descends immediately
+     after the first listing never sees it — no backseat-driving for a model
+     that already inferred the next step. It then keeps firing while the model
+     stays stuck (no upper silence cap). Only a **successful file read** resets
+     the wandering counter; a `not_found` does not (a failed read is not
+     progress), so interleaved failed reads can't mask wandering — and
+     `not_found` fires its own reactive nudge in parallel. (The two listings
+     are not asserted to be distinct paths; a different spelling of the same
+     dir would also count, but the nudge is benign.)
+
+   **The nudge is a nudge, not the mechanism.** The structured `entries[]` must
+   carry the descent on its own — validated by a bias-disabled gate
+   (`AgentTaskStateTests.transcript_listThenRead_descendsWithoutBias`) that
+   requires the model to descend and read within a fixed turn budget with the
+   note **off**. If it only works with the note on, the structure failed.
+
+**Scope.** All three tool-call loops share the component:
+`ChatSession.send` (chat), the HTTP `/v1/chat/completions` agent loop, and the
+plugin completion loop. Within-message dedupe/bias is reset by `beginMessage()`.
+Cross-*user-message* survival of `lastListing` (so "what's on my desktop"
+carries into a later "read the file") is **`ChatSession`-only** — the HTTP and
+plugin loops are stateless across requests by design (see the divergence note
+above), so their `AgentTaskState` lives for the single request/invocation.
 
 ---
 

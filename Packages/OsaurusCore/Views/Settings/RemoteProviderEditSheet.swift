@@ -459,7 +459,7 @@ private struct AddProviderFlow: View {
         knownProtocol = config.providerProtocol
         knownPort = config.port.map(String.init) ?? ""
         knownBasePath = config.basePath
-        manualModelIdsText = ""
+        manualModelIdsText = config.defaultManualModelIds.joined(separator: "\n")
         testResult = nil
     }
 
@@ -1425,7 +1425,8 @@ private struct AddProviderFlow: View {
             port: port,
             basePath: trimmedBasePath.isEmpty ? config.basePath : trimmedBasePath,
             authType: config.authType,
-            providerType: config.providerType
+            providerType: config.providerType,
+            defaultManualModelIds: config.defaultManualModelIds
         )
     }
 }

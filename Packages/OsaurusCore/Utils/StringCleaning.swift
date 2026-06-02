@@ -32,7 +32,7 @@ public enum StringCleaning {
         }
 
         // Pattern 2: Strip trailing incomplete JSON that looks like a function call
-        // e.g., {"name": "file_tree", "result": {
+        // e.g., {"name": "file_read", "result": {
         if let lastBrace = result.lastIndex(of: "{") {
             let suffix = String(result[lastBrace...])
             if (suffix.contains("\"name\"") || suffix.contains("\"function\"") || suffix.contains("\"tool\""))

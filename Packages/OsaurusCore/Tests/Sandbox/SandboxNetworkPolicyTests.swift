@@ -71,6 +71,39 @@
             #expect(decoded.allowHostSecretReads == true)
             #expect(decoded.sandboxNetworkEnabled == false)
         }
+
+        // MARK: - Boot-time reconcile (self-heal desynced installs)
+
+        @Test func agentNetworkOnMapsToOutbound() {
+            #expect(SandboxManager.reconciledNetwork(agentNetworkEnabled: true) == "outbound")
+        }
+
+        @Test func agentNetworkOffMapsToNone() {
+            #expect(SandboxManager.reconciledNetwork(agentNetworkEnabled: false) == "none")
+        }
+
+        /// The regression that motivated the reconcile: the per-agent toggle
+        /// says egress-on, but `sandbox.json` was left at "none" (early-build
+        /// provisioning, the container-level toggle, or another agent's flip).
+        /// Reconciling the active agent's preference at boot must override the
+        /// stale value so the VM comes up with network.
+        @Test func agentNetworkOnHealsStaleNoneConfig() {
+            var stale = SandboxConfiguration(network: "none")
+            #expect(!SandboxManager.networkEnabled(from: stale))  // pre-heal: egress cut
+
+            stale.network = SandboxManager.reconciledNetwork(agentNetworkEnabled: true)
+            #expect(SandboxManager.networkEnabled(from: stale))  // post-heal: egress on
+        }
+
+        /// Symmetric guarantee: a user who turned the agent toggle OFF still
+        /// gets egress cut even if `sandbox.json` is stale at "outbound".
+        @Test func agentNetworkOffHealsStaleOutboundConfig() {
+            var stale = SandboxConfiguration(network: "outbound")
+            #expect(SandboxManager.networkEnabled(from: stale))
+
+            stale.network = SandboxManager.reconciledNetwork(agentNetworkEnabled: false)
+            #expect(!SandboxManager.networkEnabled(from: stale))
+        }
     }
 
 #endif

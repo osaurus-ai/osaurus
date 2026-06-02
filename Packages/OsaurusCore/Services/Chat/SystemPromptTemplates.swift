@@ -69,6 +69,24 @@ public enum SystemPromptTemplates {
         - `share_artifact(...)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd) — files in `/tmp` won't be findable. If unsure where you wrote it, verify with `sandbox_search_files(target="files", pattern="<name>")` first. For inline text/markdown, use `content`+`filename` mode and skip the file write entirely. **When using `sandbox_execute_code`, call `share_artifact` from the model layer AFTER the script returns — the helper module does not expose it because in-script calls would silently fail to render the artifact card.**
         """
 
+    // MARK: - Grounding
+
+    /// Anti-fabrication directive injected whenever tools are present
+    /// (gated on `!effectiveToolsOff` + a non-empty schema in the
+    /// composer). Both conditions are session-constant → KV-cache safe.
+    /// Deliberately tool-name-free: this section can be emitted when
+    /// `capabilities_search` is NOT in the schema (e.g. manual mode), and
+    /// naming a tool that isn't in the request is the recitation-loop trap
+    /// `defaultPersona` documents. The capability-discovery nudge (when
+    /// present) supplies the "how to find a tool" half; this supplies the
+    /// "don't fabricate when none fits" half.
+    public static let groundingDirective = """
+        ## Grounding
+
+        - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
+        - You can almost always get there: a shell or network tool fetches live/external data, and `capabilities_search` finds tools you don't have yet. Attempt that before deciding you can't — the absence of a purpose-built tool is not a dead end. Say what you can't do only after genuinely trying, and never invent a tool name or fabricate a value to fill a gap.
+        """
+
     // MARK: - Capability Discovery Nudge
 
     /// Static guidance appended to the system prompt when `capabilities_search`
@@ -94,10 +112,12 @@ public enum SystemPromptTemplates {
 
     // MARK: - Cross-cutting Engineering Discipline
 
-    /// General code-style discipline. Injected into the system prompt
-    /// whenever any file-mutation tool (sandbox or folder) is in the
-    /// resolved schema. Not sandbox-specific — folder-mode agents doing
-    /// real edits get the same guardrails.
+    /// General code-style discipline. Injected when a file-authoring tool
+    /// (`sandbox_write_file` / `file_write` / `file_edit`, see
+    /// `SystemPromptComposer.codeEditToolNames`) is in the resolved schema —
+    /// not for shell-/install-only chats, which don't edit code. Not
+    /// sandbox-specific — folder-mode agents doing real edits get the same
+    /// guardrails.
     public static let codeStyleGuidance = """
         ## Code style
 
@@ -108,14 +128,16 @@ public enum SystemPromptTemplates {
         - Do not add docstrings, comments, or type annotations to code you did not modify.
         """
 
-    /// Risk-aware action discipline. Same gate as `codeStyleGuidance` —
-    /// fires whenever the schema includes a tool that can mutate the
-    /// user's filesystem or run arbitrary code (sandbox or folder).
+    /// Risk-aware action discipline. Fires on the broader
+    /// `SystemPromptComposer.mutationToolNames` gate (any tool that can
+    /// mutate the filesystem OR run arbitrary code / install deps) — wider
+    /// than `codeStyleGuidance` because destructive risk applies to
+    /// exec/install, not just file edits.
     public static let riskAwareGuidance = """
         ## Risk-aware actions
 
-        - Local, reversible actions (editing a file, running a test) — proceed without hesitation.
-        - Destructive or hard-to-undo actions (deleting files, `rm -rf`, dropping data) — confirm with the user first.
+        - Default to acting. Local, reversible work — reading, editing a file, running a command or test, installing into the sandbox — just do it; you do not need to ask permission first.
+        - Only pause to confirm for genuinely destructive or hard-to-undo actions: deleting the user's files, `rm -rf`, dropping data, force-pushing. The test is reversibility — if it's reversible, proceed.
         - When encountering unexpected state (unfamiliar files, unknown processes), investigate before removing anything.
         """
 
@@ -170,7 +192,7 @@ public enum SystemPromptTemplates {
     /// NOT included here — they live as top-level sections gated on
     /// file-mutation tools being in the schema, so folder-mode agents
     /// doing real edits get the same discipline.
-    public static func sandbox(secretNames: [String] = []) -> String {
+    public static func sandbox(secretNames: [String] = [], hostReadCombined: Bool = false) -> String {
         var section = """
 
             \(sandboxSectionHeading)
@@ -178,9 +200,9 @@ public enum SystemPromptTemplates {
             \(sandboxEnvironmentBlock)
             Files persist across messages.
 
-            \(sandboxToolGuide)
+            \(hostReadCombined ? sandboxToolGuideCombined : sandboxToolGuide)
 
-            \(sandboxRuntimeHints)
+            \(sandboxRuntimeHints(hostReadCombined: hostReadCombined))
 
             """
         // The runtime hints block ends with a single `\n`; the secrets
@@ -199,12 +221,20 @@ public enum SystemPromptTemplates {
     static let sandboxReadFileHint =
         "`sandbox_read_file` with `start_line`/`line_count`/`tail_lines`"
 
+    /// Combined-mode log-read hint: `sandbox_read_file` is hidden in
+    /// combined mode (the unified `file_read` reaches `/workspace/...`),
+    /// so point the model at `file_read` with `tail_lines` instead of a
+    /// tool it can't call.
+    static let sandboxReadFileHintCombined =
+        "`file_read` with `tail_lines` (works on `/workspace/...` sandbox paths too)"
+
     private static let sandboxEnvironmentBlock = """
         You have an isolated Alpine Linux ARM64 sandbox. Your home directory \
         (`~`) is your sandbox home; files persist across messages.
 
-        Internet access is available. Use `curl`, `wget`, Python `requests`, \
-        or Node `fetch` for live data; prefer fetched data over placeholders.
+        Internet access is available — fetch live or external data (weather, \
+        web pages, APIs) directly with `curl`, `wget`, Python `requests`, or \
+        Node `fetch`; you don't need a dedicated tool for it.
 
         Installed: bash, python3, node, git, curl, wget, jq, rg, sqlite3, \
         build-base, cmake, vim, tree, and standard POSIX utilities.
@@ -212,20 +242,42 @@ public enum SystemPromptTemplates {
 
     private static let sandboxToolGuide = """
         Tool dispatch:
-        - File IO: `sandbox_read_file`, `sandbox_write_file`, `sandbox_edit_file`.
+        - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`content` whole-file, or `old_string`+`new_string` to edit).
         - Search: `sandbox_search_files` with `target="content"` or `target="files"`.
-        - Shell: `sandbox_exec`; use `background:true` for servers and `sandbox_process` to inspect them.
-        - Multi-step Python: `sandbox_execute_code` with `osaurus_tools` helpers (`read_file`, `write_file`, `edit_file`, `search_files`, `terminal`).
+        - Shell: `sandbox_exec` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them.
+        - Python: `sandbox_execute_code` (runs Python directly) with `osaurus_tools` helpers (`read_file`, `write_file`, `edit_file`, `search_files`, `terminal`) — the default for ANY Python.
+        - NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks. Use `sandbox_execute_code`, or `sandbox_write_file` the script then run the file.
         - Run independent calls in parallel; chain dependent shell steps with `&&`.
         """
 
-    private static let sandboxRuntimeHints = """
-        Runtime hints:
-        - Install Python, Node, or system deps with `sandbox_pip_install`, `sandbox_npm_install`, or `sandbox_install`.
-        - Use \(sandboxReadFileHint) to inspect large logs.
-        - The sandbox is disposable; experiment freely.
-        - Your `SOUL.md` at `~/SOUL.md` records stable preferences across sessions. Edit it with `sandbox_edit_file` or `sandbox_write_file` when you observe a durable pattern; edits apply on the next session.
+    /// Combined-mode (`.sandbox(hostRead:)`) variant: the host `file_*`
+    /// tools are the single, path-routed read family, so reads/lists/searches
+    /// are NOT done with `sandbox_read_file` / `sandbox_search_files` (hidden
+    /// in this mode). The `## Files` block spells out the path routing.
+    private static let sandboxToolGuideCombined = """
+        Tool dispatch:
+        - Read files / list dirs / search: `file_read` (reads a file or lists a directory — the path decides), `file_search` (they reach both your workspace and `/workspace/...` sandbox paths — see `## Files`).
+        - Sandbox writes: `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — your workspace is read-only).
+        - Shell: `sandbox_exec` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them.
+        - Python: `sandbox_execute_code` (runs Python directly) with `osaurus_tools` helpers (`read_file`, `write_file`, `edit_file`, `search_files`, `terminal`) — the default for ANY Python.
+        - NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks. Use `sandbox_execute_code`, or `sandbox_write_file` the script then run the file.
+        - Run independent calls in parallel; chain dependent shell steps with `&&`.
         """
+
+    /// Runtime hints block. In combined mode the log-read hint points at
+    /// `file_read` (the unified read tool) rather than the hidden
+    /// `sandbox_read_file`, so the model is never steered toward a tool
+    /// it can't see in this mode.
+    private static func sandboxRuntimeHints(hostReadCombined: Bool) -> String {
+        let logReadHint = hostReadCombined ? sandboxReadFileHintCombined : sandboxReadFileHint
+        return """
+            Runtime hints:
+            - Install Python, Node, or system deps with `sandbox_pip_install`, `sandbox_npm_install`, or `sandbox_install`.
+            - Use \(logReadHint) to inspect large logs.
+            - The sandbox is disposable; experiment freely.
+            - Your `SOUL.md` at `~/SOUL.md` records stable preferences across sessions. Edit it with `sandbox_write_file` when you observe a durable pattern; edits apply on the next session.
+            """
+    }
 
     private static func secretsPromptBlock(_ names: [String]) -> String {
         guard !names.isEmpty else { return "" }
@@ -304,7 +356,7 @@ public enum SystemPromptTemplates {
     /// so the rule is anchored once at the top of the section instead of
     /// repeated in every dispatch bullet.
     static let folderPathRule =
-        "Tool paths are relative to the working directory; absolute paths are rejected."
+        "Use paths relative to the working directory; an absolute path is accepted only if it is inside the working directory (paths outside it are rejected)."
 
     /// Positive dispatch table for the folder-mode tools. Mirror of
     /// `sandboxToolGuide` — discipline ("instead of cat / sed / awk")
@@ -312,9 +364,9 @@ public enum SystemPromptTemplates {
     static let folderToolGuide = """
         Tool dispatch (each tool's description has full detail and the \
         shell pattern it replaces):
-        - Layout: `file_tree` to list directory structure.
-        - Search: `file_search` for content (case-insensitive substring match).
-        - Read: `file_read` to inspect a file (optional line range).
+        - Read / list: `file_read` to read a file or list a directory — the path decides (optional line range, or `max_depth` for a directory).
+        - Search: `file_search` for content (case-insensitive substring), or `target:"files"` to find files by name (case-insensitive substring, e.g. `q4`).
+        - Find a file by name: use `file_search` with `target:"files"` and a short distinctive token from the name (not the whole phrase).
         - Edit: `file_edit` for targeted in-place edits, `file_write` for new files or full rewrites.
         - Shell: `shell_run` for `mv` / `cp` / `rm` / `mkdir` (write/exec ops are logged and undoable).
         """
@@ -362,9 +414,7 @@ public enum SystemPromptTemplates {
 
         section += """
 
-            \(combinedHostReadGuide(allowSecretReads: allowSecretReads))
-
-            \(twoFilesystemBlock)
+            \(unifiedFilesBlock(allowSecretReads: allowSecretReads))
 
             """
 
@@ -385,41 +435,31 @@ public enum SystemPromptTemplates {
         return section
     }
 
-    /// Read-only dispatch table for the host workspace in combined mode.
-    /// Lists only the read tools and states the host is read-only — no
-    /// `file_write` / `file_edit` / `shell_run`, those are hidden in
-    /// this mode because exec is confined to the sandbox. The final
-    /// sentence reflects the per-agent secret-read setting so the agent
-    /// isn't told secrets are blocked when the user has opted in.
-    static func combinedHostReadGuide(allowSecretReads: Bool) -> String {
+    /// The load-bearing mental model for combined mode under the unified,
+    /// path-routed file tools: ONE reader (`file_read`, which also lists
+    /// directories) and ONE search tool (`file_search`) reach two storage
+    /// areas by path — the read-only workspace (default) and the
+    /// `/workspace/...` sandbox scratch area; one writer
+    /// (`sandbox_write_file`, which also edits) targets the sandbox. This
+    /// replaces the older `## Two filesystems` framing that asked the model
+    /// to pick between `file_*` and `sandbox_*` read families (the
+    /// disambiguation weak models kept getting wrong). The final sentence
+    /// reflects the per-agent secret-read setting.
+    static func unifiedFilesBlock(allowSecretReads: Bool) -> String {
         let secretLine =
             allowSecretReads
-            ? "Secret files (`.env`, keys, credentials) are readable because the user enabled secret reads for this agent — handle them carefully and never write them into the sandbox or send them off-host."
-            : "Secret files (`.env`, keys, credentials) are refused even inside the workspace."
+            ? "Workspace secret files (`.env`, keys, credentials) are readable because you enabled secret reads — handle them carefully and never copy them into the sandbox or off-host."
+            : "Workspace secret files (`.env`, keys, credentials) are refused."
         return """
-            This is your read-only host workspace. Tool paths are relative to it; absolute paths are rejected.
-            - Layout: `file_tree` to list the workspace structure.
-            - Search: `file_search` for content (case-insensitive substring match).
-            - Read: `file_read` to inspect a file (optional line range).
-            You cannot write, edit, or run commands against the host workspace — it is read-only. \(secretLine)
+            ## Files
+
+            One reader and one search tool reach two storage areas by path:
+            - **Workspace** (your read-only host folder) — the default. For "what's in my workspace / on my Desktop", use `file_read` (it reads a file or lists a directory) and `file_search`. Relative paths and `/Users/...` paths are the workspace.
+            - **Sandbox** scratch area — pass a `/workspace/...` path to the SAME `file_read` / `file_search`.
+
+            The workspace is read-only: create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` / `sandbox_execute_code` (they run in the sandbox, which has no copy of the workspace — `file_read` a workspace file and pass its content in if a command needs it). Surface results with `share_artifact`. \(secretLine)
             """
     }
-
-    /// The load-bearing mental model for combined mode. Short and
-    /// concrete, leading with the failure weaker models hit: the sandbox
-    /// shell cannot see the host workspace because there is no shared
-    /// mount. Names the real exec tools (`sandbox_exec` /
-    /// `sandbox_execute_code`), never the host `shell_run` (hidden in
-    /// this mode).
-    static let twoFilesystemBlock = """
-        ## Two filesystems
-
-        You work with two separate filesystems that never share storage:
-        - The `file_*` tools above read your **read-only host workspace**.
-        - `sandbox_exec` and `sandbox_execute_code` run in a **separate Linux sandbox** that CANNOT see the host workspace. `sandbox_exec cat <a workspace file>` will fail — the sandbox has no copy of the workspace.
-
-        To use a workspace file inside the sandbox, `file_read` it on the host and carry the content across: inline it into your script, or `sandbox_write_file` it into the sandbox first. Nothing flows through a shared mount. Surface results to the user with `share_artifact` from the sandbox — the host workspace is read-only.
-        """
 
     private static func buildTopLevelSummary(from tree: String) -> String {
         let lines = tree.components(separatedBy: .newlines)

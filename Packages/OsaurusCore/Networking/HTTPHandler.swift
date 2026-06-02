@@ -635,6 +635,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         runRequestTask(priority: .userInitiated) {
             let cached = await ModelRuntime.shared.cachedModelSummaries()
+            let diagnostics = await MLXBatchAdapter.snapshotDiagnostics()
             var aggregate: [String: Int] = [
                 "prefix_hits": 0,
                 "prefix_misses": 0,
@@ -787,11 +788,41 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return row
             }
 
+            let batchDiagnostics: Any
+            if let snapshot = diagnostics {
+                var row: [String: Any] = [
+                    "pending_count": snapshot.pendingCount,
+                    "active_count": snapshot.activeCount,
+                    "active_high_watermark": snapshot.activeHighWatermark,
+                    "decode_split_count": snapshot.decodeSplitCount,
+                    "turbo_quant_compressions": snapshot.turboQuantCompressions,
+                    "is_accepting_requests": snapshot.isAcceptingRequests,
+                    "loaded_model_count": snapshot.loadedModelCount,
+                    "native_mtp_model_count": snapshot.nativeMTPModelCount,
+                    "cache_enabled_model_count": snapshot.cacheEnabledModelCount,
+                    "hybrid_model_count": snapshot.hybridModelCount,
+                    "paged_incompatible_model_count": snapshot.pagedIncompatibleModelCount,
+                    "prefix_hits": snapshot.prefixHits,
+                    "prefix_misses": snapshot.prefixMisses,
+                    "disk_l2_hits": snapshot.diskL2Hits,
+                    "disk_l2_misses": snapshot.diskL2Misses,
+                    "disk_l2_stores": snapshot.diskL2Stores,
+                    "ssm_companion_hits": snapshot.ssmCompanionHits,
+                    "ssm_companion_misses": snapshot.ssmCompanionMisses,
+                    "ssm_companion_rederives": snapshot.ssmCompanionReDerives,
+                ]
+                row["native_mtp_depth_summary"] = snapshot.nativeMTPDepthSummary ?? NSNull()
+                batchDiagnostics = row
+            } else {
+                batchDiagnostics = NSNull()
+            }
+
             let obj: [String: Any] = [
                 "status": "ok",
                 "timestamp": Date().ISO8601Format(),
                 "models": models,
                 "aggregate": aggregate,
+                "batch_diagnostics": batchDiagnostics,
             ]
             let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
@@ -3137,6 +3168,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let maxIterations = 30
             var iteration = 0
             let requestId = UUID().uuidString
+            // Per-request harness state. The agent-run endpoint is stateless
+            // across requests by design (see the divergence note above), so a
+            // per-request instance is correct — there is no prior listing to
+            // survive. Provides within-request dedupe + post-listing nudge.
+            let taskState = AgentTaskState()
 
             hop {
                 writerBound.value.writeRole(
@@ -3273,16 +3309,56 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     break
                 }
 
-                // Execute every parsed tool call. Independent calls run
-                // in parallel via a TaskGroup so wall-clock time stays
-                // proportional to the slowest call rather than the sum.
-                // Per-call errors land as `ToolEnvelope.fromError` so a
-                // single bad call never aborts the rest of the batch.
-                let outcomes = await Self.runToolBatchInParallel(
-                    pendingInvocations,
-                    requestId: requestId,
-                    agentId: agentId
+                // Consecutive-identical dedupe across iterations: replay the
+                // exact held envelope for a back-to-back re-issue instead of
+                // re-executing. Index-preserving so SSE framing order and the
+                // assistant tool_call <-> tool result pairing stay intact.
+                var slottedOutcomes: [ToolOutcome?] = Array(
+                    repeating: nil,
+                    count: pendingInvocations.count
                 )
+                var toExecute: [(slot: Int, invocation: ServiceToolInvocation)] = []
+                for (i, inv) in pendingInvocations.enumerated() {
+                    if let held = taskState.heldResult(
+                        name: inv.toolName,
+                        argsJSON: inv.jsonArguments
+                    ) {
+                        slottedOutcomes[i] = ToolOutcome(
+                            invocation: inv,
+                            callId: inv.toolCallId ?? Self.shortId(prefix: "call_"),
+                            result: held
+                        )
+                    } else {
+                        toExecute.append((i, inv))
+                    }
+                }
+                // Execute the non-duplicate calls in parallel via a TaskGroup
+                // so wall-clock time stays proportional to the slowest call
+                // rather than the sum. Per-call errors land as
+                // `ToolEnvelope.fromError` so a single bad call never aborts
+                // the rest of the batch.
+                if !toExecute.isEmpty {
+                    let executed = await Self.runToolBatchInParallel(
+                        toExecute.map { $0.invocation },
+                        requestId: requestId,
+                        agentId: agentId
+                    )
+                    for (entry, outcome) in zip(toExecute, executed) {
+                        slottedOutcomes[entry.slot] = outcome
+                    }
+                }
+                let outcomes = slottedOutcomes.compactMap { $0 }
+
+                // Feed results into the harness state machine (in order) and
+                // stage the next-step nudge for the following iteration.
+                for outcome in outcomes {
+                    taskState.record(
+                        name: outcome.invocation.toolName,
+                        argsJSON: outcome.invocation.jsonArguments,
+                        result: outcome.result
+                    )
+                }
+                let stateBias = taskState.nextStepBias()
 
                 var assistantToolCalls: [ToolCall] = []
                 var toolResultsByCallId: [(String, String)] = []
@@ -3314,6 +3390,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     messages.append(
                         ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
                     )
+                }
+                // System-attributed nudge (e.g. post-listing) for the next
+                // iteration. Non-load-bearing; the structured results carry it.
+                if let bias = stateBias {
+                    messages.append(ChatMessage(role: "user", content: "[System Notice] " + bias))
                 }
             }
 

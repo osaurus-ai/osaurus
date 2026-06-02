@@ -645,7 +645,12 @@ public actor ModelRuntime {
         // gets a clear error and the server stays up.
         try Self.validateUnsupportedPlainDSV4AffineJANG(at: localURL, name: name)
         try await Self.ensureJANGTQSidecar(at: localURL, modelId: id, name: name)
-        let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
+        let weightsBytes: Int64
+        if policy == .manualMultiModel {
+            weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
+        } else {
+            weightsBytes = 0
+        }
         genLog.info(
             "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public)"
         )
@@ -942,6 +947,24 @@ public actor ModelRuntime {
         // Hybrid and path-dependent caches keep fp16 live KV by default until
         // a row proves TurboQuant for that exact topology. TurboQuant KV is
         // not a substitute for SSM/CCA/CSA/HSA/SWA companion-state restore.
+        //
+        // Step 3.7 is the narrow exception for mixed full-attention + SWA:
+        // vMLX's TurboQuant hook converts only KVCacheSimple full-attention
+        // layers and preserves RotatingKVCache sliding layers, so the disk
+        // coordinator still owns SWA restore while full KV layers get the
+        // proven TQ codec.
+        if ModelFamilyNames.isStepFamily(modelName) {
+            if let cacheTopology {
+                return cacheTopology.kvLayerCount > 0
+                    && cacheTopology.mambaLayerCount == 0
+                    && cacheTopology.arraysLayerCount == 0
+                    && cacheTopology.hybridPoolLayerCount == 0
+                    && cacheTopology.rotatingWrapperLayerCount == 0
+                    && cacheTopology.zayaCCALayerCount == 0
+            }
+            return true
+        }
+
         if ModelFamilyNames.isDSV4Family(modelName)
             || ModelFamilyNames.isZayaFamily(modelName)
             || ModelFamilyNames.isZayaVLFamily(modelName)
@@ -2209,14 +2232,18 @@ public actor ModelRuntime {
 
     private static func computeWeightsSizeBytes(at url: URL) -> Int64 {
         let fm = FileManager.default
-        guard
-            let enumerator = fm.enumerator(
-                at: url,
-                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
-            )
-        else { return 0 }
+        let fileURLs: [URL]
+        if let entries = try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            fileURLs = entries
+        } else {
+            return 0
+        }
         var total: Int64 = 0
-        for case let fileURL as URL in enumerator {
+        for fileURL in fileURLs {
             if fileURL.pathExtension.lowercased() == "safetensors" {
                 if let attrs = try? fm.attributesOfItem(atPath: fileURL.path),
                     let size = attrs[.size] as? NSNumber
@@ -2269,10 +2296,11 @@ public actor ModelRuntime {
         // Non-JANG models have no jang_config.json — nothing to validate.
         guard FileManager.default.fileExists(atPath: jangConfigURL.path) else { return }
 
-        // Only read the `weight_format` field; ignore anything else so format
-        // drift (new fields, missing optionals) doesn't break the preflight.
+        // Read only routing stamps; ignore all other fields so format drift
+        // (new fields, missing optionals) doesn't break the preflight.
         struct JangConfigProbe: Decodable {
             let weight_format: String?
+            let format: String?
         }
         guard let data = try? Data(contentsOf: jangConfigURL),
             let probe = try? JSONDecoder().decode(JangConfigProbe.self, from: data)
@@ -2291,6 +2319,10 @@ public actor ModelRuntime {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         let isMxtq = normalizedStamp == "mxtq"
+        let normalizedFormat = (probe.format ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let declaresJANGTQFormat = normalizedFormat == "jangtq"
 
         // Forward mismatch: declared JANGTQ, sidecar missing.
         if isMxtq && !sidecarPresent {
@@ -2309,7 +2341,7 @@ public actor ModelRuntime {
         // Inverse mismatch: sidecar present but stamp says non-JANGTQ. The
         // safetensors carry `tq_norms` / `tq_packed` keys vmlx's base class
         // can't decode → "Unhandled keys" runtime error. Catch it here.
-        if sidecarPresent && !isMxtq {
+        if sidecarPresent && !isMxtq && !declaresJANGTQFormat {
             let actualStamp = (probe.weight_format?.isEmpty == false) ? probe.weight_format! : "absent"
             throw NSError(
                 domain: "ModelRuntime",
@@ -2441,6 +2473,23 @@ public actor ModelRuntime {
     /// uses; a flat-layout id (no `/` in it) cannot be mapped back to an
     /// HF repo and skips the fetch entirely, surfacing the original error.
     static func ensureJANGTQSidecar(at directory: URL, modelId: String, name: String) async throws {
+        if Self.isStepJANGTQName(modelId) || Self.isStepJANGTQName(name) {
+            let sidecarURL = directory.appendingPathComponent("jangtq_runtime.safetensors")
+            guard FileManager.default.fileExists(atPath: sidecarURL.path) else {
+                throw NSError(
+                    domain: "ModelRuntime",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Model '\(name)' is a Step 3.7 JANGTQ bundle but is missing "
+                            + "required sidecar file 'jangtq_runtime.safetensors'. "
+                            + "Re-download the full model or obtain the sidecar from the original publisher."
+                    ]
+                )
+            }
+            return
+        }
+
         do {
             try validateJANGTQSidecarIfRequired(at: directory, name: name)
             return
@@ -2502,6 +2551,16 @@ public actor ModelRuntime {
                 ]
             )
         }
+    }
+
+    private static func isStepJANGTQName(_ value: String) -> Bool {
+        let normalized =
+            value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        return normalized.contains("step-3.7")
+            && normalized.contains("jangtq")
     }
 
     /// Build the ordered list of HF `<org>/<repo>` candidates to try when
@@ -2699,10 +2758,24 @@ public actor ModelRuntime {
         // the two symmetric here closes the asymmetry.
         let resolved = url.resolvingSymlinksInPath()
         let hasConfig = fm.fileExists(atPath: resolved.appendingPathComponent("config.json").path)
-        if let items = try? fm.contentsOfDirectory(at: resolved, includingPropertiesForKeys: nil),
-            hasConfig && items.contains(where: { $0.pathExtension == "safetensors" })
-        {
+        guard hasConfig else {
+            return nil
+        }
+        let directWeightSentinels = [
+            "model.safetensors",
+            "weights.safetensors",
+            "model-00001-of-00001.safetensors",
+        ]
+        if directWeightSentinels.contains(where: {
+            fm.fileExists(atPath: resolved.appendingPathComponent($0).path)
+        }) {
             return resolved
+        }
+        for shardCount in 2 ... 256 {
+            let candidate = String(format: "model-00001-of-%05d.safetensors", shardCount)
+            if fm.fileExists(atPath: resolved.appendingPathComponent(candidate).path) {
+                return resolved
+            }
         }
         return nil
     }

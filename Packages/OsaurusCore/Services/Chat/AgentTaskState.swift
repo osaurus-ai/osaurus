@@ -1,0 +1,345 @@
+//
+//  AgentTaskState.swift
+//  osaurus
+//
+//  The per-task state machine the harness holds so the model doesn't have to.
+//
+//  Diagnosis (see docs/AGENT_LOOP.md): a 1B-active model used as both planner
+//  and executor in a free, stateless loop has to reconstruct from raw tool
+//  text — every turn — where it is, what it just received, and what the next
+//  valid move is. That reconstruction is the work it fails at. This type moves
+//  that bookkeeping into the loop: it classifies each tool result, tracks what
+//  the last result implies, dedupes back-to-back identical re-issues, and
+//  emits a (non-load-bearing) next-step nudge. The structured result objects
+//  (`ToolEnvelope.listing`, `kind: "file"`) are what actually carry the win —
+//  this layer is a thin nudge on top, validated to not be load-bearing.
+//
+//  One instance per loop run. `ChatSession` keeps a session-scoped instance so
+//  a listing survives across user messages; the HTTP `/agents/{id}/run` and
+//  plugin loops are stateless across requests by design, so they use a
+//  per-request / per-invocation instance (nothing to survive).
+//
+
+import Foundation
+
+/// Classification of a tool result, derived from the canonical envelope.
+/// The loop branches on this without the model interpreting anything.
+public enum ToolResultClass: Equatable, Sendable {
+    /// A directory listing with no entries.
+    case emptyListing
+    /// A directory listing with at least one entry.
+    case populatedListing
+    /// A directory listing that hit a cap (entries are incomplete).
+    case partialListing
+    /// File content (`kind: "file"`).
+    case fileContent
+    /// A referenced path does not exist (`kind: "not_found"`).
+    case notFound
+    /// Any other failure envelope.
+    case error
+    /// Any success that isn't a listing or file read.
+    case other
+}
+
+/// A single listed entry, parsed into a typed (Sendable) form.
+public struct ListingEntry: Equatable, Sendable {
+    public let name: String
+    public let path: String
+    public let isDirectory: Bool
+}
+
+/// A snapshot of the most recent directory listing, retained so a later
+/// reference ("read the file") can be resolved against it. Phase-3 reference
+/// resolution will read this; today it backs the post-listing nudge.
+public struct ListingSnapshot: Equatable, Sendable {
+    public let path: String
+    public let entries: [ListingEntry]
+    /// True when the listing was capped, so its entries are incomplete and it
+    /// must not be treated as an exhaustive set for find-by-name.
+    public let truncated: Bool
+}
+
+/// Identity of a tool call for dedupe: tool name + canonicalised arguments.
+public struct CallSignature: Hashable, Sendable {
+    public let name: String
+    public let canonicalArgs: String
+}
+
+/// Per-task state threaded through a tool-call loop. Not thread-safe by
+/// design: a single loop drives it sequentially. Each loop owns its own
+/// instance.
+public final class AgentTaskState {
+
+    // MARK: Configuration
+
+    /// When false, `nextStepBias()` returns nil. The structured result objects
+    /// must get the model to descend on their own; this flag exists so the
+    /// validation gate can prove the nudge is not load-bearing.
+    public var biasEnabled: Bool
+
+    /// Read-like tools whose results are eligible for replay-on-duplicate and
+    /// whose `path` freshness is invalidated by a write to the same path.
+    private static let readLikeTools: Set<String> = ["file_read", "file_search"]
+
+    /// Tools that mutate a path; recording one invalidates any fresh read
+    /// signature for that path so a verify-read re-executes.
+    private static let writeLikeTools: Set<String> = [
+        "file_edit", "file_write", "sandbox_write_file",
+    ]
+
+    /// The listing nudge is REACTIVE, not proactive: it fires only once the
+    /// model has produced this many listings without an intervening read —
+    /// i.e. it is observed to be wandering rather than descending. A capable
+    /// model that lists once and immediately descends never reaches this, so
+    /// it is never nudged; a stuck model is nudged exactly when it loops, and
+    /// keeps being nudged while it stays stuck (no premature silence).
+    private static let listingReactiveThreshold = 2
+
+    // MARK: State
+
+    /// A read result still considered fresh: the canonical path it read and
+    /// the EXACT envelope the model received (replayed verbatim on a dedupe
+    /// short-circuit so the model never gets back less than it had).
+    private struct FreshRead {
+        let canonicalPath: String
+        let envelope: String
+    }
+
+    /// The class of the most recently recorded result.
+    public private(set) var lastResultClass: ToolResultClass?
+    /// The most recent directory listing (survives across messages in
+    /// `ChatSession`; per-request elsewhere).
+    public private(set) var lastListing: ListingSnapshot?
+    /// The exact envelope the model received for the most recent call.
+    public private(set) var lastResultEnvelope: String?
+    /// Reads still considered fresh, keyed by signature. A write/edit to a
+    /// read's path invalidates its entry so a verify-read re-executes instead
+    /// of replaying stale pre-edit content.
+    private var freshReads: [CallSignature: FreshRead] = [:]
+    /// Listings recorded since the last file read; gates the listing nudge.
+    private var consecutiveListingsWithoutRead = 0
+
+    public init(biasEnabled: Bool = true) {
+        self.biasEnabled = biasEnabled
+    }
+
+    // MARK: Per-message lifecycle
+
+    /// Reset the within-message dedupe tracking (fresh reads). `lastListing`
+    /// deliberately persists so a listing from one user message can be
+    /// referenced by the next. Called by `ChatSession` at the start of each
+    /// send; one-shot loops simply never call it.
+    public func beginMessage() {
+        lastResultEnvelope = nil
+        freshReads.removeAll(keepingCapacity: true)
+        consecutiveListingsWithoutRead = 0
+    }
+
+    // MARK: Dedupe
+
+    /// If this read re-issues a still-fresh read (same tool + canonical args,
+    /// not invalidated by an intervening write to its path), return the EXACT
+    /// envelope the model already received so the loop can replay it instead
+    /// of re-executing. Returns nil for non-reads, novel calls, or reads
+    /// whose path was written since. The replay is verbatim — never a
+    /// collapsed/summarized form — so the short-circuit is neutral.
+    public func heldResult(name: String, argsJSON: String) -> String? {
+        guard Self.readLikeTools.contains(name) else { return nil }
+        return freshReads[signature(name: name, argsJSON: argsJSON)]?.envelope
+    }
+
+    /// Convenience boolean mirror of `heldResult`.
+    public func isDuplicate(name: String, argsJSON: String) -> Bool {
+        heldResult(name: name, argsJSON: argsJSON) != nil
+    }
+
+    // MARK: Recording
+
+    /// Record a tool call and its result, updating the state machine.
+    public func record(name: String, argsJSON: String, result: String) {
+        let sig = signature(name: name, argsJSON: argsJSON)
+        let resultClass = Self.classify(result)
+
+        lastResultEnvelope = result
+        lastResultClass = resultClass
+
+        // A write/edit invalidates any fresh read of the same path so the
+        // verify-read re-executes instead of replaying stale pre-edit content.
+        // Read and write canonicalize the path through the SAME helper, so
+        // `file_read "config.json"` and `file_edit "./config.json"` match.
+        if Self.writeLikeTools.contains(name), let target = pathArgument(argsJSON) {
+            let targetCanonical = Self.canonicalPath(target)
+            freshReads = freshReads.filter { $0.value.canonicalPath != targetCanonical }
+        }
+
+        // Wandering counter: a listing is a step that hasn't reached a file
+        // yet, so it increments. ONLY a successful file read counts as
+        // progress and resets it. A `not_found` / `error` is a FAILED read —
+        // not progress — so it neither increments nor resets, which lets
+        // wandering accumulate across interleaved failed reads (e.g.
+        // list -> bad read -> list still reaches the reactive threshold)
+        // while the `not_found` fires its own reactive nudge in parallel.
+        switch resultClass {
+        case .emptyListing, .populatedListing, .partialListing:
+            consecutiveListingsWithoutRead += 1
+            lastListing = parseListing(result)
+        case .fileContent:
+            consecutiveListingsWithoutRead = 0
+        case .notFound, .error, .other:
+            break
+        }
+
+        // Mark a successful read-like result as fresh (with its exact
+        // envelope) so a re-issue replays it until a write invalidates it.
+        if Self.readLikeTools.contains(name), ToolEnvelope.isSuccess(result),
+            let target = pathArgument(argsJSON)
+        {
+            freshReads[sig] = FreshRead(canonicalPath: Self.canonicalPath(target), envelope: result)
+        }
+    }
+
+    // MARK: Next-step nudge (non-load-bearing)
+
+    /// A short, system-attributed next-step nudge for the most recent result,
+    /// or nil. The listing nudge is REACTIVE: it fires only after two listings
+    /// without an intervening read (the model is observed wandering), so a
+    /// capable model that descends immediately is never nudged — the
+    /// structured `entries[]` carries the descent on its own. It keeps firing
+    /// while the model stays stuck (no upper silence cap). `not_found` is
+    /// reactive by nature (an observed failure) and always fires. Returns nil
+    /// entirely when `biasEnabled` is false.
+    public func nextStepBias() -> String? {
+        guard biasEnabled, let last = lastResultClass else { return nil }
+
+        // Listing nudges are reactive: suppressed until the model is observed
+        // wandering (this many listings without an intervening read), so a
+        // model that descends after its first listing is never nudged.
+        let isWandering = consecutiveListingsWithoutRead >= Self.listingReactiveThreshold
+
+        switch last {
+        case .populatedListing:
+            guard isWandering else { return nil }
+            return
+                "Entries are in `result.entries`. To read one, call `file_read` with that entry's `path` value. Do not re-list this directory."
+        case .emptyListing:
+            guard isWandering else { return nil }
+            return
+                "This directory is empty (`entry_count` is 0). Do not pick or invent an entry; report it empty or list a different path."
+        case .partialListing:
+            guard isWandering else { return nil }
+            return
+                "This listing was truncated; the entries shown are incomplete. Use `file_search` to find a specific file by name instead of picking blindly from the partial set."
+        case .notFound:
+            // If the last listing was truncated, its entries are incomplete —
+            // steering the model back into that partial set is how a present
+            // file gets wrongly reported absent. Send it to file_search.
+            if lastListing?.truncated == true {
+                return
+                    "Path not found, and the last directory listing was incomplete (truncated). Use `file_search` with `target:\"files\"` and a token from the name instead of picking from the partial listing."
+            }
+            return
+                "Path not found. Pick a `path` from the most recent listing's entries, or list the parent directory."
+        case .fileContent, .error, .other:
+            return nil
+        }
+    }
+
+    // MARK: - Classification
+
+    /// Classify a result envelope into a `ToolResultClass`. Pure function so
+    /// it can be unit-tested independently of any loop.
+    public static func classify(_ envelope: String) -> ToolResultClass {
+        if ToolEnvelope.isError(envelope) {
+            if let data = envelope.data(using: .utf8),
+                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                dict["kind"] as? String == ToolEnvelope.Kind.notFound.rawValue
+            {
+                return .notFound
+            }
+            return .error
+        }
+        guard let payload = ToolEnvelope.successPayload(envelope) as? [String: Any] else {
+            return .other
+        }
+        switch payload["kind"] as? String {
+        case "listing":
+            let count = payload["entry_count"] as? Int ?? (payload["entries"] as? [Any])?.count ?? 0
+            if count == 0 { return .emptyListing }
+            if payload["truncated"] as? Bool == true { return .partialListing }
+            return .populatedListing
+        case "file":
+            return .fileContent
+        default:
+            return .other
+        }
+    }
+
+    // MARK: - Path canonicalization (shared)
+
+    /// Normalise a path so two spellings of the same path compare equal.
+    /// Used by BOTH the read-signature key and the write-target invalidation
+    /// check — if these diverged, invalidation would silently miss and a
+    /// verify-read could be short-circuited with stale content.
+    static func canonicalPath(_ raw: String) -> String {
+        var p = raw.trimmingCharacters(in: .whitespaces)
+        if p.hasPrefix("./") { p.removeFirst(2) }
+        // `standardizingPath` resolves `.`/`..`/`~` and collapses `//`.
+        p = (p as NSString).standardizingPath
+        if p.count > 1, p.hasSuffix("/") { p.removeLast() }
+        return p
+    }
+
+    // MARK: - Helpers
+
+    private func signature(name: String, argsJSON: String) -> CallSignature {
+        CallSignature(name: name, canonicalArgs: Self.canonicalArgs(argsJSON))
+    }
+
+    /// Canonicalise an arguments JSON string to a stable, sorted-key form so
+    /// `{"a":1,"b":2}` and `{"b":2,"a":1}` hash equal.
+    static func canonicalArgs(_ argsJSON: String) -> String {
+        guard let data = argsJSON.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data),
+            let canonical = try? JSONSerialization.data(
+                withJSONObject: obj,
+                options: [.sortedKeys]
+            ),
+            let str = String(data: canonical, encoding: .utf8)
+        else {
+            return argsJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return str
+    }
+
+    /// Pull the path argument a tool acted on (`path`, then `file_path`).
+    private func pathArgument(_ argsJSON: String) -> String? {
+        guard let data = argsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        if let p = dict["path"] as? String, !p.isEmpty { return p }
+        if let p = dict["file_path"] as? String, !p.isEmpty { return p }
+        return nil
+    }
+
+    private func parseListing(_ envelope: String) -> ListingSnapshot? {
+        guard let payload = ToolEnvelope.successPayload(envelope) as? [String: Any],
+            payload["kind"] as? String == "listing"
+        else { return nil }
+        let path = payload["path"] as? String ?? "."
+        let rawEntries = payload["entries"] as? [[String: Any]] ?? []
+        let entries: [ListingEntry] = rawEntries.compactMap { entry in
+            guard let entryPath = entry["path"] as? String else { return nil }
+            let name = entry["name"] as? String ?? (entryPath as NSString).lastPathComponent
+            return ListingEntry(
+                name: name,
+                path: entryPath,
+                isDirectory: (entry["type"] as? String) == "directory"
+            )
+        }
+        return ListingSnapshot(
+            path: path,
+            entries: entries,
+            truncated: payload["truncated"] as? Bool == true
+        )
+    }
+}

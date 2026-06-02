@@ -1185,6 +1185,56 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(!decoded.contains("Today's date:"), "Decoded: \(decoded)")
         #expect(!decoded.contains("<think>"), "Decoded: \(decoded)")
     }
+
+    @Test func step37LocalTokenizerUsesRequiredToolFallbackAndClosesThinkingRail() async throws {
+        let defaultPath = "/Volumes/EricsLLMDrive/jangq-ai/Step-3.7-Flash-JANGTQ_K"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_STEP37_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                ["role": "user", "content": "Use the line_count tool on this exact text: red\ngreen\nblue"]
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "enable_thinking": false,
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("# Tools"), "Decoded: \(decoded)")
+        #expect(decoded.contains("The active API tool_choice is required"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
+        #expect(decoded.contains("Required parameters for `line_count`: text."), "Decoded: \(decoded)")
+        #expect(decoded.contains("<tool_call>\n<function=FUNCTION_NAME>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<parameter=ARGUMENT_NAME>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<|im_start|>assistant\n<think>\n</think>\n\n"), "Decoded: \(decoded)")
+        #expect(!decoded.hasSuffix("<|im_start|>assistant\n<think>\n"), "Decoded: \(decoded)")
+    }
 }
 
 private struct LocalTokenizerRow {

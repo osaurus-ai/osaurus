@@ -651,6 +651,54 @@ struct MLXBatchAdapterTests {
                 modelName: "Gemma-4-26B-A4B-it-JANG_4M-CRACK"
             ) == "fp16"
         )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "JANGQ-AI/Step-3.7-Flash-JANG_2L"
+            ) == "turbo(3,3)"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "step-3.7-flash-jang_2l"
+            ) == "turbo(3,3)"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "JANGQ-AI/Step-3.7-Flash-JANG_2L",
+                cacheTopology: ModelCacheTopologySnapshot(
+                    layerCount: 45,
+                    kvLayerCount: 12,
+                    turboQuantKVLayerCount: 0,
+                    rotatingKVLayerCount: 33
+                )
+            ) == "turbo(3,3)"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "JANGQ-AI/Step-3.7-Flash-JANGTQ_K",
+                cacheTopology: ModelCacheTopologySnapshot(
+                    layerCount: 45,
+                    kvLayerCount: 12,
+                    turboQuantKVLayerCount: 0,
+                    rotatingKVLayerCount: 33
+                )
+            ) == "turbo(3,3)"
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "MiniMax-M2.7-JANG_K-CRACK",
+                cacheTopology: ModelCacheTopologySnapshot(
+                    layerCount: 62,
+                    kvLayerCount: 62,
+                    turboQuantKVLayerCount: 0,
+                    rotatingKVLayerCount: 0
+                )
+            ) == "turbo(3,3)"
+        )
 
         settings.cache.liveKVCodec = .native
         #expect(
@@ -1156,6 +1204,14 @@ struct MLXBatchAdapterTests {
             modelName: modelName
         )
         #expect(omitted["tool_choice"] == nil)
+
+        let stepRequired = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: "JANGQ-AI/Step-3.7-Flash-JANGTQ_K",
+            toolChoice: .required
+        )
+        #expect(stepRequired["tool_choice"] as? String == "required")
+        #expect(stepRequired["enable_thinking"] as? Bool == false)
     }
 
     @Test func additionalContext_defaultsLingThinkingOffButHonorsExplicitOptIn() {

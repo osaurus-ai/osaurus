@@ -55,16 +55,21 @@ struct FolderToolRegistrationTests {
         }
     }
 
-    /// Sanity: the rest of the core set still rides along.
+    /// Sanity: the rest of the core set still rides along. `file_tree` is
+    /// intentionally absent — `file_read` lists directories now.
     @Test("file_* core tools are loaded for unknown-project folders")
     func coreFileToolsLoadedForUnknownProject() {
         withRegisteredFolderTools { manager in
-            for name in ["file_tree", "file_read", "file_write", "file_edit", "file_search"] {
+            for name in ["file_read", "file_write", "file_edit", "file_search"] {
                 #expect(
                     manager.folderToolNames.contains(name),
                     "`\(name)` missing from folder core set. Live names: \(manager.folderToolNames)"
                 )
             }
+            #expect(
+                !manager.folderToolNames.contains("file_tree"),
+                "`file_tree` was merged into `file_read` and must not be registered. Live names: \(manager.folderToolNames)"
+            )
         }
     }
 }

@@ -299,4 +299,89 @@ struct PromptSectionOrderingTests {
             #expect(ids.contains("riskAware") == false)
         }
     }
+
+    // MARK: - Grounding gating
+
+    /// The grounding (anti-fabrication) directive rides on tools being
+    /// present: a normal-context tool-enabled chat gets it; a tiny model
+    /// whose tools auto-disable does not (the persona handles the no-tools
+    /// case, and the section would otherwise just burn the 4K budget).
+    @Test("gate: grounding present with tools, absent when tools auto-disable")
+    func gate_groundingTracksTools() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let on = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "gpt-5",
+                cachedPreflight: .empty
+            )
+            #expect(sectionIds(on).contains("grounding"))
+
+            let tiny = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "foundation",
+                cachedPreflight: .empty
+            )
+            #expect(sectionIds(tiny).contains("grounding") == false)
+            // Tiny stays minimal — tools-off cascades to every gated section.
+            #expect(sectionIds(tiny) == ["platform", "persona"])
+        }
+    }
+
+    // MARK: - KV-cache prefix stability
+
+    /// KV-cache safety: the new always-on sections (grounding,
+    /// modelFamilyGuidance-for-every-family) must be present on BOTH the
+    /// first turn and a turn after the model has entered the loop, so they
+    /// never appear/disappear mid-session and bust the cached prefix. The
+    /// ONLY legitimate mid-session section delta is `agentLoopGuidance`,
+    /// which (for non-small-context models) intentionally joins once the
+    /// session enters the loop — that pre-existing flip is unchanged here.
+    @Test("kv-safety: new sections do not flip between turn 1 and a post-loop turn")
+    func kvSafety_newSectionsStableAcrossTurns() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let turn1 = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "gpt-5",
+                cachedPreflight: .empty
+            )
+            let loopMessages = [
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        ToolCall(
+                            id: "call_todo",
+                            type: "function",
+                            function: ToolCallFunction(
+                                name: "todo",
+                                arguments: #"{"markdown":"- [ ] one"}"#
+                            )
+                        )
+                    ],
+                    tool_call_id: nil
+                )
+            ]
+            let turn2 = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "gpt-5",
+                messages: loopMessages,
+                cachedPreflight: .empty
+            )
+            let s1 = Set(sectionIds(turn1))
+            let s2 = Set(sectionIds(turn2))
+            // Only the loop cheat-sheet may be added on the later turn.
+            #expect(s2.subtracting(s1) == ["agentLoopGuidance"])
+            // Nothing disappears mid-session.
+            #expect(s1.subtracting(s2).isEmpty)
+            // The new always-on sections are on BOTH turns.
+            for id in ["grounding", "modelFamilyGuidance"] {
+                #expect(s1.contains(id))
+                #expect(s2.contains(id))
+            }
+        }
+    }
 }

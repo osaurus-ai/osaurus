@@ -86,6 +86,30 @@ struct PromptWhitespaceTests {
         )
     }
 
+    @Test("groundingDirective has no whitespace continuation artifacts")
+    func groundingDirectiveRendersClean() {
+        assertNoContinuationLeak(
+            SystemPromptTemplates.groundingDirective,
+            label: "groundingDirective"
+        )
+    }
+
+    @Test("lfm2Guidance has no whitespace continuation artifacts")
+    func lfm2GuidanceRendersClean() {
+        assertNoContinuationLeak(
+            ModelFamilyGuidance.lfm2Guidance,
+            label: "lfm2Guidance"
+        )
+    }
+
+    @Test("defaultGuidance has no whitespace continuation artifacts")
+    func defaultGuidanceRendersClean() {
+        assertNoContinuationLeak(
+            ModelFamilyGuidance.defaultGuidance,
+            label: "defaultGuidance"
+        )
+    }
+
     /// Composed sandbox section bundles `sandboxToolGuide` (the historical
     /// offender — `target="content"` had a 3-space leak) — assert the
     /// composition stays clean. The compact variant was dropped in the

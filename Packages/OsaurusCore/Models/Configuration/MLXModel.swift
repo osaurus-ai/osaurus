@@ -220,6 +220,14 @@ struct MLXModel: Identifiable, Codable {
     /// For downloaded models, checks vision_config in config.json.
     /// For undownloaded models, checks modelType against VLMTypeRegistry.
     var isVLM: Bool {
+        if ModelFamilyNames.isStepFamily(id) || ModelFamilyNames.isStepFamily(name) {
+            // Step 3.7 bundles can carry upstream vision metadata, but this
+            // Osaurus/vMLX path is the Step text runtime. Keep picker
+            // capability detection text-only until Step VLM is wired and
+            // proven, and avoid blocking picker rebuilds on large external
+            // bundle metadata reads.
+            return false
+        }
         if isDownloaded { return VLMDetection.isVLM(at: localDirectory) }
         if let mt = modelType { return VLMDetection.isVLM(modelType: mt) }
         return VLMDetection.isVLM(modelId: id)

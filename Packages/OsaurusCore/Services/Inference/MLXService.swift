@@ -298,6 +298,13 @@ actor MLXService: ToolCapableService {
         modelId: String,
         modelDirectory: URL? = nil
     ) -> Bool {
+        if ModelFamilyNames.isStepFamily(modelName) || ModelFamilyNames.isStepFamily(modelId) {
+            // Step 3.7 tool parsing/template selection is owned by the pinned
+            // vMLX runtime. Do not block request preflight on large external
+            // bundle metadata reads before vMLX can load the model.
+            return true
+        }
+
         if let directory = modelDirectory ?? localModelDirectory(modelId: modelId),
             let format = resolvedToolCallFormat(in: directory)
         {
@@ -431,6 +438,14 @@ actor MLXService: ToolCapableService {
     private nonisolated static func mediaCapabilities(
         modelId: String
     ) -> ModelMediaCapabilities.Capabilities {
+        if ModelFamilyNames.isStepFamily(modelId) {
+            // Step 3.7 currently runs through vMLX's Step text runtime in
+            // Osaurus. Some source bundles carry vision metadata, but the
+            // Step VLM path is not wired or proven here; keep request gating
+            // text-only and avoid blocking runtime preflight on large
+            // external-bundle metadata reads.
+            return ModelMediaCapabilities.from(modelId: modelId)
+        }
         let parts = modelId.split(separator: "/").map(String.init)
         let localDirectory = parts.reduce(DirectoryPickerService.effectiveModelsDirectory()) {
             $0.appendingPathComponent($1, isDirectory: true)
