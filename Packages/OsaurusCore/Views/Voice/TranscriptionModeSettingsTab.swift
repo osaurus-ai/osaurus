@@ -6,6 +6,7 @@
 //  Configure hotkey, pause duration, and test the transcription feature.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Transcription Mode Settings Tab
@@ -21,6 +22,10 @@ struct TranscriptionModeSettingsTab: View {
     @State private var transcriptionEnabled: Bool = false
     @State private var hotkey: Hotkey?
     @State private var hasLoadedSettings = false
+
+    /// Polls accessibility permission while the tab is visible, since
+    /// `AXIsProcessTrusted()` won't notify us when the user grants it externally.
+    @State private var permissionRefreshTimer: Timer?
 
     private func loadSettings() {
         let config = TranscriptionConfigurationStore.load()
@@ -75,12 +80,37 @@ struct TranscriptionModeSettingsTab: View {
                 loadSettings()
                 hasLoadedSettings = true
             }
-            // Refresh accessibility permission status
+            // Refresh accessibility permission status and keep it in sync while visible
+            keyboardService.checkAccessibilityPermission()
+            startPermissionRefresh()
+        }
+        .onDisappear {
+            stopPermissionRefresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // User may have just returned from System Settings after granting permission
             keyboardService.checkAccessibilityPermission()
         }
         .onReceive(NotificationCenter.default.publisher(for: .transcriptionConfigurationChanged)) { _ in
             loadSettings()
         }
+    }
+
+    // MARK: - Permission Refresh
+
+    private func startPermissionRefresh() {
+        stopPermissionRefresh()
+        let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            Task { @MainActor in
+                keyboardService.checkAccessibilityPermission()
+            }
+        }
+        permissionRefreshTimer = timer
+    }
+
+    private func stopPermissionRefresh() {
+        permissionRefreshTimer?.invalidate()
+        permissionRefreshTimer = nil
     }
 
     // MARK: - Transcription Toggle Card
