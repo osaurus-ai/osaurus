@@ -53,6 +53,9 @@ let package = Package(
         .package(url: "https://github.com/raspu/Highlightr", from: "2.3.0"),
         .package(url: "https://github.com/AAChartModel/AAChartKit-Swift.git", from: "9.5.0"),
         .package(url: "https://github.com/aptabase/aptabase-swift.git", from: "0.3.11"),
+        // Crash + app-hang reporting (Sentry). Consent-gated through the same
+        // `TelemetryService` opt-in as Aptabase — see `CrashReportingService`.
+        .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "9.15.0"),
     ],
     targets: [
         // Vendored SQLCipher 4.6.1 amalgamation (CommonCrypto
@@ -177,6 +180,7 @@ let package = Package(
                 .product(name: "Highlightr", package: "Highlightr"),
                 .product(name: "AAInfographics", package: "AAChartKit-Swift"),
                 .product(name: "Aptabase", package: "aptabase-swift"),
+                .product(name: "Sentry", package: "sentry-cocoa"),
             ],
             path: ".",
             exclude: ["Tests", "SQLCipher"],

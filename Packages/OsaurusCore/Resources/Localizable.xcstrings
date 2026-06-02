@@ -15291,34 +15291,34 @@
         }
       }
     },
-    "Osaurus can send anonymous, aggregated usage data to help us understand how it's used and where people run into friction." : {
+    "Osaurus can send anonymous usage data and crash reports to help us understand how it's used and fix what breaks." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus kann anonyme, aggregierte Nutzungsdaten senden, damit wir verstehen, wie die App genutzt wird und wo Nutzer auf Probleme stoßen."
+            "value" : "Osaurus kann anonyme Nutzungsdaten und Absturzberichte senden, damit wir verstehen, wie die App genutzt wird, und Fehler beheben können."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 可以发送匿名的汇总使用数据，帮助我们了解应用的使用方式以及用户在哪里遇到问题。"
+            "value" : "Osaurus 可以发送匿名使用数据和崩溃报告，帮助我们了解应用的使用方式并修复问题。"
           }
         }
       }
     },
-    "Osaurus is brand new. Knowing which steps trip people up — and which features get used — is how we make it better for everyone." : {
+    "Osaurus is brand new. Knowing which steps trip people up, which features get used, and when something crashes is how we make it better for everyone." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus ist brandneu. Zu wissen, welche Schritte für Verwirrung sorgen – und welche Funktionen genutzt werden – hilft uns, es für alle besser zu machen."
+            "value" : "Osaurus ist brandneu. Zu wissen, welche Schritte für Verwirrung sorgen, welche Funktionen genutzt werden und wann etwas abstürzt, hilft uns, es für alle besser zu machen."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 还很年轻。了解哪些步骤会让人卡住、哪些功能常被使用，能帮助我们把它做得更好。"
+            "value" : "Osaurus 还很年轻。了解哪些步骤会让人卡住、哪些功能常被使用，以及何时发生崩溃，能帮助我们把它做得更好。"
           }
         }
       }

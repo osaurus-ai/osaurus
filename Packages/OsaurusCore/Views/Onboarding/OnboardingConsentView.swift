@@ -41,7 +41,7 @@ struct ConsentBody: View {
             illustrationAsset: "osaurus-data",
             leftHeadline: "Help shape Osaurus",
             leftBody:
-                "Osaurus is brand new. Knowing which steps trip people up — and which features get used — is how we make it better for everyone.",
+                "Osaurus is brand new. Knowing which steps trip people up, which features get used, and when something crashes is how we make it better for everyone.",
             subtitle: "Anonymous, on by default, and yours to turn off right here."
         ) {
             VStack(alignment: .leading, spacing: 14) {

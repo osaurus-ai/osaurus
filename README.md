@@ -176,15 +176,26 @@ Osaurus collects **anonymous, aggregated usage analytics** via [Aptabase](https:
 
 It's **consent-gated and opt-out**: nothing leaves your Mac without your consent. Anything recorded beforehand stays buffered locally and is transmitted *only* if you opt in. You can change your choice anytime in **Settings → Privacy → Share Anonymous Usage Data**.
 
+### Crash reporting
+
+The same single opt-in also enables **crash and app-hang reporting** via [Sentry](https://sentry.io). It's limited to crash and hang diagnostics — no performance tracing, profiling, screenshots, or personal information; we drop the user object and device hostname from every event, on top of disabling PII. Crash reporting starts only when you've opted in and a DSN is configured, and stops when you opt out. Like analytics, it's off by default in source builds.
+
 ### Local development
 
 Telemetry is **off by default in source builds**: with no key, the SDK is never initialized and every event is a silent no-op, so you can build and contribute without any of this. To enable it locally:
 
-1. Create `App/osaurus/Secrets.xcconfig` with a single line: `APTABASE_APP_KEY = A-XX-...` (your Aptabase app key). The file is gitignored, so never commit it.
+1. Create `App/osaurus/Secrets.xcconfig` (gitignored — never commit it) with the keys you want:
+   - `APTABASE_APP_KEY = A-XX-...` — your Aptabase app key (analytics).
+   - `SENTRY_DSN` — your Sentry project DSN (crash reporting). Optional; omit it to leave crash reporting off. **Escape the scheme slashes**: an `.xcconfig` treats `//` as a comment, so a raw `https://…` DSN gets silently truncated to `https:`. Add a slash variable and reference it:
+
+     ```
+     SENTRY_SLASH = /
+     SENTRY_DSN = https:$(SENTRY_SLASH)$(SENTRY_SLASH)yourPublicKey@o123.ingest.sentry.io/456
+     ```
 2. In Xcode, add `Secrets.xcconfig` to the project (**no** target membership), then under **Project → Info → Configurations → Debug → osaurus** set "Based on Configuration File" to **Secrets**.
 3. Clean build (⇧⌘K) and relaunch.
 
-The key flows `Secrets.xcconfig` → `$(APTABASE_APP_KEY)` build setting → `AptabaseAppKey` in `Info.plist`. Debug builds report to Aptabase's **Debug** bucket (enable the Debug view on the dashboard to see them), so local testing never pollutes production metrics.
+The keys flow `Secrets.xcconfig` → `$(APTABASE_APP_KEY)` / `$(SENTRY_DSN)` build settings → `AptabaseAppKey` / `SentryDSN` in `Info.plist`. Debug builds report to Aptabase's **Debug** bucket (enable the Debug view on the dashboard to see them) and to Sentry's `debug` environment, so local testing never pollutes production data.
 
 ## Compatible APIs
 
