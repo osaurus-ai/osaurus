@@ -2,7 +2,51 @@
 
 Date: 2026-06-01
 
-Current Osaurus PR head after the latest Step proof-boundary refresh:
+Current local Osaurus PR head before the final vMLX repin commit:
+`1bc3202c0ccc36f791d27ef7ce7943eba0b691b8`.
+
+Current local vMLX pin after the final Step XML parser fix:
+`25f8111552005fdc6ef12cd2c8298a782d4e2052`.
+
+Final no-sign app built for the current pin:
+`build/DerivedData-post1314-step-parser-25f8111/Build/Products/Release/osaurus.app`.
+
+Final Step 3.7 live proof used `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`,
+isolated `OSAURUS_TEST_ROOT=/tmp/osaurus-post1314-step-final-root/state-open`,
+and `OSU_MODELS_DIR=/tmp/osaurus-post1314-step-final-root/models`. The app was
+launched through LaunchServices with those env vars set by `launchctl`; no
+`security`, notary, Developer ID signing, signing identity, or password/keychain
+prompt was used. The app stayed healthy after the final rows.
+
+Final Step JANG_K parser/cache artifact:
+`/tmp/osaurus-post1314-25f8111-step-jangk-restart-l2-20260601-192211/step-3.7-flash-jang_k_summary.json`.
+
+Final Step JANG_2L tool/topology artifact:
+`/tmp/osaurus-post1314-25f8111-step-jang2l-final-20260601-191743/step-3.7-flash-jang_2l_summary.json`.
+
+Final Step JANG_K parser-only cold artifact before restart/L2:
+`/tmp/osaurus-post1314-25f8111-step-jangk-final-20260601-191716/step-3.7-flash-jang_k_summary.json`.
+
+These final rows supersede the older `eb116ef...` Step proof boundary below:
+Step JANG_K and Step JANG_2L both pass the strict required/none/required
+multi-turn tool harness on the final app, with exact `line_count` arguments on
+turn 1 and turn 3, visible no-tool follow-up, no protocol leak, no incoherent
+loop, no length-stop fake pass, token/s recorded for the visible generation
+turn, healthy `/health` after the row, 45-layer mixed topology with 12 KV layers
+and 33 rotating KV layers, `requires_disk_backed_restore=true`,
+paged-incompatible, and `turbo_quant_kv_layer_count=0`. The restart/L2 JANG_K
+row additionally proves actual disk L2 restore with `block_disk_hits +1`,
+`block_disk_misses 0`, and `block_disk_stores +5`.
+
+The vMLX fix is narrow and parser-boundary-specific: Step emitted a native bare
+XML function envelope beginning with `<function=line_count>` after tool history.
+`StepToolCallParser` now buffers and parses that Step-native envelope without
+adding sampler defaults, repetition penalties, close-token bias, synthetic
+reasoning tags, or template coercion. Focused vMLX test
+`Step37ParserDispatchTests/stepParserAcceptsBareXMLFunctionEnvelopeAfterHistory`
+passed before the pin was updated.
+
+Earlier Osaurus PR head after the Step proof-boundary refresh:
 `9804bb474ad73cd107a493ccaba2e9b3f5c964c1`.
 
 Earlier Osaurus PR head after Step proof-harness hardening:
@@ -19,7 +63,7 @@ Live no-sign app proofs were run from this PR worktree as the matrix was built
 up across several commits. Individual artifact paths below are the source of
 truth for the exact live rows and the row-specific PR head where listed.
 
-Current local vMLX pin in Osaurus after the Step required-template refresh:
+Previous local vMLX pin in Osaurus after the Step required-template refresh:
 `eb116ef735d9445cfac30b6a3346ff162483122e`.
 
 Previous fully pushed/CI-green PR head used `3043cc98d7c2a0fd9df34376e6b42beec5517516`.
@@ -30,7 +74,7 @@ current artifact explicitly says so.
 No-sign app used for live proof:
 `/tmp/osaurus-post1314-nosign-3043cc98/Build/Products/Release/osaurus.app`
 
-Current no-sign app built for the `eb116ef...` refresh:
+Previous no-sign app built for the `eb116ef...` refresh:
 `build/DerivedData-post1314-step-template-eb116ef/Build/Products/Release/osaurus.app`
 
 Model root used for live proof: `/tmp/osaurus-post1310-modelroot`
@@ -52,18 +96,15 @@ The fresh app launch served these model ids through `/v1/models`:
 - `lfm2.5-8b-a1b-mxfp8`
 - `step-3.7-flash-jang_2l`
 
-Current `eb116ef...` Step refresh served these ids from a fresh no-sign
+Final `25f8111...` Step refresh served these ids from the no-sign
 keychain-free app root:
 
 - `step-3.7-flash-jang_2l`
-- `step-3.7-flash-jang_k-crack`
-- `step-3.7-flash-jang_k-crack-v5`
+- `step-3.7-flash-jang_k`
 
-`Step-3.7-Flash-JANG_K` is not promoted by the current refresh. Valid non-empty
-local CRACK bundles now exist under `/Users/eric/models/dealign.ai`, but the
-current no-sign app attempts timed out before returning turn 1 while a separate
-heavy Step CRACK process was consuming about 74 GB RSS. Treat JANG_K as blocked
-for current Osaurus merge proof, not green.
+`Step-3.7-Flash-JANG_K` is promoted by the final `25f8111...` refresh for this
+strict Osaurus app lane. The earlier `eb116ef...` JANG_K timeout/leak boundary
+is superseded by the final parser/cache artifact listed above.
 
 ## Source and Guard Coverage
 
@@ -82,9 +123,13 @@ Passed on the final vMLX pin:
   current-turn required-tool value repetition after history, Step3p7
   wrapper config decoding, mixed full/sliding cache topology, TurboQuant KV only
   for full-attention layers, JANGTQ per-layer group-size inheritance, and NVFP4
-  attention side-tensor sanitization.
+  attention side-tensor sanitization, and the final bare
+  `<function=line_count>` XML envelope observed from Step JANG_K after tool
+  history.
 - Osaurus source tests:
-  `RuntimePolicySourceTests` passed 75/75 on the `eb116ef...` pin, and
+  `RuntimePolicySourceTests/vmlxPinIncludesRuntimeHardening` passed on the
+  `25f8111...` pin, earlier `RuntimePolicySourceTests` passed 75/75 on the
+  `eb116ef...` pin, and
   `SwiftTransformersTokenizerLoaderTests/step37LocalTokenizerUsesRequiredToolFallbackAndClosesThinkingRail`
   passed on the same pin. Earlier LFM tokenizer/source guards remain covered by
   the previous proof rows.

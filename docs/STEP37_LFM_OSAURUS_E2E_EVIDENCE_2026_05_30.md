@@ -6,13 +6,38 @@ from partial rows.
 
 ## Code State
 
+- Final local Osaurus PR head before the final vMLX repin commit:
+  `1bc3202c0ccc36f791d27ef7ce7943eba0b691b8`.
+- Final local vMLX pin after the Step bare XML function-envelope parser fix:
+  `25f8111552005fdc6ef12cd2c8298a782d4e2052`.
+- Final no-sign app:
+  `build/DerivedData-post1314-step-parser-25f8111/Build/Products/Release/osaurus.app`.
+- Final Step JANG_2L artifact:
+  `/tmp/osaurus-post1314-25f8111-step-jang2l-final-20260601-191743/step-3.7-flash-jang_2l_summary.json`.
+- Final Step JANG_K warm disk-L2 artifact:
+  `/tmp/osaurus-post1314-25f8111-step-jangk-restart-l2-20260601-192211/step-3.7-flash-jang_k_summary.json`.
+- Final Step JANG_K parser-only cold artifact:
+  `/tmp/osaurus-post1314-25f8111-step-jangk-final-20260601-191716/step-3.7-flash-jang_k_summary.json`.
+- Final Step verdict: both JANG_2L and JANG_K pass the strict no-sign Osaurus
+  app required/none/required multi-turn `line_count` harness with exact turn 1
+  args `red\ngreen\nblue`, exact turn 3 args `one\ntwo`, visible no-tool
+  follow-up, no protocol leak, no incoherent loop, no length-stop fake pass,
+  token/s recorded for visible generation, healthy `/health`, 45-layer mixed
+  topology with 12 KV and 33 rotating KV layers, disk-backed restore required,
+  paged-incompatible, and `turbo_quant_kv_layer_count=0`. The JANG_K restart
+  row additionally proves disk L2 restore with `block_disk_hits +1`,
+  `block_disk_misses 0`, and `block_disk_stores +5`.
+- The final vMLX fix is narrow parser repair for a Step-native bare XML
+  function envelope beginning with `<function=line_count>` after tool history.
+  It does not add hidden sampler defaults, repetition penalties, close-token
+  biasing, synthetic reasoning tags, or fake prompt coercion.
 - Current Osaurus PR head after the latest Step proof-boundary refresh:
   `9804bb474ad73cd107a493ccaba2e9b3f5c964c1`.
 - Earlier Osaurus PR head after Step proof-harness hardening:
   `31911e2319b324250bca3f3660a75d2d182e55a9`.
 - Earlier Osaurus PR head after the ZAYA evidence refresh:
   `dceaf9edf85ffe0d20a0b142b6dbe585b4874828`.
-- Current local vMLX pin after the Step required-template refresh:
+- Previous local vMLX pin after the Step required-template refresh:
   `eb116ef735d9445cfac30b6a3346ff162483122e`.
 - Previous final vMLX pin in Osaurus before the current refresh:
   `3043cc98d7c2a0fd9df34376e6b42beec5517516`.
