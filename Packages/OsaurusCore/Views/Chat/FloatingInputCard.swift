@@ -1797,6 +1797,18 @@ extension FloatingInputCard {
         isSandboxEnabled && sandboxFailure != nil
     }
 
+    /// True when the sandbox is on but outbound network is turned off for
+    /// this agent. Egress is the per-agent `sandboxNetworkEnabled` toggle,
+    /// reconciled onto the VM at boot — so this reflects what the sandbox
+    /// will actually permit. Surfaced on the chip so a network-less sandbox
+    /// is visible up front, instead of the model discovering it only when a
+    /// `curl`/`urllib` call fails mid-task.
+    private var isSandboxNetworkDisabled: Bool {
+        isSandboxEnabled
+            && agentManager.effectiveAutonomousExec(for: effectiveAgentId)?
+                .sandboxNetworkEnabled == false
+    }
+
     private func retrySandbox() {
         let agentId = effectiveAgentId
         Task {
@@ -1878,20 +1890,29 @@ extension FloatingInputCard {
     }
 
     private var sandboxHelpText: String {
+        let base: String
         if let failure = sandboxFailure, isSandboxEnabled {
             return "Sandbox unavailable: \(failure.message)\nClick to open Sandbox settings."
         } else if isSandboxLoading {
             return "Sandbox is starting up — click to view progress."
         } else if isCombinedMode {
-            return
+            base =
                 "Combined mode: the selected folder is read-only and all code runs in the sandbox. Click to disable."
         } else if isSandboxEnabled && isSandboxRunning {
-            return "Sandbox is active — click to disable. Right-click for settings."
+            base = "Sandbox is active — click to disable. Right-click for settings."
         } else if isSandboxEnabled {
-            return "Sandbox enabled — container not running"
+            base = "Sandbox enabled — container not running"
         } else {
-            return "Enable Sandbox for autonomous code execution"
+            base = "Enable Sandbox for autonomous code execution"
         }
+        // Spell out the egress restriction so the user understands the
+        // wifi.slash badge — and why the model can't fetch URLs. Takes
+        // effect on the next sandbox start.
+        if isSandboxNetworkDisabled {
+            return base
+                + "\nOutbound network is off — enable it in Sandbox settings (applies on next sandbox start)."
+        }
+        return base
     }
 
     /// Foreground tint for the chip's icon + dot. Failure beats running so a
@@ -1938,6 +1959,16 @@ extension FloatingInputCard {
                     )
                     .lineLimit(1)
                     .opacity(isSandboxLoading ? sandboxPulseAmount : 1.0)
+
+                // Network-off badge: only meaningful once the sandbox is
+                // settled, so suppress it while loading or failed (those
+                // states own the leading indicator + accent color).
+                if isSandboxNetworkDisabled && !isSandboxLoading && !isSandboxFailed {
+                    Image(systemName: "wifi.slash")
+                        .font(.system(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .accessibilityLabel(Text("Outbound network disabled", bundle: .module))
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
