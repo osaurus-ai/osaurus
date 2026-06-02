@@ -553,7 +553,21 @@ final class ModelDownloadService: ObservableObject {
         downloadStates[modelId] = .notStarted
     }
 
-    func delete(_ model: MLXModel) {
+    func delete(_ model: MLXModel) async {
+        // Use-after-free guard: free any resident GPU buffers and drain
+        // in-flight per-request leases for this model BEFORE removing its
+        // on-disk weights. `ModelRuntime.unload` shuts the BatchEngine, waits
+        // for the lease count to hit zero, and frees the container. Deleting
+        // the files out from under a live `ModelContainer` would let Metal
+        // touch freed-then-reused memory (the `notifyExternalReferencesNonZero
+        // OnDealloc` class). `unload` is a no-op when the model isn't resident.
+        // Some callers (the "remove old id" migration notice) pass a synthetic
+        // model with an empty name; skip the unload there since the runtime is
+        // keyed by name and there's nothing to drain.
+        if !model.name.isEmpty {
+            await ModelRuntime.shared.unload(name: model.name)
+        }
+
         releaseOrchestrationResources(for: model.id)
         pausedDownloads[model.id] = nil
         clearDownloadTracking(for: model.id)
@@ -864,6 +878,9 @@ final class ModelDownloadService: ObservableObject {
         defer { downloader.invalidate() }
         var allSucceeded = true
         for file in missing {
+            // Honor cancellation between shard fetches so a cancelled load /
+            // app shutdown doesn't keep pulling a long tail of missing files.
+            if Task.isCancelled { return false }
             guard
                 let url = resolveURL(repoId: model.id, path: file.path),
                 let dest = HuggingFaceService.destinationURL(
@@ -899,6 +916,10 @@ final class ModelDownloadService: ObservableObject {
         guard !candidates.isEmpty else { return }
 
         for model in candidates {
+            // Stop the (best-effort, lifecycle-once) top-up sweep promptly if
+            // the surrounding task is cancelled (e.g. app teardown) instead of
+            // walking the full candidate list.
+            if Task.isCancelled { return }
             await Self.downloadMissingFiles(for: model, to: model.localDirectory)
         }
     }

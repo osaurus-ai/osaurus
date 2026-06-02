@@ -17,6 +17,14 @@ private struct CtxBox: @unchecked Sendable {
 
 private extension EmbeddedChannel {
     func testContext() throws -> ChannelHandlerContext {
+        // Mark the embedded channel active so writers that (correctly) skip
+        // writes on an inactive channel — e.g. `SSEResponseWriter`'s
+        // backpressure-aware path guards on `channel.isActive` — actually
+        // emit outbound parts under test. `connect` on an `EmbeddedChannel`
+        // just flips it active without any real networking.
+        if !self.isActive {
+            try? self.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 0)).wait()
+        }
         do {
             return try self.pipeline.context(handlerType: TestContextHandler.self).map { CtxBox(ctx: $0) }.wait().ctx
         } catch {

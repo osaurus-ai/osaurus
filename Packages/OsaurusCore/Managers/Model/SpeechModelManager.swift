@@ -46,7 +46,7 @@ public final class SpeechModelManager: ObservableObject {
 
     private var activeDownloadTasks: [String: Task<Void, Never>] = [:]
 
-    private static let legacyWhisperDirectories: [String] = [
+    nonisolated private static let legacyWhisperDirectories: [String] = [
         "models--argmaxinc--whisperkit-coreml",
         "models--argmaxinc--whisperkit-pro",
     ]
@@ -56,8 +56,54 @@ public final class SpeechModelManager: ObservableObject {
     private init() {
         availableModels = Self.curatedModels
         loadSelectedModel()
-        refreshDownloadStates()
-        refreshLegacyWhisperState()
+
+        // Seed cheap defaults synchronously so the `@Published` UI binds
+        // immediately, then run the disk probes (FluidAudio cache existence
+        // checks + the recursive legacy-Whisper `directorySize` enumerator —
+        // unbounded on large legacy dirs) off the launch-critical main thread.
+        // `.shared` is constructed during App-struct setup, before
+        // `applicationDidFinishLaunching`, so this must not block launch.
+        for model in availableModels where downloadStates[model.id] == nil {
+            downloadStates[model.id] = .notStarted
+        }
+        Task { [weak self] in
+            await self?.refreshDiskStateInBackground()
+        }
+    }
+
+    /// Probe the FluidAudio cache and legacy-Whisper directories on a
+    /// background thread, then publish the results on the main actor. Keeps
+    /// the recursive directory-size enumerator off the launch path while the
+    /// synchronous `refreshDownloadStates()` / `refreshLegacyWhisperState()`
+    /// remain available for explicit refreshes (post-download / post-delete).
+    public func refreshDiskStateInBackground() async {
+        let probes: [(id: String, version: SpeechModelVersion)] =
+            availableModels.map { ($0.id, $0.version) }
+
+        let scan = await Task.detached(priority: .utility) {
+            () -> (download: [String: Bool], legacyExists: Bool, legacySize: String?) in
+            var download: [String: Bool] = [:]
+            for probe in probes {
+                let faVersion: AsrModelVersion = probe.version == .v2 ? .v2 : .v3
+                let cacheDir = AsrModels.defaultCacheDirectory(for: faVersion)
+                download[probe.id] = AsrModels.modelsExist(at: cacheDir, version: faVersion)
+            }
+            let dirs = Self.findLegacyWhisperDirectories()
+            let legacyExists = !dirs.isEmpty
+            let legacySize: String? =
+                legacyExists
+                ? Self.formatBytes(dirs.reduce(Int64(0)) { $0 + Self.directorySize($1) })
+                : nil
+            return (download, legacyExists, legacySize)
+        }.value
+
+        for (id, isDownloaded) in scan.download {
+            // Don't clobber an in-flight download that started while we scanned.
+            if case .downloading = downloadStates[id] { continue }
+            downloadStates[id] = isDownloaded ? .completed : .notStarted
+        }
+        legacyWhisperModelsExist = scan.legacyExists
+        legacyWhisperModelsSizeString = scan.legacySize
     }
 
     // MARK: - Public Methods
@@ -191,7 +237,7 @@ public final class SpeechModelManager: ObservableObject {
         refreshLegacyWhisperState()
     }
 
-    private static func findLegacyWhisperDirectories() -> [URL] {
+    nonisolated private static func findLegacyWhisperDirectories() -> [URL] {
         let fm = FileManager.default
         let homeDir = fm.homeDirectoryForCurrentUser
         let hubCache =
@@ -210,7 +256,7 @@ public final class SpeechModelManager: ObservableObject {
         }
     }
 
-    private static func directorySize(_ url: URL) -> Int64 {
+    nonisolated private static func directorySize(_ url: URL) -> Int64 {
         let fm = FileManager.default
         guard
             let enumerator = fm.enumerator(
@@ -230,7 +276,7 @@ public final class SpeechModelManager: ObservableObject {
         return total
     }
 
-    private static func formatBytes(_ bytes: Int64) -> String {
+    nonisolated private static func formatBytes(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useGB, .useMB]
         formatter.countStyle = .file

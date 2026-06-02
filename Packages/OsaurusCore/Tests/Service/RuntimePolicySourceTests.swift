@@ -200,11 +200,10 @@ struct RuntimePolicySourceTests {
         #expect(storageKey.contains("public var hasCachedKey: Bool"))
 
         let appDelegate = try Self.source("AppDelegate.swift")
-        // The migrator used to be the implicit key-cache warmer via its
-        // own `currentKey()` call, but `runIfNeeded` short-circuits on
-        // launches with no pending migration. The explicit prewarm must
-        // stay off the launch-critical main-actor path so a slow Keychain
-        // read cannot prevent the local HTTP server from binding.
+        // The storage key cache is warmed by an explicit prewarm that
+        // must stay off the launch-critical main-actor path so a slow
+        // Keychain read cannot prevent the local HTTP server from
+        // binding.
         #expect(!appDelegate.contains("try? StorageKeyManager.shared.prewarmCurrentKey()"))
         #expect(appDelegate.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
         #expect(appDelegate.contains("Task.detached(priority: .utility)"))
@@ -793,7 +792,9 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             !runtime.contains("warm disk hit path is not stable yet")
-                && !runtime.contains("ModelFamilyNames.isLFM2Family(modelName) {\n            // Current live Osaurus rows prove LFM2.5"),
+                && !runtime.contains(
+                    "ModelFamilyNames.isLFM2Family(modelName) {\n            // Current live Osaurus rows prove LFM2.5"
+                ),
             "LFM2 must not carry the temporary disk-restore disable gate once required-tool history stability is fixed in vMLX"
         )
         let mlxService = try Self.source("Services/Inference/MLXService.swift")
@@ -1344,7 +1345,11 @@ struct RuntimePolicySourceTests {
         )
         #expect(ndjsonStreaming.contains("func markSemanticDeltaIfChannelActive()"))
         #expect(ndjsonStreaming.contains("await ModelRuntime.shared.unload(name: req.model)"))
-        #expect(ndjsonStreaming.contains("try Task.checkCancellation()\n                    // Ollama-style NDJSON"))
+        #expect(
+            ndjsonStreaming.contains(
+                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    // Ollama-style NDJSON"
+            )
+        )
         let anthropicStart = try #require(handler.range(of: "private func handleAnthropicMessagesStreaming("))
         let anthropicEnd = try #require(
             handler.range(
@@ -1361,7 +1366,11 @@ struct RuntimePolicySourceTests {
         #expect(anthropicStreaming.contains("func markSemanticDeltaIfChannelActive()"))
         #expect(anthropicStreaming.contains("markSemanticDeltaIfChannelActive()"))
         #expect(anthropicStreaming.contains("await ModelRuntime.shared.unload(name: model)"))
-        #expect(anthropicStreaming.contains("try Task.checkCancellation()\n                    // Reasoning sentinel"))
+        #expect(
+            anthropicStreaming.contains(
+                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    // Reasoning sentinel"
+            )
+        )
         let responsesStart = try #require(handler.range(of: "private func handleOpenResponsesStreaming("))
         let responsesEnd = try #require(
             handler.range(
@@ -1379,7 +1388,11 @@ struct RuntimePolicySourceTests {
         #expect(responsesStreaming.contains("func markSemanticDeltaIfChannelActive()"))
         #expect(responsesStreaming.contains("!wasResidentBeforeStream && !emittedSemanticDelta"))
         #expect(responsesStreaming.contains("await ModelRuntime.shared.unload(name: model)"))
-        #expect(responsesStreaming.contains("try Task.checkCancellation()\n                    // Reasoning sentinel"))
+        #expect(
+            responsesStreaming.contains(
+                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    // Reasoning sentinel"
+            )
+        )
         let errorStart = try #require(handler.range(of: "func errorCaught"))
         let errorEnd = try #require(
             handler.range(of: "    // MARK: - CORS", range: errorStart.upperBound ..< handler.endIndex)
@@ -1447,8 +1460,8 @@ struct RuntimePolicySourceTests {
             "cancelActiveGeneration() must still exist for shutdown / clearAll cancellation paths"
         )
         #expect(
-            runtime.contains("if let modelName, record.modelName != modelName { return }"),
-            "ModelRuntime.unload(name:) must not cancel a generation belonging to a different model"
+            runtime.contains("modelName == nil || record.modelName == modelName"),
+            "cancelActiveGeneration(for:) must scope cancellation to the requested model (nil = cancel all)"
         )
         #expect(
             runtime.contains("await cancelActiveGeneration(for: name)"),
@@ -1491,7 +1504,7 @@ struct RuntimePolicySourceTests {
         let body = String(appDelegate[start.lowerBound ..< end.lowerBound])
 
         let stopSessions = try #require(body.range(of: "ChatWindowManager.shared.stopAllSessions()"))
-        let clearRuntime = try #require(body.range(of: "await ModelRuntime.shared.clearAll()"))
+        let clearRuntime = try #require(body.range(of: "await ModelRuntime.shared.clearAll(quit: true)"))
         let replyTerminate = try #require(
             body.range(of: "NSApp.reply(toApplicationShouldTerminate: true)")
         )
@@ -1499,13 +1512,99 @@ struct RuntimePolicySourceTests {
         #expect(stopSessions.lowerBound < clearRuntime.lowerBound)
         #expect(clearRuntime.lowerBound < replyTerminate.lowerBound)
         #expect(body.contains("return .terminateLater"))
+
+        // Hang audit: the teardown must be bounded (every step wrapped in a
+        // deadline) and must always reply via a watchdog-guarded one-shot so
+        // a stuck step can never strand the app in "quitting".
+        #expect(
+            body.contains("runWithDeadline"),
+            "applicationShouldTerminate steps must be bounded by runWithDeadline so a stuck await can't hang quit"
+        )
+        #expect(
+            body.contains("replyToTerminationOnce()"),
+            "termination reply must funnel through the watchdog-guarded one-shot"
+        )
+        #expect(
+            body.contains("Quit watchdog fired"),
+            "a global quit watchdog must force the termination reply if the teardown chain wedges"
+        )
+
+        // Reentrancy guard: a second/racing quit must early-return without
+        // spawning a duplicate teardown chain + watchdog.
+        #expect(
+            body.contains("if isTerminating"),
+            "applicationShouldTerminate must guard against re-entry with isTerminating"
+        )
+        #expect(
+            body.contains("isTerminating = true"),
+            "applicationShouldTerminate must latch isTerminating on first entry"
+        )
+        // The only `hasRepliedToTermination = false` allowed is the stored
+        // property's default initializer; resetting it on entry would defeat
+        // the reentrancy guard, so there must be exactly one occurrence.
+        #expect(
+            body.components(separatedBy: "hasRepliedToTermination = false").count - 1 == 1,
+            "the reply flag must not be reset on entry — that would defeat the reentrancy guard"
+        )
+
+        // Reordering: the must-not-orphan steps (cancel generations, child
+        // process / NIO / VM teardown) must run BEFORE the abandonable
+        // MLX/memory tail, so a watchdog firing only ever cuts GPU/memory.
+        let cancelGen = try #require(body.range(of: "await ModelRuntime.shared.cancelAllGenerations()"))
+        let liveExec = try #require(body.range(of: "await LiveExecRegistry.shared.terminateAll()"))
+        let ensureShutdown = try #require(body.range(of: "await self.serverController.ensureShutdown()"))
+        let flush = try #require(body.range(of: "await MemoryService.shared.flushAllPending"))
+
+        #expect(
+            cancelGen.lowerBound < ensureShutdown.lowerBound,
+            "generations must be cancelled (ending SSE) before NIO shutdown so the server can drain"
+        )
+        #expect(
+            liveExec.lowerBound < flush.lowerBound,
+            "orphan-prone child processes must be killed before the abandonable memory/MLX tail"
+        )
+        #expect(
+            ensureShutdown.lowerBound < clearRuntime.lowerBound,
+            "network/VM teardown must run before the abandonable MLX clearAll tail"
+        )
+    }
+
+    @Test("NIO server stop reports completion so the group isn't dropped mid-shutdown")
+    func nioServerStopReportsCompletion() throws {
+        let server = try Self.source("Networking/OsaurusServer.swift")
+        // `stop` must return whether the EventLoopGroup actually shut down.
+        #expect(
+            server.contains("func stop(gracefully: Bool = true) async -> Bool"),
+            "OsaurusServer.stop must return whether shutdown completed"
+        )
+
+        let controller = try Self.source("Networking/ServerController.swift")
+        let start = try #require(controller.range(of: "func ensureShutdown() async"))
+        let end = try #require(
+            controller.range(of: "init()", range: start.upperBound ..< controller.endIndex)
+        )
+        let body = String(controller[start.lowerBound ..< end.lowerBound])
+
+        // On timeout the actor (and its EventLoopGroup) must stay rooted — only
+        // drop it when shutdown actually completed (issue #860).
+        #expect(
+            body.contains("let completed = await server.stop(gracefully: false)"),
+            "ensureShutdown must capture whether the bounded NIO shutdown completed"
+        )
+        #expect(
+            body.contains("if completed {") && body.contains("serverActor = nil"),
+            "ensureShutdown must only release serverActor when the group fully shut down"
+        )
+        #expect(
+            body.contains("BonjourAdvertiser.shared.stopAdvertising()"),
+            "ensureShutdown must also stop mDNS advertising on the quit path"
+        )
     }
 
     @Test("live proof keychain-disabled mode keeps app startup off user Keychain")
     func liveProofKeychainDisabledModeKeepsStartupOffUserKeychain() throws {
         let paths = try Self.source("Utils/OsaurusPaths.swift")
         let storage = try Self.source("Identity/StorageKeyManager.swift")
-        let storageMigration = try Self.source("Views/Storage/StorageMigrationOverlay.swift")
         let appDelegate = try Self.source("AppDelegate.swift")
         let keychainHelper = try Self.source("Services/Keychain/KeychainQueryHelpers.swift")
         let agentSecrets = try Self.source("Services/Keychain/AgentSecretsKeychain.swift")
@@ -1517,8 +1616,6 @@ struct RuntimePolicySourceTests {
         #expect(storage.contains("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"))
         #expect(storage.contains("generateInMemoryKey()"))
         #expect(storage.contains("if Self.disablesKeychainForProcess"))
-        #expect(storageMigration.contains("if StorageKeyManager.disablesKeychainForProcess"))
-        #expect(storageMigration.contains("without touching the user's at-rest migration/keychain"))
         #expect(appDelegate.contains("private var keychainDisabledTestMode"))
         #expect(appDelegate.contains("private var keychainDisabledUIPresentationMode"))
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
@@ -1530,7 +1627,11 @@ struct RuntimePolicySourceTests {
                 "if !keychainDisabledTestMode {\n                await MCPProviderManager.shared.connectEnabledProviders()"
             )
         )
-        #expect(appDelegate.contains("if !keychainDisabledTestMode {\n            SandboxToolRegistrar.shared.start()"))
+        #expect(
+            appDelegate.contains(
+                "if !keychainDisabledTestMode && !LaunchGuard.shouldSkip(.sandbox) {\n            SandboxToolRegistrar.shared.start()"
+            )
+        )
         #expect(appDelegate.contains("Headless live-proof launches only need the local HTTP server"))
         #expect(appDelegate.contains("keychainDisabledTestMode && !keychainDisabledUIPresentationMode"))
         #expect(keychainHelper.contains("disablesKeychainForProcess"))
@@ -1575,11 +1676,22 @@ struct RuntimePolicySourceTests {
             runtime.range(of: "let loadID = allocateLoadingTaskID()", range: loadStart.upperBound ..< runtime.endIndex)
         )
         let loadPreflight = String(runtime[loadStart.lowerBound ..< loadEnd.lowerBound])
+        // `computeWeightsSizeBytes` is a shallow (non-recursive) directory
+        // listing — the `enumerator(` guard above keeps it off the deep-walk
+        // path. It is now computed for EVERY policy (not just manualMultiModel)
+        // because the pre-load RAM-feasibility gate and the in-flight-load
+        // reservation both need the incoming bundle's footprint up front.
         #expect(loadPreflight.contains("if policy == .manualMultiModel"))
-        #expect(loadPreflight.contains("weightsBytes = Self.computeWeightsSizeBytes(at: localURL)"))
+        #expect(loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)"))
+        // Feasibility gate + concurrent-load reservation must run before the
+        // load task is allocated, so a cold load can't bypass RAM accounting.
         #expect(
-            loadPreflight.contains("} else {\n            weightsBytes = 0"),
-            "Default single-model loads must not block on directory size scans before vmlx starts loading."
+            loadPreflight.contains("inflightLoadWeights[name] = weightsBytes"),
+            "Cold loads must reserve their footprint before the feasibility gate so a parallel load of another model can't double-book unified memory."
+        )
+        #expect(
+            loadPreflight.contains("checkRAMFeasibility("),
+            "All policies must pass the pre-load RAM feasibility gate before vmlx starts loading."
         )
     }
 

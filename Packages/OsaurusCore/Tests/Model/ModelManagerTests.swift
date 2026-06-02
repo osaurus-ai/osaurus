@@ -301,7 +301,7 @@ struct ModelManagerTests {
         try Data("dummy".utf8).write(to: dir.appendingPathComponent("file.txt"))
 
         await MainActor.run { manager.downloadService.downloadStates[testModel.id] = .completed }
-        await MainActor.run { manager.deleteModel(testModel) }
+        await manager.deleteModel(testModel)
 
         // Directory should no longer exist and state should reset
         var isDir: ObjCBool = false

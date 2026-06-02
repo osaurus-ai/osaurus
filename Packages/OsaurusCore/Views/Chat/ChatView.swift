@@ -188,6 +188,17 @@ final class ChatSession: ObservableObject {
     private let blockMemoizer = BlockMemoizer()
     private var cachedContext: ComposedContext?
 
+    /// Cached welcome/pre-send preview `ComposedContext`, used by
+    /// `estimatedContextBreakdown` when no real send context exists yet.
+    /// Recomputed by `refreshContextEstimates()` whenever a budget-relevant
+    /// input changes (agent config / feature toggle, sandbox state, tool
+    /// registration, folder, model). Kept separate from `cachedContext`
+    /// (the authoritative send-time context) so typing only re-derives the
+    /// cheap conversation/input/output overlay instead of recomposing the
+    /// whole system prompt on every keystroke. Cleared wherever
+    /// `cachedContext` is reset so a new agent/session recomposes fresh.
+    private var cachedPreviewContext: ComposedContext?
+
     private var thinkingEnabledForCurrentModel: Bool {
         guard let selectedModel else {
             return activeModelOptions["disableThinking"]?.boolValue == false
@@ -308,6 +319,19 @@ final class ChatSession: ObservableObject {
     /// eviction is by `removeFirst` when the count exceeds the cap.
     private var sessionRedactionOrder: [String] = []
     static let maxSessionRedactions: Int = 256
+
+    /// Single debounced pipeline that recomputes the context-budget
+    /// estimate whenever any budget-relevant input changes: agent config /
+    /// feature toggles (`.agentUpdated`), active-agent switches
+    /// (`.activeAgentChanged`), plugin/MCP/sandbox tool registration
+    /// (`.toolsListChanged`), sandbox status/provisioning
+    /// (`SandboxManager.State`), and folder mount/unmount
+    /// (`FolderContextService`). These are global singletons the session
+    /// does not otherwise observe, so without this the welcome-screen
+    /// estimate would only refresh on incidental re-renders and go stale
+    /// after a toggle. Debounced to coalesce the burst of signals a single
+    /// sandbox toggle / provisioning sequence emits.
+    nonisolated(unsafe) private var contextEstimateCancellable: AnyCancellable?
 
     init() {
         let cache = ModelPickerItemCache.shared
@@ -449,6 +473,38 @@ final class ChatSession: ObservableObject {
                 }
             }
 
+        // Keep the welcome-screen context-budget estimate in sync with the
+        // global singletons it reads but doesn't otherwise observe. Every
+        // signal maps to a single debounced recompute so a sandbox toggle
+        // (which fires .agentUpdated + .toolsListChanged + several
+        // SandboxManager.State @Published updates during provisioning)
+        // collapses into at most one recompute + re-render. The recompute
+        // itself is guarded on the composed shape (see
+        // `refreshContextEstimates`), so identical re-emissions don't churn
+        // the view.
+        // `$selectedModel` is included (and replays its current value on
+        // subscribe) so a model switch re-prices the size-class /
+        // model-family-dependent sections, and so the preview cache is
+        // populated shortly after init without waiting for a toggle.
+        let budgetSignals: [AnyPublisher<Void, Never>] = [
+            NotificationCenter.default.publisher(for: .agentUpdated)
+                .map { _ in () }.eraseToAnyPublisher(),
+            NotificationCenter.default.publisher(for: .activeAgentChanged)
+                .map { _ in () }.eraseToAnyPublisher(),
+            NotificationCenter.default.publisher(for: .toolsListChanged)
+                .map { _ in () }.eraseToAnyPublisher(),
+            SandboxManager.State.shared.objectWillChange
+                .map { _ in () }.eraseToAnyPublisher(),
+            FolderContextService.shared.objectWillChange
+                .map { _ in () }.eraseToAnyPublisher(),
+            $selectedModel.map { _ in () }.eraseToAnyPublisher(),
+        ]
+        contextEstimateCancellable = Publishers.MergeMany(budgetSignals)
+            .debounce(for: .milliseconds(80), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in await self?.refreshContextEstimates() }
+            }
+
         // Always reconcile on init: the cache may already be loaded with a
         // snapshot taken before remote providers finished connecting (or
         // before this window's notification observer was registered, in
@@ -483,6 +539,7 @@ final class ChatSession: ObservableObject {
         modelSelectionCancellable = nil
         agentAutoSpeakCancellable = nil
         promptQueueCancellable = nil
+        contextEstimateCancellable = nil
     }
 
     private func loadActiveModelOptions(for model: String?) {
@@ -701,9 +758,6 @@ final class ChatSession: ObservableObject {
             return active
         }
 
-        let effectiveId = agentId ?? Agent.defaultId
-        let executionMode = estimatedChatExecutionMode(agentId: effectiveId)
-
         let outputTokens = ContextBudgetManager.estimateOutputTokens(for: turns)
         let conversationTokens = ContextBudgetManager.estimateTokens(for: turns) - outputTokens
         var inputTokens = 0
@@ -725,11 +779,13 @@ final class ChatSession: ObservableObject {
         // base+sandbox-only stub. Preflight tool delta and Plugin
         // Companions are query-dependent and stay deferred — the
         // auto-mode `Tools` row can under-count by that delta on turn 1.
-        let preview = SystemPromptComposer.composePreviewContext(
-            agentId: effectiveId,
-            executionMode: executionMode,
-            model: selectedModel
-        )
+        //
+        // The preview is cached (recomputed only when a budget input
+        // changes — see `refreshContextEstimates`) so typing only
+        // re-derives the cheap conversation/input/output overlay below.
+        // First render before any refresh has run lazily composes + fills
+        // the cache so the popover is never empty.
+        let preview = previewContext()
         return .from(
             manifest: preview.manifest,
             toolTokens: preview.toolTokens,
@@ -737,6 +793,31 @@ final class ChatSession: ObservableObject {
             conversationTokens: conversationTokens,
             inputTokens: inputTokens,
             outputTokens: outputTokens
+        )
+    }
+
+    /// Return the cached welcome/pre-send preview context, lazily composing
+    /// and caching it on the first read. Pure read otherwise — does not emit
+    /// `objectWillChange`, so it's safe to call from within a view-body
+    /// evaluation.
+    private func previewContext() -> ComposedContext {
+        if let cached = cachedPreviewContext { return cached }
+        let preview = composePreview()
+        cachedPreviewContext = preview
+        return preview
+    }
+
+    /// Compose a fresh welcome/pre-send preview from the current agent /
+    /// sandbox / tool / folder / model state. Pure — no caching, no
+    /// `objectWillChange`. Single source of truth for the lazy read
+    /// (`previewContext`) and the budget-input recompute
+    /// (`recomputePreviewContext`).
+    private func composePreview() -> ComposedContext {
+        let effectiveId = agentId ?? Agent.defaultId
+        return SystemPromptComposer.composePreviewContext(
+            agentId: effectiveId,
+            executionMode: estimatedChatExecutionMode(agentId: effectiveId),
+            model: selectedModel
         )
     }
 
@@ -1000,6 +1081,7 @@ final class ChatSession: ObservableObject {
         // Clear caches
         blockMemoizer.clear()
         cachedContext = nil
+        cachedPreviewContext = nil
         visibleBlocksStore.blocks = []
         visibleBlocksStore.groupHeaderMap = [:]
 
@@ -1156,6 +1238,7 @@ final class ChatSession: ObservableObject {
     /// Invalidate the token cache (called when tools/skills change)
     func invalidateTokenCache() {
         cachedContext = nil
+        cachedPreviewContext = nil
         budgetTracker.clear()
         objectWillChange.send()
     }
@@ -1249,37 +1332,72 @@ final class ChatSession: ObservableObject {
         // Clear caches to force a clean block rebuild for the new session
         blockMemoizer.clear()
         cachedContext = nil
+        cachedPreviewContext = nil
         rebuildVisibleBlocks()
 
         Task { [weak self] in await self?.refreshContextEstimates() }
     }
 
-    private func refreshMemoryTokens() async {
+    /// Recompute the cached memory-section token estimate. Returns `true`
+    /// when the value changed. Does NOT emit `objectWillChange` — the
+    /// caller (`refreshContextEstimates`) coalesces preview + memory into a
+    /// single notification so a budget refresh is at most one re-render.
+    private func refreshMemoryTokens() async -> Bool {
         let effectiveAgentId = agentId ?? Agent.defaultId
         guard !AgentManager.shared.effectiveMemoryDisabled(for: effectiveAgentId) else {
-            if cachedMemoryTokens != 0 {
-                cachedMemoryTokens = 0
-                objectWillChange.send()
-            }
-            return
+            guard cachedMemoryTokens != 0 else { return false }
+            cachedMemoryTokens = 0
+            return true
         }
         let context = await MemoryContextAssembler.assembleContext(
             agentId: effectiveAgentId.uuidString,
             config: MemoryConfigurationStore.load()
         )
         let newTokens = ContextBudgetManager.estimateTokens(for: context)
-        guard newTokens != cachedMemoryTokens else { return }
+        guard newTokens != cachedMemoryTokens else { return false }
         cachedMemoryTokens = newTokens
-        objectWillChange.send()
+        return true
     }
 
-    /// Re-resolve every async input the welcome-screen preview composer
-    /// needs. Currently only memory tokens, but kept as a single entry
-    /// point so future async preview inputs land in one place instead of
-    /// being scattered across the trigger sites (agent change, session
-    /// reset, session load, capability config update).
+    /// Recompute the welcome/pre-send preview `ComposedContext` from the
+    /// current agent / sandbox / tool / folder / model state and store it
+    /// in `cachedPreviewContext`. Returns `true` when the budget-relevant
+    /// shape changed — compared via `cacheHint` (the static-prefix hash
+    /// that already folds prompt sections + tool schemas) plus
+    /// `toolTokens`. Identical recomputes return `false` so a burst of
+    /// redundant signals (e.g. SandboxManager.State publishing several
+    /// fields during provisioning) collapses to no re-render.
+    ///
+    /// No-op when a real send context is cached (`cachedContext != nil`):
+    /// that path owns the authoritative breakdown, so we drop any stale
+    /// preview and let the send context drive the popover.
+    @discardableResult
+    private func recomputePreviewContext() -> Bool {
+        guard cachedContext == nil else {
+            guard cachedPreviewContext != nil else { return false }
+            cachedPreviewContext = nil
+            return true
+        }
+        let preview = composePreview()
+        let previous = cachedPreviewContext
+        cachedPreviewContext = preview
+        return previous?.cacheHint != preview.cacheHint
+            || previous?.toolTokens != preview.toolTokens
+    }
+
+    /// Re-resolve every input the welcome-screen preview estimate needs and
+    /// emit a single `objectWillChange` when anything actually changed.
+    /// Driven by the debounced budget-input pipeline (agent config, sandbox
+    /// state, tool registration, folder, model) plus the lifecycle trigger
+    /// sites (agent change, session reset, session load). Single entry
+    /// point so every future async preview input lands here instead of
+    /// being scattered across call sites.
     private func refreshContextEstimates() async {
-        await refreshMemoryTokens()
+        let previewChanged = recomputePreviewContext()
+        let memoryChanged = await refreshMemoryTokens()
+        if previewChanged || memoryChanged {
+            objectWillChange.send()
+        }
     }
 
     /// Edit a user message and regenerate from that point

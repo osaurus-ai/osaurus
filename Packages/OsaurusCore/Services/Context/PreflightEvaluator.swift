@@ -166,19 +166,6 @@ public enum PreflightEvaluator {
     ///   out-of-process callers can start querying before that Task
     ///   ever gets scheduled.
     public static func loadInstalledPlugins() async {
-        // Drive the storage migration gate through its async entry
-        // point first so the defensive `blockingAwaitReady()` calls
-        // inside every `*Database.open()` hit the lock-free atomic
-        // path. The slow path (`Task @MainActor` + `DispatchSemaphore`
-        // + run-loop pump) deadlocks in CLI processes that own the
-        // main thread via Swift Concurrency's `@main async` — no
-        // AppKit runloop to drain the queued main-actor task that
-        // signals the semaphore. The host app side-steps this
-        // because AppKit's installed runloop sources do drive the
-        // main DispatchQueue while it pumps; the CLI has no such
-        // sources.
-        await StorageMigrationCoordinator.shared.awaitReady()
-
         await PluginManager.shared.loadAll()
 
         try? ToolDatabase.shared.open()

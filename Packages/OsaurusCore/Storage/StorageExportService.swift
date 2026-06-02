@@ -81,7 +81,7 @@ public actor StorageExportService {
 
         // 1. Databases — export via SQLCipher's sqlcipher_export to
         //    a plaintext sibling.
-        for target in StorageMigrator.databaseTargets() {
+        for target in StorageDatabaseCatalog.databaseTargets() {
             let result = exportOneDatabase(target: target, key: key, to: destination)
             switch result {
             case .success: summary.databasesExported += 1
@@ -155,16 +155,17 @@ public actor StorageExportService {
     @discardableResult
     public func rotateStorageKey() async throws -> SymmetricKey {
         // Block every other DB-open path while we mutate. Anything
-        // that hits `StorageMigrationCoordinator.awaitReady()` (sync
-        // or async) parks until we call `endMutating()` below.
+        // that hits `StorageMutationGate.blockingAwaitNotMutating()`
+        // (or the async `awaitNotMutating()`) parks until we call
+        // `endMutating()` below.
         //
         // We can't use `defer { Task { @MainActor in endMutating() } }`
         // here because `defer { Task { ... } }` would let
         // `rotateStorageKey()` return before `endMutating()` actually
-        // runs, leaving callers parked on `awaitReady()` for an extra
-        // hop. Use a do/catch with explicit `await endMutating` on
-        // every exit instead.
-        await MainActor.run { StorageMigrationCoordinator.shared.beginMutating() }
+        // runs, leaving callers parked for an extra hop. Use a
+        // do/catch with explicit `await endMutating` on every exit
+        // instead.
+        await MainActor.run { StorageMutationGate.shared.beginMutating() }
 
         let result: Result<SymmetricKey, Error>
         do {
@@ -174,10 +175,19 @@ public actor StorageExportService {
             result = .failure(error)
         }
 
-        await MainActor.run { StorageMigrationCoordinator.shared.endMutating() }
+        await MainActor.run { StorageMutationGate.shared.endMutating() }
 
         switch result {
-        case .success(let key): return key
+        case .success(let key):
+            // The SQLCipher `PRAGMA rekey` + OSec rewrap above cover the
+            // encrypted databases and key-wrapped files, but NOT the
+            // VecturaKit vector indexes under `memory/vectura/`. After a
+            // rekey those are stale and a plaintext-at-rest gap, so discard
+            // and rebuild them from the now-rekeyed SQLite source of truth.
+            // Done after `endMutating()` so the rebuild's DB-open path isn't
+            // parked on the mutation gate.
+            await MemorySearchService.shared.resetAndRebuildAfterKeyRotation()
+            return key
         case .failure(let error): throw error
         }
     }
@@ -204,7 +214,7 @@ public actor StorageExportService {
         // the way out (with the new key, which we install before
         // the reopen).
         try OsaurusDatabaseHandle.withAllHandlesQuiesced {
-            for target in StorageMigrator.databaseTargets() {
+            for target in StorageDatabaseCatalog.databaseTargets() {
                 do {
                     try rekeyDatabase(path: target.path, oldKey: oldKey, newKey: newKey)
                     log.info("storage rekey: \(target.label) done")
@@ -227,67 +237,10 @@ public actor StorageExportService {
         return newKey
     }
 
-    // MARK: - Orphan cleanup
-
-    public struct OrphanedPluginCleanupSummary: Sendable {
-        public var directoriesRemoved: Int
-        public var removedPluginIds: [String]
-    }
-
-    /// Walk `~/.osaurus/Tools/` and remove the data dir for any
-    /// plugin whose `data.db` cannot be opened with the current
-    /// storage key. Used by the Storage settings panel "Clean up
-    /// orphaned plugin data" action when the migrator's
-    /// `detectKeyMismatch()` reports plugin-only failures (the
-    /// "real" failure case we need to surface for users — a plugin
-    /// was uninstalled or its DB drifted out of sync with the
-    /// current key).
-    ///
-    /// Safe by construction:
-    ///   - Skips databases that decrypt successfully (those are
-    ///     real, in-use plugin data — never deleted).
-    ///   - Skips plugin IDs that are NOT already on the migrator's
-    ///     key-mismatch list, so we never remove a directory the
-    ///     caller didn't already authorize via the UI.
-    ///   - Removes the **whole plugin directory** for each
-    ///     orphan, not just the `data.db`. Otherwise we'd leave
-    ///     `Tools/<pluginId>/` empty and the migrator would
-    ///     re-discover it on next launch as a zero-DB target
-    ///     (harmless, but pollution).
-    public func cleanupOrphanedPluginDatabases(
-        targets: [StorageMigrator.DatabaseTarget]
-    ) async -> OrphanedPluginCleanupSummary {
-        let fm = FileManager.default
-        var removed: [String] = []
-
-        for target in targets {
-            // Only touch plugin targets. Core DBs return `nil` from
-            // `pluginId` so this guard alone keeps them safe even if
-            // a future caller mis-builds the mismatch list.
-            guard let pluginId = target.pluginId else { continue }
-            let pluginDir = OsaurusPaths.pluginDirectory(for: pluginId)
-            guard fm.fileExists(atPath: pluginDir.path) else { continue }
-            do {
-                try fm.removeItem(at: pluginDir)
-                removed.append(pluginId)
-                log.notice("orphan cleanup: removed plugin dir \(pluginId)")
-            } catch {
-                log.error(
-                    "orphan cleanup: failed to remove \(pluginId): \(error.localizedDescription)"
-                )
-            }
-        }
-
-        return OrphanedPluginCleanupSummary(
-            directoriesRemoved: removed.count,
-            removedPluginIds: removed
-        )
-    }
-
     // MARK: - Internals: per-DB
 
     private func exportOneDatabase(
-        target: StorageMigrator.DatabaseTarget,
+        target: StorageDatabaseCatalog.DatabaseTarget,
         key: SymmetricKey,
         to destination: URL
     ) -> Result<Void, Error> {

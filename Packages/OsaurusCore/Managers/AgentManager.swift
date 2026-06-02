@@ -468,6 +468,10 @@ public final class AgentManager: ObservableObject {
         // from sitting in memory until TTL.
         await GenerativeGreetingPool.shared.invalidate(agentId: id)
 
+        // Release the agent's in-memory vector index so a long-lived process
+        // doesn't accumulate one VecturaKit instance per deleted agent.
+        await MemorySearchService.shared.evictAgent(agentId: id.uuidString)
+
         // Notify subscribers (e.g. PluginManager) so plugins can
         // deregister webhooks (push tunnel_url=nil) and tear down any
         // per-agent state of their own.

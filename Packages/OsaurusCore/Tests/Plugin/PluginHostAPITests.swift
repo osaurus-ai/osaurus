@@ -669,11 +669,11 @@ struct TaskStateDictTests {
 /// for the global lock.
 ///
 /// The `com.test.` prefix on the synthetic plugin IDs is defense in
-/// depth: `StorageMigrator.databaseTargets()` filters those IDs
-/// out, so even if a future change starts opening the DB eagerly
+/// depth: `StorageDatabaseCatalog.databaseTargets()` filters those
+/// IDs out, so even if a future change starts opening the DB eagerly
 /// in `init`, the leftover dirs under `~/.osaurus/Tools/` won't
-/// surface in the Storage settings panel as "key mismatch"
-/// failures. See `StorageMigratorTargetFilterTests`.
+/// surface in key rotation / plaintext export. See
+/// `StorageDatabaseCatalogTests`.
 struct DispatchRateLimitTests {
 
     private let testAgentId = UUID()

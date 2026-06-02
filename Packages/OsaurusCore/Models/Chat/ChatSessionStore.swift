@@ -57,18 +57,23 @@ enum ChatSessionStore {
     /// Open the database (idempotent) and run the one-time JSON-to-SQLite
     /// import on first call. Safe to invoke from any session-touching code path.
     ///
-    /// Gates on `StorageMigrationCoordinator.blockingAwaitReady()` so
-    /// SQLCipher never tries to open a still-plaintext file with a key
-    /// during the brief window between app launch and migration
-    /// completion. Normally a no-op fast-path because the AppDelegate
-    /// already awaited the migrator before any UI accepted clicks.
+    /// Gates on `StorageMutationGate.blockingAwaitNotMutating()` so
+    /// SQLCipher never tries to open a half-rekeyed file while a key
+    /// rotation is in flight. Normally a no-op fast path.
     private static func ensureOpenAndImported() {
         guard !didOpen else { return }
+        // Close the prewarm race: a session-touching call can arrive before
+        // the launch key prewarm lands. Load the key now (this is not the
+        // launch-critical path) so chat history isn't reported unavailable
+        // purely because the cache is still cold.
+        if !StorageKeyManager.shared.hasCachedKey {
+            try? StorageKeyManager.shared.prewarmCurrentKey()
+        }
         guard StorageKeyManager.shared.hasCachedKey else {
             print("[ChatSessionStore] Chat history unavailable: storage key is not already unlocked")
             return
         }
-        StorageMigrationCoordinator.blockingAwaitReady()
+        StorageMutationGate.blockingAwaitNotMutating()
         didOpen = true
         do {
             try ChatHistoryDatabase.shared.open()

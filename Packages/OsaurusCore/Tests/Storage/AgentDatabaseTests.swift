@@ -4,7 +4,7 @@
 //
 //  Spec §1.4 + §5.5.2 + §5.5.5 round-trip tests for the agent DB
 //  layer. These run against an in-memory SQLCipher database so they
-//  don't need to coordinate with `StorageMigrationCoordinator`.
+//  don't need to coordinate with `StorageMutationGate`.
 //
 //  Coverage:
 //   - `SchemaSnapshot.render` truncates view SQL, then column lists,

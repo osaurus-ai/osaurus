@@ -12,7 +12,7 @@
 //    1. sqlite3_open(path)
 //    2. sqlite3_key_v2(db, nil, "x'<64-hex>'", 67)   (raw-key form;
 //       see `rawKeyBlob` doc — anything else triggers PBKDF2 and
-//       silently mismatches the migrator)
+//       silently mismatches the stored key)
 //    3. PRAGMA cipher_memory_security = OFF   (perf, OS already protects)
 //    4. PRAGMA cipher_page_size = 4096
 //    5. PRAGMA kdf_iter = 256000              (SQLCipher 4 default)
@@ -23,8 +23,8 @@
 //   10. PRAGMA cache_size = -20000            (~20 MB)
 //   11. PRAGMA foreign_keys = ON
 //
-//  Encryption can be skipped (in-memory test DBs, the migrator
-//  reading legacy plaintext, etc.) by passing `key: nil`.
+//  Encryption can be skipped (in-memory test DBs, plaintext export,
+//  etc.) by passing `key: nil`.
 //
 
 import CryptoKit
@@ -52,7 +52,7 @@ public enum EncryptedSQLiteOpener {
     /// - Parameters:
     ///   - path: Filesystem path or `:memory:`.
     ///   - key:  Optional 32-byte encryption key. When `nil`, the DB
-    ///           is opened plaintext (used by the migrator + tests).
+    ///           is opened plaintext (used by plaintext export + tests).
     ///   - applyPerfPragmas: When true, sets WAL/synchronous/cache/temp PRAGMAs.
     ///   - applyForeignKeys: When true, sets `PRAGMA foreign_keys = ON`.
     public static func open(
@@ -111,12 +111,10 @@ public enum EncryptedSQLiteOpener {
     ///   - The literal ASCII string `x'<64-hex>'` (67 bytes) →
     ///     SQLCipher interprets it as a raw 256-bit key, NO PBKDF2.
     ///
-    /// The migrator (`StorageMigrator.migrateOneDatabase`) writes
-    /// every encrypted database with the raw-key form via
-    /// `ATTACH DATABASE … KEY "x'<hex>'"`, so every open MUST also
-    /// use the raw-key form or HMAC verification fails on page 1.
-    /// Using `sqlite3_key_v2` with the raw 32 bytes is the
-    /// pre-fix bug that produced
+    /// Every encrypted database is keyed with the raw-key form, so
+    /// every open MUST also use the raw-key form or HMAC verification
+    /// fails on page 1. Using `sqlite3_key_v2` with the raw 32 bytes
+    /// is the pre-fix bug that produced
     ///     ERROR CORE sqlcipher_page_cipher: hmac check failed for pgno=1
     /// even though the Keychain bytes hadn't changed.
     private static func rawKeyBlob(_ key: SymmetricKey) -> String {
@@ -182,26 +180,5 @@ public enum EncryptedSQLiteOpener {
             throw EncryptedSQLiteError.pragmaFailed("\(sql): \(msg)")
         }
         return rc
-    }
-
-    // MARK: - Detection
-
-    /// Returns true when the file at `path` looks like a SQLCipher
-    /// database (cannot be opened with `key=nil` as a plaintext SQLite).
-    /// Used by the migrator to skip already-encrypted files.
-    public static func isEncryptedDatabase(path: String) -> Bool {
-        var dbPointer: OpaquePointer?
-        let result = sqlite3_open(path, &dbPointer)
-        defer { sqlite3_close(dbPointer) }
-        guard result == SQLITE_OK, let connection = dbPointer else { return false }
-
-        // A plaintext SQLite file always succeeds at reading sqlite_master
-        // without a key. An encrypted file fails with SQLITE_NOTADB.
-        var stmt: OpaquePointer?
-        let prepared = sqlite3_prepare_v2(connection, "SELECT count(*) FROM sqlite_master", -1, &stmt, nil)
-        defer { sqlite3_finalize(stmt) }
-        if prepared != SQLITE_OK { return true }
-        let step = sqlite3_step(stmt)
-        return step != SQLITE_ROW
     }
 }

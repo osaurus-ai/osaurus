@@ -52,14 +52,18 @@ struct ModelLeaseTests {
         // No assertion needed — reaching this line means no hang.
     }
 
-    @Test func double_release_clamps_at_zero() async {
+    @Test func double_release_clamps_at_zero_and_records_underflow() async {
         let lease = ModelLease.shared
         let name = "clamp-test-\(UUID().uuidString)"
+        let beforeUnderflows = await lease.releaseUnderflows()
         await lease.acquire(name)
         await lease.release(name)
-        await lease.release(name)  // intentional double-release
+        await lease.release(name)  // intentional double-release (underflow)
         let count = await lease.count(for: name)
         #expect(count == 0)
+        // The unbalanced release must be detected, not silently floored away.
+        let afterUnderflows = await lease.releaseUnderflows()
+        #expect(afterUnderflows == beforeUnderflows + 1)
     }
 
     @Test func activeNames_only_includes_held_leases() async {

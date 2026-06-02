@@ -120,7 +120,7 @@ public final class ToolDatabase: @unchecked Sendable {
 
     public func open() throws {
         // See `ChatHistoryDatabase.open()` for the gate rationale.
-        StorageMigrationCoordinator.blockingAwaitReady()
+        StorageMutationGate.blockingAwaitNotMutating()
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.toolIndex())

@@ -130,8 +130,15 @@ final class TerminalDisplayView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    // No explicit deinit: each `AnyCancellable` cancels itself when
-    // released, so dropping the `cancellables` set during ARC is enough.
+    deinit {
+        // Drop the bounds-changed observer registered in `buildViews()`.
+        // AppKit auto-deregisters selector observers on dealloc on modern
+        // macOS, but we remove it explicitly so the contract is local and
+        // doesn't silently regress if this view is reused or the registration
+        // pattern changes. `AnyCancellable`s in `cancellables` still cancel
+        // themselves when the set is released during ARC.
+        NotificationCenter.default.removeObserver(self)
+    }
 
     // MARK: Bind / Unbind
 

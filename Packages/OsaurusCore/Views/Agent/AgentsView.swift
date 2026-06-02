@@ -4865,6 +4865,10 @@ struct AgentDetailView: View {
 
     private func deletePinnedFact(_ factId: String) {
         try? MemoryDatabase.shared.deletePinnedFact(id: factId)
+        // Drop the matching vector so search can't keep surfacing a fact that
+        // no longer exists in SQL (SQL<->vector consistency).
+        let agentScope = agent.id.uuidString
+        Task { await MemorySearchService.shared.removeDocument(id: factId, agentId: agentScope) }
         loadMemoryData()
         showSuccess("Pinned fact deleted")
     }

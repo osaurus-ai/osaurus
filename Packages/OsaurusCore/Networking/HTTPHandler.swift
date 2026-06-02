@@ -20,6 +20,18 @@ private final class SendableBool: @unchecked Sendable {
     }
 }
 
+/// Thread-safe optional-string holder for cross-closure model capture on the
+/// agent-run streaming route, where the model name isn't known until after
+/// agent resolution but the close hook (a different closure) needs it.
+private final class SendableStringBox: @unchecked Sendable {
+    private var _value: String?
+    private let _lock = NSLock()
+    var value: String? {
+        get { _lock.withLock { _value } }
+        set { _lock.withLock { _value = newValue } }
+    }
+}
+
 private final class ChannelCloseFutureBox: @unchecked Sendable {
     private var future: EventLoopFuture<Void>?
     private let lock = NSLock()
@@ -221,6 +233,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             _isChannelActive.value = false
             requestTasks.cancelAll()
         }
+        // Slow-loris / idle-hold defense: an upstream `IdleStateHandler` fires
+        // this when the connection has stalled past its read/write/all budget
+        // (a client dribbling bytes, holding a half-open socket, or parked
+        // mid-stream after disconnecting). Cancel in-flight work and close so
+        // the socket can't be pinned indefinitely.
+        if let idle = event as? IdleStateHandler.IdleStateEvent {
+            NSLog("[Osaurus] Closing idle connection (state=%@)", String(describing: idle))
+            _isChannelActive.value = false
+            requestTasks.cancelAll()
+            context.close(promise: nil)
+            return
+        }
         context.fireUserInboundEventTriggered(event)
     }
 
@@ -257,11 +281,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             stateRef.value.bodyByteLimit = bodyByteLimit(for: head)
 
+            // Header DoS guard: reject pathological header sets (a client
+            // sending tens of thousands of headers, or megabytes of header
+            // bytes) before we do any further per-header work. NIO/llhttp
+            // imposes no default ceiling, so an unauthenticated peer could
+            // otherwise pin memory/CPU purely with headers.
+            var headerCount = 0
+            var headerBytes = 0
+            for (name, value) in head.headers {
+                headerCount += 1
+                headerBytes += name.utf8.count + value.utf8.count
+                if headerCount > Self.maxRequestHeaderCount
+                    || headerBytes > Self.maxRequestHeaderBytes
+                {
+                    rejectHeadersTooLarge(context: context, head: head)
+                    return
+                }
+            }
+
             // Reject before allocating the body buffer so a client lying
             // about Content-Length can't force a huge allocation up front.
-            if let lengthStr = head.headers.first(name: "Content-Length"),
-                let length = Int(lengthStr)
-            {
+            if let lengthStr = head.headers.first(name: "Content-Length") {
+                // A present-but-malformed or negative Content-Length is a
+                // protocol violation (and a negative value would crash the
+                // `buffer(capacity:)` allocation below). Reject with 400
+                // instead of silently treating it as "no length".
+                guard let length = Int(lengthStr), length >= 0 else {
+                    sendBadRequest(context: context)
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
                 if length > stateRef.value.bodyByteLimit {
                     rejectPayloadTooLarge(
                         context: context,
@@ -946,7 +996,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // MainActor. Route matching, auth, JSON encoding, plugin invocation,
         // and response handling all run off MainActor to avoid serializing
         // concurrent requests through the main thread.
+        // Tie the plugin handler task to the channel lifecycle so a client
+        // disconnect / idle-timeout cancels in-flight plugin work instead of
+        // leaving it running (and the registry entry pinned) for a dead
+        // connection. Mirrors `runRequestTask`.
+        let pluginTaskId = UUID()
+        let pluginRegistry = requestTasks
         let task = Task {
+            defer { pluginRegistry.remove(id: pluginTaskId) }
             let loaded = await MainActor.run {
                 PluginManager.shared.loadedPlugin(for: pluginId)
             }
@@ -1381,7 +1438,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             }
         }
-        _ = task
+        channelCloseFuture.snapshot()?.whenComplete { _ in task.cancel() }
+        requestTasks.insert(id: pluginTaskId, task: task)
     }
 
     private func sendPluginError(
@@ -1843,6 +1901,49 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return configuration.maxPairingBodyBytes
         }
         return configuration.maxRequestBodyBytes
+    }
+
+    /// Upper bound on the number of request headers we accept. Anything past
+    /// this is a malformed/abusive client; a normal request has well under
+    /// a few dozen headers.
+    static let maxRequestHeaderCount = 200
+    /// Upper bound on the total bytes across all header names+values. Bounds
+    /// the header-only memory/CPU an unauthenticated peer can force.
+    static let maxRequestHeaderBytes = 1 * 1024 * 1024
+    /// Maximum structural nesting depth (`{`/`[`) we hand to a JSON decoder.
+    /// A body within the size cap can still be a depth bomb that overflows
+    /// the decoder's recursion; this is far beyond any real chat/tool payload.
+    static let maxJSONNestingDepth = 256
+
+    /// Reply 431 Request Header Fields Too Large and close. Done at `.head`
+    /// before any body allocation or routing so a header-flood can't pin
+    /// resources.
+    private func rejectHeadersTooLarge(context: ChannelHandlerContext, head: HTTPRequestHead) {
+        stateRef.value.rejectedTooLarge = true
+        stateRef.value.requestBodyBuffer = nil
+        let path = normalize(extractPath(from: head.uri))
+        let body =
+            #"{"error":{"message":"Request header fields too large","type":"request_header_fields_too_large"}}"#
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        let status = HTTPResponseStatus(statusCode: 431, reasonPhrase: "Request Header Fields Too Large")
+        sendResponse(
+            context: context,
+            version: head.version,
+            status: status,
+            headers: headers,
+            body: body
+        )
+        logRequest(
+            method: head.method.rawValue,
+            path: path,
+            userAgent: head.headers.first(name: "User-Agent"),
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: 431,
+            startTime: stateRef.value.requestStartTime
+        )
+        stateRef.value.requestHead = nil
     }
 
     /// Reply 413 Payload Too Large, log the rejection so it shows up in the
@@ -3099,6 +3200,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        guard
+            let admissionToken = acquireInferenceAdmissionOrReject(
+                context: context,
+                version: head.version,
+                flavor: .openai(type: "server_overloaded"),
+                path: path,
+                method: "POST",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                startTime: startTime
+            )
+        else { return }
+
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let writer = SSEResponseWriter()
@@ -3116,7 +3230,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
+        // The model name isn't known until after agent resolution, so the
+        // close hook reads it from a lock-protected box: a client hangup
+        // flips `disconnected` and cancels the resolved model's generation.
+        let disconnected = SendableBool(false)
+        let cancelModelBox = SendableStringBox()
+        context.channel.closeFuture.whenComplete { _ in
+            disconnected.value = true
+            if let m = cancelModelBox.value {
+                Task { await ModelRuntime.shared.cancelGeneration(name: m) }
+            }
+        }
+
         runRequestTask(priority: .userInitiated) {
+            defer { admissionToken.release() }
             // Resolve model: client sends "default" when no specific model was known
             let model: String
             if req.model.isEmpty || req.model == "default" {
@@ -3125,6 +3252,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } else {
                 model = req.model
             }
+            cancelModelBox.value = model
 
             // Enrich with agent context (system prompt + memory)
             var messages = await Self.enrichWithAgentContext(req, agentId: agentId.uuidString).messages
@@ -3186,6 +3314,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             while iteration < maxIterations {
+                // Client hung up between iterations — stop the agent loop. The
+                // close hook already cancelled the model's generation.
+                if disconnected.value { break }
                 iteration += 1
 
                 var iterationReq = ChatCompletionRequest(
@@ -3224,7 +3355,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 do {
                     let stream = try await chatEngine.streamChat(request: iterationReq)
+                    if disconnected.value { throw CancellationError() }
                     for try await delta in stream {
+                        if disconnected.value { throw CancellationError() }
                         // Reasoning sentinel must be decoded BEFORE the
                         // generic `isSentinel` filter; emit it on the
                         // OpenAI extended `reasoning_content` channel
@@ -4077,18 +4210,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
 
+        guard
+            let admissionToken = acquireInferenceAdmissionOrReject(
+                context: context,
+                version: head.version,
+                flavor: .openai(type: "server_overloaded"),
+                path: "/completions",
+                method: "POST",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                startTime: startTime
+            )
+        else { return }
+
         if wantsSSE {
             let writer = SSEResponseWriter()
             let writerBound = NIOLoopBound(writer, eventLoop: loop)
             hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
+            let disconnected = installStreamingDisconnectHook(context: context, model: model)
             let keepaliveTask = Self.startSSEKeepalive(
                 writer: writerBound,
                 channel: context.channel,
                 loop: loop,
-                ctx: ctx
+                ctx: ctx,
+                disconnected: disconnected
             )
             runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
+                defer { admissionToken.release() }
                 var accumulated = ""
                 let finishReason = "stop"
                 do {
@@ -4098,11 +4247,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         requestedModel: model,
                         stopSequences: stop
                     )
+                    if disconnected.value { throw CancellationError() }
                     // `streamRawCompletion` yields only plain generated text
                     // (reasoning / tool / stats events are dropped upstream in
                     // `ModelRuntime.streamRawText`), so no sentinel filtering is
                     // needed here.
                     for try await delta in stream {
+                        if disconnected.value { throw CancellationError() }
                         if delta.isEmpty { continue }
                         accumulated += delta
                         let chunk = CompletionResponseDTO(
@@ -4153,6 +4304,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         // Non-streaming
         runRequestTask(priority: .userInitiated) {
+            defer { admissionToken.release() }
             do {
                 let stream = try await MLXService.shared.streamRawCompletion(
                     prompt: prompt,
@@ -4257,6 +4409,72 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
             ctx.value.close(promise: nil)
         }
+    }
+
+    /// Concurrency ceiling for simultaneous HTTP inference requests, keyed to
+    /// the batch engine's effective `maxConcurrentSequences`. Sized with
+    /// headroom so normal concurrent use is never throttled, but a pathological
+    /// fan-out (hundreds of streams) is refused with `503` before it
+    /// oversubscribes MLX / unified memory.
+    static func httpInferenceAdmissionLimit() -> Int {
+        let snapshot = ServerRuntimeSettingsStore.snapshot()
+        let batch = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+            in: .standard,
+            runtime: snapshot
+        )
+        return max(batch, 1) * 8 + 4
+    }
+
+    /// Acquire one inference-admission slot for an MLX-bearing route, or reject
+    /// the request with a protocol-correct 503 + `Retry-After` and return `nil`.
+    ///
+    /// All MLX-bearing routes (`/chat/completions`, `/completions`, `/messages`,
+    /// `/responses`, Ollama `/chat` + `/generate`, agent-run) share this single
+    /// ceiling so a burst across mixed protocols can't collectively fan out
+    /// unbounded into the batch engine and oversubscribe unified memory.
+    ///
+    /// The returned `Token` releases exactly once and self-releases on `deinit`;
+    /// capture it in the generation task (`defer { token.release() }`) so the
+    /// slot frees on every exit path, including cancellation.
+    func acquireInferenceAdmissionOrReject(
+        context: ChannelHandlerContext,
+        version: HTTPVersion,
+        flavor: HTTPErrorFlavor,
+        path: String,
+        method: String,
+        userAgent: String?,
+        requestBody: String?,
+        startTime: Date
+    ) -> HTTPInferenceAdmission.Token? {
+        let limit = Self.httpInferenceAdmissionLimit()
+        if let token = HTTPInferenceAdmission.shared.tryAcquireToken(limit: limit) {
+            return token
+        }
+        let body = Self.errorBody(
+            flavor,
+            message:
+                "Server is at inference capacity (\(limit) concurrent requests). Retry shortly."
+        )
+        sendResponse(
+            context: context,
+            version: version,
+            status: .serviceUnavailable,
+            headers: [
+                ("Content-Type", "application/json; charset=utf-8"),
+                ("Retry-After", "1"),
+            ] + stateRef.value.corsHeaders,
+            body: body
+        )
+        logRequest(
+            method: method,
+            path: path,
+            userAgent: userAgent,
+            requestBody: requestBody,
+            responseStatus: 503,
+            startTime: startTime,
+            errorMessage: "inference admission saturated (limit \(limit))"
+        )
+        return nil
     }
 
     private func handleChatCompletions(
@@ -4372,6 +4590,41 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let priorMessages = req.messages
         let persistOnSuccess = !persistDisabled
 
+        // HTTP inference admission control. A real concurrency ceiling keyed to
+        // the batch engine's capacity so a burst of concurrent streams can't
+        // fan out unbounded into MLX and oversubscribe unified memory. When
+        // saturated we return 503 + Retry-After instead of admitting the work.
+        // Acquired here (synchronously, on the channel) and released in the
+        // generation task's `defer` on every exit path below.
+        let admissionLimit = Self.httpInferenceAdmissionLimit()
+        guard HTTPInferenceAdmission.shared.tryAcquire(limit: admissionLimit) else {
+            let body = Self.errorBody(
+                .openai(type: "server_overloaded"),
+                message:
+                    "Server is at inference capacity (\(admissionLimit) concurrent requests). Retry shortly."
+            )
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .serviceUnavailable,
+                headers: [
+                    ("Content-Type", "application/json; charset=utf-8"),
+                    ("Retry-After", "1"),
+                ] + stateRef.value.corsHeaders,
+                body: body
+            )
+            logRequest(
+                method: "POST",
+                path: "/chat/completions",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 503,
+                startTime: startTime,
+                errorMessage: "inference admission saturated (limit \(admissionLimit))"
+            )
+            return
+        }
+
         if wantsSSE {
             let writer = SSEResponseWriter()
             let cors = stateRef.value.corsHeaders
@@ -4410,6 +4663,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
+                defer { HTTPInferenceAdmission.shared.release() }
                 let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
                 var emittedSemanticDelta = false
                 func markSemanticDeltaIfConnected() {
@@ -4761,6 +5015,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
             }
             runRequestTask(priority: .userInitiated) {
+                defer { HTTPInferenceAdmission.shared.release() }
                 do {
                     httpTrace.mark("http_task_start")
                     wasResidentBeforeComplete.value = await ModelRuntime.shared.isResident(name: model)
@@ -4952,6 +5207,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        guard
+            let admissionToken = acquireInferenceAdmissionOrReject(
+                context: context,
+                version: head.version,
+                flavor: .openai(type: "server_overloaded"),
+                path: "/chat",
+                method: "POST",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                startTime: startTime
+            )
+        else { return }
+
         let shouldStream = req.stream ?? true
         if !shouldStream {
             handleOllamaChatNonStreaming(
@@ -4960,7 +5228,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 startTime: startTime,
                 userAgent: userAgent,
                 requestBodyString: requestBodyString,
-                request: req
+                request: req,
+                admissionToken: admissionToken
             )
             return
         }
@@ -4982,7 +5251,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logTemperature = req.temperature
         let logMaxTokens = req.resolvedMaxTokens
         let logSelf = self
+        let disconnected = installStreamingDisconnectHook(context: context, model: req.model)
         runRequestTask(priority: .userInitiated) {
+            defer { admissionToken.release() }
             let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: req.model)
             var emittedSemanticDelta = false
             func markSemanticDeltaIfChannelActive() {
@@ -5003,11 +5274,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: req)
+                if disconnected.value { throw CancellationError() }
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                 )
                 for try await delta in stream {
                     try Task.checkCancellation()
+                    if disconnected.value { throw CancellationError() }
                     // Ollama-style NDJSON has no `reasoning` / `thinking`
                     // field today — `StreamingReasoningHint`, along with
                     // `StreamingToolHint` / `StreamingStatsHint`, is
@@ -5133,7 +5406,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         startTime: Date,
         userAgent: String?,
         requestBodyString: String?,
-        request: ChatCompletionRequest
+        request: ChatCompletionRequest,
+        admissionToken: HTTPInferenceAdmission.Token
     ) {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -5141,6 +5415,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
+            defer { admissionToken.release() }
             do {
                 try Task.checkCancellation()
                 let response = try await self.chatEngine.completeChat(request: request)
@@ -5348,6 +5623,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             session_id: nil
         )
 
+        guard
+            let admissionToken = acquireInferenceAdmissionOrReject(
+                context: context,
+                version: head.version,
+                flavor: .openai(type: "server_overloaded"),
+                path: "/generate",
+                method: "POST",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                startTime: startTime
+            )
+        else { return }
+
         let shouldStream = ollama.stream ?? true
         if !shouldStream {
             handleOllamaGenerateNonStreaming(
@@ -5356,7 +5644,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 startTime: startTime,
                 userAgent: userAgent,
                 requestBodyString: requestBodyString,
-                request: chatRequest
+                request: chatRequest,
+                admissionToken: admissionToken
             )
             return
         }
@@ -5378,14 +5667,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logTemperature = chatRequest.temperature
         let logMaxTokens = chatRequest.max_tokens
         let logSelf = self
+        let disconnected = installStreamingDisconnectHook(context: context, model: chatRequest.model)
         runRequestTask(priority: .userInitiated) {
+            defer { admissionToken.release() }
             do {
                 try Task.checkCancellation()
                 let stream = try await self.chatEngine.streamChat(request: chatRequest)
+                if disconnected.value { throw CancellationError() }
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                 )
                 for try await delta in stream {
+                    if disconnected.value { throw CancellationError() }
                     if StreamingReasoningHint.decode(delta) != nil { continue }
                     if StreamingStatsHint.decode(delta) != nil { continue }
                     if StreamingToolHint.isSentinel(delta) { continue }
@@ -5458,7 +5751,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         startTime: Date,
         userAgent: String?,
         requestBodyString: String?,
-        request: ChatCompletionRequest
+        request: ChatCompletionRequest,
+        admissionToken: HTTPInferenceAdmission.Token
     ) {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -5466,6 +5760,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
+            defer { admissionToken.release() }
             do {
                 try Task.checkCancellation()
                 let response = try await self.chatEngine.completeChat(request: request)
@@ -5630,6 +5925,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// but keep intermediate proxies from idling out long
     /// tool-execution or reasoning pauses. Callers must `cancel()` the
     /// returned task when their producer finishes.
+    /// Install a channel-close hook for a streaming route: flips the returned
+    /// flag and cancels the model's in-flight generation the moment the client
+    /// disconnects, so a hangup stops GPU work on every streaming path. The
+    /// `/chat/completions` streamer wires this inline; this is the shared
+    /// version for the Anthropic / Responses / Ollama streamers. The streaming
+    /// loop must poll the flag and `throw CancellationError()` when it's set.
+    private func installStreamingDisconnectHook(
+        context: ChannelHandlerContext,
+        model: String
+    ) -> SendableBool {
+        let disconnected = SendableBool(false)
+        context.channel.closeFuture.whenComplete { _ in
+            disconnected.value = true
+            // Cancel decode on hangup so the GPU isn't left generating into a
+            // closed socket. Safe/no-op if generation already finished.
+            Task { await ModelRuntime.shared.cancelGeneration(name: model) }
+        }
+        return disconnected
+    }
+
     private static func startSSEKeepalive(
         writer: NIOLoopBound<SSEResponseWriter>,
         channel: Channel,
@@ -5830,6 +6145,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return row
             }
 
+            // Diagnostics surface (hang/overload triage without scraping logs):
+            // HTTP admission depth, distillation queue, sandbox state, the last
+            // recovered MLX error, live chat count, vector-index failures, and
+            // the last RAM feasibility verdict.
+            let httpInflight = HTTPInferenceAdmission.shared.inflightCount
+            let httpLimit = Self.httpInferenceAdmissionLimit()
+            let chatActive = await InferenceLoadCoordinator.shared.activeCount
+            let distill = await DistillationCoordinator.shared.snapshot()
+            let indexFailures = await MemorySearchService.shared.indexFailures()
+            let sandboxStatus = await MainActor.run {
+                String(describing: SandboxManager.State.shared.status)
+            }
+            let mlxLastError: Any = MLXErrorRecovery.lastError as Any? ?? NSNull()
+            let ramSnapshot = await ModelRuntime.shared.lastRAMFeasibilitySnapshot()
+            let ramFeasibility: Any
+            if let f = ramSnapshot {
+                ramFeasibility =
+                    [
+                        "model": f.modelName,
+                        "verdict": f.verdict.rawValue,
+                        "incoming_weights_bytes": f.incomingWeightsBytes,
+                        "resident_weights_bytes": f.residentWeightsBytes,
+                        "kv_headroom_bytes": f.kvHeadroomBytes,
+                        "projected_bytes": f.projectedBytes,
+                        "physical_memory_bytes": f.physicalMemoryBytes,
+                        "soft_limit_bytes": f.softLimitBytes,
+                        "hard_limit_bytes": f.hardLimitBytes,
+                    ] as [String: Any]
+            } else {
+                ramFeasibility = NSNull()
+            }
+
             let memoryConfig = MemoryConfigurationStore.load()
             let obj: [String: Any] = [
                 "status": "healthy",
@@ -5840,7 +6187,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "resident_models": residentModels,
                 "memory_enabled": memoryConfig.enabled,
                 "memory_database_open": MemoryDatabase.shared.isOpen,
+                "http_inflight": httpInflight,
+                "http_inference_limit": httpLimit,
+                "chat_active": chatActive,
+                "distillation": ["queued": distill.queued, "active": distill.active],
+                "sandbox_status": sandboxStatus,
+                "mlx_last_error": mlxLastError,
+                "index_failures": indexFailures,
+                "ram_feasibility": ramFeasibility,
+                "persistence": PersistenceHealth.shared.snapshot(),
             ]
+
+            // A served /health means the process is alive and responsive —
+            // clear any crash-loop safe mode and bring skipped subsystems back.
+            await MainActor.run { LaunchGuard.noteHealthyHealthCheck() }
             let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
             let headers: [(String, String)] =
@@ -6609,6 +6969,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // Determine if streaming
         let wantsStream = anthropicReq.stream ?? false
 
+        guard
+            let admissionToken = acquireInferenceAdmissionOrReject(
+                context: context,
+                version: head.version,
+                flavor: .anthropic(errorType: "overloaded_error"),
+                path: "/messages",
+                method: "POST",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                startTime: startTime
+            )
+        else { return }
+
         if wantsStream {
             handleAnthropicMessagesStreaming(
                 anthropicReq: anthropicReq,
@@ -6619,7 +6992,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: context,
                 startTime: startTime,
                 userAgent: userAgent,
-                requestBodyString: requestBodyString
+                requestBodyString: requestBodyString,
+                admissionToken: admissionToken
             )
         } else {
             handleAnthropicMessagesNonStreaming(
@@ -6631,7 +7005,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: context,
                 startTime: startTime,
                 userAgent: userAgent,
-                requestBodyString: requestBodyString
+                requestBodyString: requestBodyString,
+                admissionToken: admissionToken
             )
         }
     }
@@ -6645,7 +7020,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         context: ChannelHandlerContext,
         startTime: Date,
         userAgent: String?,
-        requestBodyString: String?
+        requestBodyString: String?,
+        admissionToken: HTTPInferenceAdmission.Token
     ) {
         let writer = AnthropicSSEResponseWriter()
         let cors = stateRef.value.corsHeaders
@@ -6677,8 +7053,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logRequestBody = requestBodyString
         let logModel = model
         let logSelf = self
+        let disconnected = installStreamingDisconnectHook(context: context, model: model)
 
         runRequestTask(priority: .userInitiated) {
+            defer { admissionToken.release() }
             let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
             var emittedSemanticDelta = false
             func markSemanticDeltaIfChannelActive() {
@@ -6699,11 +7077,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
+                if disconnected.value { throw CancellationError() }
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                 )
                 for try await delta in stream {
                     try Task.checkCancellation()
+                    if disconnected.value { throw CancellationError() }
                     // Reasoning sentinel must be decoded BEFORE the
                     // generic `isSentinel` filter, otherwise it gets
                     // dropped together with tool/stats hints.
@@ -6829,7 +7209,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         context: ChannelHandlerContext,
         startTime: Date,
         userAgent: String?,
-        requestBodyString: String?
+        requestBodyString: String?,
+        admissionToken: HTTPInferenceAdmission.Token
     ) {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -6844,6 +7225,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
 
         runRequestTask(priority: .userInitiated) {
+            defer { admissionToken.release() }
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
@@ -7353,6 +7735,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // Determine if streaming
         let wantsStream = openResponsesReq.stream ?? false
 
+        guard
+            let admissionToken = acquireInferenceAdmissionOrReject(
+                context: context,
+                version: head.version,
+                flavor: .openResponses(code: "server_overloaded"),
+                path: "/responses",
+                method: "POST",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                startTime: startTime
+            )
+        else { return }
+
         if wantsStream {
             handleOpenResponsesStreaming(
                 request: openResponsesReq,
@@ -7362,7 +7757,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: context,
                 startTime: startTime,
                 userAgent: userAgent,
-                requestBodyString: requestBodyString
+                requestBodyString: requestBodyString,
+                admissionToken: admissionToken
             )
         } else {
             handleOpenResponsesNonStreaming(
@@ -7373,7 +7769,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: context,
                 startTime: startTime,
                 userAgent: userAgent,
-                requestBodyString: requestBodyString
+                requestBodyString: requestBodyString,
+                admissionToken: admissionToken
             )
         }
     }
@@ -7386,7 +7783,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         context: ChannelHandlerContext,
         startTime: Date,
         userAgent: String?,
-        requestBodyString: String?
+        requestBodyString: String?,
+        admissionToken: HTTPInferenceAdmission.Token
     ) {
         let writer = OpenResponsesSSEWriter()
         let cors = stateRef.value.corsHeaders
@@ -7447,8 +7845,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // the concurrent closures that read/mutate the flag.
         let messageItemOpen = AtomicBoolBox()
         let outputText = LockedStringAccumulator()
+        let disconnected = installStreamingDisconnectHook(context: context, model: model)
 
         runRequestTask(priority: .userInitiated) {
+            defer { admissionToken.release() }
             let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
             var emittedSemanticDelta = false
             func markSemanticDeltaIfChannelActive() {
@@ -7469,11 +7869,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
                 let stream = try await chatEngine.streamChat(request: internalReq)
+                if disconnected.value { throw CancellationError() }
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                 )
                 for try await delta in stream {
                     try Task.checkCancellation()
+                    if disconnected.value { throw CancellationError() }
                     // Reasoning sentinel must be decoded BEFORE the
                     // generic `isSentinel` filter, otherwise it gets
                     // dropped together with tool/stats hints.
@@ -7850,7 +8252,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         context: ChannelHandlerContext,
         startTime: Date,
         userAgent: String?,
-        requestBodyString: String?
+        requestBodyString: String?,
+        admissionToken: HTTPInferenceAdmission.Token
     ) {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -7865,6 +8268,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
 
         runRequestTask(priority: .userInitiated) {
+            defer { admissionToken.release() }
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()

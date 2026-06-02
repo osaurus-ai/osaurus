@@ -62,7 +62,7 @@ public final class AgentDatabaseStore: @unchecked Sendable {
     /// uses the new value without needing a reconnect.
     public func setStorageLimit(for agentId: UUID, bytes: Int) {
         guard let conn = lockedGet(agentId) else { return }
-        conn.storageBytesLimit = bytes
+        conn.setStorageBytesLimit(bytes)
     }
 
     /// Push a fresh soft-warn percent into the (already-cached)
@@ -70,13 +70,13 @@ public final class AgentDatabaseStore: @unchecked Sendable {
     /// reads this on its next post-commit quota check (spec §11.2).
     public func setStorageWarnPercent(for agentId: UUID, percent: Int) {
         guard let conn = lockedGet(agentId) else { return }
-        conn.storageWarnPercent = percent
+        conn.setStorageWarnPercent(percent)
     }
 
     /// Read the cached storage limit for `agentId`. Returns 0 (the
     /// `disabled` sentinel) when the agent has no open connection.
     public func storageLimit(for agentId: UUID) -> Int {
-        lockedGet(agentId)?.storageBytesLimit ?? 0
+        lockedGet(agentId)?.currentStorageBytesLimit() ?? 0
     }
 
     /// Read the on-disk file size for the agent's DB. Convenience for

@@ -606,6 +606,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 Task { await InferenceLoadCoordinator.shared.endChatGeneration() }
             }
 
+            // Capture the MLX error sequence before generation so we can tell
+            // whether a (swallowed) MLX C++ forward-pass error fired during
+            // this stream and surface it instead of finishing blank.
+            let mlxErrorEpoch = MLXErrorRecovery.errorSequence()
+
             let startTime = Date()
             var outputTokenCount = 0
             // Track the last cumulative output-token count we forwarded
@@ -736,7 +741,18 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     "[Osaurus][Stream] Stream completed: \(deltaCount) deltas in \(String(format: "%.2f", totalTime))s"
                 )
 
-                continuation.finish()
+                // A blank stream that coincides with a fresh MLX C++ error is
+                // almost certainly that error (the global handler swallowed the
+                // would-be fatalError, so generation just produced nothing).
+                // Surface it as a failed stream rather than an empty success.
+                if deltaCount == 0, let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch) {
+                    print("[Osaurus][Stream] Empty stream after MLX error: \(mlxErr)")
+                    finishReason = .error
+                    errorMsg = mlxErr
+                    continuation.finish(throwing: MLXForwardPassError(message: mlxErr))
+                } else {
+                    continuation.finish()
+                }
             } catch let invs as ServiceToolInvocations {
                 print("[Osaurus][Stream] Tool invocations (batch): count=\(invs.invocations.count)")
                 if let first = invs.invocations.first {
@@ -836,6 +852,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             defer {
                 Task { await InferenceLoadCoordinator.shared.endChatGeneration() }
             }
+            // Capture the MLX error sequence so a blank, error-coincident
+            // response is surfaced as a thrown error (→ HTTP 500 / failed
+            // chunk) instead of an empty 200.
+            let mlxErrorEpoch = MLXErrorRecovery.errorSequence()
             // If tools were provided and the service supports them, use the message-based API
             if Self.allowsLocalToolDispatch(request.tool_choice),
                 let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService
@@ -871,6 +891,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         }
                         if StreamingToolHint.isSentinel(delta) { continue }
                         text += delta
+                    }
+                    if text.isEmpty, reasoning.isEmpty,
+                        let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch)
+                    {
+                        throw MLXForwardPassError(message: mlxErr)
                     }
                     let outputTokens = TokenEstimator.estimate(text)
                     let choice = ChatChoice(
@@ -978,6 +1003,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 }
                 if StreamingToolHint.isSentinel(delta) { continue }
                 text += delta
+            }
+            if text.isEmpty, reasoning.isEmpty,
+                let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch)
+            {
+                throw MLXForwardPassError(message: mlxErr)
             }
             let outputTokens = authoritativeOutputTokens ?? TokenEstimator.estimate(text)
             let choice = ChatChoice(

@@ -53,16 +53,25 @@ enum ChatHistoryWriter {
     ) {
         let conversational = finalMessages.filter { $0.role != "system" }
         guard !conversational.isEmpty else { return }
+        // Close the launch prewarm race: an early write (first request after
+        // launch) can arrive before the detached key prewarm warms the cache.
+        // This runs on a background request executor — not the launch-critical
+        // path — so loading the key now is safe, and it prevents silently
+        // dropping the write. Only the genuine "key can't be unlocked" case
+        // falls through to the skip below.
+        if !StorageKeyManager.shared.hasCachedKey {
+            try? StorageKeyManager.shared.prewarmCurrentKey()
+        }
         guard StorageKeyManager.shared.hasCachedKey else {
             print("[ChatHistoryWriter] Skipping chat history persistence: storage key is not already unlocked")
             return
         }
 
-        // Gate on the storage migration before opening SQLCipher.
-        // No-op fast-path once the AppDelegate has awaited it; this
-        // is here for completeness so background HTTP / plugin paths
-        // that hit `persist` very early can't race the migrator.
-        StorageMigrationCoordinator.blockingAwaitReady()
+        // Park if a key rotation is re-encrypting databases before
+        // opening SQLCipher. No-op fast path otherwise; here so a
+        // background HTTP / plugin path that hits `persist` during a
+        // rotation can't open a half-rekeyed file.
+        StorageMutationGate.blockingAwaitNotMutating()
 
         let db = ChatHistoryDatabase.shared
         do {

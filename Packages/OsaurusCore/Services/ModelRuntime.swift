@@ -116,18 +116,41 @@ public actor ModelRuntime {
     private var loadingTasks: [String: LoadingTaskRecord] = [:]
     private var supersededLoadingTaskIDs = Set<UInt64>()
     private var nextLoadingTaskID: UInt64 = 0
+
+    /// On-disk weight bytes reserved by loads that are past the pre-load gate
+    /// but not yet resident in `modelCache`, keyed by model name. The
+    /// coordination loop in `loadContainer` only serializes loads that have
+    /// already registered a `loadingTasks` record — but the expensive pre-load
+    /// awaits (`ensureComplete`, JANGTQ sidecar, flexible-budget eviction) run
+    /// BEFORE registration. Two cold loads of different models can therefore
+    /// both clear the `while` loop, suspend on those awaits, and reach
+    /// `checkRAMFeasibility` each seeing only `modelCache` (blind to the other
+    /// in-flight materialization) → double the unified-memory footprint → OOM.
+    /// Recording the reservation the instant the weight size is known — and
+    /// counting it in the feasibility gate — closes that window without a
+    /// global cold-load lock.
+    private var inflightLoadWeights: [String: Int64] = [:]
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
 
-    /// Most recently launched generation wrapper task. `ModelLease` is the
-    /// authoritative "is anyone still using the model" signal; this record only
-    /// exists so shutdown / same-model unload can defensively kill a task that
-    /// was cancelled mid-setup before its lease became visible.
+    /// Result of the most recent pre-load RAM feasibility check. Surfaced via
+    /// `lastRAMFeasibilitySnapshot()` so `/health` and the model picker can
+    /// show why a load was refused or flagged as tight without re-scanning.
+    private var lastRAMFeasibility: RAMFeasibility?
+
+    /// Every in-flight generation wrapper task, keyed by a monotonic id.
+    /// `ModelLease` is the authoritative "is anyone still using the model"
+    /// signal; these records exist so shutdown / same-model unload can
+    /// defensively cancel tasks that were cancelled mid-setup before their
+    /// lease became visible. Tracking *all* concurrent streams (not just the
+    /// most recent) means quit can cancel every in-flight request directly
+    /// instead of relying solely on the lease drain.
     private struct ActiveGenerationRecord {
         let modelName: String
         let task: Task<Void, Never>
     }
-    private var activeGenerationTask: ActiveGenerationRecord?
+    private var activeGenerationTasks: [UInt64: ActiveGenerationRecord] = [:]
+    private var nextGenerationTaskID: UInt64 = 0
 
     private init() {}
 
@@ -285,17 +308,44 @@ public actor ModelRuntime {
 
     // MARK: - Model lifecycle
 
-    /// Defensive helper: cancels and awaits the most recently launched
-    /// generation task. With `ModelLease` enforcing per-stream lifetime
-    /// the unload paths already wait on `waitForZero(name)` first, so this
-    /// only catches the rare race where a task was launched but never made
-    /// it to `acquire`. Callers should still treat the lease as authoritative.
+    /// Defensive helper: cancels and awaits every tracked generation task
+    /// (optionally filtered to one model). With `ModelLease` enforcing
+    /// per-stream lifetime the unload paths already wait on
+    /// `waitForZero(name)` first, so this primarily catches the rare race
+    /// where a task was launched but never made it to `acquire`, and — at
+    /// quit — guarantees *all* concurrent streams are cancelled, not just
+    /// the most recent. Callers should still treat the lease as authoritative.
     private func cancelActiveGeneration(for modelName: String? = nil) async {
-        guard let record = activeGenerationTask else { return }
-        if let modelName, record.modelName != modelName { return }
-        record.task.cancel()
-        _ = await record.task.value
-        activeGenerationTask = nil
+        let records = activeGenerationTasks.filter { _, record in
+            modelName == nil || record.modelName == modelName
+        }
+        guard !records.isEmpty else { return }
+        for (_, record) in records { record.task.cancel() }
+        for (_, record) in records { _ = await record.task.value }
+        for id in records.keys { activeGenerationTasks.removeValue(forKey: id) }
+    }
+
+    /// Allocate a monotonic id for a new generation wrapper task.
+    private func allocateGenerationTaskID() -> UInt64 {
+        nextGenerationTaskID &+= 1
+        return nextGenerationTaskID
+    }
+
+    /// Remove a generation record once its wrapper task finishes on its own
+    /// (success or cancellation), so the tracking dictionary doesn't grow
+    /// unbounded across a long-lived process.
+    private func clearGenerationTask(id: UInt64) {
+        activeGenerationTasks.removeValue(forKey: id)
+    }
+
+    /// Quit-path helper: cancel every in-flight generation across all models
+    /// without evicting containers or freeing buffers. Run early in the
+    /// termination sequence so SSE producers stop and the HTTP server's
+    /// graceful shutdown can drain its child channels; `clearAll(quit:)`
+    /// performs the full container/GPU teardown afterward.
+    func cancelAllGenerations() async {
+        await MLXBatchAdapter.Registry.shared.shutdownAll()
+        await cancelActiveGeneration()
     }
 
     /// Cancel the active decode for `name` without evicting the loaded
@@ -312,7 +362,10 @@ public actor ModelRuntime {
         return nextLoadingTaskID
     }
 
-    private func cancelAndDrainLoadingTasks(_ records: [(String, LoadingTaskRecord)]) async {
+    private func cancelAndDrainLoadingTasks(
+        _ records: [(String, LoadingTaskRecord)],
+        quit: Bool = false
+    ) async {
         guard !records.isEmpty else { return }
 
         for (name, record) in records {
@@ -322,11 +375,22 @@ public actor ModelRuntime {
             record.task.cancel()
         }
 
-        for (_, record) in records {
-            if let holder = try? await record.task.value,
-                supersededLoadingTaskIDs.contains(record.id)
-            {
-                holder.container.disableCaching()
+        // The join below (`await record.task.value`) can block for the full
+        // remaining weight-materialization of a cold load — Swift
+        // cancellation is cooperative and `loadModelContainer` only checks
+        // it before/after the MLX load. On the normal eviction path we pay
+        // that to disable caching on the superseded holder; at *quit* we
+        // skip the join (and the intermediate GPU fence) so a load in
+        // progress can't stall process exit. The OS reclaims GPU resources
+        // on exit, and `clearAll(quit:)` still issues a final, watchdog-
+        // bounded `Stream.gpu.synchronize()`.
+        if !quit {
+            for (_, record) in records {
+                if let holder = try? await record.task.value,
+                    supersededLoadingTaskIDs.contains(record.id)
+                {
+                    holder.container.disableCaching()
+                }
             }
         }
 
@@ -337,8 +401,10 @@ public actor ModelRuntime {
             supersededLoadingTaskIDs.remove(record.id)
         }
 
-        Stream.gpu.synchronize()
-        Memory.clearCache()
+        if !quit {
+            Stream.gpu.synchronize()
+            Memory.clearCache()
+        }
     }
 
     private func cancelLoadingTask(name: String, loadID: UInt64) async {
@@ -425,20 +491,58 @@ public actor ModelRuntime {
         }
     }
 
-    func clearAll() async {
+    /// Tear down all loaded/loading models and free GPU buffers.
+    ///
+    /// - Parameter quit: when `true`, every otherwise-unbounded wait is
+    ///   capped so a stuck lease or in-flight cold load can't hang app
+    ///   termination. The lease drain uses the timed `waitForZero` variant
+    ///   and the cold-load drain skips its cooperative join. Callers on the
+    ///   normal (settings-change / GC) path leave this `false` for the full,
+    ///   correctness-first teardown.
+    func clearAll(quit: Bool = false) async {
         await ModelResidencyManager.shared.cancelAll()
 
         // Shut down every BatchEngine so they stop scheduling new forward
-        // passes, then cancel the latest tracked wrapper task and wait for
-        // every leased model to drain before we touch any container.
-        await MLXBatchAdapter.Registry.shared.shutdownAll()
-        await cancelActiveGeneration()
+        // passes and cancel ALL tracked generation wrapper tasks, then wait
+        // for every leased model to drain before we touch any container.
+        await cancelAllGenerations()
+        var hasStuckLease = false
         for name in modelCache.keys {
-            await ModelLease.shared.waitForZero(name)
+            if quit {
+                // Force-proceed fallback: a never-released lease (a producer
+                // that ignored cancellation) returns `false` here after the
+                // cap instead of hanging the quit chain forever. We record
+                // it so we can skip the buffer free below — see the UAF note.
+                let drained = await ModelLease.shared.waitForZero(name, timeoutSeconds: 2.0)
+                if !drained { hasStuckLease = true }
+            } else {
+                await ModelLease.shared.waitForZero(name)
+            }
         }
 
         let loadingRecords = loadingTasks.map { ($0.key, $0.value) }
-        await cancelAndDrainLoadingTasks(loadingRecords)
+        await cancelAndDrainLoadingTasks(loadingRecords, quit: quit)
+
+        // Quit-path use-after-free guard: `ModelLease` exists precisely to
+        // stop us from freeing a model's Metal buffers while a generation
+        // still references them (`notifyExternalReferencesNonZeroOnDealloc`).
+        // If a holder ignored cancellation and the lease never drained, the
+        // safe move on the way out is NOT to free anything: calling
+        // `disableCaching()` / `Stream.gpu.synchronize()` against a live,
+        // stuck command buffer is either a UAF or a hang. The process is
+        // terminating, so let the OS reclaim GPU memory on `exit()` instead
+        // of a partial container free. (`cancelAllGenerations` already shut
+        // down every BatchEngine, so no new GPU work can be scheduled.)
+        if quit && hasStuckLease {
+            genLog.error(
+                "clearAll(quit:) detected a stuck model lease — skipping buffer free; OS will reclaim GPU on exit"
+            )
+            loadingTasks.removeAll()
+            supersededLoadingTaskIDs.removeAll()
+            currentModelName = nil
+            cachedConfig = nil
+            return
+        }
 
         for holder in modelCache.values {
             holder.container.disableCaching()
@@ -505,10 +609,131 @@ public actor ModelRuntime {
         Int64(Double(ProcessInfo.processInfo.physicalMemory) * 0.70)
     }
 
+    /// Snapshot of the most recent pre-load RAM feasibility assessment.
+    public struct RAMFeasibility: Sendable, Equatable {
+        public enum Verdict: String, Sendable, Equatable {
+            /// Comfortably within budget.
+            case ok
+            /// Above the soft (warn) threshold but below the hard ceiling —
+            /// loaded anyway, but resident pressure is high.
+            case tight
+            /// Above the hard ceiling — the load was refused.
+            case refused
+        }
+        public let modelName: String
+        public let verdict: Verdict
+        public let incomingWeightsBytes: Int64
+        public let residentWeightsBytes: Int64
+        public let kvHeadroomBytes: Int64
+        public let projectedBytes: Int64
+        public let physicalMemoryBytes: Int64
+        public let softLimitBytes: Int64
+        public let hardLimitBytes: Int64
+        public let timestamp: Date
+    }
+
+    /// Fraction of physical RAM above which a load is flagged `tight` (warn).
+    private static let ramSoftThreshold = 0.70
+    /// Fraction of physical RAM above which a load is `refused`.
+    private static let ramHardThreshold = 0.90
+
+    /// Estimated KV-cache + activation headroom an incoming load needs beyond
+    /// its static weights. We don't know the exact context length up front, so
+    /// scale modestly with weight size and floor it so even a small model
+    /// reserves something. Intentionally conservative — the goal is to catch
+    /// "this clearly won't fit" before the OS jetsams us, not to be exact.
+    private static func estimatedKVHeadroomBytes(forWeights weights: Int64) -> Int64 {
+        let scaled = Int64(Double(weights) * 0.20)
+        let floor: Int64 = 512 * 1024 * 1024
+        return max(scaled, floor)
+    }
+
+    /// Public read of the last feasibility assessment for `/health` + UI.
+    public func lastRAMFeasibilitySnapshot() -> RAMFeasibility? {
+        lastRAMFeasibility
+    }
+
+    /// Pre-load RAM feasibility gate. Records `lastRAMFeasibility` for
+    /// observability and throws when the projected footprint exceeds the hard
+    /// ceiling. Applies to all eviction policies.
+    private func checkRAMFeasibility(
+        modelName: String,
+        incomingWeightsBytes: Int64,
+        excludingResident excludedName: String?
+    ) throws {
+        let physical = Int64(ProcessInfo.processInfo.physicalMemory)
+        guard physical > 0, incomingWeightsBytes > 0 else { return }
+
+        let resident = residentWeightBytes(excluding: excludedName)
+        // Other cold loads already past the gate but not yet resident. Without
+        // this, two concurrent loads of different models each see only the
+        // (empty) cache and both pass, doubling the real footprint.
+        let inflightOther = inflightLoadWeightBytes(excluding: excludedName)
+        let kvHeadroom = Self.estimatedKVHeadroomBytes(forWeights: incomingWeightsBytes)
+        let projected = resident + inflightOther + incomingWeightsBytes + kvHeadroom
+        let softLimit = Int64(Double(physical) * Self.ramSoftThreshold)
+        let hardLimit = Int64(Double(physical) * Self.ramHardThreshold)
+
+        let verdict: RAMFeasibility.Verdict
+        if projected > hardLimit {
+            verdict = .refused
+        } else if projected > softLimit {
+            verdict = .tight
+        } else {
+            verdict = .ok
+        }
+
+        lastRAMFeasibility = RAMFeasibility(
+            modelName: modelName,
+            verdict: verdict,
+            incomingWeightsBytes: incomingWeightsBytes,
+            residentWeightsBytes: resident,
+            kvHeadroomBytes: kvHeadroom,
+            projectedBytes: projected,
+            physicalMemoryBytes: physical,
+            softLimitBytes: softLimit,
+            hardLimitBytes: hardLimit,
+            timestamp: Date()
+        )
+
+        switch verdict {
+        case .ok:
+            break
+        case .tight:
+            genLog.error(
+                "loadContainer: RAM tight for \(modelName, privacy: .public) projected=\(projected, privacy: .public) soft=\(softLimit, privacy: .public) physical=\(physical, privacy: .public)"
+            )
+        case .refused:
+            genLog.error(
+                "loadContainer: refusing \(modelName, privacy: .public) — projected footprint \(projected, privacy: .public)B exceeds hard limit \(hardLimit, privacy: .public)B (physical \(physical, privacy: .public)B)"
+            )
+            let projGB = String(format: "%.1f", Double(projected) / 1_073_741_824)
+            let physGB = String(format: "%.1f", Double(physical) / 1_073_741_824)
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Not enough memory to load \(modelName): needs ~\(projGB) GB (weights + KV headroom) but this Mac has \(physGB) GB. Free up RAM, choose a smaller/more-quantized model, or close other models."
+                ]
+            )
+        }
+    }
+
     private func residentWeightBytes(excluding excludedName: String? = nil) -> Int64 {
         modelCache.reduce(Int64(0)) { total, entry in
             if entry.key == excludedName { return total }
             return total + entry.value.weightsSizeBytes
+        }
+    }
+
+    /// Weight bytes reserved by loads in flight (past the pre-load gate, not
+    /// yet resident). Counted by `checkRAMFeasibility` so a concurrent cold
+    /// load of a *different* model is visible to the gate.
+    private func inflightLoadWeightBytes(excluding excludedName: String? = nil) -> Int64 {
+        inflightLoadWeights.reduce(Int64(0)) { total, entry in
+            if entry.key == excludedName { return total }
+            return total + entry.value
         }
     }
 
@@ -631,7 +856,26 @@ public actor ModelRuntime {
         )
 
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
-        await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
+        let completeVerified = await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
+        if !completeVerified {
+            // `ensureComplete` returns false when the remote file list couldn't
+            // be fetched (offline / HF down) or a missing-file fetch failed. A
+            // complete local bundle is still loadable offline, so this is a
+            // warning, not a hard failure — the shard-manifest verification
+            // below is the authoritative local-integrity gate.
+            genLog.warning(
+                "loadContainer: ensureComplete could not verify remote completeness model=\(name, privacy: .public) — proceeding on local files; will manifest-verify shards"
+            )
+        }
+        try Task.checkCancellation()
+
+        // Manifest-verify ALL weight shards. `MLXModel.isDownloaded` only
+        // requires *one* `*.safetensors` file, so a partially-downloaded
+        // sharded bundle (one shard present, the rest missing) passes the UI
+        // gate but makes vmlx abort() the whole process on the first forward
+        // pass when it can't find a referenced tensor. Fail loud here with a
+        // clear error and keep the server up.
+        try Self.verifyShardManifest(at: localURL, name: name)
         try Task.checkCancellation()
 
         // Preflight: JANGTQ/TurboQuant variants need a `jangtq_runtime.safetensors`
@@ -645,15 +889,26 @@ public actor ModelRuntime {
         // gets a clear error and the server stays up.
         try Self.validateUnsupportedPlainDSV4AffineJANG(at: localURL, name: name)
         try await Self.ensureJANGTQSidecar(at: localURL, modelId: id, name: name)
-        let weightsBytes: Int64
-        if policy == .manualMultiModel {
-            weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
-        } else {
-            weightsBytes = 0
-        }
+        // Compute the incoming bundle's on-disk weight size for *every* policy.
+        // Previously only `manualMultiModel` did this (strict left it 0), which
+        // meant the resident-RAM accounting — and the pre-load feasibility gate
+        // below — were blind under the default strict policy. The value also
+        // feeds `mlxCacheLimit()` and the `/health` + model-picker surfaces.
+        let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
         genLog.info(
             "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public)"
         )
+
+        // Reserve this load's footprint the instant it's known, BEFORE the
+        // feasibility gate and the task registration below, so a concurrent
+        // cold load of a different model that is also past the coordination
+        // loop sees it. Cleared on every exit path (refuse, cancel, success)
+        // — by the time the success path returns, the model is already
+        // resident in `modelCache`, so dropping the reservation can't
+        // momentarily under-count.
+        inflightLoadWeights[name] = weightsBytes
+        defer { inflightLoadWeights.removeValue(forKey: name) }
+
         try Task.checkCancellation()
 
         if policy == .manualMultiModel {
@@ -663,6 +918,17 @@ public actor ModelRuntime {
             )
         }
         try Task.checkCancellation()
+
+        // Pre-load RAM feasibility gate (all policies). After strict eviction /
+        // flexible budget trimming above, `resident` reflects what will still
+        // be alive when this load lands. If projected footprint blows past the
+        // hard ceiling, refuse with a clear error instead of letting the OS
+        // jetsam/OOM-kill us mid-load. A softer threshold only warns.
+        try checkRAMFeasibility(
+            modelName: name,
+            incomingWeightsBytes: weightsBytes,
+            excludingResident: name
+        )
 
         // Tool-call format + reasoning parser are stamped automatically by
         // vmlx-swift's LLM/VLM factories from `jang_config.json` capabilities
@@ -1290,6 +1556,7 @@ public actor ModelRuntime {
         // finishes (success or cancellation). The adapter's producer task
         // forwards Swift cancellation into the upstream stream.
         let innerProducer = prepared.genTask
+        let genID = allocateGenerationTaskID()
         let activeTask = Task<Void, Never> {
             await withTaskCancellationHandler {
                 await innerProducer.value
@@ -1298,8 +1565,9 @@ public actor ModelRuntime {
             }
             await ModelLease.shared.release(modelName)
             await self.scheduleIdleResidency(for: modelName)
+            self.clearGenerationTask(id: genID)
         }
-        activeGenerationTask = ActiveGenerationRecord(modelName: modelName, task: activeTask)
+        activeGenerationTasks[genID] = ActiveGenerationRecord(modelName: modelName, task: activeTask)
 
         return GenerationEventMapper.map(events: prepared.stream, modelName: modelName, trace: trace)
     }
@@ -2246,6 +2514,60 @@ public actor ModelRuntime {
         return total
     }
 
+    /// Verify every weight shard referenced by a `*.safetensors.index.json`
+    /// manifest is present on disk before load. Sharded bundles list each
+    /// tensor's owning file in the manifest's `weight_map`; if any referenced
+    /// shard is missing, vmlx aborts the process on the first forward pass.
+    /// Single-file bundles (no manifest) are a no-op here — the one-file
+    /// `isDownloaded` check already covers them.
+    static func verifyShardManifest(at directory: URL, name: String) throws {
+        let fm = FileManager.default
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        else { return }
+
+        let indexFiles = entries.filter {
+            $0.lastPathComponent.hasSuffix(".safetensors.index.json")
+        }
+        // No manifest → not a sharded bundle; nothing to cross-check.
+        guard let indexURL = indexFiles.first else { return }
+
+        guard
+            let data = try? Data(contentsOf: indexURL),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let weightMap = obj["weight_map"] as? [String: String]
+        else {
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Model \(name) has an unreadable shard manifest (\(indexURL.lastPathComponent)). Re-download to repair."
+                ]
+            )
+        }
+
+        let referencedShards = Set(weightMap.values)
+        let missing = referencedShards.sorted().filter {
+            !fm.fileExists(atPath: directory.appendingPathComponent($0).path)
+        }
+        guard missing.isEmpty else {
+            let sample = missing.prefix(3).joined(separator: ", ")
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 4,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Model \(name) is incomplete: \(missing.count) of \(referencedShards.count) weight shard(s) missing (e.g. \(sample)). Re-download to repair."
+                ]
+            )
+        }
+    }
+
     private static func findLocalDirectory(forModelId id: String) -> URL? {
         return resolveLocalModelDirectory(forModelId: id, in: DirectoryPickerService.effectiveModelsDirectory())
     }
@@ -2628,7 +2950,7 @@ public actor ModelRuntime {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 60
-        let (tempURL, response) = try await GlobalProxySettings.makeSession().download(for: request)
+        let (tempURL, response) = try await GlobalProxySettings.sharedSession().download(for: request)
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {

@@ -17,6 +17,7 @@
 //
 
 import Foundation
+import os
 @preconcurrency import MLXLMCommon
 
 /// Centralized persistence for `VMLXServerRuntimeSettings`.
@@ -31,7 +32,20 @@ public enum ServerRuntimeSettingsStore {
     /// Hot snapshot accessed by non-MainActor runtime code paths
     /// (`ModelRuntime.buildCacheCoordinatorConfig`, `MLXBatchAdapter`).
     /// Updated on every `save(_:)`.
-    private nonisolated(unsafe) static var cachedSnapshot: VMLXServerRuntimeSettings?
+    ///
+    /// Lock-protected: `VMLXServerRuntimeSettings` is a (large) value type, so
+    /// an unsynchronized `nonisolated(unsafe)` var let an off-actor reader tear
+    /// a struct that a concurrent `save(_:)` was mid-write on. The unfair lock
+    /// is only ever held for the pointer-sized optional copy in/out — never
+    /// across file IO — so it adds no contention on the hot read path.
+    private static let snapshotLock = OSAllocatedUnfairLock<VMLXServerRuntimeSettings?>(
+        initialState: nil
+    )
+
+    private nonisolated static var cachedSnapshot: VMLXServerRuntimeSettings? {
+        get { snapshotLock.withLock { $0 } }
+        set { snapshotLock.withLock { $0 = newValue } }
+    }
 
     /// File name. Versioned-ish: the contract version on
     /// `VMLXServerRuntimeSettings.contractVersion` controls the JSON
@@ -319,7 +333,8 @@ public enum ServerRuntimeSettingsStore {
         let projectedOrigins = settings.network.corsOrigins
             .filter { $0 != "*" }
         updated.allowedOrigins = projectedOrigins
-        updated.genTopP = settings.generation.topP.map(Float.init)
+        updated.genTopP =
+            settings.generation.topP.map(Float.init)
             ?? ServerConfiguration.default.genTopP
         return updated
     }

@@ -38,6 +38,17 @@ import os.log
 
 private let recoveryLog = Logger(subsystem: "com.dinoki.osaurus", category: "MLXErrorRecovery")
 
+/// A recovered MLX C++ forward-pass error surfaced to a single request. The
+/// global handler turns the underlying MLX `fatalError` into a logged event
+/// (keeping the server alive); this is how the offending generation reports
+/// it to its caller as a failed chunk / HTTP 500 with `mlx_error` detail
+/// instead of an opaque blank stream.
+public struct MLXForwardPassError: LocalizedError {
+    public let message: String
+    public init(message: String) { self.message = message }
+    public var errorDescription: String? { "mlx_error: \(message)" }
+}
+
 public enum MLXErrorRecovery {
 
     /// Lock-protected slot for the most recent MLX error message. Useful for
@@ -45,9 +56,27 @@ public enum MLXErrorRecovery {
     /// so this is a coarse "what failed last" rather than a per-request signal.
     nonisolated(unsafe) private static let lock = NSLock()
     nonisolated(unsafe) private static var _lastError: String?
+    /// Monotonic count of MLX errors seen process-wide. A generation captures
+    /// this before it starts and compares afterward to detect whether an MLX
+    /// C++ error fired during its window. Coarse under heavy concurrency (the
+    /// handler is global and can't be attributed to a specific forward pass),
+    /// but enough to convert the common single-stream blank-output case into a
+    /// surfaced error.
+    nonisolated(unsafe) private static var _errorSequence: UInt64 = 0
 
     public static var lastError: String? {
         lock.withLock { _lastError }
+    }
+
+    /// Snapshot of the current error sequence; capture before a generation.
+    public static func errorSequence() -> UInt64 {
+        lock.withLock { _errorSequence }
+    }
+
+    /// The most recent MLX error message if a new error was recorded since
+    /// `sequence`, else `nil`.
+    public static func errorSince(_ sequence: UInt64) -> String? {
+        lock.withLock { _errorSequence > sequence ? _lastError : nil }
     }
 
     /// One-shot install flag. `setErrorHandler` itself is idempotent at the
@@ -71,6 +100,7 @@ public enum MLXErrorRecovery {
             let message = cMessage.map { String(cString: $0) } ?? "<nil>"
             MLXErrorRecovery.lock.withLock {
                 MLXErrorRecovery._lastError = message
+                MLXErrorRecovery._errorSequence &+= 1
             }
             // `os_log` from the C-convention thunk is allowed (no async
             // hops, no captures of Swift state).

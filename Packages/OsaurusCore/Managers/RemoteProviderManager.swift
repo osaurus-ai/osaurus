@@ -562,7 +562,7 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         do {
-            let (data, response) = try await GlobalProxySettings.makeSession().data(for: request)
+            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 print("[Osaurus] Test Connection: Invalid response type")

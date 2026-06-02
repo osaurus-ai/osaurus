@@ -202,13 +202,10 @@ public final class SchedulerDatabase: @unchecked Sendable {
     // MARK: - Lifecycle
 
     public func open() throws {
-        // Mirrors the gating in every other `*Database.open()`: even though
-        // `AppDelegate.applicationDidFinishLaunching` already awaits the
-        // migrator, headless / test entry points may call `open()`
-        // directly and would otherwise race plaintext files against the
-        // SQLCipher migration. Sync gate is a no-op once the migrator
-        // has finished.
-        StorageMigrationCoordinator.blockingAwaitReady()
+        // Mirrors the gating in every other `*Database.open()`: parks
+        // only while a key rotation is re-encrypting databases so we
+        // can't open a half-rekeyed file. No-op fast path otherwise.
+        StorageMutationGate.blockingAwaitNotMutating()
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.root())

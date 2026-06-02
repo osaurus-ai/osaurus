@@ -115,12 +115,22 @@
             return found
         }
 
+        /// Set once a global spawn slot is held so `stop()` releases exactly
+        /// one slot even if called twice.
+        private var spawnSlotHeld = false
+
         /// Start the subprocess. Must be called before connecting `MCP.Client`
-        /// to `transport`.
-        public func start() throws {
+        /// to `transport`. Reserves a global MCP child-spawn slot first so a
+        /// reconnect/launch storm can't exhaust PIDs/FDs.
+        public func start() async throws {
+            try await MCPChildSpawnLimiter.shared.acquire()
+            spawnSlotHeld = true
             do {
                 try process.run()
             } catch {
+                // Release the slot we just reserved — the child never launched.
+                await MCPChildSpawnLimiter.shared.release()
+                spawnSlotHeld = false
                 throw MCPStdioTransportError.processSpawnFailed(error.localizedDescription)
             }
         }
@@ -131,6 +141,10 @@
             await transport.disconnect()
             if process.isRunning {
                 process.terminate()
+            }
+            if spawnSlotHeld {
+                spawnSlotHeld = false
+                await MCPChildSpawnLimiter.shared.release()
             }
         }
 

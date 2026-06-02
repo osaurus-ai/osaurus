@@ -115,6 +115,11 @@ public final class NextRunScheduler {
     /// and dispatch up to `maxConcurrent` of them.
     private func dispatchDueRows() async {
         let now = Date()
+        // Prune coalesce entries older than the window: they can no longer
+        // suppress a dispatch, so keeping them just grows `lastDispatch` by
+        // one entry per agent that ever fired. Bounds the map to recently
+        // active agents.
+        lastDispatch = lastDispatch.filter { now.timeIntervalSince($0.value) < Self.coalesceWindow }
         let due: [NextRunEntry]
         do {
             due = try SchedulerDatabase.shared.dueNextRuns(asOf: now, limit: Self.maxConcurrent)

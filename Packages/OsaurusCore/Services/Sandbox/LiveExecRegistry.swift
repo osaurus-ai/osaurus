@@ -67,6 +67,13 @@ public actor LiveExecRegistry {
         /// callers that race (model + UI) should both end up at the
         /// same exit signal.
         public let terminate: @Sendable (_ graceSeconds: Int) async -> Void
+        /// Best-effort resource cleanup invoked exactly once when the entry
+        /// leaves the registry (grace drop, `clearAll`, `terminateAll`).
+        /// Background jobs use it to cancel their detached pid-poll task and
+        /// stop the log tailer so neither outlives the entry. Must be
+        /// idempotent and non-blocking. `nil` for entries (foreground tools)
+        /// that own no detached resources.
+        public let onDrop: (@Sendable () -> Void)?
 
         public init(
             toolCallId: String,
@@ -77,7 +84,8 @@ public actor LiveExecRegistry {
             statusPublisher: AnyPublisher<LiveExecStatus, Never>,
             currentStatus: @escaping @Sendable () -> LiveExecStatus,
             seed: @escaping @Sendable () async -> Data,
-            terminate: @escaping @Sendable (_ graceSeconds: Int) async -> Void
+            terminate: @escaping @Sendable (_ graceSeconds: Int) async -> Void,
+            onDrop: (@Sendable () -> Void)? = nil
         ) {
             self.toolCallId = toolCallId
             self.pid = pid
@@ -88,6 +96,7 @@ public actor LiveExecRegistry {
             self.currentStatus = currentStatus
             self.seed = seed
             self.terminate = terminate
+            self.onDrop = onDrop
         }
     }
 
@@ -159,13 +168,29 @@ public actor LiveExecRegistry {
     public func clearAll() {
         for (_, task) in pendingDrops { task.cancel() }
         pendingDrops.removeAll()
+        let dropped = Array(entries.values)
         entries.removeAll()
         entriesSubject.send(entries)
+        for entry in dropped { entry.onDrop?() }
+    }
+
+    /// Quit-path teardown: SIGKILL every still-running live exec (background
+    /// `shell_run` / `sandbox_exec` jobs) then drop all entries. `clearAll()`
+    /// alone only clears the UI snapshot — it leaves the underlying child
+    /// processes to be reaped by the OS, which can orphan them briefly after
+    /// a force-quit. `graceSeconds: 0` sends SIGKILL immediately.
+    public func terminateAll(graceSeconds: Int = 0) async {
+        let live = Array(entries.values)
+        for entry in live {
+            await entry.terminate(graceSeconds)
+        }
+        clearAll()
     }
 
     private func dropAfterGrace(toolCallId: String) {
         pendingDrops.removeValue(forKey: toolCallId)
-        guard entries.removeValue(forKey: toolCallId) != nil else { return }
+        guard let dropped = entries.removeValue(forKey: toolCallId) else { return }
         entriesSubject.send(entries)
+        dropped.onDrop?()
     }
 }

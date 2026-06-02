@@ -92,9 +92,10 @@ final class PluginDatabase: @unchecked Sendable {
         // their own `close()`, which is sufficient. Key rotation
         // still works against plugin DBs because
         // `StorageExportService.rotateStorageKey` enumerates
-        // `StorageMigrator.databaseTargets()`, which independently
-        // walks `~/.osaurus/Tools/<plugin>/data/data.db` from disk.
-        StorageMigrationCoordinator.blockingAwaitReady()
+        // `StorageDatabaseCatalog.databaseTargets()`, which
+        // independently walks `~/.osaurus/Tools/<plugin>/data/data.db`
+        // from disk.
+        StorageMutationGate.blockingAwaitNotMutating()
 
         try queue.sync {
             guard db == nil else { return }

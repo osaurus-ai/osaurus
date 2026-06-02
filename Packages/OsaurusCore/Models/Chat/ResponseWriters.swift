@@ -290,12 +290,45 @@ final class SSEResponseWriter: ResponseWriter {
         do {
             try encoder.encodeAndWrite(chunk, into: &buffer)
             buffer.writeString("\n\n")
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            context.flush()
+            Self.writeBackpressureAware(
+                HTTPServerResponsePart.body(.byteBuffer(buffer)),
+                context: context
+            )
         } catch {
             // Log encoding error and close connection gracefully
             print("Error encoding SSE chunk: \(error)")
             context.close(promise: nil)
+        }
+    }
+
+    /// Backpressure- / writability-aware SSE body write.
+    ///
+    /// Previously every chunk used `write(..., promise: nil)` so a write
+    /// failure (broken pipe from a client that closed mid-stream) was
+    /// silently swallowed and the connection lingered while the generation
+    /// task kept producing into a dead socket. Here we attach a promise that
+    /// closes the channel on failure — which trips the route's
+    /// `closeFuture` disconnect hook and cancels the in-flight generation.
+    ///
+    /// We also skip the write entirely once the channel is inactive, and we
+    /// only `flush()` when the channel is writable: if a slow consumer has
+    /// driven the outbound buffer past NIO's high-water mark (`isWritable ==
+    /// false`), the bytes stay queued (NIO applies backpressure) rather than
+    /// forcing a flush that can't drain — bounding peak memory for a stalled
+    /// reader.
+    @inline(__always)
+    static func writeBackpressureAware(
+        _ part: HTTPServerResponsePart,
+        context: ChannelHandlerContext
+    ) {
+        guard context.channel.isActive else { return }
+        let promise = context.eventLoop.makePromise(of: Void.self)
+        promise.futureResult.whenFailure { _ in
+            context.close(promise: nil)
+        }
+        context.write(NIOAny(part), promise: promise)
+        if context.channel.isWritable {
+            context.flush()
         }
     }
 
