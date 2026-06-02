@@ -239,6 +239,24 @@ def call_chat(base_url: str, payload: dict[str, Any], timeout: int) -> tuple[dic
     return response, time.monotonic() - start
 
 
+def failure_summary(model: str, error: BaseException, root: pathlib.Path) -> dict[str, Any]:
+    label = model.replace("/", "_").replace(":", "_")
+    summary: dict[str, Any] = {
+        "model": model,
+        "checks": {"harness_completed": False},
+        "failed_checks": ["harness_completed"],
+        "error": {
+            "type": type(error).__name__,
+            "message": str(error),
+        },
+        "passed": False,
+        "finished": datetime.now(timezone.utc).isoformat(),
+    }
+    save(root / f"{label}_error.json", summary)
+    save(root / f"{label}_summary.json", summary)
+    return summary
+
+
 def run_model(args: argparse.Namespace, model: str, root: pathlib.Path) -> dict[str, Any]:
     label = model.replace("/", "_").replace(":", "_")
     summary: dict[str, Any] = {
@@ -273,8 +291,8 @@ def run_model(args: argparse.Namespace, model: str, root: pathlib.Path) -> dict[
         "tool_choice": "required",
         "max_tokens": args.max_tokens,
     }
-    resp1, elapsed1 = call_chat(args.base_url, req1, args.timeout)
     save(root / f"{label}_01_required.request.json", req1)
+    resp1, elapsed1 = call_chat(args.base_url, req1, args.timeout)
     save(root / f"{label}_01_required.response.json", resp1)
     msg1 = message(resp1)
     calls1 = msg1.get("tool_calls") or []
@@ -302,8 +320,8 @@ def run_model(args: argparse.Namespace, model: str, root: pathlib.Path) -> dict[
             "tool_choice": "none",
             "max_tokens": args.max_tokens,
         }
-        resp2, elapsed2 = call_chat(args.base_url, req2, args.timeout)
         save(root / f"{label}_02_none_followup.request.json", req2)
+        resp2, elapsed2 = call_chat(args.base_url, req2, args.timeout)
         save(root / f"{label}_02_none_followup.response.json", resp2)
         msg2 = message(resp2)
         content2 = msg2.get("content") or ""
@@ -319,8 +337,8 @@ def run_model(args: argparse.Namespace, model: str, root: pathlib.Path) -> dict[
             "tool_choice": "required",
             "max_tokens": args.max_tokens,
         }
-        resp3, elapsed3 = call_chat(args.base_url, req3, args.timeout)
         save(root / f"{label}_03_required_again.request.json", req3)
+        resp3, elapsed3 = call_chat(args.base_url, req3, args.timeout)
         save(root / f"{label}_03_required_again.response.json", resp3)
         msg3 = message(resp3)
         calls3 = msg3.get("tool_calls") or []
@@ -423,7 +441,12 @@ def main() -> int:
     save(root / "process-before.txt", process_snapshot())
     save(root / "vm-before.txt", vm_snapshot())
     started = datetime.now(timezone.utc).isoformat()
-    results = {model: run_model(args, model, root) for model in args.model}
+    results: dict[str, Any] = {}
+    for model in args.model:
+        try:
+            results[model] = run_model(args, model, root)
+        except BaseException as error:
+            results[model] = failure_summary(model, error, root)
     save(root / "process-after.txt", process_snapshot())
     save(root / "vm-after.txt", vm_snapshot())
     summary = {

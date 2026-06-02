@@ -319,8 +319,7 @@ public enum ServerRuntimeSettingsStore {
         let projectedOrigins = settings.network.corsOrigins
             .filter { $0 != "*" }
         updated.allowedOrigins = projectedOrigins
-        updated.genTopP =
-            settings.generation.topP.map(Float.init)
+        updated.genTopP = settings.generation.topP.map(Float.init)
             ?? ServerConfiguration.default.genTopP
         return updated
     }
