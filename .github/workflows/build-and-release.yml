@@ -121,8 +121,6 @@ jobs:
         env:
           DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
           DEVELOPER_ID_NAME: ${{ secrets.DEVELOPER_ID_NAME }}
-          # Baked into Info.plist via the $(APTABASE_APP_KEY) build setting.
-          # Absent in forks/PRs → empty key → telemetry stays disabled.
           APTABASE_APP_KEY: ${{ secrets.APTABASE_APP_KEY }}
         run: bash scripts/build/build_arm64.sh
 
