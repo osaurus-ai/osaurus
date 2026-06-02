@@ -170,36 +170,52 @@ public final class OsaurusModelDeleteTool: OsaurusTool, PermissionedTool, @unche
         let req = requireString(args, "id", expected: "Model id", tool: name)
         guard case .value(let modelId) = req else { return req.failureEnvelope ?? "" }
 
-        let outcome: String = await MainActor.run {
+        // Resolve + validate on the main actor, then perform the (async)
+        // delete outside the synchronous `MainActor.run` closure so the
+        // unload/lease-drain can complete before we report success.
+        enum Resolution {
+            case failure(String)
+            case delete(MLXModel)
+        }
+        let resolution: Resolution = await MainActor.run {
             let mgr = ModelManager.shared
             guard
                 let model = mgr.availableModels.first(where: { $0.id == modelId })
                     ?? mgr.suggestedModels.first(where: { $0.id == modelId })
             else {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message: "No model found with id `\(modelId)`.",
-                    field: "id",
-                    tool: name
+                return .failure(
+                    ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "No model found with id `\(modelId)`.",
+                        field: "id",
+                        tool: name
+                    )
                 )
             }
             let state = mgr.effectiveDownloadState(for: model)
             if case .downloading = state {
-                return ToolEnvelope.failure(
-                    kind: .executionError,
-                    message:
-                        "Model `\(modelId)` is currently downloading. "
-                        + "Call osaurus_model_cancel_download first, then retry.",
-                    tool: name,
-                    retryable: true
+                return .failure(
+                    ToolEnvelope.failure(
+                        kind: .executionError,
+                        message:
+                            "Model `\(modelId)` is currently downloading. "
+                            + "Call osaurus_model_cancel_download first, then retry.",
+                        tool: name,
+                        retryable: true
+                    )
                 )
             }
-            mgr.deleteModel(model)
+            return .delete(model)
+        }
+        switch resolution {
+        case .failure(let envelope):
+            return envelope
+        case .delete(let model):
+            await ModelManager.shared.deleteModel(model)
             return ToolEnvelope.success(
                 tool: name,
                 result: ["model_id": modelId, "status": "deleted"]
             )
         }
-        return outcome
     }
 }

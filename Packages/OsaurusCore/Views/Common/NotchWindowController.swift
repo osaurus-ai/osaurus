@@ -178,8 +178,12 @@ public final class NotchWindowController: NSObject, ObservableObject {
             let windowScreen = chatWindow.screen
         {
             targetScreen = windowScreen
+        } else if let fallback = NSScreen.main ?? NSScreen.screens.first {
+            targetScreen = fallback
         } else {
-            targetScreen = NSScreen.main ?? NSScreen.screens.first!
+            // No attached display (headless / all screens detached). Nothing
+            // to reposition onto; bail rather than trap on `.first!`.
+            return
         }
 
         let newMetrics = NotchScreenMetrics.detect(for: targetScreen)
@@ -203,7 +207,10 @@ public final class NotchWindowController: NSObject, ObservableObject {
         guard alertActive != isExpandedForAlert else { return }
         isExpandedForAlert = alertActive
 
-        let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first!
+        guard let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first else {
+            // No attached display; nothing to resize against.
+            return
+        }
         let targetFrame = alertActive ? screen.frame : panelRect(for: screen)
         panel.setFrame(targetFrame, display: true)
     }

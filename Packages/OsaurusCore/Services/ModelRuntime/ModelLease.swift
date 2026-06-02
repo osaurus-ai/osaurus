@@ -17,6 +17,9 @@
 //
 
 import Foundation
+import os
+
+private let leaseLog = Logger(subsystem: "ai.osaurus", category: "ModelLease")
 
 /// Refcount + waiter actor for pinning loaded models against eviction.
 ///
@@ -48,6 +51,13 @@ public actor ModelLease {
     /// waiter on timeout without disturbing other parked callers.
     private var nextWaiterID: UInt64 = 0
 
+    /// Count of unbalanced `release` calls (more releases than acquires for a
+    /// name). A non-zero value means a generation path is missing a paired
+    /// `acquire` (or releasing twice) — dangerous because a phantom release
+    /// could let `waitForZero` succeed while Metal work is still live.
+    /// Surfaced for diagnostics instead of being silently floored away.
+    private var underflowCount: Int = 0
+
     private init() {}
 
     // MARK: - Acquire / release
@@ -59,12 +69,29 @@ public actor ModelLease {
     }
 
     /// Drop one lease on `name`. When the count reaches zero, all `waitForZero`
-    /// waiters for that name are resumed. Floors at zero so a buggy double-release
-    /// can never poison the count.
+    /// waiters for that name are resumed.
+    ///
+    /// An unbalanced release (no active lease) is a programming error — a
+    /// missing `defer { release }` pairing or a double release. Rather than
+    /// silently flooring at zero (which hides the bug and risks a phantom
+    /// release letting `waitForZero` win while Metal work is live), we count
+    /// it, log it, and trap in debug builds.
     public func release(_ name: String) {
         let current = counts[name] ?? 0
+        guard current > 0 else {
+            // Detect (don't silently floor): count + log loudly so the
+            // acquire/release pairing bug is observable via `releaseUnderflows()`
+            // / `/health`. We deliberately do NOT `fatalError`/`assertionFailure`
+            // here — a phantom release is a bug, but trapping would turn a
+            // latent imbalance into a hard crash, which is worse for a server.
+            underflowCount += 1
+            leaseLog.error(
+                "release underflow for \(name, privacy: .public) — released with no active lease (total underflows: \(self.underflowCount, privacy: .public))"
+            )
+            return
+        }
         let next = current - 1
-        if next <= 0 {
+        if next == 0 {
             counts.removeValue(forKey: name)
             wakeWaiters(for: name)
         } else {
@@ -169,6 +196,13 @@ public actor ModelLease {
     /// Current refcount for `name`. Primarily for diagnostics / tests.
     public func count(for name: String) -> Int {
         counts[name] ?? 0
+    }
+
+    /// Number of unbalanced `release` calls observed since launch. Non-zero
+    /// indicates a lease acquire/release pairing bug. Surfaced for `/health`
+    /// and tests.
+    public func releaseUnderflows() -> Int {
+        underflowCount
     }
 
     /// Atomic snapshot of all per-model in-flight counts. Used by `/health`

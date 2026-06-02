@@ -489,7 +489,7 @@ final class ModelManager: NSObject, ObservableObject {
         guard let model = resolveModel(byRepoId: modelId) else { return }
         downloadService.resume(model)
     }
-    func deleteModel(_ model: MLXModel) { downloadService.delete(model) }
+    func deleteModel(_ model: MLXModel) async { await downloadService.delete(model) }
 
     func estimateDownloadSize(for model: MLXModel) async -> Int64? {
         await downloadService.estimateSize(for: model)
@@ -1116,7 +1116,7 @@ extension ModelManager {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         guard
-            let (data, response) = try? await GlobalProxySettings.makeSession().data(for: request),
+            let (data, response) = try? await GlobalProxySettings.sharedSession().data(for: request),
             let http = response as? HTTPURLResponse,
             (200 ..< 300).contains(http.statusCode)
         else { return nil }
@@ -1128,7 +1128,7 @@ extension ModelManager {
     fileprivate static func requestHFModels(at url: URL) async throws -> [HFModel] {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await GlobalProxySettings.makeSession().data(for: request)
+        let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             return []
         }

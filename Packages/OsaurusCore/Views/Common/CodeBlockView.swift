@@ -18,11 +18,22 @@ import SwiftUI
 // Highlightr wraps highlight.js via JavaScriptCore — initialisation is expensive,
 // so we keep a single instance for the process lifetime. The theme is switched
 // lazily when the resolved highlight theme name changes.
+//
+// The underlying `JSContext` is NOT thread-safe and Highlightr offers no
+// internal synchronization: concurrent `highlight(...)` / `setTheme(...)`
+// calls (e.g. a background highlight pass racing a theme switch on the main
+// thread) can corrupt the context or tear the theme-tracking globals below.
+// All access goes through `highlightrLock` so it is serialized.
 nonisolated(unsafe) private let sharedHighlightr: Highlightr? = {
     guard let h = Highlightr() else { return nil }
     h.setTheme(to: "atom-one-dark")
     return h
 }()
+
+/// Serializes every touch of `sharedHighlightr` and the theme-tracking
+/// globals. Held only for the duration of a single highlight / theme read,
+/// which is the correct granularity for a non-reentrant JSContext.
+private let highlightrLock = NSLock()
 
 /// Track which Highlightr theme is currently loaded so we only call setTheme when it changes.
 nonisolated(unsafe) private var currentHighlightrTheme: String = "atom-one-dark"
@@ -33,15 +44,18 @@ private let defaultLightHighlightTheme = "atom-one-light"
 /// Returns the available Highlightr theme names (cached after first call).
 nonisolated(unsafe) private var cachedAvailableThemes: [String]?
 func availableHighlightrThemes() -> [String] {
+    highlightrLock.lock()
+    defer { highlightrLock.unlock() }
     if let cached = cachedAvailableThemes { return cached }
     let themes = (sharedHighlightr?.availableThemes() ?? []).sorted()
     cachedAvailableThemes = themes
     return themes
 }
 
-/// Resolves which Highlightr theme to use and switches if needed.
-/// Call this before highlighting — it's a no-op when the theme hasn't changed.
-func ensureHighlightrTheme(for theme: any ThemeProtocol) {
+/// Resolves which Highlightr theme to use and switches if needed (no-op when
+/// unchanged). Assumes `highlightrLock` is already held — only call from
+/// inside a locked section (`ensureHighlightrTheme` / `highlightCode`).
+private func switchHighlightrThemeLocked(for theme: any ThemeProtocol) {
     let resolved =
         theme.codeHighlightTheme
         ?? (theme.isDark ? defaultDarkHighlightTheme : defaultLightHighlightTheme)
@@ -50,9 +64,33 @@ func ensureHighlightrTheme(for theme: any ThemeProtocol) {
     currentHighlightrTheme = resolved
 }
 
+/// Resolves which Highlightr theme to use and switches if needed.
+/// Call this before highlighting — it's a no-op when the theme hasn't changed.
+func ensureHighlightrTheme(for theme: any ThemeProtocol) {
+    highlightrLock.lock()
+    defer { highlightrLock.unlock() }
+    switchHighlightrThemeLocked(for: theme)
+}
+
+/// Switch the theme (if needed) and highlight `code` as a single atomic
+/// operation under `highlightrLock`, so a concurrent theme switch can't
+/// land mid-highlight and corrupt the shared JSContext.
+func highlightCode(
+    _ code: String,
+    language: String?,
+    theme: any ThemeProtocol
+) -> NSAttributedString? {
+    highlightrLock.lock()
+    defer { highlightrLock.unlock() }
+    switchHighlightrThemeLocked(for: theme)
+    return sharedHighlightr?.highlight(code, as: language?.lowercased(), fastRender: true)
+}
+
 /// Returns the background color from the current Highlightr theme as a SwiftUI Color.
 /// Falls back to a sensible default if unavailable.
 func highlightrThemeBackgroundColor() -> Color {
+    highlightrLock.lock()
+    defer { highlightrLock.unlock() }
     if let bg = sharedHighlightr?.theme.themeBackgroundColor {
         return Color(bg)
     }
@@ -61,7 +99,9 @@ func highlightrThemeBackgroundColor() -> Color {
 
 /// Returns the background color from the current Highlightr theme as an NSColor.
 func highlightrThemeBackgroundNSColor() -> NSColor {
-    sharedHighlightr?.theme.themeBackgroundColor ?? NSColor(white: 0.1, alpha: 1)
+    highlightrLock.lock()
+    defer { highlightrLock.unlock() }
+    return sharedHighlightr?.theme.themeBackgroundColor ?? NSColor(white: 0.1, alpha: 1)
 }
 
 // MARK: - CodeBlockView
@@ -266,12 +306,10 @@ struct CodeContentView: NSViewRepresentable {
         let gutterWidth = CGFloat(gutterDigits + 2) * fontSize * 0.62
         let indent: CGFloat = 12 + gutterWidth
 
-        // Ensure the Highlightr theme matches the current app theme before highlighting.
-        ensureHighlightrTheme(for: theme)
-
-        // use Highlightr for syntax highlighting; fall back to plain text if it returns nil.
+        // Switch theme (if needed) + highlight atomically under the Highlightr
+        // lock; fall back to plain text if it returns nil.
         let result: NSMutableAttributedString
-        let highlightedCode = sharedHighlightr?.highlight(code, as: language?.lowercased(), fastRender: true)
+        let highlightedCode = highlightCode(code, language: language, theme: theme)
         if let highlighted = highlightedCode {
             result = NSMutableAttributedString(attributedString: highlighted)
             let fullRange = NSRange(location: 0, length: result.length)

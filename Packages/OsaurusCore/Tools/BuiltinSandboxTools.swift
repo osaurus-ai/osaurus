@@ -2008,9 +2008,10 @@ private func registerBackgroundLiveExec(
     let userTerminated = UserTerminatedFlag()
 
     // Poll the in-VM pid every second; flip to .exited when it's gone.
-    // The detached Task is self-retaining for its lifetime — we don't
-    // need to hold the returned Task value.
-    Task.detached { @Sendable in
+    // We hold the Task handle so the registry's `onDrop` can cancel it if
+    // the entry is evicted while still polling (e.g. a long background job
+    // whose row was torn down), and so the loop can't outlive the entry.
+    let pollTask = Task.detached { @Sendable in
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             if Task.isCancelled { return }
@@ -2019,6 +2020,11 @@ private func registerBackgroundLiveExec(
                 let killedByUser = await userTerminated.value
                 statusBox.send(killedByUser ? .killed(reason: "user") : .exited(0))
                 tailer.stop()
+                // Pid is gone — release the registry entry (after its grace
+                // tail) so it doesn't leak for the lifetime of the process.
+                // The grace window keeps the terminal status observable for a
+                // late-mounting UI row.
+                await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
                 return
             }
         }
@@ -2043,7 +2049,11 @@ private func registerBackgroundLiveExec(
             statusPublisher: statusBox.publisher,
             currentStatus: { statusBox.current },
             seed: { tailer.snapshot() },
-            terminate: terminate
+            terminate: terminate,
+            onDrop: {
+                pollTask.cancel()
+                tailer.stop()
+            }
         )
     )
 }

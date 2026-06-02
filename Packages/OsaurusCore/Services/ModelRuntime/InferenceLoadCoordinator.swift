@@ -60,8 +60,38 @@ public final class HTTPInferenceAdmission: @unchecked Sendable {
         }
     }
 
+    /// Acquire one slot and hand back a one-shot `Token`. Returns `nil` when
+    /// saturated. Prefer this over `tryAcquire`/`release` on routes with many
+    /// exit paths: the token releases exactly once (idempotent) and its
+    /// `deinit` is a leak backstop, so a forgotten/cancelled path can't pin
+    /// the gate.
+    public func tryAcquireToken(limit: Int) -> Token? {
+        tryAcquire(limit: limit) ? Token(gate: self) : nil
+    }
+
     public var inflightCount: Int {
         state.withLock { $0 }
+    }
+
+    /// One-shot, idempotent release handle for an admitted inference request.
+    public final class Token: @unchecked Sendable {
+        private let releasedOnce = OSAllocatedUnfairLock(initialState: false)
+        private let gate: HTTPInferenceAdmission
+
+        fileprivate init(gate: HTTPInferenceAdmission) { self.gate = gate }
+
+        /// Release the slot. Safe to call multiple times — only the first
+        /// call decrements the gate.
+        public func release() {
+            let shouldRelease = releasedOnce.withLock { done -> Bool in
+                if done { return false }
+                done = true
+                return true
+            }
+            if shouldRelease { gate.release() }
+        }
+
+        deinit { release() }
     }
 }
 

@@ -150,7 +150,11 @@ public struct OsaurusIdentity: Sendable {
             deviceAssertion.base64urlEncoded,
         ].joined(separator: ".")
 
-        var request = URLRequest(url: URL(string: "https://\(audience)\(path)")!)
+        let urlString = "https://\(audience)\(path)"
+        guard let url = URL(string: urlString) else {
+            throw OsaurusIdentityError.invalidEndpointURL(urlString)
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request

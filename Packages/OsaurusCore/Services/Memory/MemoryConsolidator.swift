@@ -88,12 +88,22 @@ public actor MemoryConsolidator {
         let promotedCount = await promotePinnedCandidates()
 
         do {
-            let evicted = try MemoryDatabase.shared.evictPinnedFacts(
+            let evictedKeys = try MemoryDatabase.shared.evictPinnedFactsReturningKeys(
                 belowSalience: config.salienceFloor,
                 idleDays: 30
             )
-            if evicted > 0 {
-                MemoryLogger.service.info("Consolidator: evicted \(evicted) pinned facts")
+            // Drop each evicted fact's vector so the index doesn't keep
+            // surfacing rows that no longer exist in SQL.
+            for key in evictedKeys {
+                await MemorySearchService.shared.removeDocument(
+                    id: key.id,
+                    agentId: key.agentId.isEmpty ? nil : key.agentId
+                )
+            }
+            if !evictedKeys.isEmpty {
+                MemoryLogger.service.info(
+                    "Consolidator: evicted \(evictedKeys.count) pinned facts (+ vectors)"
+                )
             }
         } catch {
             MemoryLogger.service.warning("Consolidator: eviction failed: \(error)")

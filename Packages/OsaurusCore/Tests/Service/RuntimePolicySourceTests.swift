@@ -1345,7 +1345,11 @@ struct RuntimePolicySourceTests {
         )
         #expect(ndjsonStreaming.contains("func markSemanticDeltaIfChannelActive()"))
         #expect(ndjsonStreaming.contains("await ModelRuntime.shared.unload(name: req.model)"))
-        #expect(ndjsonStreaming.contains("try Task.checkCancellation()\n                    // Ollama-style NDJSON"))
+        #expect(
+            ndjsonStreaming.contains(
+                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    // Ollama-style NDJSON"
+            )
+        )
         let anthropicStart = try #require(handler.range(of: "private func handleAnthropicMessagesStreaming("))
         let anthropicEnd = try #require(
             handler.range(
@@ -1362,7 +1366,11 @@ struct RuntimePolicySourceTests {
         #expect(anthropicStreaming.contains("func markSemanticDeltaIfChannelActive()"))
         #expect(anthropicStreaming.contains("markSemanticDeltaIfChannelActive()"))
         #expect(anthropicStreaming.contains("await ModelRuntime.shared.unload(name: model)"))
-        #expect(anthropicStreaming.contains("try Task.checkCancellation()\n                    // Reasoning sentinel"))
+        #expect(
+            anthropicStreaming.contains(
+                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    // Reasoning sentinel"
+            )
+        )
         let responsesStart = try #require(handler.range(of: "private func handleOpenResponsesStreaming("))
         let responsesEnd = try #require(
             handler.range(
@@ -1380,7 +1388,11 @@ struct RuntimePolicySourceTests {
         #expect(responsesStreaming.contains("func markSemanticDeltaIfChannelActive()"))
         #expect(responsesStreaming.contains("!wasResidentBeforeStream && !emittedSemanticDelta"))
         #expect(responsesStreaming.contains("await ModelRuntime.shared.unload(name: model)"))
-        #expect(responsesStreaming.contains("try Task.checkCancellation()\n                    // Reasoning sentinel"))
+        #expect(
+            responsesStreaming.contains(
+                "try Task.checkCancellation()\n                    if disconnected.value { throw CancellationError() }\n                    // Reasoning sentinel"
+            )
+        )
         let errorStart = try #require(handler.range(of: "func errorCaught"))
         let errorEnd = try #require(
             handler.range(of: "    // MARK: - CORS", range: errorStart.upperBound ..< handler.endIndex)
@@ -1660,11 +1672,22 @@ struct RuntimePolicySourceTests {
             runtime.range(of: "let loadID = allocateLoadingTaskID()", range: loadStart.upperBound ..< runtime.endIndex)
         )
         let loadPreflight = String(runtime[loadStart.lowerBound ..< loadEnd.lowerBound])
+        // `computeWeightsSizeBytes` is a shallow (non-recursive) directory
+        // listing — the `enumerator(` guard above keeps it off the deep-walk
+        // path. It is now computed for EVERY policy (not just manualMultiModel)
+        // because the pre-load RAM-feasibility gate and the in-flight-load
+        // reservation both need the incoming bundle's footprint up front.
         #expect(loadPreflight.contains("if policy == .manualMultiModel"))
-        #expect(loadPreflight.contains("weightsBytes = Self.computeWeightsSizeBytes(at: localURL)"))
+        #expect(loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)"))
+        // Feasibility gate + concurrent-load reservation must run before the
+        // load task is allocated, so a cold load can't bypass RAM accounting.
         #expect(
-            loadPreflight.contains("} else {\n            weightsBytes = 0"),
-            "Default single-model loads must not block on directory size scans before vmlx starts loading."
+            loadPreflight.contains("inflightLoadWeights[name] = weightsBytes"),
+            "Cold loads must reserve their footprint before the feasibility gate so a parallel load of another model can't double-book unified memory."
+        )
+        #expect(
+            loadPreflight.contains("checkRAMFeasibility("),
+            "All policies must pass the pre-load RAM feasibility gate before vmlx starts loading."
         )
     }
 

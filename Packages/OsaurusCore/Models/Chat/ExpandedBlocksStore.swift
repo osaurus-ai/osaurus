@@ -20,7 +20,14 @@ import SwiftUI
 /// tool call ID, thinking block content-block ID, or code section ID).
 /// The store persists across cell reuse because it lives on the session,
 /// not inside a SwiftUI `@State`.
-class ExpandedBlocksStore: ObservableObject, @unchecked Sendable {
+///
+/// `@MainActor`-isolated: the `@Published` set drives SwiftUI updates and
+/// is only ever touched from the main thread (SwiftUI views + the
+/// `@MainActor` table Coordinator). This replaces the previous
+/// `@unchecked Sendable` escape hatch, which silently permitted off-main
+/// mutation of a `@Published` property.
+@MainActor
+class ExpandedBlocksStore: ObservableObject {
 
     /// The set of currently expanded block keys.
     @Published var expandedIds: Set<String> = []

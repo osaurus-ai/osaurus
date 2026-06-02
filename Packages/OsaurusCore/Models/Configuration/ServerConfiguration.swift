@@ -139,6 +139,30 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             ?? defaults.maxPairingBodyBytes
     }
 
+    /// Custom encoder so the legacy, no-longer-applied `genMaxKVSize` is NOT
+    /// written to new config files. It remains in `CodingKeys` + `init(from:)`
+    /// for backward-compatible decoding of existing files, but persisting it
+    /// would keep resurrecting a dead field. Every other property is encoded
+    /// exactly as the synthesized conformance would have.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(port, forKey: .port)
+        try container.encode(exposeToNetwork, forKey: .exposeToNetwork)
+        try container.encode(startAtLogin, forKey: .startAtLogin)
+        try container.encode(hideDockIcon, forKey: .hideDockIcon)
+        try container.encode(appearanceMode, forKey: .appearanceMode)
+        try container.encode(numberOfThreads, forKey: .numberOfThreads)
+        try container.encode(backlog, forKey: .backlog)
+        try container.encode(genTopP, forKey: .genTopP)
+        // genMaxKVSize intentionally NOT encoded — legacy decode-only field.
+        try container.encode(allowedOrigins, forKey: .allowedOrigins)
+        try container.encodeIfPresent(globalProxyURL, forKey: .globalProxyURL)
+        try container.encode(modelEvictionPolicy, forKey: .modelEvictionPolicy)
+        try container.encode(modelIdleResidencyPolicy, forKey: .modelIdleResidencyPolicy)
+        try container.encode(maxRequestBodyBytes, forKey: .maxRequestBodyBytes)
+        try container.encode(maxPairingBodyBytes, forKey: .maxPairingBodyBytes)
+    }
+
     public init(
         port: Int,
         exposeToNetwork: Bool,

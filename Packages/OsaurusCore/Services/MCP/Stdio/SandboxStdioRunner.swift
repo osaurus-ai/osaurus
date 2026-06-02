@@ -75,7 +75,17 @@
             )
         }
 
+        /// Set once a global spawn slot is held so `stop()` releases exactly
+        /// one slot even if called twice.
+        private var spawnSlotHeld = false
+
         public func start() async throws {
+            // Reserve a global MCP child-spawn slot (shared with the host
+            // transport) before doing any container work, so a launch storm
+            // can't exhaust resources.
+            try await MCPChildSpawnLimiter.shared.acquire()
+            spawnSlotHeld = true
+
             // Ensure the default agent user exists before we exec as it.
             try? await SandboxManager.shared.ensureAgentUser("default")
 
@@ -90,6 +100,8 @@
                     stderr: stderrWriter
                 )
             } catch {
+                await MCPChildSpawnLimiter.shared.release()
+                spawnSlotHeld = false
                 throw MCPStdioTransportError.processSpawnFailed(
                     error.localizedDescription
                 )
@@ -105,6 +117,10 @@
                 try? await proc.kill(SIGTERM)
                 try? await proc.delete()
                 self.process = nil
+            }
+            if spawnSlotHeld {
+                spawnSlotHeld = false
+                await MCPChildSpawnLimiter.shared.release()
             }
         }
 

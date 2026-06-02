@@ -70,14 +70,27 @@ public actor OsaurusServer: Sendable {
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
                 channel.pipeline.configureHTTPServerPipeline().flatMap {
-                    channel.pipeline.addHandler(
+                    channel.pipeline.addHandlers([
+                        // Connection cap (first handler): a flood of idle-held
+                        // sockets can't exhaust file descriptors / pin memory.
+                        ConnectionLimitHandler(),
+                        // Slow-loris / idle-hold defense: drop a connection that
+                        // sends no bytes, accepts no writes, or sits fully idle
+                        // past the budget. Long SSE streams emit periodic
+                        // keepalive comments well inside the write window, so
+                        // legitimate streaming is unaffected.
+                        IdleStateHandler(
+                            readTimeout: .seconds(60),
+                            writeTimeout: .seconds(150),
+                            allTimeout: .seconds(300)
+                        ),
                         HTTPHandler(
                             configuration: serverConfiguration,
                             apiKeyValidatorProvider: { validatorSnapshot.value() },
                             eventLoop: channel.eventLoop,
                             trustLoopback: trustLoopback
-                        )
-                    )
+                        ),
+                    ])
                 }
             }
             .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -188,5 +201,54 @@ public actor OsaurusServer: Sendable {
             print("[Osaurus] Failed to build validator: \(error). Falling back to empty validator.")
             return .empty
         }
+    }
+}
+
+/// First handler in every child pipeline. Enforces a process-wide ceiling on
+/// concurrently open connections so a flood of idle-held sockets (slow-loris,
+/// connection-exhaustion DoS) can't run the descriptor table / memory up.
+/// Accepted connections increment a shared atomic on `channelActive` and
+/// decrement on `channelInactive`; the connection that pushes the live count
+/// past the ceiling is closed immediately.
+final class ConnectionLimitHandler: ChannelInboundHandler {
+    typealias InboundIn = NIOAny
+    typealias InboundOut = NIOAny
+
+    /// Default ceiling. The server is loopback-first and gated downstream by
+    /// `HTTPInferenceAdmission`; this is purely a coarse socket-flood backstop,
+    /// set generously so normal multi-client / multi-tab use is never affected.
+    static let maxConcurrentConnections = 512
+
+    private static let liveCount = OSAllocatedUnfairLock(initialState: 0)
+
+    /// Current number of open connections — surfaced for `/health`.
+    static var currentCount: Int { liveCount.withLock { $0 } }
+
+    private var counted = false
+
+    func channelActive(context: ChannelHandlerContext) {
+        let admitted = Self.liveCount.withLock { count -> Bool in
+            guard count < Self.maxConcurrentConnections else { return false }
+            count += 1
+            return true
+        }
+        if admitted {
+            counted = true
+            context.fireChannelActive()
+        } else {
+            NSLog(
+                "[Osaurus] Refusing connection — at max concurrent connections (%d)",
+                Self.maxConcurrentConnections
+            )
+            context.close(promise: nil)
+        }
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        if counted {
+            counted = false
+            Self.liveCount.withLock { $0 = max(0, $0 - 1) }
+        }
+        context.fireChannelInactive()
     }
 }

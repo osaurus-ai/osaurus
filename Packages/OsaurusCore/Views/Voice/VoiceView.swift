@@ -558,7 +558,7 @@ private struct SpeechModelRow: View {
                     .buttonStyle(PlainButtonStyle())
                 }
 
-                Button(action: { modelManager.deleteModel(model) }) {
+                Button(action: { Task { await modelManager.deleteModel(model) } }) {
                     Image(systemName: "trash")
                         .font(.system(size: 14))
                         .foregroundColor(theme.tertiaryText)

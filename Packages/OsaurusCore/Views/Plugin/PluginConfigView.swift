@@ -534,7 +534,14 @@ struct PluginConfigView: View {
                 {
                     Button {
                         let base = Self.resolveBaseURL(for: pluginId, agentId: agentId)
-                        let url = URL(string: "\(base)/plugins/\(pluginId)/\(routeId)")!
+                        let urlString = "\(base)/plugins/\(pluginId)/\(routeId)"
+                        guard let url = URL(string: urlString) else {
+                            NSLog(
+                                "[PluginConfigView] Skipping OAuth connect — malformed URL: %@",
+                                urlString
+                            )
+                            return
+                        }
                         NSWorkspace.shared.open(url)
                     } label: {
                         Text("Connect", bundle: .module)

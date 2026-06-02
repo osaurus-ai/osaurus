@@ -3258,7 +3258,7 @@ extension RemoteProviderService {
             timeout: provider.timeout
         )
 
-        let (data, response) = try await GlobalProxySettings.makeSession().data(for: request)
+        let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
@@ -3368,7 +3368,7 @@ extension RemoteProviderService {
             req.setValue("application/json", forHTTPHeaderField: "Accept")
             req.timeoutInterval = min(provider.timeout, 10)
             for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
-            if let (data, response) = try? await GlobalProxySettings.makeSession().data(for: req),
+            if let (data, response) = try? await GlobalProxySettings.sharedSession().data(for: req),
                 let http = response as? HTTPURLResponse, http.statusCode < 400,
                 let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
                 !parsed.data.isEmpty
@@ -3388,7 +3388,7 @@ extension RemoteProviderService {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.timeoutInterval = min(provider.timeout, 10)
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
-        guard let (data, response) = try? await GlobalProxySettings.makeSession().data(for: req),
+        guard let (data, response) = try? await GlobalProxySettings.sharedSession().data(for: req),
             let http = response as? HTTPURLResponse, http.statusCode < 400
         else {
             return ["default"]
@@ -3415,7 +3415,10 @@ extension RemoteProviderService {
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = min(provider.timeout, 30)
+        // One-shot session with a custom timeout (can't use the shared
+        // default-config session). Invalidate so it doesn't leak.
         let session = GlobalProxySettings.makeSession(base: config)
+        defer { session.finishTasksAndInvalidate() }
 
         let (data, response) = try await session.data(for: request)
 
@@ -3473,7 +3476,7 @@ extension RemoteProviderService {
 
             let request = modelDiscoveryRequest(url: url, headers: headers, timeout: timeout)
 
-            let (data, response) = try await GlobalProxySettings.makeSession().data(for: request)
+            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw RemoteProviderServiceError.invalidResponse

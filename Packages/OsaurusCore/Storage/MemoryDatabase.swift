@@ -29,6 +29,7 @@ public enum MemoryDatabaseError: Error, LocalizedError {
     case failedToExecute(String)
     case failedToPrepare(String)
     case migrationFailed(String)
+    case databaseFromNewerVersion(found: Int, expected: Int)
     case notOpen
 
     public var errorDescription: String? {
@@ -37,6 +38,9 @@ public enum MemoryDatabaseError: Error, LocalizedError {
         case .failedToExecute(let msg): return "Failed to execute query: \(msg)"
         case .failedToPrepare(let msg): return "Failed to prepare statement: \(msg)"
         case .migrationFailed(let msg): return "Memory migration failed: \(msg)"
+        case .databaseFromNewerVersion(let found, let expected):
+            return
+                "Memory database is schema v\(found) but this build supports up to v\(expected). Refusing to open to avoid forward-version corruption."
         case .notOpen: return "Memory database is not open"
         }
     }
@@ -150,16 +154,47 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     // MARK: - Schema & Migrations
 
+    /// Highest schema version this build knows how to produce. Opening a DB
+    /// stamped newer than this is refused (forward-version fail-fast).
+    private static let latestSchemaVersion = 7
+
     private func runMigrations() throws {
         let currentVersion = try getSchemaVersion()
+        // Refuse a database written by a newer build: reading its rows under
+        // the older schema would silently corrupt forward-version data.
+        if currentVersion > Self.latestSchemaVersion {
+            throw MemoryDatabaseError.databaseFromNewerVersion(
+                found: currentVersion,
+                expected: Self.latestSchemaVersion
+            )
+        }
+        // Each step is atomic (BEGIN/COMMIT). A failure mid-migration rolls
+        // back to the prior version instead of leaving a half-applied schema;
+        // the `setSchemaVersion` bump commits with the step.
         if currentVersion < 5 {
-            try migrateToV5(from: currentVersion)
+            try runMigrationStep(5) { try self.migrateToV5(from: currentVersion) }
         }
         if currentVersion < 6 {
-            try migrateToV6()
+            try runMigrationStep(6, migrateToV6)
         }
         if currentVersion < 7 {
+            // `migrateToV7` owns its own BEGIN/COMMIT (table rebuild), so it
+            // must NOT be double-wrapped — a nested BEGIN traps SQLite.
             try migrateToV7()
+        }
+    }
+
+    /// Run one migration body atomically. Called only from `runMigrations`,
+    /// which already holds the database queue, so it uses raw
+    /// `BEGIN/COMMIT/ROLLBACK` (no nested `queue.sync`).
+    private func runMigrationStep(_ version: Int, _ body: () throws -> Void) throws {
+        try executeRaw("BEGIN TRANSACTION")
+        do {
+            try body()
+            try executeRaw("COMMIT")
+        } catch {
+            try? executeRaw("ROLLBACK")
+            throw MemoryDatabaseError.migrationFailed("v\(version): \(error.localizedDescription)")
         }
     }
 
@@ -1131,6 +1166,47 @@ public final class MemoryDatabase: @unchecked Sendable {
             }
         )
         return evicted
+    }
+
+    /// Eviction variant that returns the `(id, agentId)` of every row it
+    /// deletes, so the caller can drop the matching Vectura embeddings and
+    /// keep the SQL store and the vector index consistent. Without this the
+    /// pinned-fact vectors outlive their SQL rows and keep surfacing in
+    /// `searchPinnedFacts` until the next full `rebuildIndex()`.
+    public func evictPinnedFactsReturningKeys(
+        belowSalience floor: Double,
+        idleDays: Int
+    ) throws -> [(id: String, agentId: String)] {
+        var keys: [(id: String, agentId: String)] = []
+        try prepareAndExecute(
+            """
+            SELECT id, agent_id FROM pinned_facts
+            WHERE status = 'active'
+              AND salience < ?1
+              AND last_used <= datetime('now', '-' || ?2 || ' days')
+            """,
+            bind: { stmt in
+                sqlite3_bind_double(stmt, 1, floor)
+                sqlite3_bind_int(stmt, 2, Int32(max(0, idleDays)))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    guard let idC = sqlite3_column_text(stmt, 0) else { continue }
+                    let id = String(cString: idC)
+                    let agentId = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
+                    if !id.isEmpty { keys.append((id: id, agentId: agentId)) }
+                }
+            }
+        )
+        guard !keys.isEmpty else { return [] }
+        let ids = keys.map { $0.id }
+        let placeholders = ids.enumerated().map { "?\($0.offset + 1)" }.joined(separator: ",")
+        _ = try executeUpdate("DELETE FROM pinned_facts WHERE id IN (\(placeholders))") { stmt in
+            for (i, id) in ids.enumerated() {
+                Self.bindText(stmt, index: Int32(i + 1), value: id)
+            }
+        }
+        return keys
     }
 
     public func loadPinnedFacts(

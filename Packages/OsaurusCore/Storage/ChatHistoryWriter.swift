@@ -53,6 +53,15 @@ enum ChatHistoryWriter {
     ) {
         let conversational = finalMessages.filter { $0.role != "system" }
         guard !conversational.isEmpty else { return }
+        // Close the launch prewarm race: an early write (first request after
+        // launch) can arrive before the detached key prewarm warms the cache.
+        // This runs on a background request executor — not the launch-critical
+        // path — so loading the key now is safe, and it prevents silently
+        // dropping the write. Only the genuine "key can't be unlocked" case
+        // falls through to the skip below.
+        if !StorageKeyManager.shared.hasCachedKey {
+            try? StorageKeyManager.shared.prewarmCurrentKey()
+        }
         guard StorageKeyManager.shared.hasCachedKey else {
             print("[ChatHistoryWriter] Skipping chat history persistence: storage key is not already unlocked")
             return

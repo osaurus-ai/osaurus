@@ -1025,12 +1025,6 @@ struct MLXBatchAdapter {
 
         let (outStream, continuation) = AsyncStream<Generation>.makeStream()
         let producerTask = Task<Void, Never> {
-            defer {
-                continuation.finish()
-                if let soloLease {
-                    Task { await soloLease.release() }
-                }
-            }
             await withTaskCancellationHandler {
                 for await event in upstream {
                     if case .info = event {
@@ -1048,6 +1042,18 @@ struct MLXBatchAdapter {
                 // and finishes the stream). Do not finish the wrapper from
                 // here; the operation body gets the chance to drain and
                 // forward that terminal `.info` event first.
+            }
+            // The upstream loop has fully drained (success or cancellation).
+            // Finish the wrapper and release the solo lease *inline* —
+            // `await`ed, not in a detached `Task` — so the lease is provably
+            // released before this producer task completes. The old
+            // `defer { Task { await soloLease.release() } }` released on an
+            // unordered future hop, leaving a window where the next same-model
+            // request could enter `prepareInput` while this one's Metal
+            // cache-store was still materializing.
+            continuation.finish()
+            if let soloLease {
+                await soloLease.release()
             }
         }
 

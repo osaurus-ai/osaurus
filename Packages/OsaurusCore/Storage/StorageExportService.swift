@@ -178,7 +178,16 @@ public actor StorageExportService {
         await MainActor.run { StorageMutationGate.shared.endMutating() }
 
         switch result {
-        case .success(let key): return key
+        case .success(let key):
+            // The SQLCipher `PRAGMA rekey` + OSec rewrap above cover the
+            // encrypted databases and key-wrapped files, but NOT the
+            // VecturaKit vector indexes under `memory/vectura/`. After a
+            // rekey those are stale and a plaintext-at-rest gap, so discard
+            // and rebuild them from the now-rekeyed SQLite source of truth.
+            // Done after `endMutating()` so the rebuild's DB-open path isn't
+            // parked on the mutation gate.
+            await MemorySearchService.shared.resetAndRebuildAfterKeyRotation()
+            return key
         case .failure(let error): throw error
         }
     }

@@ -309,6 +309,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // `EncryptedSQLiteOpener`; each `*Database.shared.open()` only parks
         // on `StorageMutationGate` while a key rotation is in flight.
         let embeddingInitTask = Task.detached(priority: .utility) {
+            // Await the key prewarm before the cache gate so storage-dependent
+            // init isn't skipped purely because the (separately dispatched)
+            // launch prewarm hasn't landed yet. Uses the off-cooperative
+            // variant so it never pins a Swift cooperative thread inside the
+            // synchronous Keychain read, and stays off the launch-critical
+            // main-actor path. Idempotent with the prewarm above.
+            try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
             guard StorageKeyManager.shared.hasCachedKey else {
                 MemoryLogger.database.error(
                     "Storage-dependent search/index services disabled — storage key is not already unlocked"
@@ -332,12 +339,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 await MemorySearchService.shared.initialize()
             } else {
                 MemoryLogger.database.error("Memory system disabled — database failed to open after 3 attempts")
+                PersistenceHealth.shared.recordDatabaseOpenFailure(
+                    subsystem: "memory",
+                    error: MemoryDatabaseError.failedToOpen("open failed after 3 attempts")
+                )
             }
 
-            try? MethodDatabase.shared.open()
+            do {
+                try MethodDatabase.shared.open()
+            } catch {
+                PersistenceHealth.shared.recordDatabaseOpenFailure(subsystem: "method", error: error)
+            }
             await MethodSearchService.shared.initialize()
 
-            try? ToolDatabase.shared.open()
+            do {
+                try ToolDatabase.shared.open()
+            } catch {
+                PersistenceHealth.shared.recordDatabaseOpenFailure(subsystem: "tool", error: error)
+            }
             await ToolSearchService.shared.initialize()
 
             await SkillSearchService.shared.initialize()

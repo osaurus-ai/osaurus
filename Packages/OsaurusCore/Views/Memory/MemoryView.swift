@@ -522,6 +522,10 @@ struct MemoryView: View {
                                 onDelete: { factId in
                                     try? MemoryDatabase.shared.deletePinnedFact(id: factId)
                                     defaultAgentPinned.removeAll { $0.id == factId }
+                                    // Drop the vector too (SQL<->vector consistency);
+                                    // nil scope sweeps every bucket so the embedding
+                                    // can't outlive its SQL row.
+                                    Task { await MemorySearchService.shared.removeDocument(id: factId) }
                                 }
                             )
                             .frame(maxHeight: 400)

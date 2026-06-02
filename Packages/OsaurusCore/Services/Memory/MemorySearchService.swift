@@ -102,6 +102,25 @@ public actor MemorySearchService {
         pendingReconcileTask = nil
     }
 
+    /// Drop all in-memory vector state for a deleted agent so its VecturaKit
+    /// instance (and the lazily-built reverse maps) don't linger for the
+    /// process lifetime. Without this, `vectorDBs` grew one never-released
+    /// instance per agent ever touched. The on-disk index is removed
+    /// separately by the agent-memory delete path. Safe to call for an agent
+    /// that was never indexed (no-op).
+    public func evictAgent(agentId: String) async {
+        let bucket = Self.bucketKey(for: agentId)
+        // Never evict the shared/global bucket on a per-agent delete.
+        guard bucket != Self.sharedAgentBucket else { return }
+        vectorDBs.removeValue(forKey: bucket)
+        // The reverse maps are keyed by vector UUID (not agent-scoped), so we
+        // can't cheaply drop only this agent's entries. Clear them wholesale;
+        // they're caches that rebuild lazily on next index/search, and this
+        // prevents a stale uuid→key pair from outliving the deleted agent.
+        episodeKeyMap.removeAll(keepingCapacity: false)
+        transcriptKeyMap.removeAll(keepingCapacity: false)
+    }
+
     private static let sharedAgentBucket = ""
 
     private static func bucketKey(for agentId: String?) -> String {
@@ -455,6 +474,26 @@ public actor MemorySearchService {
         try? FileManager.default.removeItem(at: base)
         vectorDBs.removeAll()
         isInitialized = false
+    }
+
+    /// Discard the on-disk vector index and regenerate it from the
+    /// SQLite source of truth. Invoked after a storage key rotation:
+    /// VecturaKit indexes under `memory/vectura/` are not covered by
+    /// the SQLCipher `PRAGMA rekey` / OSec rewrap pass, so after a
+    /// rekey they're both stale (point at pre-rotation state) and a
+    /// plaintext-at-rest gap. Deleting + rebuilding keeps the vectors
+    /// consistent with — and as protected as — the rekeyed databases.
+    ///
+    /// Preserves the opt-in contract: if vector search was never
+    /// initialized for this process we still wipe stale plaintext
+    /// leftovers via `clearIndex()` but do not force-initialize a new
+    /// index (it rebuilds lazily on first use).
+    public func resetAndRebuildAfterKeyRotation() async {
+        let wasInitialized = isInitialized
+        await clearIndex()
+        guard wasInitialized else { return }
+        await initialize()
+        await rebuildIndex()
     }
 
     /// Stream-rebuild every per-agent index from the (encrypted)

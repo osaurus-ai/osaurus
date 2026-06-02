@@ -116,6 +116,20 @@ public actor ModelRuntime {
     private var loadingTasks: [String: LoadingTaskRecord] = [:]
     private var supersededLoadingTaskIDs = Set<UInt64>()
     private var nextLoadingTaskID: UInt64 = 0
+
+    /// On-disk weight bytes reserved by loads that are past the pre-load gate
+    /// but not yet resident in `modelCache`, keyed by model name. The
+    /// coordination loop in `loadContainer` only serializes loads that have
+    /// already registered a `loadingTasks` record — but the expensive pre-load
+    /// awaits (`ensureComplete`, JANGTQ sidecar, flexible-budget eviction) run
+    /// BEFORE registration. Two cold loads of different models can therefore
+    /// both clear the `while` loop, suspend on those awaits, and reach
+    /// `checkRAMFeasibility` each seeing only `modelCache` (blind to the other
+    /// in-flight materialization) → double the unified-memory footprint → OOM.
+    /// Recording the reservation the instant the weight size is known — and
+    /// counting it in the feasibility gate — closes that window without a
+    /// global cold-load lock.
+    private var inflightLoadWeights: [String: Int64] = [:]
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
 
@@ -651,8 +665,12 @@ public actor ModelRuntime {
         guard physical > 0, incomingWeightsBytes > 0 else { return }
 
         let resident = residentWeightBytes(excluding: excludedName)
+        // Other cold loads already past the gate but not yet resident. Without
+        // this, two concurrent loads of different models each see only the
+        // (empty) cache and both pass, doubling the real footprint.
+        let inflightOther = inflightLoadWeightBytes(excluding: excludedName)
         let kvHeadroom = Self.estimatedKVHeadroomBytes(forWeights: incomingWeightsBytes)
-        let projected = resident + incomingWeightsBytes + kvHeadroom
+        let projected = resident + inflightOther + incomingWeightsBytes + kvHeadroom
         let softLimit = Int64(Double(physical) * Self.ramSoftThreshold)
         let hardLimit = Int64(Double(physical) * Self.ramHardThreshold)
 
@@ -706,6 +724,16 @@ public actor ModelRuntime {
         modelCache.reduce(Int64(0)) { total, entry in
             if entry.key == excludedName { return total }
             return total + entry.value.weightsSizeBytes
+        }
+    }
+
+    /// Weight bytes reserved by loads in flight (past the pre-load gate, not
+    /// yet resident). Counted by `checkRAMFeasibility` so a concurrent cold
+    /// load of a *different* model is visible to the gate.
+    private func inflightLoadWeightBytes(excluding excludedName: String? = nil) -> Int64 {
+        inflightLoadWeights.reduce(Int64(0)) { total, entry in
+            if entry.key == excludedName { return total }
+            return total + entry.value
         }
     }
 
@@ -828,7 +856,26 @@ public actor ModelRuntime {
         )
 
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
-        await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
+        let completeVerified = await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
+        if !completeVerified {
+            // `ensureComplete` returns false when the remote file list couldn't
+            // be fetched (offline / HF down) or a missing-file fetch failed. A
+            // complete local bundle is still loadable offline, so this is a
+            // warning, not a hard failure — the shard-manifest verification
+            // below is the authoritative local-integrity gate.
+            genLog.warning(
+                "loadContainer: ensureComplete could not verify remote completeness model=\(name, privacy: .public) — proceeding on local files; will manifest-verify shards"
+            )
+        }
+        try Task.checkCancellation()
+
+        // Manifest-verify ALL weight shards. `MLXModel.isDownloaded` only
+        // requires *one* `*.safetensors` file, so a partially-downloaded
+        // sharded bundle (one shard present, the rest missing) passes the UI
+        // gate but makes vmlx abort() the whole process on the first forward
+        // pass when it can't find a referenced tensor. Fail loud here with a
+        // clear error and keep the server up.
+        try Self.verifyShardManifest(at: localURL, name: name)
         try Task.checkCancellation()
 
         // Preflight: JANGTQ/TurboQuant variants need a `jangtq_runtime.safetensors`
@@ -851,6 +898,17 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public)"
         )
+
+        // Reserve this load's footprint the instant it's known, BEFORE the
+        // feasibility gate and the task registration below, so a concurrent
+        // cold load of a different model that is also past the coordination
+        // loop sees it. Cleared on every exit path (refuse, cancel, success)
+        // — by the time the success path returns, the model is already
+        // resident in `modelCache`, so dropping the reservation can't
+        // momentarily under-count.
+        inflightLoadWeights[name] = weightsBytes
+        defer { inflightLoadWeights.removeValue(forKey: name) }
+
         try Task.checkCancellation()
 
         if policy == .manualMultiModel {
@@ -2456,6 +2514,60 @@ public actor ModelRuntime {
         return total
     }
 
+    /// Verify every weight shard referenced by a `*.safetensors.index.json`
+    /// manifest is present on disk before load. Sharded bundles list each
+    /// tensor's owning file in the manifest's `weight_map`; if any referenced
+    /// shard is missing, vmlx aborts the process on the first forward pass.
+    /// Single-file bundles (no manifest) are a no-op here — the one-file
+    /// `isDownloaded` check already covers them.
+    static func verifyShardManifest(at directory: URL, name: String) throws {
+        let fm = FileManager.default
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        else { return }
+
+        let indexFiles = entries.filter {
+            $0.lastPathComponent.hasSuffix(".safetensors.index.json")
+        }
+        // No manifest → not a sharded bundle; nothing to cross-check.
+        guard let indexURL = indexFiles.first else { return }
+
+        guard
+            let data = try? Data(contentsOf: indexURL),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let weightMap = obj["weight_map"] as? [String: String]
+        else {
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Model \(name) has an unreadable shard manifest (\(indexURL.lastPathComponent)). Re-download to repair."
+                ]
+            )
+        }
+
+        let referencedShards = Set(weightMap.values)
+        let missing = referencedShards.sorted().filter {
+            !fm.fileExists(atPath: directory.appendingPathComponent($0).path)
+        }
+        guard missing.isEmpty else {
+            let sample = missing.prefix(3).joined(separator: ", ")
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 4,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Model \(name) is incomplete: \(missing.count) of \(referencedShards.count) weight shard(s) missing (e.g. \(sample)). Re-download to repair."
+                ]
+            )
+        }
+    }
+
     private static func findLocalDirectory(forModelId id: String) -> URL? {
         return resolveLocalModelDirectory(forModelId: id, in: DirectoryPickerService.effectiveModelsDirectory())
     }
@@ -2838,7 +2950,7 @@ public actor ModelRuntime {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 60
-        let (tempURL, response) = try await GlobalProxySettings.makeSession().download(for: request)
+        let (tempURL, response) = try await GlobalProxySettings.sharedSession().download(for: request)
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
