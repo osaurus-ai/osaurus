@@ -702,6 +702,40 @@ extension AgentManager {
         return agent.settings.dbEnabled
     }
 
+    /// Whether the `render_chart` built-in tool is exposed to the model
+    /// for an agent. Default off and hard-wired off for the default agent
+    /// (which is restricted to its fixed 8-tool baseline).
+    public func effectiveRenderChartEnabled(for agentId: UUID) -> Bool {
+        guard let agent = agent(for: agentId) else { return false }
+        if agent.id == Agent.defaultId { return false }
+        return agent.settings.renderChartEnabled
+    }
+
+    /// Whether the `speak` (voice output) tool is exposed to the model.
+    public func effectiveSpeakEnabled(for agentId: UUID) -> Bool {
+        guard let agent = agent(for: agentId) else { return false }
+        if agent.id == Agent.defaultId { return false }
+        return agent.settings.speakEnabled
+    }
+
+    /// Whether the `search_memory` recall tool is exposed to the model.
+    /// Independent of memory disable, which gates injection + recording.
+    public func effectiveSearchMemoryEnabled(for agentId: UUID) -> Bool {
+        guard let agent = agent(for: agentId) else { return false }
+        if agent.id == Agent.defaultId { return false }
+        return agent.settings.searchMemoryEnabled
+    }
+
+    /// Whether the self-scheduling tools (`schedule_next_run` /
+    /// `cancel_next_run` / `notify`) are exposed to the model. Default off and
+    /// decoupled from the schedule-mode picker (which only sets host-enforced
+    /// bounds). The default agent never self-schedules.
+    public func effectiveSelfSchedulingEnabled(for agentId: UUID) -> Bool {
+        guard let agent = agent(for: agentId) else { return false }
+        if agent.id == Agent.defaultId { return false }
+        return agent.settings.selfSchedulingEnabled
+    }
+
     /// Whether memory is disabled for an agent.
     /// Default agent defers to global `MemoryConfiguration.enabled` (inverted).
     /// Custom agents use their own flag (defaulting to false), OR-ed with global disabled.

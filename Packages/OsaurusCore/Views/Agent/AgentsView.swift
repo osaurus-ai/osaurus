@@ -907,6 +907,14 @@ struct AgentDetailView: View {
     /// Features section binds a toggle to this; `debouncedSave`
     /// folds it back into the persisted `AgentSettings` block.
     @State private var dbEnabled: Bool = false
+    /// Local mirrors of the per-agent built-in tool gates
+    /// (`render_chart` / `speak` / `search_memory`). The Features
+    /// section binds individual toggles to these; `saveAgent` folds
+    /// them back into the persisted `AgentSettings` block.
+    @State private var renderChartEnabled: Bool = false
+    @State private var speakEnabled: Bool = false
+    @State private var searchMemoryEnabled: Bool = false
+    @State private var selfSchedulingEnabled: Bool = false
     /// Per-agent on/off for the chat empty-state generative greeting.
     /// `nil` resolves to "auto" — the feature runs whenever a Core Model
     /// is configured. Values flow through `loadAgent` / `saveAgent`
@@ -1150,12 +1158,14 @@ struct AgentDetailView: View {
             detailHeaderBar
 
             // Next Run panel (spec §9.4) sits above the tab strip for any
-            // user-created agent. The panel renders one of three banner
-            // shapes — paused, scheduled, or idle — and is the only place
-            // Pause/Resume is reachable at-a-glance. The mode picker
-            // itself moved into the Configure tab; a read-only mode chip
-            // here links back to it.
-            if agent.id != Agent.defaultId {
+            // user-created agent that has self-scheduling switched on. The
+            // panel renders one of three banner shapes — paused, scheduled,
+            // or idle — and is the only place Pause/Resume is reachable
+            // at-a-glance. The mode picker itself moved into the Configure
+            // tab; a read-only mode chip here links back to it. With
+            // self-scheduling off the agent never manages a next-run slot,
+            // so the whole panel is hidden.
+            if agent.id != Agent.defaultId, selfSchedulingEnabled {
                 NextRunPanelView(agentId: agent.id)
                     .environment(\.theme, theme)
             }
@@ -1215,6 +1225,26 @@ struct AgentDetailView: View {
                 DetailTab.dbTabs.contains(dt)
             {
                 selectedTab = .builtIn(.configure)
+            }
+        }
+        .onChange(of: selfSchedulingEnabled) { _, newValue in
+            // The master Self-scheduling switch owns the on/off state, so the
+            // mode picker only offers the "how often" presets (Ambient /
+            // Reactive / Project) — the legacy `.manual` ("off") card is gone.
+            if newValue {
+                // If the feature is switched on while the persisted mode is
+                // still `.manual`, promote it to `.ambient` so a real preset
+                // is selected and the agent runs within sensible bounds.
+                if currentAgent.settings.schedule.mode == .manual {
+                    selectScheduleMode(.ambient)
+                }
+            } else {
+                // Switching the feature off cancels any pending next-run so a
+                // self-scheduled wake-up doesn't fire after the user has
+                // opted out. The Next Run banner (and its Cancel button) is
+                // hidden in this state, so we clear the slot here rather than
+                // leaving an orphaned run the user can no longer see.
+                try? LocalAgentBridge.shared.cancelNextRun(agentId: agent.id)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
@@ -1918,9 +1948,20 @@ struct AgentDetailView: View {
         voiceSection
         systemPromptSection
         defaultModelSection
-        if agent.id != Agent.defaultId {
+        // The schedule-mode picker is configuration for the self-scheduling
+        // feature, so it only appears once that capability is switched on
+        // (the master toggle lives in the Features section below). With it
+        // off the agent has no scheduler tools, so the bounds picker would
+        // be dead UI.
+        if agent.id != Agent.defaultId, selfSchedulingEnabled {
             scheduleSection
         }
+        // Feature toggles are always visible (not tucked behind the Advanced
+        // disclosure) so the per-agent capability surface — model access,
+        // output, memory, autonomy, data, and code execution — is
+        // discoverable at a glance. The Advanced Settings disclosure sits at
+        // the very bottom.
+        featuresSection
         advancedSettingsDisclosure
     }
 
@@ -2042,7 +2083,6 @@ struct AgentDetailView: View {
             if showAdvancedSettings {
                 VStack(alignment: .leading, spacing: 16) {
                     generationOverridesSection
-                    disableTogglesSection
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -2050,13 +2090,12 @@ struct AgentDetailView: View {
     }
 
     /// Tiny one-line summary shown next to "Advanced Settings" so users can see at
-    /// a glance whether anything in there is overridden. Quick Actions and Theme
-    /// moved to the Customization tab and are no longer reachable from here.
+    /// a glance whether anything in there is overridden. The feature toggles now
+    /// live in the always-visible Features section, so only generation overrides
+    /// remain behind this disclosure.
     private var advancedSummary: String {
         var parts: [String] = []
         if !temperature.isEmpty || !maxTokens.isEmpty { parts.append("generation") }
-        if disableTools { parts.append("tools off") }
-        if disableMemory { parts.append("memory off") }
         return parts.isEmpty ? L("Defaults") : parts.joined(separator: " · ")
     }
 
@@ -2538,11 +2577,13 @@ struct AgentDetailView: View {
 
     // MARK: - Scheduling
 
-    /// Schedule-mode picker. Lives in Configure (not the top banner)
-    /// so each option can carry its own description of what it actually
-    /// changes — picking a mode rewrites the agent's `schedule`
-    /// preset via `AgentScheduleSettings.defaults(for:)`. The read-only
-    /// chip in the Next Run banner deep-links here.
+    /// Schedule-mode picker. Only shown when self-scheduling is enabled
+    /// (the master toggle gates this section), so it offers just the
+    /// "how often" presets — the legacy `.manual` ("off") card is omitted
+    /// because the toggle now owns the on/off state. Picking a mode
+    /// rewrites the agent's `schedule` preset via
+    /// `AgentScheduleSettings.defaults(for:)`. The read-only chip in the
+    /// Next Run banner deep-links here.
     private var scheduleSection: some View {
         AgentDetailSection(title: "Scheduling", icon: "calendar.badge.clock") {
             VStack(alignment: .leading, spacing: 10) {
@@ -2555,13 +2596,20 @@ struct AgentDetailView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
                 VStack(spacing: 8) {
-                    ForEach(AgentScheduleMode.allCases, id: \.self) { mode in
+                    ForEach(Self.selectableScheduleModes, id: \.self) { mode in
                         scheduleModeCard(mode: mode)
                     }
                 }
             }
         }
     }
+
+    /// Schedule presets surfaced in the picker. Excludes `.manual` — the
+    /// Self-scheduling master toggle owns the on/off state now, so a
+    /// "Self-scheduling off" card inside an enabled section would be
+    /// contradictory.
+    private static let selectableScheduleModes: [AgentScheduleMode] =
+        AgentScheduleMode.allCases.filter { $0 != .manual }
 
     /// One radio-card in the schedule-mode list. Filled circle when
     /// selected; the body lays out title + tagline + concrete preset
@@ -2621,11 +2669,10 @@ struct AgentDetailView: View {
     private func selectScheduleMode(_ newMode: AgentScheduleMode) {
         guard var current = agentManager.agent(for: agent.id) else { return }
         guard current.settings.schedule.mode != newMode else { return }
-        current.settings = AgentSettings(
-            dbEnabled: current.settings.dbEnabled,
-            schedule: AgentScheduleSettings.defaults(for: newMode),
-            limits: current.settings.limits
-        )
+        // Mutate only the schedule preset so every other opt-in
+        // (DB, generative greetings, persona, the built-in tool gates)
+        // is preserved across a mode change.
+        current.settings.schedule = AgentScheduleSettings.defaults(for: newMode)
         current.updatedAt = Date()
         agentManager.update(current)
         showSaveIndicator()
@@ -2722,22 +2769,104 @@ struct AgentDetailView: View {
         )
     }
 
-    // MARK: - Tool Selection
+    // MARK: - Features
 
-    private var disableTogglesSection: some View {
-        AgentDetailSection(title: "Features", icon: "switch.2") {
-            VStack(alignment: .leading, spacing: 10) {
-                featureToggleRow(
-                    title: "Disable Tools",
-                    subtitle: "No tools or pre-flight context will be sent to the model.",
-                    isOn: $disableTools
-                )
-                featureToggleRow(
-                    title: "Disable Memory",
-                    subtitle: "Memory will not be injected into prompts or recorded.",
-                    isOn: $disableMemory
-                )
-                databaseFeatureRow
+    /// Positive-polarity view of the stored `disableTools` flag so the
+    /// toggle reads the same direction as every other opt-in (ON = the
+    /// agent can use tools). `featureToggleRow` owns the debounced save.
+    private var toolsEnabledBinding: Binding<Bool> {
+        Binding(get: { !disableTools }, set: { disableTools = !$0 })
+    }
+
+    /// Positive-polarity view of the stored `disableMemory` flag (ON =
+    /// memory is injected and recorded).
+    private var memoryEnabledBinding: Binding<Bool> {
+        Binding(get: { !disableMemory }, set: { disableMemory = !$0 })
+    }
+
+    private var featuresSection: some View {
+        let isCustomAgent = agent.id != Agent.defaultId
+        return AgentDetailSection(
+            title: "Features",
+            icon: "switch.2",
+            subtitle: "Control what this agent can do. Extra capabilities are off by default to keep it lean."
+        ) {
+            VStack(alignment: .leading, spacing: 18) {
+                featureGroup(
+                    "Model Access",
+                    description: "What the model can draw on by default."
+                ) {
+                    featureToggleRow(
+                        title: "Tools",
+                        subtitle:
+                            "Let the agent use tools to take actions and look things up. Turn off for a chat-only agent.",
+                        isOn: toolsEnabledBinding
+                    )
+                    featureToggleRow(
+                        title: "Memory",
+                        subtitle: "Pull relevant memories into prompts and save new ones as you chat.",
+                        isOn: memoryEnabledBinding
+                    )
+                }
+
+                // Custom-agent-only groups. The default agent is locked to
+                // its fixed baseline (DB hard-off, no sandbox), so these
+                // would be dead UI for it.
+                if isCustomAgent {
+                    featureGroup(
+                        "Output",
+                        description: "Extra ways the agent can present results."
+                    ) {
+                        featureToggleRow(
+                            title: "Charts",
+                            subtitle: "Render data as inline chart cards.",
+                            isOn: $renderChartEnabled
+                        )
+                        featureToggleRow(
+                            title: "Voice",
+                            subtitle: "Speak responses aloud when you ask.",
+                            isOn: $speakEnabled
+                        )
+                    }
+
+                    featureGroup(
+                        "Memory & Recall",
+                        description: "Active lookups into the agent's memory."
+                    ) {
+                        featureToggleRow(
+                            title: "Memory Recall",
+                            subtitle:
+                                "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
+                            isOn: $searchMemoryEnabled
+                        )
+                    }
+
+                    featureGroup(
+                        "Autonomy",
+                        description: "Let the agent act between your messages."
+                    ) {
+                        featureToggleRow(
+                            title: "Self-scheduling",
+                            subtitle:
+                                "Let the agent schedule its own follow-up runs and send you notifications. Turn on to choose how often it can run.",
+                            isOn: $selfSchedulingEnabled
+                        )
+                    }
+
+                    featureGroup(
+                        "Data",
+                        description: "Durable storage for this agent."
+                    ) {
+                        databaseFeatureRow
+                    }
+
+                    featureGroup(
+                        "Code Execution",
+                        description: "Run code and commands in an isolated sandbox."
+                    ) {
+                        sandboxExecSubsection
+                    }
+                }
             }
         }
     }
@@ -2751,9 +2880,9 @@ struct AgentDetailView: View {
     private var databaseFeatureRow: some View {
         VStack(alignment: .leading, spacing: 8) {
             featureToggleRow(
-                title: "Enable Database",
+                title: "Database",
                 subtitle:
-                    "Give this agent a private encrypted SQLite database to remember structured data across runs.",
+                    "Give this agent a private encrypted database to remember structured data across runs.",
                 isOn: $dbEnabled
             )
             if dbEnabled, isUsingRemoteProvider {
@@ -3115,10 +3244,32 @@ struct AgentDetailView: View {
         LocalAgentBridge.shared.forget(agentId: agentId)
     }
 
+    /// Binding-backed feature toggle row. Thin wrapper over `featureCard`
+    /// that writes the binding and triggers the debounced agent save. Used
+    /// for every per-agent `AgentSettings` flag in the Features section.
     private func featureToggleRow(title: LocalizedStringKey, subtitle: LocalizedStringKey, isOn: Binding<Bool>)
         -> some View
     {
-        HStack {
+        featureCard(title: title, subtitle: subtitle, isOn: isOn.wrappedValue) { newValue in
+            isOn.wrappedValue = newValue
+            debouncedSave()
+        }
+    }
+
+    /// The single, canonical toggle-row visual for the Features section.
+    /// Every row — model access, capability gates, data, and code execution —
+    /// renders through this so they share identical padding, card chrome,
+    /// and accent-tinted switch. `interactive: false` dims and disables the
+    /// switch (sandbox rows use it when the container isn't running) while
+    /// keeping the copy readable. Subtitles wrap instead of truncating.
+    private func featureCard(
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey,
+        isOn: Bool,
+        interactive: Bool = true,
+        onChange: @escaping (Bool) -> Void
+    ) -> some View {
+        HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title, bundle: .module)
                     .font(.system(size: 12, weight: .medium))
@@ -3126,12 +3277,13 @@ struct AgentDetailView: View {
                 Text(subtitle, bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            Toggle("", isOn: isOn)
+            Spacer(minLength: 12)
+            Toggle("", isOn: Binding(get: { isOn }, set: onChange))
                 .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                 .labelsHidden()
-                .onChange(of: isOn.wrappedValue) { debouncedSave() }
+                .disabled(!interactive)
         }
         .padding(10)
         .background(
@@ -3142,6 +3294,33 @@ struct AgentDetailView: View {
                         .stroke(theme.inputBorder, lineWidth: 1)
                 )
         )
+        .opacity(interactive ? 1 : 0.55)
+    }
+
+    /// Labeled subgroup inside the Features section. Renders a small caps
+    /// header (and an optional one-line description) above its rows so the
+    /// section reads as distinct, self-explaining groups (Model Access /
+    /// Output / Memory & Recall / Autonomy / Data / Code Execution) rather
+    /// than one long undifferentiated toggle list.
+    @ViewBuilder
+    private func featureGroup<Content: View>(
+        _ label: LocalizedStringKey,
+        description: LocalizedStringKey? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                AgentSheetSectionLabel(label)
+                if let description {
+                    Text(description, bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.leading, 2)
+            content()
+        }
     }
 
     // MARK: - Plugin Tab Content
@@ -3675,7 +3854,6 @@ struct AgentDetailView: View {
     private var sandboxSection: some View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
         let sandboxRunning = SandboxManager.State.shared.status == .running
-        let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
 
         let subtitle: String = {
             if sandboxRunning { return "Running" }
@@ -3698,12 +3876,11 @@ struct AgentDetailView: View {
                         icon: "shippingbox",
                         title: "Sandbox not running",
                         hint:
-                            "Start the sandbox container from the Sandbox status bar to enable autonomous execution and plugin creation."
+                            "Start the sandbox container from the Sandbox status bar, then enable autonomous execution and plugin creation under Configure → Features."
                     )
                     secretsSubsection
                 } else {
                     workspaceFolderRow
-                    sandboxExecToggles(execConfig: execConfig)
                     secretsSubsection
                 }
             }
@@ -3767,67 +3944,92 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Sandbox execution toggles, surfaced inside the Configure tab's
+    /// Features section via the shared `featureCard` visual so they match
+    /// the rest of the section. `interactive` is false when the sandbox is
+    /// unavailable / not running: the rows still render (so the capability
+    /// is discoverable) but the switches are disabled and dimmed, paired
+    /// with an explanatory hint from `sandboxExecSubsection`.
     @ViewBuilder
-    private func sandboxExecToggles(execConfig: AutonomousExecConfig?) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sandboxToggleRow(
-                title: "Autonomous Execution",
-                subtitle: "Allow agent to run arbitrary commands in the sandbox",
-                isOn: execConfig?.enabled ?? false
-            ) { enabled in
-                updateAutonomousExec(from: execConfig) { $0.enabled = enabled }
+    private func sandboxExecToggles(
+        execConfig: AutonomousExecConfig?,
+        interactive: Bool = true
+    ) -> some View {
+        featureCard(
+            title: "Autonomous Execution",
+            subtitle: "Allow the agent to run arbitrary commands in the sandbox.",
+            isOn: execConfig?.enabled ?? false,
+            interactive: interactive
+        ) { enabled in
+            updateAutonomousExec(from: execConfig) { $0.enabled = enabled }
+        }
+
+        if execConfig?.enabled == true {
+            featureCard(
+                title: "Plugin Creation",
+                subtitle: "Let the agent create its own tools as plugins.",
+                isOn: execConfig?.pluginCreate ?? false,
+                interactive: interactive
+            ) { create in
+                updateAutonomousExec(from: execConfig) { $0.pluginCreate = create }
             }
 
-            if execConfig?.enabled == true {
-                sandboxToggleRow(
-                    title: "Plugin Creation",
-                    subtitle: "Agent can create its own tools as plugins",
-                    isOn: execConfig?.pluginCreate ?? false
-                ) { create in
-                    updateAutonomousExec(from: execConfig) { $0.pluginCreate = create }
-                }
+            featureCard(
+                title: "Sandbox Network",
+                subtitle:
+                    "Allow outbound network from the sandbox. Turn off to cut data exfiltration (takes effect on next sandbox start).",
+                isOn: execConfig?.sandboxNetworkEnabled ?? true,
+                interactive: interactive
+            ) { networkOn in
+                updateAutonomousExec(from: execConfig) { $0.sandboxNetworkEnabled = networkOn }
+            }
 
-                sandboxToggleRow(
-                    title: "Sandbox Network",
-                    subtitle:
-                        "Allow outbound network from the sandbox. Turn off to cut data exfiltration (takes effect on next sandbox start).",
-                    isOn: execConfig?.sandboxNetworkEnabled ?? true
-                ) { networkOn in
-                    updateAutonomousExec(from: execConfig) { $0.sandboxNetworkEnabled = networkOn }
-                }
-
-                sandboxToggleRow(
-                    title: "Read Secret Files",
-                    subtitle:
-                        "With a working folder, allow reading .env / keys / credentials. Off by default to keep secrets out of the sandbox.",
-                    isOn: execConfig?.allowHostSecretReads ?? false
-                ) { allow in
-                    updateAutonomousExec(from: execConfig) { $0.allowHostSecretReads = allow }
-                }
+            featureCard(
+                title: "Read Secret Files",
+                subtitle:
+                    "With a working folder, allow reading .env / keys / credentials. Off by default to keep secrets out of the sandbox.",
+                isOn: execConfig?.allowHostSecretReads ?? false,
+                interactive: interactive
+            ) { allow in
+                updateAutonomousExec(from: execConfig) { $0.allowHostSecretReads = allow }
             }
         }
     }
 
-    private func sandboxToggleRow(
-        title: LocalizedStringKey,
-        subtitle: LocalizedStringKey,
-        isOn: Bool,
-        onChange: @escaping (Bool) -> Void
-    ) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title, bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Text(subtitle, bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            Spacer()
-            Toggle("", isOn: Binding(get: { isOn }, set: onChange))
-                .toggleStyle(.switch)
-                .labelsHidden()
+    /// Sandbox execution rows for the Features section. Shows the toggles
+    /// in every sandbox state: dimmed + disabled (with an explanatory hint)
+    /// when the sandbox is unavailable or not running, fully interactive
+    /// once it's running. The section gates this on `isCustomAgent`.
+    @ViewBuilder
+    private var sandboxExecSubsection: some View {
+        let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
+        let sandboxRunning = SandboxManager.State.shared.status == .running
+        let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
+
+        sandboxExecToggles(execConfig: execConfig, interactive: sandboxRunning)
+        if !sandboxAvailable {
+            sandboxFeatureHint("Container-based execution requires macOS 26 or later.")
+        } else if !sandboxRunning {
+            sandboxFeatureHint(
+                "Start the sandbox container from the Sandbox status bar to enable these."
+            )
         }
+    }
+
+    /// Small explanatory line shown under the sandbox toggles when they're
+    /// disabled because the sandbox isn't ready.
+    private func sandboxFeatureHint(_ text: LocalizedStringKey) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            Text(text, bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 2)
     }
 
     private func updateAutonomousExec(
@@ -4682,6 +4884,10 @@ struct AgentDetailView: View {
         disableTools = agent.disableTools ?? false
         disableMemory = agent.disableMemory ?? false
         dbEnabled = agent.settings.dbEnabled
+        renderChartEnabled = agent.settings.renderChartEnabled
+        speakEnabled = agent.settings.speakEnabled
+        searchMemoryEnabled = agent.settings.searchMemoryEnabled
+        selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
         generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled
         // Hydrate the Personality editor with the resolved default
         // (global persona, falling back to built-in) when the agent has
@@ -4883,7 +5089,11 @@ struct AgentDetailView: View {
                         resolvedPersonaDefault
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     return trimmed == inheritedTrimmed ? nil : trimmed
-                }()
+                }(),
+                renderChartEnabled: renderChartEnabled,
+                speakEnabled: speakEnabled,
+                searchMemoryEnabled: searchMemoryEnabled,
+                selfSchedulingEnabled: selfSchedulingEnabled
             )
         )
 

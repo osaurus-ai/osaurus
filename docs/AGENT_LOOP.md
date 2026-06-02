@@ -32,7 +32,7 @@ See [Tool Contract](TOOL_CONTRACT.md) for the canonical success/failure envelope
 
 These live in [`Tools/AgentLoopTools.swift`](../Packages/OsaurusCore/Tools/AgentLoopTools.swift). Each one has a single required field — the smallest schema we can give a small local model and still get the right behavior — but they're called identically by frontier models too. They're registered as global built-ins in [`ToolRegistry`](../Packages/OsaurusCore/Tools/ToolRegistry.swift) so the model sees them in every chat (folder, sandbox, plain Q&A) and the system prompt's "Agent Loop" guidance block reinforces when to call which.
 
-> **Agents get more.** DB-enabled agents also see the `db_*` persistence tools and the `schedule_next_run` / `cancel_next_run` self-scheduling slot — see [Agent DB & Self-Scheduling](AGENT_DB.md).
+> **Agents get more.** DB-enabled agents also see the `db_*` persistence tools, and agents with the per-agent **Self-scheduling** toggle on (default off) see the `schedule_next_run` / `cancel_next_run` / `notify` tools — independent of the schedule-mode picker, which only sets the host-enforced run bounds. See [Agent DB & Self-Scheduling](AGENT_DB.md).
 
 ### `todo` — write or replace the task checklist
 
