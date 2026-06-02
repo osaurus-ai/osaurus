@@ -52,9 +52,15 @@ public func runWithDeadline(
             await work.value
             if claim() { cont.resume(returning: true) }
         }
-        // Deadline racer.
-        Task {
-            try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+        // Deadline racer on a Dispatch timer rather than `Task.sleep`. This
+        // backstops the quit teardown, which can saturate the Swift
+        // cooperative thread pool (many concurrent shutdown awaits) — and a
+        // `Task.sleep`-based deadline would then fire late, exactly when the
+        // bound matters most. A Dispatch timer runs on its own thread, so the
+        // deadline is honored regardless of cooperative-pool pressure.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + max(0, seconds)
+        ) {
             if claim() {
                 work.cancel()
                 cont.resume(returning: false)

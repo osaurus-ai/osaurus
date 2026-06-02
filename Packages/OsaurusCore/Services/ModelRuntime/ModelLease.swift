@@ -34,13 +34,16 @@ public actor ModelLease {
     /// when it drops to zero so `activeNames()` is cheap.
     private var counts: [String: Int] = [:]
 
-    /// A parked `waitForZero` caller. `timeoutTask` (if any) fires the
-    /// timed variant's deadline; it is cancelled the moment the waiter is
-    /// resumed by a release so a drained lease never leaves a timer running.
+    /// A parked `waitForZero` caller. `timeoutItem` (if any) fires the timed
+    /// variant's deadline off a Dispatch queue; it is cancelled the moment the
+    /// waiter is resumed by a release so a drained lease never leaves a timer
+    /// running. A Dispatch timer (rather than `Task.sleep`) is used so the
+    /// deadline fires even when the cooperative pool is saturated by the
+    /// quit-teardown awaits this drain backstops.
     private struct Waiter {
         let id: UInt64
         let continuation: CheckedContinuation<Void, Never>
-        let timeoutTask: Task<Void, Never>?
+        let timeoutItem: DispatchWorkItem?
     }
 
     /// Per-model continuations waiting for the count to reach zero. Keyed by
@@ -102,7 +105,7 @@ public actor ModelLease {
     private func wakeWaiters(for name: String) {
         guard let pending = waiters.removeValue(forKey: name) else { return }
         for waiter in pending {
-            waiter.timeoutTask?.cancel()
+            waiter.timeoutItem?.cancel()
             waiter.continuation.resume()
         }
     }
@@ -141,7 +144,7 @@ public actor ModelLease {
                     continuation.resume()
                 } else {
                     waiters[name, default: []].append(
-                        Waiter(id: id, continuation: continuation, timeoutTask: nil)
+                        Waiter(id: id, continuation: continuation, timeoutItem: nil)
                     )
                 }
             }
@@ -169,15 +172,23 @@ public actor ModelLease {
                 continuation.resume()
                 return
             }
-            let timeoutTask = Task { [weak self] in
-                try? await Task.sleep(
-                    nanoseconds: UInt64(max(0, timeoutSeconds) * 1_000_000_000)
-                )
-                guard !Task.isCancelled else { return }
-                await self?.timeoutWaiter(name: name, id: id)
+            // Fire the deadline from a Dispatch timer instead of `Task.sleep`:
+            // the quit path that uses this drain can saturate the cooperative
+            // pool, and a `Task.sleep` deadline would then wake late, stranding
+            // `clearAll` — the exact hang this bound exists to prevent. The
+            // work item hops back into the actor to remove/resume the waiter;
+            // `timeoutWaiter` is a no-op if a release already drained it, and
+            // `wakeWaiters` cancels this item so the timer never fires post-drain.
+            let timeoutItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                Task { await self.timeoutWaiter(name: name, id: id) }
             }
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                deadline: .now() + max(0, timeoutSeconds),
+                execute: timeoutItem
+            )
             waiters[name, default: []].append(
-                Waiter(id: id, continuation: continuation, timeoutTask: timeoutTask)
+                Waiter(id: id, continuation: continuation, timeoutItem: timeoutItem)
             )
         }
 

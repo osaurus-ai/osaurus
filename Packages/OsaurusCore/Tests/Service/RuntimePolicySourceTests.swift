@@ -1627,7 +1627,11 @@ struct RuntimePolicySourceTests {
                 "if !keychainDisabledTestMode {\n                await MCPProviderManager.shared.connectEnabledProviders()"
             )
         )
-        #expect(appDelegate.contains("if !keychainDisabledTestMode {\n            SandboxToolRegistrar.shared.start()"))
+        #expect(
+            appDelegate.contains(
+                "if !keychainDisabledTestMode && !LaunchGuard.shouldSkip(.sandbox) {\n            SandboxToolRegistrar.shared.start()"
+            )
+        )
         #expect(appDelegate.contains("Headless live-proof launches only need the local HTTP server"))
         #expect(appDelegate.contains("keychainDisabledTestMode && !keychainDisabledUIPresentationMode"))
         #expect(keychainHelper.contains("disablesKeychainForProcess"))
