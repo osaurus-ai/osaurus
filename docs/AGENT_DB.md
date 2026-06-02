@@ -137,6 +137,8 @@ The Data tab also shows a small per-agent **in-flight mutation** badge driven by
 
 ## The Self-Scheduling Slot
 
+> **Opt-in per agent.** Self-scheduling is gated by `Agent.settings.selfSchedulingEnabled` (default **off**), surfaced as the **Self-scheduling** toggle under Configure → Features. When off, [`SystemPromptComposer`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips the `schedule_next_run` / `cancel_next_run` / `notify` tools from the model's tool list, the Scheduling mode picker and the Next Run banner are hidden, and flipping the toggle off cancels any pending slot so an orphaned run can't fire after the user opted out. This flag is **independent of the schedule mode** — the mode only sets the bounds (below), while this flag decides whether the tools exist at all.
+
 Schedules in Osaurus follow a deliberately minimal contract: **one row per agent**, in the `agent_next_run` table of `~/.osaurus/scheduler.sqlite` ([`SchedulerDatabase.swift`](../Packages/OsaurusCore/Storage/SchedulerDatabase.swift)).
 
 ```
@@ -187,7 +189,7 @@ The requested time is **clamped** against the agent's schedule mode before it's 
 
 ## Schedule Modes
 
-The four modes from `AgentScheduleMode` in [`Agent.swift`](../Packages/OsaurusCore/Models/Agent/Agent.swift). Each one is a preset over `AgentScheduleSettings`; `AgentScheduleSettings.defaults(for:)` returns the values below.
+The modes from `AgentScheduleMode` in [`Agent.swift`](../Packages/OsaurusCore/Models/Agent/Agent.swift). Each one is a preset over `AgentScheduleSettings`; `AgentScheduleSettings.defaults(for:)` returns the values below. The mode sets the **bounds** for self-scheduling; whether the agent can self-schedule at all is the separate `selfSchedulingEnabled` toggle described above.
 
 | Mode      | Max horizon | Min interval | Daily cap | Quiet hours | Days |
 | --------- | ----------- | ------------ | --------- | ----------- | ---- |
@@ -196,9 +198,9 @@ The four modes from `AgentScheduleMode` in [`Agent.swift`](../Packages/OsaurusCo
 | Project   | 30 days     | 1 hour       | 4         | 22:00–07:00 | All  |
 | Manual    | 7 days      | 15 minutes   | **0**     | None        | All  |
 
-**Manual is the off-state.** `dailyRunCap = 0` means [`LocalAgentBridge.scheduleNextRun`](../Packages/OsaurusCore/Services/AgentBridge/LocalAgentBridge.swift) rejects agent-initiated slot writes. The user can still schedule a run manually from the Next Run panel — the rejection is for `schedule_next_run` tool calls, not the UI bridge.
+**`Manual` (`dailyRunCap = 0`) is a legacy off-state preset** — [`LocalAgentBridge.scheduleNextRun`](../Packages/OsaurusCore/Services/AgentBridge/LocalAgentBridge.swift) rejects agent-initiated slot writes under it. It is no longer offered in the picker (the `selfSchedulingEnabled` toggle owns on/off now), and is only reachable via legacy data; turning the Self-scheduling toggle on promotes a `Manual` mode to `Ambient` so a real preset is selected.
 
-The mode picker lives in the **Configure** tab of the agent detail view ([`AgentsView.swift`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift), `scheduleSection`). Selecting a mode writes both `settings.schedule.mode` and the corresponding preset values via `AgentScheduleSettings.defaults(for:)` — so picking "Reactive" actually rewrites the cap, horizon, quiet-hours, etc., not just the label.
+The mode picker lives in the **Configure** tab of the agent detail view ([`AgentsView.swift`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift), `scheduleSection`) and is only shown when self-scheduling is enabled. It offers the three bound presets (Ambient / Reactive / Project) via `selectableScheduleModes`. Selecting a mode writes both `settings.schedule.mode` and the corresponding preset values via `AgentScheduleSettings.defaults(for:)` — so picking "Reactive" actually rewrites the cap, horizon, quiet-hours, etc., not just the label.
 
 ---
 
@@ -241,7 +243,7 @@ The Mode chip is read-only and tapping it posts an `.agentDetailDeeplink` notifi
 
 ### Configure → Scheduling
 
-Mode picker rendered as four radio cards (`scheduleModeCard` in [`AgentsView.swift`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift)), each showing the mode name, a one-line tagline, and the resolved preset summary so the user knows what they're switching to before they click. Below the picker are the underlying fields (`maxHorizonSeconds`, `dailyRunCap`, quiet hours, etc.) for power users who want to override the preset.
+Gated behind the **Self-scheduling** toggle: the mode picker and the Next Run banner only render once `selfSchedulingEnabled` is on. When shown, the picker is three radio cards (`scheduleModeCard` in [`AgentsView.swift`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift)) for the Ambient / Reactive / Project presets, each showing the mode name, a one-line tagline, and the resolved preset summary so the user knows what they're switching to before they click.
 
 ### Schema / Data / Views / Activity / Home
 

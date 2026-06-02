@@ -69,6 +69,25 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// snapshot are omitted).
     public let dbEnabled: Bool
 
+    /// Per-agent opt-in for the `render_chart` tool. When false the tool
+    /// is stripped from the model-visible schema (it stays registered in
+    /// `ToolRegistry` for direct execution / ChatView interception).
+    public let renderChartEnabled: Bool
+
+    /// Per-agent opt-in for the `speak` (voice output) tool.
+    public let speakEnabled: Bool
+
+    /// Per-agent opt-in for the `search_memory` recall tool. Independent
+    /// of `memoryDisabled` (which gates injection + recording); this only
+    /// controls whether the model can recall memory mid-session.
+    public let searchMemoryEnabled: Bool
+
+    /// Per-agent opt-in for the self-scheduling tools (`schedule_next_run` /
+    /// `cancel_next_run` / `notify`). Decoupled from the schedule-mode picker
+    /// (which only sets host-enforced bounds); when false those tools are
+    /// stripped from the model-visible schema.
+    public let selfSchedulingEnabled: Bool
+
     public init(
         agentId: UUID,
         toolsDisabled: Bool,
@@ -78,7 +97,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         model: String?,
         manualToolNames: [String]?,
         systemPrompt: String,
-        dbEnabled: Bool
+        dbEnabled: Bool,
+        renderChartEnabled: Bool = false,
+        speakEnabled: Bool = false,
+        searchMemoryEnabled: Bool = false,
+        selfSchedulingEnabled: Bool = false
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -89,6 +112,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.manualToolNames = manualToolNames
         self.systemPrompt = systemPrompt
         self.dbEnabled = dbEnabled
+        self.renderChartEnabled = renderChartEnabled
+        self.speakEnabled = speakEnabled
+        self.searchMemoryEnabled = searchMemoryEnabled
+        self.selfSchedulingEnabled = selfSchedulingEnabled
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -116,7 +143,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             model: modelOverride ?? mgr.effectiveModel(for: agentId),
             manualToolNames: mgr.effectiveManualToolNames(for: agentId),
             systemPrompt: mgr.effectiveSystemPrompt(for: agentId),
-            dbEnabled: mgr.effectiveDBEnabled(for: agentId)
+            dbEnabled: mgr.effectiveDBEnabled(for: agentId),
+            renderChartEnabled: mgr.effectiveRenderChartEnabled(for: agentId),
+            speakEnabled: mgr.effectiveSpeakEnabled(for: agentId),
+            searchMemoryEnabled: mgr.effectiveSearchMemoryEnabled(for: agentId),
+            selfSchedulingEnabled: mgr.effectiveSelfSchedulingEnabled(for: agentId)
         )
     }
 }
