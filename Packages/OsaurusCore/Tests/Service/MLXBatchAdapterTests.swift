@@ -1682,6 +1682,9 @@ struct MLXBatchAdapterTests {
             "gemma-4-26b-a4b-it-jang_4m-crack",
             "dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK",
             "OsaurusAI/gemma4-it-26b-a4b",
+            "gemma-4-12b-it-jang_4m",
+            "gemma-4-12b-it-mxfp4",
+            "gemma-4-12b-it-mxfp8",
         ] {
             #expect(
                 MLXBatchAdapter.additionalContext(
