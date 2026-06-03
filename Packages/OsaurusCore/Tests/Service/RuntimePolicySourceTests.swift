@@ -469,13 +469,14 @@ struct RuntimePolicySourceTests {
         // role-token/DSML fragments in Osaurus tool turns, plus the Gemma4
         // Zyphra XML tool-call parser used by live JANG_4M multiline tool
         // envelopes, plus Gemma4 unified 12B config dispatch, processor
-        // tool-schema preservation, quoted native call:value parsing, and the
-        // explicit unsupported boundary for unproven unified image/audio/video.
+        // tool-schema preservation, quoted native call:value parsing, the
+        // explicit unsupported boundary for unproven unified image/audio/video,
+        // and Gemma4 proportional RoPE support needed by full-attention layers.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "43e0e82d515eb3de480fcb18bc0a6f2430d18389"
+        let expectedRuntimeHardenedRevision = "24d5ac5251c24006cf209942441cf9ce9e25642e"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -483,7 +484,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix; an internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix and Gemma4 proportional RoPE live rows; an internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
