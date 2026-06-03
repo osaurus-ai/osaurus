@@ -12,28 +12,20 @@ import Testing
 
 @Suite("Agent starter templates")
 struct AgentStarterTemplateTests {
-    @Test("Osaurus Guide starter is available and scoped to onboarding help")
-    func osaurusGuideStarterIsAvailable() {
-        #expect(AgentStarterTemplate.allCases.contains(.osaurusGuide))
-        #expect(AgentStarterTemplate.osaurusGuide.label == "Guide")
-        #expect(AgentStarterTemplate.osaurusGuide.defaultName == "Osaurus Guide")
-
-        let prompt = AgentStarterTemplate.osaurusGuide.systemPrompt.lowercased()
-        #expect(prompt.contains("agent"))
-        #expect(prompt.contains("skills"))
-        #expect(prompt.contains("plugins"))
-        #expect(prompt.contains("feature request"))
-        #expect(prompt.contains("do not pretend"))
-        #expect(prompt.contains("github"))
+    @Test("Osaurus Guide starter has been retired")
+    func osaurusGuideStarterIsRemoved() {
+        let raw = AgentStarterTemplate.allCases.map(\.rawValue)
+        #expect(!raw.contains("osaurusGuide"))
+        #expect(AgentStarterTemplate(rawValue: "osaurusGuide") == nil)
     }
 
-    @Test("Onboarding create-agent step defaults to Osaurus Guide")
+    @Test("Onboarding create-agent step defaults to a blank starter")
     @MainActor
-    func onboardingCreateAgentDefaultsToGuide() {
+    func onboardingCreateAgentDefaultsToBlank() {
         let state = CreateAgentState()
 
-        #expect(state.selectedTemplate == .osaurusGuide)
-        #expect(state.name == "Osaurus Guide")
-        #expect(state.systemPrompt == AgentStarterTemplate.osaurusGuide.systemPrompt)
+        #expect(state.selectedTemplate == .blank)
+        #expect(state.name == "")
+        #expect(state.systemPrompt == AgentStarterTemplate.blank.systemPrompt)
     }
 }

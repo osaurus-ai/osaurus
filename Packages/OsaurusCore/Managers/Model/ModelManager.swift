@@ -514,22 +514,34 @@ final class ModelManager: NSObject, ObservableObject {
     }
 
     /// Deduplicated merge of suggestedModels + availableModels, preferring curated descriptions.
+    ///
+    /// Order is deterministic: rows keep the insertion order of `combined`
+    /// (suggestedModels first, then availableModels). Earlier this returned
+    /// `Dictionary.values`, whose iteration order is unspecified and reshuffles
+    /// between calls — so any view that recomputed on a tick (e.g. the
+    /// onboarding picker observing `SystemMonitorService`'s 2s timer) saw the
+    /// rows jump around. Preserving insertion order keeps the list stable.
     func deduplicatedModels() -> [MLXModel] {
         let combined = suggestedModels + availableModels
-        var byLowerId: [String: MLXModel] = [:]
+        var ordered: [MLXModel] = []
+        var indexByLowerId: [String: Int] = [:]
         for m in combined {
             let key = m.id.lowercased()
-            if let existing = byLowerId[key] {
-                let existingIsDiscovered = existing.description == "Discovered on Hugging Face"
+            if let existingIndex = indexByLowerId[key] {
+                let existingIsDiscovered =
+                    ordered[existingIndex].description == "Discovered on Hugging Face"
                 let currentIsDiscovered = m.description == "Discovered on Hugging Face"
+                // Swap a richer (curated) entry into the slot a discovered
+                // placeholder already occupies, keeping the original position.
                 if existingIsDiscovered && !currentIsDiscovered {
-                    byLowerId[key] = m
+                    ordered[existingIndex] = m
                 }
             } else {
-                byLowerId[key] = m
+                indexByLowerId[key] = ordered.count
+                ordered.append(m)
             }
         }
-        return Array(byLowerId.values)
+        return ordered
     }
 
     // MARK: - Private Methods

@@ -152,6 +152,12 @@ final class ConfigureAIState: ObservableObject {
     @Published var localSubstate: LocalSubstate = .picker
     @Published var apiSubstate: APISubstate = .picker
 
+    /// Guards `applyDefaultPathIfNeeded(totalMemoryGB:)` so the RAM-based
+    /// default path is only ever applied once. Without it a user who manually
+    /// switched back to Local would be bounced to Cloud again on the next
+    /// `onAppear`.
+    private var didApplyDefaultPath = false
+
     /// Direction the next substate transition should travel. Mirrors the
     /// global step `OnboardingDirection` so the substate slide reads as a
     /// natural continuation of the outer navigation language.
@@ -246,6 +252,26 @@ final class ConfigureAIState: ObservableObject {
         case .downloading(let p), .paused(let p): return p
         case .completed: return 1
         case .notStarted, .failed: return 0
+        }
+    }
+
+    /// At or below this much unified memory, onboarding defaults to the Cloud
+    /// tab: the curated local picks are compute-intensive, so a small machine
+    /// is more likely to have a good first run with a hosted provider.
+    private static let cloudDefaultMemoryCeilingGB: Double = 24
+
+    /// Picks the lowest-friction default tab for this Mac on first appearance
+    /// (see `cloudDefaultMemoryCeilingGB`). Applied at most once (see
+    /// `didApplyDefaultPath`) so it never overrides a path the user chose by
+    /// hand.
+    func applyDefaultPathIfNeeded(totalMemoryGB: Double) {
+        guard !didApplyDefaultPath else { return }
+        // `totalMemoryGB == 0` means the monitor hasn't reported yet; wait for
+        // a real value before committing to a default.
+        guard totalMemoryGB > 0 else { return }
+        didApplyDefaultPath = true
+        if totalMemoryGB <= Self.cloudDefaultMemoryCeilingGB {
+            selectedPath = .apiProvider
         }
     }
 
@@ -535,7 +561,10 @@ struct ConfigureAIBody: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .onAppear { state.ensureLocalSelection(totalMemoryGB: systemMonitor.totalMemoryGB) }
+        .onAppear {
+            state.applyDefaultPathIfNeeded(totalMemoryGB: systemMonitor.totalMemoryGB)
+            state.ensureLocalSelection(totalMemoryGB: systemMonitor.totalMemoryGB)
+        }
     }
 
     // MARK: - Path subtitle

@@ -152,7 +152,9 @@ public final class CrashReportingService {
                     NSLog(
                         "[Osaurus] SENTRY_DSN looks truncated (\"%@\"). An xcconfig treats "
                             + "// as a comment — escape the scheme slashes in Secrets.xcconfig "
-                            + "(e.g. SLASH = / then https:$(SLASH)$(SLASH)…).", plist)
+                            + "(e.g. SLASH = / then https:$(SLASH)$(SLASH)…).",
+                        plist
+                    )
                 }
             #endif
             return plist
