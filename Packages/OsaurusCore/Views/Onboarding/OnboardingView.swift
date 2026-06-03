@@ -304,10 +304,13 @@ public struct OnboardingView: View {
         case .configureAI:
             ConfigureAISecondary(state: configureAIState, onComplete: { advance(to: .choosePlugins) })
         case .identitySetup:
-            IdentitySecondary(state: identityState, onSkip: {
-                OnboardingTelemetry.stepSkipped(.identitySetup)
-                advanceFromIdentity()
-            })
+            IdentitySecondary(
+                state: identityState,
+                onSkip: {
+                    OnboardingTelemetry.stepSkipped(.identitySetup)
+                    advanceFromIdentity()
+                }
+            )
         case .sandboxSetup:
             SandboxSetupSecondary(onSkip: {
                 OnboardingTelemetry.stepSkipped(.sandboxSetup)

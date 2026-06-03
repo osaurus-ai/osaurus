@@ -71,7 +71,7 @@ struct TelemetryServiceConsentTests {
         service.markStartedForTesting()
 
         service.track("onboarding_started")  // buffered while undecided
-        service.setEnabled(false)            // decline → drop the buffer
+        service.setEnabled(false)  // decline → drop the buffer
         #expect(service.isEnabled == false)
         #expect(sink.names.isEmpty)
 
@@ -107,7 +107,7 @@ struct TelemetryServiceConsentTests {
         // Note: no `markStartedForTesting()` — simulates "no key resolved".
 
         service.track("onboarding_started")  // ignored (not started)
-        service.setEnabled(true)             // flush finds nothing buffered
+        service.setEnabled(true)  // flush finds nothing buffered
         #expect(sink.names.isEmpty)
 
         service.track("onboarding_completed")  // still not started → ignored
@@ -144,7 +144,7 @@ struct TelemetryServiceConsentTests {
         service.markStartedForTesting()
 
         let overflow = TelemetryService.maxPending + 25
-        for i in 0..<overflow {
+        for i in 0 ..< overflow {
             service.track("e\(i)")
         }
 
