@@ -3,6 +3,35 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.7</title>
+            <pubDate>Wed, 03 Jun 2026 01:45:57 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.7</sparkle:version>
+            <sparkle:shortVersionString>0.19.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.7/Osaurus-0.19.7.dmg" length="50504147" type="application/octet-stream" sparkle:edSignature="ZgbcvP25DxsCQoFbCKERDsSql1wvWwPSMLHYDyRwKrEQmGgSpinR6izkPBzJl6wCOCrKBAm+xKIEJx36iwvpBA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Prove LFM tool runtime and cache reuse (#1314) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- fixed issue with context budget being out of sync (#1324) by @tpae
+- fixed skill renaming (#1321) by @RaajeevChandran
+- bug fixes (#1319) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- launch stability improvements (#1323) by @tpae
+- moved default tools behind a feature gate (#1318) by @tpae
+- improve prompt for better guidance (#1317) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.6...0.19.7
+]]></description>
+        </item>
+        <item>
             <title>0.19.6</title>
             <pubDate>Mon, 01 Jun 2026 06:46:08 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
