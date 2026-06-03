@@ -516,7 +516,9 @@ final class PluginHostContext: @unchecked Sendable {
         // and a one-shot warning is logged so a deliberate cross-agent
         // dispatch attempt remains visible in the unified log.
         let activeAgent = Self.activeAgentId()
-        return Self.blockingAsync { [pluginId, activeAgent] in
+        return Self.blockingAsync(
+            fallback: (Self.pluginHostTimeoutJSON(kind: "dispatch"), UUID?.none)
+        ) { [pluginId, activeAgent] in
             // PluginManager + ToolRegistry are MainActor-isolated; hop
             // once and hand `planDispatch` a plain `Set` so the planner
             // stays a pure transform driveable from tests.
@@ -577,7 +579,8 @@ final class PluginHostContext: @unchecked Sendable {
             return Self.jsonString(["error": "invalid_task_id", "message": "Invalid UUID format"])
         }
 
-        return Self.blockingMainActor { [pluginId] in
+        return Self.blockingMainActor(fallback: Self.pluginHostTimeoutJSON(kind: "task_status")) {
+            [pluginId] in
             guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
                 state.sourcePluginId == pluginId
             else {
@@ -592,7 +595,7 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnInvalidTaskIdOnce(pluginId: pluginId, op: "dispatch_cancel", taskId: taskId)
             return
         }
-        Self.blockingMainActor { [pluginId] in
+        Self.blockingMainActor(fallback: ()) { [pluginId] in
             guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
                 state.sourcePluginId == pluginId
             else {
@@ -611,7 +614,8 @@ final class PluginHostContext: @unchecked Sendable {
     func dispatchClarify(taskId _: String, response _: String) {}
 
     func listActiveTasks() -> String {
-        Self.blockingMainActor { [pluginId] in
+        Self.blockingMainActor(fallback: Self.pluginHostTimeoutJSON(kind: "list_active_tasks")) {
+            [pluginId] in
             let tasks = BackgroundTaskManager.shared.backgroundTasks.values
                 .filter { $0.sourcePluginId == pluginId && $0.status.isActive }
                 .map { PluginHostContext.taskStateDict(id: $0.id, state: $0) }
@@ -624,7 +628,7 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnInvalidTaskIdOnce(pluginId: pluginId, op: "send_draft", taskId: taskId)
             return
         }
-        Self.blockingMainActor { [pluginId] in
+        Self.blockingMainActor(fallback: ()) { [pluginId] in
             guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
                 state.sourcePluginId == pluginId, state.status.isActive
             else {
@@ -641,7 +645,7 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnInvalidTaskIdOnce(pluginId: pluginId, op: "dispatch_interrupt", taskId: taskId)
             return
         }
-        Self.blockingMainActor { [pluginId] in
+        Self.blockingMainActor(fallback: ()) { [pluginId] in
             guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
                 state.sourcePluginId == pluginId
             else {
@@ -1342,7 +1346,7 @@ final class PluginHostContext: @unchecked Sendable {
             self?.exitInflightInference()
         }
         let activityId = Self.beginPluginActivity(pluginId: pid, kind: .complete)
-        return Self.blockingAsync {
+        return Self.blockingAsync(fallback: Self.pluginHostTimeoutJSON(kind: "complete")) {
             defer {
                 releaseSlot()
                 Self.endPluginActivity(activityId)
@@ -1518,7 +1522,7 @@ final class PluginHostContext: @unchecked Sendable {
             return ctx.isStreamCancelled(id)
         }
         let activityId = Self.beginPluginActivity(pluginId: pid, kind: .completeStream)
-        return Self.blockingAsync {
+        return Self.blockingAsync(fallback: Self.pluginHostTimeoutJSON(kind: "complete_stream")) {
             // Stream id is per-call: if the plugin supplied one in the
             // request, register it so a concurrent `complete_cancel` call
             // can flag the stream for cancellation. We treat it as opaque
@@ -2135,7 +2139,7 @@ final class PluginHostContext: @unchecked Sendable {
             self?.exitInflightInference()
         }
         let activityId = Self.beginPluginActivity(pluginId: pid, kind: .embed)
-        return Self.blockingAsync {
+        return Self.blockingAsync(fallback: Self.pluginHostTimeoutJSON(kind: "embed")) {
             defer {
                 releaseSlot()
                 Self.endPluginActivity(activityId)
@@ -2183,7 +2187,7 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: - Models Callback
 
     func listModels() -> String {
-        Self.blockingAsync {
+        Self.blockingAsync(fallback: Self.pluginHostTimeoutJSON(kind: "list_models")) {
             var models: [[String: Any]] = []
 
             // Apple Foundation Model
@@ -2307,7 +2311,7 @@ final class PluginHostContext: @unchecked Sendable {
 
         let finalRequest = request
 
-        return Self.blockingAsync {
+        return Self.blockingAsync(fallback: Self.pluginHostTimeoutJSON(kind: "http_request")) {
             let startTime = Date()
             do {
                 var currentRequest = finalRequest
@@ -2942,9 +2946,26 @@ extension PluginHostContext {
 
 // MARK: - Async Bridging Helpers
 
-/// Thread-safe box for passing a result out of a Task closure in Swift 6 strict concurrency.
+/// Thread-safe box for passing a result out of a Task closure in Swift 6
+/// strict concurrency. Self-synchronizing via an internal lock so it doesn't
+/// silently depend on an external semaphore as its only memory barrier — the
+/// write happens on the bridge queue, the read on the parked trampoline
+/// thread, so the lock makes the cross-thread handoff explicit and correct.
 private final class ResultBox<T>: @unchecked Sendable {
-    var value: T?
+    private let lock = NSLock()
+    private var _value: T?
+
+    func set(_ newValue: T) {
+        lock.lock()
+        _value = newValue
+        lock.unlock()
+    }
+
+    func get() -> T? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _value
+    }
 }
 
 extension PluginHostContext {
@@ -2978,36 +2999,79 @@ extension PluginHostContext {
     /// actor isolation or priority, and runs the signal on a dedicated
     /// concurrent GCD queue so the wakeup path doesn't depend on the
     /// cooperative pool having a free worker.
-    static func blockingAsync<T: Sendable>(_ work: @escaping @Sendable () async -> T) -> T {
+    ///
+    /// Bounded: `sem.wait` carries a deadline so a wedged inner `Task`
+    /// (cooperative-pool starvation, an inner `await` that never resumes,
+    /// a hung downstream) can NOT hang the plugin worker thread forever.
+    /// On timeout we cancel the inner work and return `fallback` instead of
+    /// force-unwrapping a value that was never produced (the old `box.value!`
+    /// could trap). The default ceiling is intentionally generous (30 min)
+    /// so it never trips a legitimate long completion / embed, only a true
+    /// deadlock; callers may shorten it.
+    static func blockingAsync<T: Sendable>(
+        timeout: DispatchTime = .now() + 1800,
+        fallback: @autoclosure @escaping () -> T,
+        _ work: @escaping @Sendable () async -> T
+    ) -> T {
         assert(!Thread.isMainThread, "Host API trampoline must not be called from main thread")
         let sem = DispatchSemaphore(value: 0)
         let box = ResultBox<T>()
-        Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             let value = await work()
             blockingBridgeQueue.async {
-                box.value = value
+                box.set(value)
                 sem.signal()
             }
         }
-        sem.wait()
-        return box.value!
+        guard sem.wait(timeout: timeout) == .success else {
+            task.cancel()
+            NSLog("[PluginHostAPI] blockingAsync timed out — cancelling inner work, returning fallback")
+            return fallback()
+        }
+        return box.get() ?? fallback()
     }
 
     /// Block the current (non-main) thread while running @MainActor work.
+    ///
+    /// Bounded for the same reason as `blockingAsync`, but with a much
+    /// shorter default deadline: the wrapped work is a quick MainActor hop
+    /// (read task state, toggle a flag). The deadline is also the backstop
+    /// for the load-time first-delivery path — if a plugin's
+    /// `on_config_changed` calls a `blockingMainActor` host API while the
+    /// main thread is parked in `ExternalPlugin.notifyConfigBatchSync`'s
+    /// `configEventQueue.sync`, the wait can't acquire main; the timeout
+    /// converts that would-be permanent deadlock into a bounded return.
     @discardableResult
-    static func blockingMainActor<T: Sendable>(_ work: @MainActor @escaping @Sendable () -> T) -> T {
+    static func blockingMainActor<T: Sendable>(
+        timeout: DispatchTime = .now() + 30,
+        fallback: @autoclosure @escaping () -> T,
+        _ work: @MainActor @escaping @Sendable () -> T
+    ) -> T {
         assert(!Thread.isMainThread, "Host API trampoline must not be called from main thread")
         let sem = DispatchSemaphore(value: 0)
         let box = ResultBox<T>()
-        Task.detached(priority: .userInitiated) { @MainActor in
+        let task = Task.detached(priority: .userInitiated) { @MainActor in
             let value = work()
             blockingBridgeQueue.async {
-                box.value = value
+                box.set(value)
                 sem.signal()
             }
         }
-        sem.wait()
-        return box.value!
+        guard sem.wait(timeout: timeout) == .success else {
+            task.cancel()
+            NSLog("[PluginHostAPI] blockingMainActor timed out — cancelling inner work, returning fallback")
+            return fallback()
+        }
+        return box.get() ?? fallback()
+    }
+
+    /// Canonical error envelope returned when a host bridge times out, so a
+    /// plugin sees a structured failure instead of an opaque empty string.
+    static func pluginHostTimeoutJSON(kind: String) -> String {
+        jsonString([
+            "error": "host_timeout",
+            "message": "Host \(kind) call exceeded its time budget and was cancelled.",
+        ])
     }
 
     /// Serialize a dictionary to a JSON string. Falls back to "{}" on encoding failure.

@@ -269,8 +269,12 @@ public final class ToastWindowController: NSObject {
             let windowScreen = chatWindow.screen
         {
             targetScreen = windowScreen
+        } else if let fallback = NSScreen.main ?? NSScreen.screens.first {
+            targetScreen = fallback
         } else {
-            targetScreen = NSScreen.main ?? NSScreen.screens.first!
+            // No attached display (headless / all screens detached). Nothing
+            // to reposition onto; bail rather than trap on `.first!`.
+            return
         }
 
         // Only update if the screen actually changed

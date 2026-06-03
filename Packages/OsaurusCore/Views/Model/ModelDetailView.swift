@@ -632,7 +632,7 @@ struct ModelDetailView: View, Identifiable {
     private var completedFooter: some View {
         HStack(spacing: 12) {
             Button(action: {
-                modelManager.deleteModel(model)
+                Task { await modelManager.deleteModel(model) }
                 dismiss()
             }) {
                 Text("Delete Model", bundle: .module)

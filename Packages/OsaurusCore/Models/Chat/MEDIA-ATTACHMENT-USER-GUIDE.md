@@ -124,7 +124,7 @@ Files exceeding the cap show a toast and don't attach.
 After the user sends a turn, `AttachmentBlobStore.spillIfNeeded`
 walks the attachments and writes inline bytes that exceed the
 modality threshold to `~/.osaurus/blob-store/<hash>` (encrypted by
-the at-rest key from `StorageMigrationCoordinator`):
+the at-rest key from `StorageKeyManager`):
 
 | Attachment kind | Spill threshold |
 |---|---|

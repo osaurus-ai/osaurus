@@ -1129,7 +1129,7 @@ struct SwiftTransformersTokenizerLoaderTests {
             "Decoded: \(decoded)"
         )
         #expect(
-            decoded.contains(#"{"name":"line_count","arguments":{"text":"red\ngreen\nblue"}}"#),
+            decoded.contains(#"<|tool_call_start|>[line_count(text='red\ngreen\nblue')]<|tool_call_end|>"#),
             "Decoded: \(decoded)"
         )
         #expect(decoded.contains("Copy the `text` value exactly from the current user request."), "Decoded: \(decoded)")
@@ -1138,11 +1138,11 @@ struct SwiftTransformersTokenizerLoaderTests {
             "Decoded: \(decoded)"
         )
         #expect(
-            decoded.contains(#"In the JSON call, each line break is represented by the two characters \n"#),
+            decoded.contains(#"In the native LFM call, each line break is represented by the two characters \n"#),
             "Decoded: \(decoded)"
         )
         #expect(
-            decoded.contains(#"the exact `text` value encoded with JSON \n escapes is: red\ngreen\nblue"#),
+            decoded.contains(#"the exact `text` value encoded with \n escapes is: red\ngreen\nblue"#),
             "Decoded: \(decoded)"
         )
         #expect(decoded.contains("Do not double any line break."), "Decoded: \(decoded)")
@@ -1158,9 +1158,10 @@ struct SwiftTransformersTokenizerLoaderTests {
             "Decoded: \(decoded)"
         )
         #expect(!decoded.contains("List of tools:"), "Decoded: \(decoded)")
-        #expect(decoded.contains(#""name":"line_count""#), "Decoded: \(decoded)")
+        #expect(decoded.contains("line_count(text='red\\ngreen\\nblue')"), "Decoded: \(decoded)")
         #expect(!decoded.contains("<tools>"), "Decoded: \(decoded)")
         #expect(!decoded.contains("</tool_call>"), "Decoded: \(decoded)")
+        #expect(!decoded.contains(#""name":"line_count""#), "Decoded: \(decoded)")
         #expect(
             decoded.contains(#"Use the line_count tool on this exact text: red\ngreen\nblue"#),
             "Decoded: \(decoded)"
@@ -1178,11 +1179,15 @@ struct SwiftTransformersTokenizerLoaderTests {
                 "Required-tool instruction must trail the latest LFM user turn instead of preceding it. Decoded: \(decoded)"
             )
             #expect(
-                afterUser.contains(#"{"name":"line_count","arguments":{"text":"red\ngreen\nblue"}}"#),
+                afterUser.contains(#"<|tool_call_start|>[line_count(text='red\ngreen\nblue')]<|tool_call_end|>"#),
                 "Required-tool instruction must keep the exact multiline value after the latest LFM user turn. Decoded: \(decoded)"
             )
         }
         #expect(!decoded.contains("Today's date:"), "Decoded: \(decoded)")
+        #expect(
+            decoded.hasSuffix("<|im_start|>assistant\n"),
+            "LFM required-tool turns must not inject a synthetic thinking rail. Decoded: \(decoded)"
+        )
         #expect(!decoded.contains("<think>"), "Decoded: \(decoded)")
     }
 

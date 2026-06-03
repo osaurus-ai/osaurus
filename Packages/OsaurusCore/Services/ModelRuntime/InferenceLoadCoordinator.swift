@@ -22,6 +22,78 @@
 //
 
 import Foundation
+import os
+
+/// Synchronous HTTP-layer admission gate for inference requests.
+///
+/// `ServerController.activeRequestCount` is UI-only and `ModelLease` /
+/// `InferenceLoadCoordinator` track *liveness*, not *backpressure*: nothing
+/// stops N concurrent `/v1/chat/completions` streams from each spawning a Task
+/// that fans into MLX, oversubscribing the batch engine and unified memory.
+///
+/// This is a plain token counter (no async hop — the NIO channel handler is
+/// synchronous) keyed to the batch engine's `maxConcurrentSequences`. When the
+/// in-flight count is at the ceiling, the HTTP layer returns `503` with a
+/// `Retry-After` instead of admitting unbounded work.
+public final class HTTPInferenceAdmission: @unchecked Sendable {
+    public static let shared = HTTPInferenceAdmission()
+
+    private let state = OSAllocatedUnfairLock(initialState: 0)
+
+    init() {}
+
+    /// Try to admit one inference request. Returns `true` when admitted — the
+    /// caller MUST pair it with exactly one `release()` on every exit path —
+    /// or `false` when the gate is saturated.
+    public func tryAcquire(limit: Int) -> Bool {
+        let ceiling = max(1, limit)
+        return state.withLock { inflight in
+            guard inflight < ceiling else { return false }
+            inflight += 1
+            return true
+        }
+    }
+
+    public func release() {
+        state.withLock { inflight in
+            inflight = max(0, inflight - 1)
+        }
+    }
+
+    /// Acquire one slot and hand back a one-shot `Token`. Returns `nil` when
+    /// saturated. Prefer this over `tryAcquire`/`release` on routes with many
+    /// exit paths: the token releases exactly once (idempotent) and its
+    /// `deinit` is a leak backstop, so a forgotten/cancelled path can't pin
+    /// the gate.
+    public func tryAcquireToken(limit: Int) -> Token? {
+        tryAcquire(limit: limit) ? Token(gate: self) : nil
+    }
+
+    public var inflightCount: Int {
+        state.withLock { $0 }
+    }
+
+    /// One-shot, idempotent release handle for an admitted inference request.
+    public final class Token: @unchecked Sendable {
+        private let releasedOnce = OSAllocatedUnfairLock(initialState: false)
+        private let gate: HTTPInferenceAdmission
+
+        fileprivate init(gate: HTTPInferenceAdmission) { self.gate = gate }
+
+        /// Release the slot. Safe to call multiple times — only the first
+        /// call decrements the gate.
+        public func release() {
+            let shouldRelease = releasedOnce.withLock { done -> Bool in
+                if done { return false }
+                done = true
+                return true
+            }
+            if shouldRelease { gate.release() }
+        }
+
+        deinit { release() }
+    }
+}
 
 public actor InferenceLoadCoordinator {
     public static let shared = InferenceLoadCoordinator()

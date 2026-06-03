@@ -298,17 +298,46 @@ public final class AgentDatabase: @unchecked Sendable {
     /// so the check is on by default even before the store wires the
     /// agent's specific limit through. Mutations call
     /// `enforceStorageQuotaUnlocked` after the SQL commits.
-    public var storageBytesLimit: Int = AgentLimitsSettings.defaults.storageBytesLimit
+    ///
+    /// These three fields are read on the serial `queue` (inside
+    /// `enforceStorageQuotaUnlocked`, which only runs from `inTransaction`)
+    /// but were previously written directly from `AgentDatabaseStore`
+    /// (off-queue, on the caller's thread) — a data race on plain
+    /// `Int`/`Bool`. They are now `private` and confined to `queue`:
+    /// mutate via `setStorageBytesLimit` / `setStorageWarnPercent` and
+    /// read via `currentStorageBytesLimit()`.
+    private var _storageBytesLimit: Int = AgentLimitsSettings.defaults.storageBytesLimit
     /// Soft-warn threshold as a percentage of `storageBytesLimit`.
     /// 0 disables the soft warning entirely. When the on-disk size
     /// crosses this threshold a one-shot edge-trigger fires the
     /// `.agentStorageWarn` notification (spec §11.2 / line 324).
-    public var storageWarnPercent: Int = AgentLimitsSettings.defaults.storageWarnPercent
+    private var _storageWarnPercent: Int = AgentLimitsSettings.defaults.storageWarnPercent
     /// One-shot guard so we only emit the warning notification on
     /// the *transition* from below-threshold to at-or-above. Reset
     /// to `false` when usage drops back below the threshold (e.g.
     /// after the agent drops rows or the user wipes data).
-    fileprivate var storageWarningActive: Bool = false
+    private var storageWarningActive: Bool = false
+
+    /// Update the byte quota on the serial queue so the post-commit
+    /// reader in `enforceStorageQuotaUnlocked` never observes a torn
+    /// write. Async (fire-and-forget): the new value applies to the
+    /// next mutation, matching the old "default applies until pushed"
+    /// contract.
+    public func setStorageBytesLimit(_ value: Int) {
+        queue.async { self._storageBytesLimit = value }
+    }
+
+    /// Update the soft-warn percent on the serial queue. Same
+    /// lifecycle as `setStorageBytesLimit`.
+    public func setStorageWarnPercent(_ value: Int) {
+        queue.async { self._storageWarnPercent = value }
+    }
+
+    /// Read the current byte quota, serialized on the queue so it
+    /// can't tear against an in-flight `setStorageBytesLimit`.
+    public func currentStorageBytesLimit() -> Int {
+        queue.sync { _storageBytesLimit }
+    }
 
     public init(agentId: UUID, path: String? = nil) {
         self.agentId = agentId
@@ -344,24 +373,29 @@ public final class AgentDatabase: @unchecked Sendable {
     /// listener (`AgentManager`); this method only handles edge
     /// detection.
     fileprivate func enforceStorageQuotaUnlocked() throws {
-        guard storageBytesLimit > 0 else { return }
+        // Reads the queue-confined quota fields directly: this method only
+        // runs from `inTransaction` (inside `queue.sync`), so the values
+        // can't tear against `setStorageBytesLimit`/`setStorageWarnPercent`.
+        let limit = _storageBytesLimit
+        guard limit > 0 else { return }
         let used = storageUsedBytes()
         // Soft warn — edge-trigger: only fire when we *transition*
         // from below the threshold to at-or-above. Sliding back
         // below resets the latch so a later spike re-warns.
-        if storageWarnPercent > 0 {
-            let softLimit = (storageBytesLimit / 100) * storageWarnPercent
+        let warnPercent = _storageWarnPercent
+        if warnPercent > 0 {
+            let softLimit = (limit / 100) * warnPercent
             let isAbove = used >= softLimit
             if isAbove && !storageWarningActive {
                 storageWarningActive = true
-                let pct = used * 100 / max(1, storageBytesLimit)
+                let pct = used * 100 / max(1, limit)
                 NotificationCenter.default.post(
                     name: .agentStorageWarn,
                     object: nil,
                     userInfo: [
                         "agentId": agentId,
                         "usedBytes": used,
-                        "limitBytes": storageBytesLimit,
+                        "limitBytes": limit,
                         "percent": pct,
                     ]
                 )
@@ -369,10 +403,10 @@ public final class AgentDatabase: @unchecked Sendable {
                 storageWarningActive = false
             }
         }
-        if used > storageBytesLimit {
+        if used > limit {
             throw AgentDatabaseError.storageQuotaExceeded(
                 usedBytes: used,
-                limitBytes: storageBytesLimit
+                limitBytes: limit
             )
         }
     }
@@ -382,7 +416,7 @@ public final class AgentDatabase: @unchecked Sendable {
     // MARK: - Lifecycle
 
     public func open() throws {
-        StorageMigrationCoordinator.blockingAwaitReady()
+        StorageMutationGate.blockingAwaitNotMutating()
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.agentDirectory(for: agentId))

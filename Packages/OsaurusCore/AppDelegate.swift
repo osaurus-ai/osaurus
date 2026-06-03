@@ -175,19 +175,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Detect repeated startup crashes and enter safe mode if needed
         LaunchGuard.checkOnLaunch()
 
-        // CRITICAL SEQUENCING: run the at-rest encryption migrator
-        // BEFORE any database opens. Without this gate
-        // `MemoryDatabase.shared.open()` below would try SQLCipher
-        // against still-plaintext files and fail key verification,
-        // leaving the app in a degraded state on first launch after
-        // upgrade. We block the launch flow synchronously while the
-        // overlay shows progress; the run loop is pumped so SwiftUI
-        // updates keep painting.
-        StorageMigrationCoordinator.blockingAwaitReady()
-
-        // Deferred from `ServerController.init()` to keep
-        // `~/.osaurus/` pristine until the storage gate has stamped
-        // `.storage-version`. See `bootstrapRuntimeSettings()`.
+        // Migrate legacy → vmlx runtime settings. Deferred out of
+        // `ServerController.init()` so it doesn't run before the app
+        // is fully launched. See `bootstrapRuntimeSettings()`.
         serverController.bootstrapRuntimeSettings()
 
         // Wire up the periodic SQLite maintenance ticker (PRAGMA
@@ -233,6 +223,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Set up distributed control listeners (local-only management)
         setupControlNotifications()
 
+        // Recover skipped subsystems if a degraded (safe-mode) launch turns
+        // out healthy (clean /health). See `LaunchGuard.noteHealthyHealthCheck`.
+        setupSafeModeRecovery()
+
         // Apply saved Start at Login preference on launch
         let launchedByCLI = ProcessInfo.processInfo.arguments.contains("--launched-by-cli")
         if !launchedByCLI {
@@ -243,10 +237,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // activity + VAD indicator dots. See `installStatusItem`.
         installStatusItem()
 
-        // Start main thread watchdog in debug builds to detect UI hangs
-        #if DEBUG
-            MainThreadWatchdog.shared.start()
-        #endif
+        // Start the main-thread watchdog to detect UI hangs. Enabled in
+        // release too (with a more conservative threshold) so a field hang
+        // leaves a unified-log breadcrumb diagnosable without a debugger.
+        MainThreadWatchdog.shared.start()
 
         // Initialize directory access early so security-scoped bookmark is active
         _ = DirectoryPickerService.shared
@@ -256,7 +250,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 "Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1; stored secrets will not be readable in this process"
             )
             LaunchGuard.markStartupComplete()
-        } else if LaunchGuard.isSafeMode {
+        } else if LaunchGuard.shouldSkip(.plugins) {
+            // Tiered safe mode: plugins are the first subsystem we drop. Other
+            // tiers (sandbox / distillation / auto model-load) are gated at
+            // their own start sites below via `LaunchGuard.shouldSkip(...)`.
             NotificationService.shared.postSafeModeActive()
             LaunchGuard.markStartupComplete()
         } else {
@@ -284,6 +281,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await serverController.startServer()
         }
 
+        // Let the Bonjour-expose Combine sink honor live restarts only after
+        // the initial bind completes. Until then an early `AgentManager`
+        // emission would otherwise restart the server mid-launch (hang audit).
+        Task { @MainActor in
+            await serverStartupTask.value
+            serverController.markLaunchComplete()
+        }
+
         Task.detached(priority: .utility) {
             try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
         }
@@ -300,14 +305,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // MemorySearchService.initialize() needs it for reverse maps.
         // MetalGate serializes CoreML/MLX at runtime; this task is only held
         // for startup sequencing of orphan recovery + activity tracking below.
-        //
-        // The `blockingAwaitReady()` call above already gated the
-        // launch flow on the storage migrator, so by the time this
-        // Task runs the migrator is guaranteed done. Each
-        // `*Database.shared.open()` also calls the gate
-        // defensively (no-op fast path) for the plugin/HTTP entry
-        // points that don't go through this Task.
+        // Databases are created/opened already SQLCipher-encrypted via
+        // `EncryptedSQLiteOpener`; each `*Database.shared.open()` only parks
+        // on `StorageMutationGate` while a key rotation is in flight.
         let embeddingInitTask = Task.detached(priority: .utility) {
+            // Await the key prewarm before the cache gate so storage-dependent
+            // init isn't skipped purely because the (separately dispatched)
+            // launch prewarm hasn't landed yet. Uses the off-cooperative
+            // variant so it never pins a Swift cooperative thread inside the
+            // synchronous Keychain read, and stays off the launch-critical
+            // main-actor path. Idempotent with the prewarm above.
+            try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
             guard StorageKeyManager.shared.hasCachedKey else {
                 MemoryLogger.database.error(
                     "Storage-dependent search/index services disabled — storage key is not already unlocked"
@@ -331,12 +339,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 await MemorySearchService.shared.initialize()
             } else {
                 MemoryLogger.database.error("Memory system disabled — database failed to open after 3 attempts")
+                PersistenceHealth.shared.recordDatabaseOpenFailure(
+                    subsystem: "memory",
+                    error: MemoryDatabaseError.failedToOpen("open failed after 3 attempts")
+                )
             }
 
-            try? MethodDatabase.shared.open()
+            do {
+                try MethodDatabase.shared.open()
+            } catch {
+                PersistenceHealth.shared.recordDatabaseOpenFailure(subsystem: "method", error: error)
+            }
             await MethodSearchService.shared.initialize()
 
-            try? ToolDatabase.shared.open()
+            do {
+                try ToolDatabase.shared.open()
+            } catch {
+                PersistenceHealth.shared.recordDatabaseOpenFailure(subsystem: "tool", error: error)
+            }
             await ToolSearchService.shared.initialize()
 
             await SkillSearchService.shared.initialize()
@@ -352,17 +372,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             if MemoryDatabase.shared.isOpen {
                 ActivityTracker.shared.start()
                 await MemoryService.shared.recoverOrphanedSignals()
-                await MemoryConsolidator.shared.start()
+                // Tiered safe mode: skip background distillation if a crash
+                // loop escalated past the distillation threshold.
+                if !LaunchGuard.shouldSkip(.distillation) {
+                    await MemoryConsolidator.shared.start()
+                }
             }
         }
 
         // Setup global hotkey for Chat overlay (configured)
         applyChatHotkey()
 
-        // Auto-load speech model if voice features are enabled
+        // Auto-load speech model if voice features are enabled. Tiered safe
+        // mode can skip auto model-load entirely (a crashing model bundle is a
+        // common startup-crash cause).
         Task { @MainActor in
             await serverStartupTask.value
-            await SpeechService.shared.autoLoadIfNeeded()
+            if !LaunchGuard.shouldSkip(.autoModelLoad) {
+                await SpeechService.shared.autoLoadIfNeeded()
+            }
         }
 
         // Initialize VAD service if enabled
@@ -395,7 +423,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // compose for the active agent sees real sandbox tools instead of
         // the placeholder. (Replaces a separate `Task.detached` startContainer
         // call that used to race the registrar's first registration.)
-        if !keychainDisabledTestMode {
+        // Tiered safe mode can skip the Linux sandbox VM (a heavy, crash-prone
+        // subsystem) while keeping the rest of the server alive.
+        if !keychainDisabledTestMode && !LaunchGuard.shouldSkip(.sandbox) {
             SandboxToolRegistrar.shared.start()
         }
 
@@ -768,32 +798,176 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // We also always stop the sandbox (which in turn stops the
         // HostAPIBridgeServer) so its 2-thread EL group can't leak
         // past quit even when no sandbox container was started.
+        //
+        // Hang audit: the teardown below is a *bounded* best-effort chain,
+        // ordered by what the OS can and cannot reclaim for us on exit.
+        //
+        //   Phase 0 (sync, instant): freeze every background dispatcher and
+        //     audio engine so nothing schedules new LLM/DB/FS/GPU work mid-
+        //     teardown.
+        //   Phase 1 + 2 (must-not-orphan): cancel generations (ends SSE so
+        //     NIO drains), SIGKILL live-exec jobs, kill MCP stdio runners,
+        //     stop MCP servers, shut down NIO, stop the Linux VM, stop the
+        //     bridge. The OS does NOT clean these up for us — leak them and
+        //     we orphan child processes / a VM / a NIO group past quit.
+        //   Phase 3 (abandonable): memory flush + MLX/GPU teardown. The OS
+        //     reclaims RAM/GPU on exit, so if anything wedges here it is safe
+        //     to abandon.
+        //
+        // Every step is wrapped in `runWithDeadline`. A global watchdog set
+        // *above* the guaranteed-cleanup budget (phases 0–2) guarantees
+        // `reply(true)` always fires; because it sits above that budget it
+        // can only ever cut the abandonable phase-3 tail, never an orphan-
+        // prone step.
+
+        // Reentrancy guard: a second Cmd-Q, or a Sparkle-triggered relaunch
+        // racing a user quit, must not spawn a duplicate teardown chain +
+        // watchdog or double-call `NSApp.reply(...)`. Once we've started
+        // terminating we stay terminating; the first chain (or the watchdog)
+        // owns the single reply.
+        if isTerminating {
+            return .terminateLater
+        }
+        isTerminating = true
+
+        // Global watchdog: hard ceiling on the entire quit. Independent of
+        // the ordered chain below, so it fires even if a step blocks the
+        // chain's own continuations. 22s comfortably exceeds the sum of the
+        // phase 0–2 (must-not-orphan) budgets (~18s), so a watchdog firing
+        // can only ever cut the abandonable phase-3 MLX/memory tail.
         Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(22 * 1_000_000_000))
+            if !hasRepliedToTermination {
+                log.error("Quit watchdog fired after 22s — forcing termination reply")
+            }
+            replyToTerminationOnce()
+        }
+
+        Task { @MainActor in
+            // ── Phase 0: freeze everything that can dispatch new work ──
+            // All cheap + synchronous (cancel timers / tasks, stop FSEvents,
+            // tear down audio taps), so no per-step deadline is needed.
             ChatWindowManager.shared.stopAllSessions()
             BackgroundTaskManager.shared.cancelAllTasks()
-            MCPProviderManager.shared.disconnectAll()
             RemoteProviderManager.shared.disconnectAll()
-            // Best-effort: drain any debounced memory sessions before
-            // MLX / NIO / SQLCipher shutdown so the user doesn't lose
-            // pending_signals to the 60s debounce race.
-            await MemoryService.shared.flushAllPending(timeoutSeconds: 5)
-            // Unconditional: ensureShutdown is idempotent when already clean.
-            await serverController.ensureShutdown()
-            await MCPServerManager.shared.stopAll()
-            await ModelRuntime.shared.clearAll()
-            do {
-                try await SandboxManager.shared.stopContainer()
-            } catch {
-                NSLog("[Osaurus] Sandbox stop failed: \(error)")
+
+            NextRunScheduler.shared.stop()
+            ActivityTracker.shared.stop()
+            SystemMonitorService.shared.stopMonitoring()
+            ScheduleManager.shared.stop()
+            WatcherManager.shared.stop()
+            // MemoryConsolidator / StorageMaintenance are actors; their stop()
+            // just cancels timers, so the actor hop is quick — bound it anyway
+            // so a busy actor can't stall phase 0.
+            await runWithDeadline(seconds: 2) {
+                await MemoryConsolidator.shared.stop()
+                await StorageMaintenance.shared.stop()
+            }
+
+            // Audio: stop the mic engine and TTS playback so neither runs
+            // through the quit window. VAD teardown is async (engine stop on
+            // a detached queue); bound it so a wedged engine can't stall us.
+            TTSService.shared.stop()
+            await runWithDeadline(seconds: 2) {
+                await VADService.shared.stop()
+            }
+            if SpeechService.shared.isRecording {
+                await runWithDeadline(seconds: 2) {
+                    _ = await SpeechService.shared.stopStreamingTranscription(force: true)
+                }
+            }
+            SpeechService.shared.unloadModel()
+
+            // ── Phase 1: must-not-orphan — stop new GPU work + kill children ──
+            // Cancel in-flight model generations first. This ends the SSE
+            // producers that keep NIO child channels open, so the bounded
+            // server shutdown in phase 2 can drain promptly. Buffers are NOT
+            // freed here — `clearAll(quit:)` does that in phase 3.
+            await runWithDeadline(seconds: 3) {
+                await ModelRuntime.shared.cancelAllGenerations()
+            }
+
+            // Kill orphan-prone child processes: live exec jobs (background
+            // `shell_run` / `sandbox_exec`) and MCP stdio runners, then MCP
+            // servers. SIGKILL is effectively instant, so these budgets are
+            // small.
+            await runWithDeadline(seconds: 2) {
+                await LiveExecRegistry.shared.terminateAll()
+            }
+            await runWithDeadline(seconds: 2) {
+                await MCPProviderManager.shared.shutdownAllStdioRunners()
+            }
+            await runWithDeadline(seconds: 2) {
+                await MCPServerManager.shared.stopAll()
+            }
+
+            // ── Phase 2: must-not-orphan — network + VM teardown ──
+            // ensureShutdown is idempotent when already clean. The NIO
+            // graceful shutdown is itself bounded inside `stop(gracefully:
+            // false)`; the outer deadline is a backstop.
+            await runWithDeadline(seconds: 4) {
+                await self.serverController.ensureShutdown()
+            }
+            await runWithDeadline(seconds: 3) {
+                do {
+                    try await SandboxManager.shared.stopContainer()
+                } catch {
+                    NSLog("[Osaurus] Sandbox stop failed: \(error)")
+                }
             }
             // Belt-and-suspenders: if the sandbox was never provisioned,
-            // `stopContainer` still stops the bridge, but if the bridge
-            // was started through some other path in a future refactor
-            // we want its EL group torn down regardless.
-            await HostAPIBridgeServer.shared.stop()
-            NSApp.reply(toApplicationShouldTerminate: true)
+            // `stopContainer` still stops the bridge, but if the bridge was
+            // started through some other path we want its EL group torn down
+            // regardless.
+            await runWithDeadline(seconds: 2) {
+                await HostAPIBridgeServer.shared.stop()
+            }
+
+            // ── Phase 3: abandonable — OS reclaims RAM/GPU on exit ──
+            // Drain debounced memory sessions before MLX teardown so the user
+            // doesn't lose pending signals to the 60s debounce race. Bounded
+            // internally (5s) and here (belt + braces).
+            await runWithDeadline(seconds: 6) {
+                await MemoryService.shared.flushAllPending(timeoutSeconds: 5)
+            }
+            // Free MLX / GPU buffers. `quit: true` caps the lease drain, skips
+            // the cooperative cold-load join, and refuses to free buffers a
+            // stuck lease still references (UAF guard) so a wedged generation
+            // can't hang exit or crash the Metal teardown.
+            await runWithDeadline(seconds: 6) {
+                await ModelRuntime.shared.clearAll(quit: true)
+            }
+
+            replyToTerminationOnce()
         }
         return .terminateLater
+    }
+
+    /// Tracks whether a termination teardown is already in flight. Set once on
+    /// the first `applicationShouldTerminate` and never reset — a second quit
+    /// (Cmd-Q spam, Sparkle relaunch racing a user quit) returns
+    /// `.terminateLater` without spawning a duplicate teardown chain/watchdog.
+    /// `@MainActor`-isolated, so no lock is needed.
+    private var isTerminating = false
+
+    /// Guards `recoverFromSafeMode` so a flurry of `/health` hits can't start
+    /// the skipped subsystems more than once.
+    private var hasRecoveredFromSafeMode = false
+
+    /// Tracks whether the termination reply has already been sent so the
+    /// ordered teardown chain and the global quit watchdog can race to call
+    /// `reply(true)` without double-replying. `@MainActor`-isolated, so the
+    /// two `@MainActor` tasks accessing it are serialized — no lock needed.
+    private var hasRepliedToTermination = false
+
+    /// Send `NSApp.reply(toApplicationShouldTerminate: true)` exactly once.
+    /// Idempotent: whichever of the teardown chain or the watchdog reaches
+    /// this first wins; subsequent calls are no-ops.
+    @MainActor
+    private func replyToTerminationOnce() {
+        guard !hasRepliedToTermination else { return }
+        hasRepliedToTermination = true
+        NSApp.reply(toApplicationShouldTerminate: true)
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
@@ -1148,6 +1322,40 @@ extension AppDelegate {
             name: Self.controlToolsReloadNotification,
             object: nil
         )
+    }
+
+    private func setupSafeModeRecovery() {
+        NotificationCenter.default.addObserver(
+            forName: .safeModeRecoveryRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.recoverFromSafeMode()
+            }
+        }
+    }
+
+    /// Bring subsystems skipped by a degraded launch online after the running
+    /// app proved healthy via `/health`. Idempotent and only ever runs once.
+    @MainActor
+    private func recoverFromSafeMode() {
+        guard !hasRecoveredFromSafeMode else { return }
+        guard !keychainDisabledTestMode else { return }
+        hasRecoveredFromSafeMode = true
+        log.warning("Safe-mode recovery: starting previously skipped subsystems after clean /health")
+
+        Task { @MainActor in
+            await PluginManager.shared.loadAll()
+        }
+        PluginRepositoryService.shared.startBackgroundRefresh()
+        SandboxToolRegistrar.shared.start()
+
+        Task { @MainActor in
+            if MemoryDatabase.shared.isOpen {
+                await MemoryConsolidator.shared.start()
+            }
+        }
     }
 
     @objc private func handleServeCommand(_ note: Notification) {

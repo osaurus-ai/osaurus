@@ -872,7 +872,7 @@ struct ModelDownloadView: View {
             case .completed:
                 pillButton("Remove old", icon: "trash", color: .red, bg: Color.red.opacity(0.12)) {
                     let oldModel = MLXModel(id: notice.oldId, name: "", description: "", downloadURL: "")
-                    modelManager.deleteModel(oldModel)
+                    Task { await modelManager.deleteModel(oldModel) }
                 }
             case .downloading:
                 pillButton("Cancel", color: theme.secondaryText, bg: theme.tertiaryBackground) {

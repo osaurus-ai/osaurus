@@ -107,6 +107,9 @@ public final class SkillManager {
         guard !skill.isBuiltIn && !skill.isFromPlugin else { return }
         var updated = skill
         updated.updatedAt = Date()
+        if updated.directoryName == nil {
+            updated.directoryName = skills.first(where: { $0.id == skill.id })?.directoryName
+        }
         await SkillStore.save(updated)
         await refresh()
 

@@ -581,19 +581,47 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// `ChatConfiguration.greetingPersona`; both empty falls back to the
     /// built-in playful default in `GenerativeGreetingService`.
     public var greetingPersona: String?
+    /// Per-agent opt-in for the `render_chart` tool. Default off — the
+    /// tool is registered as a built-in but stripped from the model's
+    /// schema unless the user enables it, keeping the always-loaded tool
+    /// count + token cost low for agents that never visualize data.
+    public var renderChartEnabled: Bool
+    /// Per-agent opt-in for the `speak` (voice output) tool. Default off;
+    /// stripped from the schema unless enabled.
+    public var speakEnabled: Bool
+    /// Per-agent opt-in for the `search_memory` recall tool. Independent
+    /// of the "Disable Memory" switch (which gates memory injection +
+    /// recording): this flag only controls whether the model can recall
+    /// memory mid-session via the tool. Default off.
+    public var searchMemoryEnabled: Bool
+    /// Per-agent opt-in for the self-scheduling tools (`schedule_next_run`,
+    /// `cancel_next_run`, `notify`). Decoupled from the schedule-mode picker
+    /// (`schedule.mode`): the mode only sets the host-enforced bounds, while
+    /// this flag governs whether those tools are exposed to the model at all.
+    /// Default off so a fresh agent never carries the scheduler trio in its
+    /// always-loaded schema.
+    public var selfSchedulingEnabled: Bool
 
     public init(
         dbEnabled: Bool,
         schedule: AgentScheduleSettings,
         limits: AgentLimitsSettings = .defaults,
         generativeGreetingsEnabled: Bool? = nil,
-        greetingPersona: String? = nil
+        greetingPersona: String? = nil,
+        renderChartEnabled: Bool = false,
+        speakEnabled: Bool = false,
+        searchMemoryEnabled: Bool = false,
+        selfSchedulingEnabled: Bool = false
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
         self.limits = limits
         self.generativeGreetingsEnabled = generativeGreetingsEnabled
         self.greetingPersona = greetingPersona
+        self.renderChartEnabled = renderChartEnabled
+        self.speakEnabled = speakEnabled
+        self.searchMemoryEnabled = searchMemoryEnabled
+        self.selfSchedulingEnabled = selfSchedulingEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -624,6 +652,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             generativeGreetingsEnabled = nil
         }
         greetingPersona = try c.decodeIfPresent(String.self, forKey: .greetingPersona)
+        renderChartEnabled = try c.decodeIfPresent(Bool.self, forKey: .renderChartEnabled) ?? false
+        speakEnabled = try c.decodeIfPresent(Bool.self, forKey: .speakEnabled) ?? false
+        searchMemoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .searchMemoryEnabled) ?? false
+        // Default off (consistent with the other built-in tool gates). Existing
+        // agents that relied on self-scheduling must re-enable it explicitly.
+        selfSchedulingEnabled = try c.decodeIfPresent(Bool.self, forKey: .selfSchedulingEnabled) ?? false
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -632,6 +666,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case limits
         case generativeGreetingsEnabled
         case greetingPersona
+        case renderChartEnabled
+        case speakEnabled
+        case searchMemoryEnabled
+        case selfSchedulingEnabled
         // Read-only legacy key — never encoded after migration.
         case generativeGreetings
     }
@@ -643,6 +681,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(limits, forKey: .limits)
         try c.encodeIfPresent(generativeGreetingsEnabled, forKey: .generativeGreetingsEnabled)
         try c.encodeIfPresent(greetingPersona, forKey: .greetingPersona)
+        try c.encode(renderChartEnabled, forKey: .renderChartEnabled)
+        try c.encode(speakEnabled, forKey: .speakEnabled)
+        try c.encode(searchMemoryEnabled, forKey: .searchMemoryEnabled)
+        try c.encode(selfSchedulingEnabled, forKey: .selfSchedulingEnabled)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of
@@ -653,7 +695,11 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             schedule: AgentScheduleSettings.defaults(for: .ambient),
             limits: .defaults,
             generativeGreetingsEnabled: nil,
-            greetingPersona: nil
+            greetingPersona: nil,
+            renderChartEnabled: false,
+            speakEnabled: false,
+            searchMemoryEnabled: false,
+            selfSchedulingEnabled: false
         )
     }
 }

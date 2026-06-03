@@ -180,9 +180,6 @@ public struct VoiceInputOverlay: View {
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 20)
-        .onChange(of: state) { _, newState in
-            handleStateChange(newState)
-        }
     }
 
     private var voiceStatusFromState: VoiceState {
@@ -412,10 +409,6 @@ public struct VoiceInputOverlay: View {
     }
 
     // MARK: - Actions
-
-    private func handleStateChange(_ newState: VoiceInputState) {
-        // Obsolete, countdown handled by parent component now
-    }
 
     private func cancelRecording() {
         state = .idle

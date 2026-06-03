@@ -167,6 +167,11 @@ public final class NotchWindowController: NSObject, ObservableObject {
 
     @objc private func screenDidChange() {
         updatePanelScreen(forWindowId: ChatWindowManager.shared.lastFocusedWindowId)
+        // Re-apply alert expansion now that the screen set changed. If a prior
+        // `syncAlertExpansion` bailed because no display was attached, the panel
+        // frame and `isExpandedForAlert` may not match the live alert state;
+        // running it here resizes against the now-available screen.
+        syncAlertExpansion()
     }
 
     private func updatePanelScreen(forWindowId windowId: UUID?) {
@@ -178,8 +183,12 @@ public final class NotchWindowController: NSObject, ObservableObject {
             let windowScreen = chatWindow.screen
         {
             targetScreen = windowScreen
+        } else if let fallback = NSScreen.main ?? NSScreen.screens.first {
+            targetScreen = fallback
         } else {
-            targetScreen = NSScreen.main ?? NSScreen.screens.first!
+            // No attached display (headless / all screens detached). Nothing
+            // to reposition onto; bail rather than trap on `.first!`.
+            return
         }
 
         let newMetrics = NotchScreenMetrics.detect(for: targetScreen)
@@ -201,11 +210,18 @@ public final class NotchWindowController: NSObject, ObservableObject {
         let alertActive = ThemedAlertCenter.shared.active(for: .notchOverlay) != nil
 
         guard alertActive != isExpandedForAlert else { return }
-        isExpandedForAlert = alertActive
 
-        let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first!
+        guard let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first else {
+            // No attached display; nothing to resize against. Leave
+            // `isExpandedForAlert` unchanged so the panel frame and the flag
+            // stay in sync — otherwise flipping it here would make the guard
+            // above short-circuit once a display reappears, leaving the panel
+            // stuck at the wrong size. We'll retry on the next sync.
+            return
+        }
         let targetFrame = alertActive ? screen.frame : panelRect(for: screen)
         panel.setFrame(targetFrame, display: true)
+        isExpandedForAlert = alertActive
     }
 
     /// Panel positioned at the very top of the screen (using full frame, not visibleFrame).

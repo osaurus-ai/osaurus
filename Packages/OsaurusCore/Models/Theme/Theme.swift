@@ -562,18 +562,20 @@ public class ThemeManager: ObservableObject {
     private init() {
         print("[Osaurus] ThemeManager: Initializing...")
 
-        // Install built-in themes if needed
-        ThemeConfigurationStore.installBuiltInThemesIfNeeded()
-
-        // Load installed themes into a local variable first
-        let loadedThemes = ThemeConfigurationStore.listThemes()
-        print("[Osaurus] ThemeManager: Found \(loadedThemes.count) installed themes")
-
-        // Load saved appearance mode
+        // Load saved appearance mode (cheap config read).
         let config = ServerConfigurationStore.load() ?? ServerConfiguration.default
 
-        // Initialize all stored properties before using self
-        // Check for active custom theme (user-selected)
+        // Resolve the *initial* theme synchronously with as little disk work
+        // as possible. `.shared` is constructed during `osaurusApp` struct
+        // setup — before any window exists — so the full
+        // `installBuiltInThemesIfNeeded()` + `listThemes()` directory walk and
+        // per-theme JSON decode must NOT run on this launch-critical path.
+        //
+        //  • Active custom theme: a single JSON decode, so honor it here to
+        //    avoid a visible flash for users who picked a custom theme.
+        //  • Otherwise: seed the compiled-in Dark/Light default. The
+        //    disk-installed built-in (identical palette) is swapped in by the
+        //    deferred load below once it finishes — invisible to the user.
         if let customTheme = ThemeConfigurationStore.loadActiveTheme() {
             print("[Osaurus] ThemeManager: Restoring active theme '\(customTheme.metadata.name)'")
             self.activeCustomTheme = customTheme
@@ -581,28 +583,17 @@ public class ThemeManager: ObservableObject {
             self.currentTheme = themeInstance
             self.chatTheme = themeInstance
         } else {
-            // No user-selected theme - use the built-in Dark/Light theme based on appearance mode
-            // Don't set activeCustomTheme so appearance mode changes will work
-            let builtInTheme = Self.resolveBuiltInTheme(for: config.appearanceMode, from: loadedThemes)
-            if let theme = builtInTheme {
-                print("[Osaurus] ThemeManager: Using built-in '\(theme.metadata.name)' theme (auto)")
-                let themeInstance = CustomizableTheme(config: theme)
-                self.currentTheme = themeInstance
-                self.chatTheme = themeInstance
-            } else {
-                // Fallback to default CustomTheme if built-in themes aren't installed
-                print("[Osaurus] ThemeManager: No built-in theme found, using fallback")
-                let fallbackTheme =
-                    Self.isDarkMode(for: config.appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
-                let themeInstance = CustomizableTheme(config: fallbackTheme)
-                self.currentTheme = themeInstance
-                self.chatTheme = themeInstance
-            }
+            let fallbackTheme =
+                Self.isDarkMode(for: config.appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
+            let themeInstance = CustomizableTheme(config: fallbackTheme)
+            self.currentTheme = themeInstance
+            self.chatTheme = themeInstance
         }
 
-        // Now we can assign to self properties
+        // Now we can assign to self properties. `installedThemes` is published
+        // empty and filled in by the deferred load.
         self.appearanceMode = config.appearanceMode
-        self.installedThemes = loadedThemes
+        self.installedThemes = []
 
         // Observe system appearance changes (Distributed Notification)
         DistributedNotificationCenter.default().addObserver(
@@ -611,6 +602,33 @@ public class ThemeManager: ObservableObject {
             name: Notification.Name("AppleInterfaceThemeChangedNotification"),
             object: nil
         )
+
+        // Defer the heavy disk work (built-in install + full theme decode)
+        // off the *synchronous* launch-critical path. `ThemeConfigurationStore`
+        // is `@MainActor` (it guards a static install-cache + UserDefaults), so
+        // the walk stays on the main actor — but as a later main-actor turn, it
+        // no longer blocks `osaurusApp` struct construction. It then publishes
+        // `installedThemes` and upgrades the initial fallback to the disk
+        // built-in when ready.
+        let appearanceMode = config.appearanceMode
+        Task { @MainActor [weak self] in
+            ThemeConfigurationStore.installBuiltInThemesIfNeeded()
+            let loaded = ThemeConfigurationStore.listThemes()
+
+            guard let self else { return }
+            print("[Osaurus] ThemeManager: Found \(loaded.count) installed themes (deferred)")
+            self.installedThemes = loaded
+
+            // Only swap the live theme if the user hasn't picked a custom one;
+            // matching the original synchronous built-in resolution.
+            if self.activeCustomTheme == nil,
+                let builtIn = Self.resolveBuiltInTheme(for: appearanceMode, from: loaded)
+            {
+                let themeInstance = CustomizableTheme(config: builtIn)
+                self.currentTheme = themeInstance
+                self.chatTheme = themeInstance
+            }
+        }
 
         print("[Osaurus] ThemeManager: Initialization complete")
     }

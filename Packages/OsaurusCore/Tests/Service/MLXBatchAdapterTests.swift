@@ -655,13 +655,13 @@ struct MLXBatchAdapterTests {
             ModelRuntime.cacheKVModeTag(
                 for: settings.cache,
                 modelName: "JANGQ-AI/Step-3.7-Flash-JANG_2L"
-            ) == "turbo(3,3)"
+            ) == "fp16"
         )
         #expect(
             ModelRuntime.cacheKVModeTag(
                 for: settings.cache,
                 modelName: "step-3.7-flash-jang_2l"
-            ) == "turbo(3,3)"
+            ) == "fp16"
         )
         #expect(
             ModelRuntime.cacheKVModeTag(
@@ -673,7 +673,7 @@ struct MLXBatchAdapterTests {
                     turboQuantKVLayerCount: 0,
                     rotatingKVLayerCount: 33
                 )
-            ) == "turbo(3,3)"
+            ) == "fp16"
         )
         #expect(
             ModelRuntime.cacheKVModeTag(
@@ -685,7 +685,7 @@ struct MLXBatchAdapterTests {
                     turboQuantKVLayerCount: 0,
                     rotatingKVLayerCount: 33
                 )
-            ) == "turbo(3,3)"
+            ) == "fp16"
         )
         #expect(
             ModelRuntime.cacheKVModeTag(
@@ -910,6 +910,19 @@ struct MLXBatchAdapterTests {
             !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
                 modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ_K",
                 maxBatchSize: 8
+            )
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "JANGQ-AI/Step-3.7-Flash-JANG_2L",
+                maxBatchSize: 1
+            ),
+            "Step 3.7 is proven on vmlx's uncompiled BatchEngine path; Osaurus must not route it through the compiled B=1 trace until that path is separately proven"
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "JANGQ-AI/Step-3.7-Flash-JANGTQ_K",
+                maxBatchSize: 1
             )
         )
     }
@@ -1212,6 +1225,14 @@ struct MLXBatchAdapterTests {
         )
         #expect(stepRequired["tool_choice"] as? String == "required")
         #expect(stepRequired["enable_thinking"] as? Bool == false)
+
+        let stepJang2LRequired = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: "JANGQ-AI/Step-3.7-Flash-JANG_2L",
+            toolChoice: .required
+        )
+        #expect(stepJang2LRequired["tool_choice"] as? String == "required")
+        #expect(stepJang2LRequired["enable_thinking"] as? Bool == false)
     }
 
     @Test func additionalContext_defaultsLingThinkingOffButHonorsExplicitOptIn() {

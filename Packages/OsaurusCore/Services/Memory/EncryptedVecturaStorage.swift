@@ -20,8 +20,7 @@
 //  ## Mitigation in place
 //
 //  Until that upstream change lands we rely on the
-//  **rebuild-from-encrypted-SQL** invariant guaranteed by
-//  `StorageMigrator`:
+//  **rebuild-from-encrypted-SQL** invariant:
 //
 //    - The authoritative copy of every fact / episode / transcript
 //      turn lives in `memory.sqlite`, which is SQLCipher-encrypted.
@@ -30,13 +29,11 @@
 //      vector dir without the SQLCipher key gets shape-of-content
 //      (token frequency, embedding vectors) but cannot reconstruct
 //      the source text without the underlying SQLCipher DB.
-//    - After every storage migration (`storage-version` bump) and
-//      after key rotation, `StorageMigrator` calls
-//      `MemorySearchService.shared.rebuildIndex()` to wipe the
-//      existing per-agent dirs and rebuild them from the encrypted
-//      SQL. This narrows the window in which a stale vector file
-//      could leak data to the time between the source row being
-//      written and the next consolidator pass / launch.
+//    - The per-agent dirs are rebuilt from the encrypted SQL via
+//      `MemorySearchService.shared.rebuildIndex()`. This narrows the
+//      window in which a stale vector file could leak data to the
+//      time between the source row being written and the next
+//      consolidator pass / rebuild.
 //
 //  ## Future work
 //
@@ -77,9 +74,9 @@ public enum EncryptedVecturaStorage {
     public static let threatModelNote = """
         Vector files under ~/.osaurus/memory/vectura/<agent>/ are
         currently plaintext on disk. The authoritative source content
-        lives in the SQLCipher-encrypted memory.sqlite. After any
-        StorageMigrator run, vectors are rebuilt from the encrypted
-        source so an attacker who reads the vector dir without the
-        SQLCipher key gets only embedding shapes, not the source text.
+        lives in the SQLCipher-encrypted memory.sqlite. Vectors are
+        rebuilt from the encrypted source so an attacker who reads the
+        vector dir without the SQLCipher key gets only embedding
+        shapes, not the source text.
         """
 }

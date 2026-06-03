@@ -348,7 +348,7 @@ Schema:
 **Tool selection.** The optional `tools` array pins specific tool names so the dispatched chat is guaranteed to see them on turn 1 — useful for "the agent must be able to call `reply` to talk back to the user" patterns where you can't rely on the agent's auto-mode preflight to surface them. Names are *additive* on top of the agent's existing selection (auto-mode preflight or manual list); they don't replace it. Allowed names are restricted to:
 
 - the calling plugin's own manifest tool ids (the `id` field on each entry in `manifest.capabilities.tools`), and
-- host built-in always-loaded names such as `share_artifact`, `search_memory`, sandbox tools, etc.
+- host built-in tool names such as `share_artifact`, `reply`, sandbox tools, etc. — including gated built-ins like `search_memory`, `render_chart`, `speak`, and the scheduler tools, which default off behind their per-agent feature toggles. Pinning a gated built-in here is additive and surfaces it for this dispatch even when the agent's toggle is off.
 
 Names outside that set are dropped silently and a one-shot `[PluginHostAPI] Plugin '<id>' requested tool '<name>' on dispatch but it is not in the allowed set` warning is logged per `(plugin, name)` per process. The rest of the dispatch proceeds normally — a typo in `tools` never fails the call. Omitting the field, passing an empty array, or passing non-string entries all behave like the field wasn't there.
 

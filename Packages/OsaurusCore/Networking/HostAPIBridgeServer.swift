@@ -178,7 +178,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         let box = UnsafeSendableBox(value: context)
         let handler = UnsafeSendableBox(value: self)
 
-        Task {
+        let task = Task {
             let response: BridgeResponse
             if let token = bearerToken,
                 let identity = await SandboxBridgeTokenStore.shared.resolve(token: token)
@@ -217,6 +217,10 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                 ctx.writeAndFlush(handler.value.wrapOutboundOut(.end(nil)), promise: nil)
             }
         }
+        // Tie the bridge request task to the channel lifecycle: if the guest
+        // VM closes the socket mid-request, cancel the in-flight routing work
+        // instead of letting it run to completion against a dead connection.
+        context.channel.closeFuture.whenComplete { _ in task.cancel() }
     }
 
     /// Pull the bearer credential out of an `Authorization` header. Tolerant of

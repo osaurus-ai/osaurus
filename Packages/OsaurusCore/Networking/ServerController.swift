@@ -51,6 +51,12 @@ final class ServerController: ObservableObject {
     private var serverActor: OsaurusServer?
     private var agentsCancellable: AnyCancellable?
 
+    /// Flipped once `applicationDidFinishLaunching` finishes its server
+    /// wiring. The Bonjour-expose Combine sink consults this so it never
+    /// triggers a `restartServer()` while the launch sequence is still
+    /// bringing the server up (mid-launch server churn — see hang audit).
+    private var isLaunchComplete = false
+
     // Singleton holder to allow async access to the current controller instance when injected as EnvironmentObject
     @MainActor
     private struct ServerControllerHolder {
@@ -77,6 +83,13 @@ final class ServerController: ObservableObject {
     }
 
     // MARK: - Public Methods
+
+    /// Marks launch as complete. Called by the AppDelegate at the end of
+    /// `applicationDidFinishLaunching` so the Bonjour-expose Combine sink may
+    /// begin honoring live config changes with a restart.
+    func markLaunchComplete() {
+        isLaunchComplete = true
+    }
 
     /// Starts the server with current configuration
     func startServer() async {
@@ -165,12 +178,29 @@ final class ServerController: ObservableObject {
 
         print("[Osaurus] Ensuring NIO server shutdown before app termination")
         RelayTunnelManager.shared.disconnectAll()
+        // Stop mDNS on the quit path too — `stopServer` does this, but
+        // `ensureShutdown` is the only teardown the AppDelegate calls, so
+        // without this an advertised service could linger past quit.
+        BonjourAdvertiser.shared.stopAdvertising()
         isRunning = false
         serverHealth = .stopping
 
         if let server = serverActor {
-            await server.stop(gracefully: true)
-            serverActor = nil
+            // Termination path: use the bounded (`gracefully: false`) shutdown
+            // so a lingering SSE child channel can't stall quit.
+            let completed = await server.stop(gracefully: false)
+            // Only drop our reference when the EventLoopGroup actually shut
+            // down. On timeout the group is still running; releasing the actor
+            // here would let it (and its group) deinit mid-shutdown and trip
+            // NIO's `EventLoopGroup is still running` precondition (issue
+            // #860). Keep it rooted — the process is exiting anyway.
+            if completed {
+                serverActor = nil
+            } else {
+                print(
+                    "[Osaurus] NIO group still draining at quit; keeping serverActor rooted to avoid mid-shutdown dealloc"
+                )
+            }
         }
 
         localNetworkAddress = "127.0.0.1"
@@ -187,8 +217,8 @@ final class ServerController: ObservableObject {
         }
         // Read-only load. The legacy → vmlx migration (which writes to
         // `~/.osaurus/config/`) is intentionally deferred to
-        // `bootstrapRuntimeSettings()` so a fresh install stays
-        // pristine until after the storage migrator's gate runs.
+        // `bootstrapRuntimeSettings()` so a fresh install stays pristine
+        // until the AppDelegate explicitly runs it during launch.
         if let existing = ServerRuntimeSettingsStore.load() {
             self.runtimeSettings = existing
         }
@@ -208,7 +238,12 @@ final class ServerController: ObservableObject {
                     self.runtimeSettings.network.host = "0.0.0.0"
                     self.saveConfiguration()
                     ServerRuntimeSettingsStore.save(self.runtimeSettings)
-                    if self.isRunning {
+                    // Only restart for a live config change *after* launch has
+                    // settled. During launch the initial auto-start already
+                    // reads the updated config, so restarting here would be
+                    // redundant server churn racing the launch sequence — the
+                    // mid-launch restart the hang audit flagged.
+                    if self.isRunning && self.isLaunchComplete {
                         await self.restartServer()
                     }
                 }
@@ -220,16 +255,13 @@ final class ServerController: ObservableObject {
     /// `loadOrMigrate()` just returns the on-disk value without
     /// writing.
     ///
-    /// Must be invoked from the AppDelegate immediately after
-    /// `StorageMigrationCoordinator.blockingAwaitReady()` returns.
-    /// `init()` skips this because `ServerController` is constructed
-    /// as a stored property of the AppDelegate (i.e. before
-    /// `applicationDidFinishLaunching`), and the migration's first-run
-    /// `save()` would otherwise create `config/server-runtime.json`
-    /// in `~/.osaurus/` *before* the storage migrator's
-    /// `isPristineInstall()` check, flipping a true fresh install
-    /// out of the pristine fast path and painting the "Securing your
-    /// data" overlay over onboarding.
+    /// Invoked from the AppDelegate during
+    /// `applicationDidFinishLaunching`. `init()` skips this because
+    /// `ServerController` is constructed as a stored property of the
+    /// AppDelegate (i.e. before launch), and the migration's
+    /// first-run `save()` would otherwise create
+    /// `config/server-runtime.json` in `~/.osaurus/` before the app
+    /// is fully up.
     func bootstrapRuntimeSettings() {
         self.runtimeSettings = ServerRuntimeSettingsStore.loadOrMigrate()
     }

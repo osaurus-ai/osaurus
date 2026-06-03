@@ -96,8 +96,9 @@ public struct PromptManifest: Sendable {
         return parts.joined(separator: "\n\n")
     }
 
-    /// Legacy hash of static prefix content + tool names.
-    public func staticPrefixHash(toolNames: [String]) -> String {
+    /// Legacy hash of static prefix content + tool names. Internal: the only
+    /// caller is the empty-array `prefixHash` debug accessor above.
+    func staticPrefixHash(toolNames: [String]) -> String {
         PromptPrefixHasher.hash(systemContent: staticPrefixContent, toolNames: toolNames)
     }
 

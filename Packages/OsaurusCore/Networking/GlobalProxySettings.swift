@@ -4,10 +4,49 @@
 //
 
 import Foundation
+import os
 
 /// Disk-backed resolver for the global proxy endpoint that can be used from
 /// background services without crossing the `@MainActor` settings store.
 public enum GlobalProxySettings {
+    private struct SharedSessionState {
+        let proxyKey: String
+        let session: URLSession
+    }
+
+    /// Cached one-shot session + the proxy key it was built for. Guarded so
+    /// concurrent callers can't race two sessions into the box.
+    private static let sharedSessionBox = OSAllocatedUnfairLock<SharedSessionState?>(initialState: nil)
+
+    /// A process-wide `URLSession` for one-shot request/response calls (model
+    /// metadata probes, provider connectivity checks, Hugging Face lookups).
+    ///
+    /// Previously each such call did `makeSession().data(for:)`, creating a
+    /// fresh `URLSession` that was never invalidated — every call leaked a
+    /// session (and its connection pool / delegate queue) for the lifetime of
+    /// the process. Reusing one session removes that churn. The session is
+    /// rebuilt (and the old one drained) only when the global proxy endpoint
+    /// changes, so proxy edits still take effect.
+    ///
+    /// Only use this for delegate-less, transient request/response work. Calls
+    /// that need a custom delegate (download progress, redirect policy) must
+    /// build and own their own session.
+    public static func sharedSession() -> URLSession {
+        let key =
+            diskBackedServerConfiguration()?.globalProxyURL?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return sharedSessionBox.withLock { state in
+            if let state, state.proxyKey == key {
+                return state.session
+            }
+            // Proxy changed (or first use): drain the old session and build a
+            // new one bound to the current endpoint.
+            state?.session.finishTasksAndInvalidate()
+            let session = makeSession()
+            state = SharedSessionState(proxyKey: key, session: session)
+            return session
+        }
+    }
     /// Read the persisted server configuration and return the validated proxy
     /// endpoint. Invalid or missing values fail closed to normal networking so
     /// a stale config file cannot break all outbound traffic.

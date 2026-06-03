@@ -349,6 +349,29 @@ public final class MCPProviderManager: ObservableObject {
         }
     }
 
+    /// Quit-path teardown: disconnect every provider AND await each stdio
+    /// subprocess owner's `stop()` so child `Process`es are reaped instead
+    /// of orphaned. `disconnectAll()` only fire-and-forgets the runner stops
+    /// (fine for an interactive disconnect, but at quit the app can exit
+    /// before those detached tasks run). We snapshot + detach the runners
+    /// first so the synchronous `disconnect` path below doesn't double-stop
+    /// them, then await the real teardown.
+    public func shutdownAllStdioRunners() async {
+        let hostRunners = Array(hostStdioRunners.values)
+        let sandboxRunners = Array(sandboxStdioRunners.values)
+        hostStdioRunners.removeAll()
+        sandboxStdioRunners.removeAll()
+
+        disconnectAll()
+
+        for runner in hostRunners {
+            await runner.stop()
+        }
+        for runner in sandboxRunners {
+            await runner.stop()
+        }
+    }
+
     // MARK: - Tool Execution
 
     /// Execute a tool on a provider

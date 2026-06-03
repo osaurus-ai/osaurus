@@ -220,6 +220,102 @@ struct ChatViewSandboxTests {
         }
     }
 
+    /// Toggling sandbox on/off for the current agent must re-price the
+    /// estimate on the SAME session — not just across two freshly-built
+    /// sessions. This pins the cache-invalidation contract the debounced
+    /// budget-input pipeline relies on: after a resync the breakdown grows
+    /// when sandbox is enabled and shrinks back to the original total when
+    /// it is disabled. `invalidateTokenCache()` stands in for the
+    /// `.agentUpdated` / `SandboxManager.State` signals the pipeline
+    /// debounces in the running app.
+    @Test
+    func estimatedContextBreakdown_resyncsAcrossSandboxToggleOnSameSession() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let manager = AgentManager.shared
+            let originalActiveAgentId = manager.activeAgentId
+            var agent = Agent(
+                name: "Resync Sandbox",
+                agentAddress: "test-resync-sandbox-\(UUID().uuidString)"
+            )
+            manager.add(agent)
+
+            let session = ChatSession()
+            session.agentId = agent.id
+
+            // Baseline: sandbox off. Reading populates the preview cache.
+            let offTotal = session.estimatedContextBreakdown.total
+            #expect(offTotal > 0)
+
+            // Enable sandbox on the same agent + register the built-ins,
+            // then resync. Direct mutation avoids the provisioning side
+            // effects of `updateAutonomousExec`.
+            agent.autonomousExec = AutonomousExecConfig(enabled: true)
+            manager.update(agent)
+            BuiltinSandboxTools.register(
+                agentId: agent.id.uuidString,
+                agentName: agent.name,
+                config: AutonomousExecConfig(enabled: true)
+            )
+            session.invalidateTokenCache()
+            let onTotal = session.estimatedContextBreakdown.total
+            #expect(onTotal > offTotal)
+
+            // Disable again → resync must shrink back to the original total.
+            agent.autonomousExec = nil
+            manager.update(agent)
+            ToolRegistry.shared.unregisterAllSandboxTools()
+            session.invalidateTokenCache()
+            let backTotal = session.estimatedContextBreakdown.total
+            #expect(backTotal < onTotal)
+            #expect(backTotal == offTotal)
+
+            manager.setActiveAgent(originalActiveAgentId)
+            _ = await manager.delete(id: agent.id)
+        }
+    }
+
+    /// A per-agent feature toggle (`render_chart`) must change the `Tools`
+    /// row once the budget cache is invalidated — and must NOT change it
+    /// before, proving the preview is genuinely cached (so typing doesn't
+    /// recompose) yet never goes stale across a resync.
+    @Test
+    func estimatedContextBreakdown_resyncsToolTokensWhenFeatureToggled() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let manager = AgentManager.shared
+            let originalActiveAgentId = manager.activeAgentId
+            var agent = Agent(
+                name: "Resync Feature",
+                agentAddress: "test-resync-feature-\(UUID().uuidString)",
+                toolSelectionMode: .auto
+            )
+            manager.add(agent)
+
+            let session = ChatSession()
+            session.agentId = agent.id
+
+            @MainActor func toolTokens() -> Int {
+                session.estimatedContextBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
+            }
+
+            let baseTools = toolTokens()
+            #expect(baseTools > 0)
+
+            // Enable render_chart. Without an invalidation signal the cached
+            // preview still reports the pre-toggle tool tokens.
+            agent.settings.renderChartEnabled = true
+            manager.update(agent)
+            #expect(toolTokens() == baseTools)
+
+            // The resync re-prices the schema: render_chart now survives the
+            // auto-mode strip, so the Tools row grows.
+            session.invalidateTokenCache()
+            #expect(toolTokens() > baseTools)
+
+            manager.setActiveAgent(originalActiveAgentId)
+            _ = await manager.delete(id: agent.id)
+        }
+    }
+
     // Chat session budget estimation is covered indirectly via
     // SystemPromptComposer + ContextBudgetManager tests.
 }

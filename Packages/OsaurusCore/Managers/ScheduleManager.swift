@@ -53,11 +53,18 @@ public final class ScheduleManager {
         // Load schedules from disk
         refresh()
 
-        // Check for missed schedules on startup
-        checkForMissedSchedules()
-
-        // Schedule the next timer
+        // Schedule the next timer (cheap — just arms a Task.sleep).
         scheduleNextTimer()
+
+        // Check for missed schedules on startup. Deferred to a later
+        // main-actor turn so it doesn't run synchronously on the
+        // launch-critical path while `.shared` is being constructed
+        // (the App struct builds this property before
+        // `applicationDidFinishLaunching`). `checkForMissedSchedules`
+        // can immediately dispatch LLM work, which must not block launch.
+        Task { @MainActor [weak self] in
+            self?.checkForMissedSchedules()
+        }
 
         // Listen for timezone changes
         timezoneObserver = NotificationCenter.default.addObserver(
@@ -231,6 +238,25 @@ public final class ScheduleManager {
         }
 
         runningTasks.removeValue(forKey: scheduleId)
+    }
+
+    /// Freeze the manager for app termination: cancel the next-run timer, all
+    /// in-flight execution tasks, and remove the timezone observer so nothing
+    /// can dispatch a new LLM run mid-teardown. Lightweight and synchronous —
+    /// safe to call at the top of the quit chain. Idempotent.
+    public func stop() {
+        cancelTimer()
+
+        if let observer = timezoneObserver {
+            NotificationCenter.default.removeObserver(observer)
+            timezoneObserver = nil
+        }
+
+        for (_, task) in executionTasks {
+            task.cancel()
+        }
+        executionTasks.removeAll()
+        runningTasks.removeAll()
     }
 
     // MARK: - Timer Management

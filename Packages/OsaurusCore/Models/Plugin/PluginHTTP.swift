@@ -73,6 +73,12 @@ final class PluginRateLimiter: @unchecked Sendable {
 
     private var buckets: [String: Bucket] = [:]
     private let lock = NSLock()
+    /// Last time idle buckets were swept. Keyed buckets (per plugin id, incl.
+    /// anonymous / agent-scoped keys) previously accumulated forever; a
+    /// periodic sweep drops fully-refilled (idle) buckets so the dict stays
+    /// bounded by *active* callers.
+    private var lastSweep = Date.distantPast
+    private let sweepInterval: TimeInterval = 300
 
     private let maxTokens: Double = 100
     private let refillRate: Double = 100.0 / 60.0  // 100 per minute
@@ -83,6 +89,7 @@ final class PluginRateLimiter: @unchecked Sendable {
         defer { lock.unlock() }
 
         let now = Date()
+        sweepIfNeeded(now: now)
         var bucket = buckets[pluginId] ?? Bucket(tokens: maxTokens, lastRefill: now)
 
         let elapsed = now.timeIntervalSince(bucket.lastRefill)
@@ -97,6 +104,15 @@ final class PluginRateLimiter: @unchecked Sendable {
 
         buckets[pluginId] = bucket
         return false
+    }
+
+    /// Drop buckets that have been idle long enough to have fully refilled —
+    /// they carry no rate-limit state worth keeping. Caller must hold `lock`.
+    private func sweepIfNeeded(now: Date) {
+        guard now.timeIntervalSince(lastSweep) >= sweepInterval else { return }
+        lastSweep = now
+        let fullAfter = maxTokens / refillRate
+        buckets = buckets.filter { now.timeIntervalSince($0.value.lastRefill) < fullAfter }
     }
 }
 

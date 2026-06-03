@@ -325,7 +325,7 @@ extension MessageTableRepresentable {
 
         /// Last known scroll view width. Used to detect actual frame changes from AppKit layout
         private var lastKnownFrameWidth: CGFloat = 0
-        private var frameObserver: NSObjectProtocol?
+        nonisolated(unsafe) private var frameObserver: NSObjectProtocol?
         private var frameDebounceWork: DispatchWorkItem?
 
         /// Width last provided by SwiftUI (effectiveContentWidth, already clamped to maxContentWidth).
@@ -439,6 +439,13 @@ extension MessageTableRepresentable {
         nonisolated(unsafe) private var minimapBoundsObserver: NSObjectProtocol?
 
         deinit {
+            // Both are block-based observers (addObserver(forName:…)) and must
+            // be removed explicitly — otherwise the retained closures (and the
+            // NSScrollView/clip view they were registered against) leak for the
+            // process lifetime as chats are opened and closed.
+            if let observer = frameObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
             if let observer = minimapBoundsObserver {
                 NotificationCenter.default.removeObserver(observer)
             }

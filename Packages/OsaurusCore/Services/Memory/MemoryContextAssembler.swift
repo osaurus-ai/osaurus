@@ -24,6 +24,11 @@ public actor MemoryContextAssembler {
     /// gate verdicts and don't share a slot.
     private var cache: [String: CacheEntry] = [:]
     private static let cacheTTL: TimeInterval = 10
+    /// Hard ceiling on distinct cache slots. Each unique `(agentId, query)`
+    /// produced a permanent entry that was only ever overwritten or cleared on
+    /// explicit invalidation — a long session with many distinct queries grew
+    /// the dict unbounded. Capped + TTL-swept on write.
+    private static let maxCacheEntries = 256
 
     public init() {}
 
@@ -93,8 +98,24 @@ public actor MemoryContextAssembler {
         let dynamicHadContent = !overridesBlock.isEmpty || !dynamic.isEmpty
         let result = dynamicHadContent ? blocks.joined(separator: "\n\n") : ""
 
+        pruneCacheIfNeeded()
         cache[cacheKey] = CacheEntry(context: result, timestamp: Date())
         return result
+    }
+
+    /// Reclaim expired slots and enforce the hard cap so the cache can't grow
+    /// without bound across a long session of distinct queries.
+    private func pruneCacheIfNeeded() {
+        let now = Date()
+        cache = cache.filter { now.timeIntervalSince($0.value.timestamp) < Self.cacheTTL }
+        if cache.count > Self.maxCacheEntries {
+            let overflow = cache.count - Self.maxCacheEntries
+            let oldestKeys =
+                cache.sorted { $0.value.timestamp < $1.value.timestamp }
+                .prefix(overflow)
+                .map(\.key)
+            for key in oldestKeys { cache.removeValue(forKey: key) }
+        }
     }
 
     /// Invalidate cache. Pass `agentId` to clear just that agent's slots.

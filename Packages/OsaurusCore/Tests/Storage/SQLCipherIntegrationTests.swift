@@ -8,7 +8,6 @@
 //  - Open with key, write a row, close, reopen with same key, read it back.
 //  - Reopen with a wrong key fails the verification step.
 //  - `cipher_version` reports a 4.x SQLCipher build.
-//  - `isEncryptedDatabase` correctly distinguishes plaintext vs encrypted files.
 //
 
 import CryptoKit
@@ -95,9 +94,9 @@ struct SQLCipherIntegrationTests {
     }
 
     /// Regression for the "hmac check failed for pgno=1" outage:
-    /// `StorageMigrator.migrateOneDatabase` keys the destination DB
-    /// with the raw-key SQL form `ATTACH … KEY "x'<hex>'"`, while
-    /// `EncryptedSQLiteOpener.open` keys via `sqlite3_key_v2`.
+    /// a database keyed with the raw-key SQL form
+    /// `ATTACH … KEY "x'<hex>'"` must read back through
+    /// `EncryptedSQLiteOpener.open` (which keys via `sqlite3_key_v2`).
     /// SQLCipher only takes the raw-key path when the C buffer is
     /// the literal ASCII string `x'<64-hex>'` (67 bytes); raw 32
     /// bytes silently fall through to PBKDF2(key, salt, kdf_iter)
@@ -105,7 +104,7 @@ struct SQLCipherIntegrationTests {
     /// fails on first read.
     ///
     /// This test simulates exactly that handoff and asserts the
-    /// runtime opener can read what the migrator wrote.
+    /// runtime opener can read a raw-key-form-written database.
     @Test
     func migratorWriteThenOpenerRead_keyFormsAgree() throws {
         let plainPath = tempDBPath("plain.sqlite")
@@ -118,7 +117,7 @@ struct SQLCipherIntegrationTests {
         // Seed a plaintext source DB (what the user has post-revert).
         let src = try EncryptedSQLiteOpener.open(path: plainPath, key: nil)
         try execute(src, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)")
-        try execute(src, "INSERT INTO notes (body) VALUES ('migrator-wrote-this')")
+        try execute(src, "INSERT INTO notes (body) VALUES ('raw-key-wrote-this')")
 
         // Mirror the migrator's exact key form: SQL ATTACH + raw-key blob.
         try execute(
@@ -146,23 +145,7 @@ struct SQLCipherIntegrationTests {
         #expect(sqlite3_prepare_v2(runtime, "SELECT body FROM notes", -1, &stmt, nil) == SQLITE_OK)
         defer { sqlite3_finalize(stmt) }
         #expect(sqlite3_step(stmt) == SQLITE_ROW)
-        #expect(String(cString: sqlite3_column_text(stmt, 0)) == "migrator-wrote-this")
-    }
-
-    @Test
-    func plaintextVsEncryptedDetection() throws {
-        // Write a plaintext sqlite by opening with key=nil.
-        let plainPath = tempDBPath("plain.sqlite")
-        let plainConn = try EncryptedSQLiteOpener.open(path: plainPath, key: nil)
-        try execute(plainConn, "CREATE TABLE p (a INTEGER)")
-        sqlite3_close(plainConn)
-        #expect(!EncryptedSQLiteOpener.isEncryptedDatabase(path: plainPath))
-
-        let encPath = tempDBPath("enc.sqlite")
-        let encConn = try EncryptedSQLiteOpener.open(path: encPath, key: key(seed: 0x77))
-        try execute(encConn, "CREATE TABLE e (a INTEGER)")
-        sqlite3_close(encConn)
-        #expect(EncryptedSQLiteOpener.isEncryptedDatabase(path: encPath))
+        #expect(String(cString: sqlite3_column_text(stmt, 0)) == "raw-key-wrote-this")
     }
 
     // MARK: - Helpers

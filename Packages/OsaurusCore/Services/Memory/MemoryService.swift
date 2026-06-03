@@ -283,12 +283,30 @@ public actor MemoryService {
         let deadline = started.addingTimeInterval(timeoutSeconds)
         var drained = 0
         for conv in toDrain {
-            if Date() >= deadline { break }
-            await performDistillSession(
-                agentId: conv.agentId,
-                conversationId: conv.conversationId
-            )
-            drained += 1
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining <= 0 { break }
+            // Per-session cap on the *remaining* budget. The coarse
+            // between-sessions check above isn't enough: a single
+            // `performDistillSession` that stalls in MLX prefill during
+            // teardown would otherwise blow the whole quit budget with no
+            // way to bail. If a session exceeds the remaining time we
+            // abandon it (cooperatively cancelled) and stop draining —
+            // whatever's left is recovered next launch via
+            // `recoverOrphanedSignals`.
+            let finished = await runWithDeadline(seconds: remaining) { [weak self] in
+                await self?.performDistillSession(
+                    agentId: conv.agentId,
+                    conversationId: conv.conversationId
+                )
+            }
+            if finished {
+                drained += 1
+            } else {
+                MemoryLogger.service.info(
+                    "flushAllPending: session for conv=\(conv.conversationId, privacy: .public) exceeded remaining budget; abandoning drain"
+                )
+                break
+            }
         }
 
         let elapsed = Int(Date().timeIntervalSince(started) * 1000)

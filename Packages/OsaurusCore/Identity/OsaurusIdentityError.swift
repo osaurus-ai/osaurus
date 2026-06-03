@@ -19,6 +19,7 @@ public enum OsaurusIdentityError: LocalizedError {
     case mnemonicUnknownWord(String)
     case mnemonicChecksumFailed
     case mnemonicAddressMismatch(expected: String, got: String)
+    case invalidEndpointURL(String)
 
     public var errorDescription: String? {
         switch self {
@@ -44,6 +45,8 @@ public enum OsaurusIdentityError: LocalizedError {
             "Recovery phrase checksum is invalid. Double-check each word."
         case .mnemonicAddressMismatch(let expected, let got):
             "Recovery phrase derives a different identity (\(got)) than the one your agents were derived from (\(expected))."
+        case .invalidEndpointURL(let value):
+            "Could not form a valid request URL from \(value)."
         }
     }
 }

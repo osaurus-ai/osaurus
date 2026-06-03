@@ -3,7 +3,7 @@
 //  osaurusTests
 //
 //  Smoke tests for the lock-protected Bool that
-//  `StorageMigrationCoordinator.blockingAwaitReady()` polls on the
+//  `StorageMutationGate.blockingAwaitNotMutating()` polls on the
 //  hot path. The contract we care about for the gate to behave
 //  correctly:
 //

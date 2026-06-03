@@ -24,6 +24,7 @@ public enum ChatHistoryDatabaseError: Error, LocalizedError {
     case failedToExecute(String)
     case failedToPrepare(String)
     case migrationFailed(String)
+    case databaseFromNewerVersion(found: Int, expected: Int)
     case notOpen
 
     public var errorDescription: String? {
@@ -32,6 +33,9 @@ public enum ChatHistoryDatabaseError: Error, LocalizedError {
         case .failedToExecute(let m): return "Failed to execute chat-history query: \(m)"
         case .failedToPrepare(let m): return "Failed to prepare chat-history statement: \(m)"
         case .migrationFailed(let m): return "Chat-history migration failed: \(m)"
+        case .databaseFromNewerVersion(let found, let expected):
+            return
+                "Chat-history database is schema v\(found) but this build supports up to v\(expected). Refusing to open to avoid forward-version corruption."
         case .notOpen: return "Chat-history database is not open"
         }
     }
@@ -53,12 +57,10 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     // MARK: - Lifecycle
 
     public func open() throws {
-        // Defensive gate: production flow already awaits the
-        // migrator in `AppDelegate.applicationDidFinishLaunching`,
-        // but tests + future headless entry points may call
-        // `open()` directly. Sync gate is a no-op once the
-        // migrator's done.
-        StorageMigrationCoordinator.blockingAwaitReady()
+        // Defensive gate: parks only while a key rotation is
+        // re-encrypting databases so we can't open a half-rekeyed
+        // file with the wrong key. No-op fast path otherwise.
+        StorageMutationGate.blockingAwaitNotMutating()
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.chatHistory())
@@ -120,15 +122,45 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Highest schema version this build knows how to produce. Opening a DB
+    /// stamped newer than this is refused (forward-version fail-fast).
+    private static let latestSchemaVersion = 7
+
     private func runMigrations() throws {
         let current = try getSchemaVersion()
-        if current < 1 { try migrateToV1() }
-        if current < 2 { try migrateToV2() }
-        if current < 3 { try migrateToV3() }
-        if current < 4 { try migrateToV4() }
-        if current < 5 { try migrateToV5() }
-        if current < 6 { try migrateToV6() }
-        if current < 7 { try migrateToV7() }
+        // A database stamped by a newer build carries columns/semantics this
+        // build doesn't understand; reading/writing it as the older schema
+        // would silently corrupt forward-version rows. Refuse instead.
+        if current > Self.latestSchemaVersion {
+            throw ChatHistoryDatabaseError.databaseFromNewerVersion(
+                found: current,
+                expected: Self.latestSchemaVersion
+            )
+        }
+        // Each step runs in its own transaction: a crash/error mid-migration
+        // rolls back to the prior version instead of leaving a half-applied
+        // schema (the `setSchemaVersion` bump is part of the same commit).
+        if current < 1 { try runMigrationStep(1, migrateToV1) }
+        if current < 2 { try runMigrationStep(2, migrateToV2) }
+        if current < 3 { try runMigrationStep(3, migrateToV3) }
+        if current < 4 { try runMigrationStep(4, migrateToV4) }
+        if current < 5 { try runMigrationStep(5, migrateToV5) }
+        if current < 6 { try runMigrationStep(6, migrateToV6) }
+        if current < 7 { try runMigrationStep(7, migrateToV7) }
+    }
+
+    /// Run one migration body atomically. Called only from `runMigrations`,
+    /// which already holds the database queue, so it uses raw
+    /// `BEGIN/COMMIT/ROLLBACK` (no nested `queue.sync`).
+    private func runMigrationStep(_ version: Int, _ body: () throws -> Void) throws {
+        try executeRaw("BEGIN TRANSACTION")
+        do {
+            try body()
+            try executeRaw("COMMIT")
+        } catch {
+            try? executeRaw("ROLLBACK")
+            throw ChatHistoryDatabaseError.migrationFailed("v\(version): \(error.localizedDescription)")
+        }
     }
 
     private func getSchemaVersion() throws -> Int {
@@ -973,15 +1005,31 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     // MARK: - JSON helpers
 
     private static func encodeJSON<T: Encodable>(_ value: T) -> String? {
-        guard let data = try? JSONEncoder().encode(value),
-            let str = String(data: data, encoding: .utf8)
-        else { return nil }
-        return str
+        do {
+            let data = try JSONEncoder().encode(value)
+            return String(data: data, encoding: .utf8)
+        } catch {
+            // Surface instead of silently persisting NULL (which would drop
+            // tool_calls / attachments without a trace).
+            PersistenceHealth.shared.recordChatEncodeFailure("\(T.self): \(error.localizedDescription)")
+            return nil
+        }
     }
 
     private static func decodeJSON<T: Decodable>(_ json: String) -> T? {
-        guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(T.self, from: data)
+        guard let data = json.data(using: .utf8) else {
+            PersistenceHealth.shared.recordChatDecodeFailure("\(T.self): non-UTF8 column")
+            return nil
+        }
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            // A non-empty column that fails to decode is real corruption /
+            // a schema mismatch — log + count it rather than returning nil
+            // and pretending the field was empty.
+            PersistenceHealth.shared.recordChatDecodeFailure("\(T.self): \(error.localizedDescription)")
+            return nil
+        }
     }
 
     // MARK: - SQLite helpers (mirrors MemoryDatabase)

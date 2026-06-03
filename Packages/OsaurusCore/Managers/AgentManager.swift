@@ -468,6 +468,10 @@ public final class AgentManager: ObservableObject {
         // from sitting in memory until TTL.
         await GenerativeGreetingPool.shared.invalidate(agentId: id)
 
+        // Release the agent's in-memory vector index so a long-lived process
+        // doesn't accumulate one VecturaKit instance per deleted agent.
+        await MemorySearchService.shared.evictAgent(agentId: id.uuidString)
+
         // Notify subscribers (e.g. PluginManager) so plugins can
         // deregister webhooks (push tunnel_url=nil) and tear down any
         // per-agent state of their own.
@@ -700,6 +704,40 @@ extension AgentManager {
         guard let agent = agent(for: agentId) else { return false }
         if agent.id == Agent.defaultId { return false }
         return agent.settings.dbEnabled
+    }
+
+    /// Whether the `render_chart` built-in tool is exposed to the model
+    /// for an agent. Default off and hard-wired off for the default agent
+    /// (which is restricted to its fixed 8-tool baseline).
+    public func effectiveRenderChartEnabled(for agentId: UUID) -> Bool {
+        guard let agent = agent(for: agentId) else { return false }
+        if agent.id == Agent.defaultId { return false }
+        return agent.settings.renderChartEnabled
+    }
+
+    /// Whether the `speak` (voice output) tool is exposed to the model.
+    public func effectiveSpeakEnabled(for agentId: UUID) -> Bool {
+        guard let agent = agent(for: agentId) else { return false }
+        if agent.id == Agent.defaultId { return false }
+        return agent.settings.speakEnabled
+    }
+
+    /// Whether the `search_memory` recall tool is exposed to the model.
+    /// Independent of memory disable, which gates injection + recording.
+    public func effectiveSearchMemoryEnabled(for agentId: UUID) -> Bool {
+        guard let agent = agent(for: agentId) else { return false }
+        if agent.id == Agent.defaultId { return false }
+        return agent.settings.searchMemoryEnabled
+    }
+
+    /// Whether the self-scheduling tools (`schedule_next_run` /
+    /// `cancel_next_run` / `notify`) are exposed to the model. Default off and
+    /// decoupled from the schedule-mode picker (which only sets host-enforced
+    /// bounds). The default agent never self-schedules.
+    public func effectiveSelfSchedulingEnabled(for agentId: UUID) -> Bool {
+        guard let agent = agent(for: agentId) else { return false }
+        if agent.id == Agent.defaultId { return false }
+        return agent.settings.selfSchedulingEnabled
     }
 
     /// Whether memory is disabled for an agent.
