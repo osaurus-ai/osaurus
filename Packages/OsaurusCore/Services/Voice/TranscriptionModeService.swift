@@ -48,6 +48,15 @@ public final class TranscriptionModeService: ObservableObject {
     private var configCancellables = Set<AnyCancellable>()
     private var escKeyMonitor: Any?
 
+    /// Shared chat voice-input settings; Transcription Mode reuses its
+    /// stop-mode / pause-duration so both behave the same way.
+    private var speechConfig: SpeechConfiguration = .default
+
+    /// Drives automatic (hands-free) stop via silence detection
+    private var silenceTimer: Timer?
+    private var lastSpeechActivityTime: Date = .distantFuture
+    private var lastConfirmedLength: Int = 0
+
     private init() {
         loadConfiguration()
         setupOverlayCallbacks()
@@ -90,6 +99,10 @@ public final class TranscriptionModeService: ObservableObject {
             return
         }
 
+        // Pick up the latest shared voice-input settings (stop mode / pause
+        // duration) so a change made just before starting takes effect.
+        speechConfig = SpeechConfigurationStore.load()
+
         keyboardService.checkAccessibilityPermission()
         guard keyboardService.hasAccessibilityPermission else {
             state = .error("Accessibility permission required")
@@ -126,6 +139,9 @@ public final class TranscriptionModeService: ObservableObject {
 
         state = .stopping
         stopEscKeyMonitoring()
+        stopSilenceMonitoring()
+        audioLevelCancellable?.cancel()
+        audioLevelCancellable = nil
 
         Task {
             _ = await speechService.stopStreamingTranscription()
@@ -149,6 +165,7 @@ public final class TranscriptionModeService: ObservableObject {
     private func loadConfiguration() {
         configuration = TranscriptionConfigurationStore.load()
         isEnabled = configuration.transcriptionModeEnabled
+        speechConfig = SpeechConfigurationStore.load()
     }
 
     private func registerHotkeyIfNeeded() {
@@ -190,6 +207,64 @@ public final class TranscriptionModeService: ObservableObject {
             .sink { [weak self] level in
                 self?.overlayService.updateAudioLevel(level)
             }
+        startSilenceMonitoring()
+    }
+
+    // MARK: - Automatic Stop (Silence Detection)
+
+    /// Starts watching for a speech pause so transcription can finalize
+    /// hands-free when the shared stop mode is `.automatic`.
+    private func startSilenceMonitoring() {
+        stopSilenceMonitoring()
+        lastSpeechActivityTime = .distantFuture
+        lastConfirmedLength = 0
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkForAutoStop()
+            }
+        }
+        silenceTimer = timer
+    }
+
+    private func stopSilenceMonitoring() {
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+    }
+
+    /// Mirrors `FloatingInputCard.checkForPause`: once the user pauses for
+    /// `pauseDuration` seconds with content captured, stop and paste.
+    private func checkForAutoStop() {
+        guard state == .transcribing else { return }
+        // Honor the shared Voice Input setting. pauseDuration == 0 means
+        // "auto-send disabled" — keep manual (Esc / Done) behavior.
+        guard speechConfig.transcriptionStopMode == .automatic,
+            speechConfig.pauseDuration > 0
+        else { return }
+
+        // Reset the pause timer on any real voice activity.
+        let confirmedLength = speechService.confirmedTranscription.count
+        let hasNewConfirmedText = confirmedLength > lastConfirmedLength
+        if hasNewConfirmedText { lastConfirmedLength = confirmedLength }
+        if speechService.isSpeechDetected || hasNewConfirmedText
+            || !speechService.currentTranscription.isEmpty
+        {
+            lastSpeechActivityTime = Date()
+        }
+
+        // Only auto-stop once we've actually captured something to paste.
+        let hasContent =
+            !speechService.confirmedTranscription.isEmpty
+            || !speechService.currentTranscription.isEmpty
+        guard hasContent else { return }
+
+        let silenceDuration = Date().timeIntervalSince(lastSpeechActivityTime)
+        if silenceDuration >= speechConfig.pauseDuration {
+            print(
+                "[TranscriptionMode] Auto-stop after \(String(format: "%.1f", silenceDuration))s silence"
+            )
+            stopTranscription()
+        }
     }
 
     // MARK: - Esc Key Monitoring
