@@ -91,16 +91,19 @@ struct ModelProfileRegistryTests {
         #expect(profile?.thinkingOption == nil)
     }
 
-    @Test("Gemma 4 exposes a thinking toggle without requiring parser-side fixes")
-    func gemma4_exposesThinkingToggle() {
+    @Test("Gemma 4 does not expose chat Thinking toggle until explicit thinking is production-clean")
+    func gemma4_noChatThinkingToggle() {
         for id in [
             "gemma-4-26b-a4b-it-jang_4m-crack",
             "dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK",
             "OsaurusAI/gemma4-it-26b-a4b",
+            "gemma-4-12b-it-jang_4m",
+            "gemma-4-12b-it-mxfp4",
+            "gemma-4-12b-it-mxfp8",
         ] {
             let profile = ModelProfileRegistry.profile(for: id)
-            #expect(profile?.displayName == Gemma4ThinkingProfile.displayName)
-            #expect(profile?.thinkingOption?.id == "disableThinking")
+            #expect(profile?.displayName == Gemma4RuntimeProfile.displayName)
+            #expect(profile?.thinkingOption == nil)
             let normalized = ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)
             #expect(normalized["disableThinking"] == nil)
         }

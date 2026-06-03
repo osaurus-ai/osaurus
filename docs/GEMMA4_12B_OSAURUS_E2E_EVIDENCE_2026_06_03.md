@@ -77,6 +77,12 @@ Artifact:
 - Explicit thinking is not production-clean yet: streaming thinking-on rows can
   length-stop in reasoning, and MXFP4 thinking-on produced visible corruption.
   The safe production rail is default/no-thinking unless explicitly requested.
+- Follow-up UI safety patch: the chat input no longer advertises the Gemma4
+  Thinking chip/profile. Gemma4 still has an explicit family profile so it does
+  not fall through to generic auto-thinking, but that profile exposes no
+  `disableThinking` UI option until Gemma4 explicit thinking is live-proven
+  production-clean. Explicit API `enable_thinking=true` remains an explicit
+  caller path; this PR does not silently force or strip it.
 
 ## Greeting Lane
 
@@ -95,6 +101,7 @@ Merge-ready if the accepted scope is:
 
 - Gemma4 JANG_4M and MXFP8 text/tool/cache-topology support.
 - Gemma4 default/no-thinking reasoning routing without visible leakage.
+- Gemma4 chat UI does not expose the unsafe explicit Thinking toggle.
 - Gemma4 optional greeting hardening.
 - Correct SWA topology and TurboQuant-KV exclusion.
 

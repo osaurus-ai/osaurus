@@ -85,7 +85,7 @@ enum ModelProfileRegistry {
         Hy3ReasoningProfile.self,
         LingRuntimeProfile.self,
         ZayaThinkingProfile.self,
-        Gemma4ThinkingProfile.self,
+        Gemma4RuntimeProfile.self,
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
@@ -429,33 +429,24 @@ struct ZayaThinkingProfile: ModelProfile {
     static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
 }
 
-// MARK: - Gemma 4 Thinking Profile
+// MARK: - Gemma 4 Runtime Profile
 
-/// Gemma-4 chat templates expose an `enable_thinking` kwarg. Osaurus must not
-/// repair output by forcing thinking on/off; it only exposes an explicit UI/API
-/// control and lets absent values follow the model bundle/runtime defaults.
-struct Gemma4ThinkingProfile: ModelProfile {
-    static let displayName = "Gemma 4 Thinking"
+/// Gemma-4 chat templates expose an `enable_thinking` kwarg, but current
+/// Gemma-4 12B live rows show explicit thinking is not production-clean enough
+/// for the chat input Thinking chip. Keep a family profile so Gemma-4 does not
+/// fall through to `AutoThinkingProfile`, while leaving explicit API
+/// `enable_thinking` requests to the lower runtime path.
+struct Gemma4RuntimeProfile: ModelProfile {
+    static let displayName = "Gemma 4"
 
     static func matches(modelId: String) -> Bool {
         let lower = modelId.lowercased()
         return lower.contains("gemma-4") || lower.contains("gemma4")
     }
 
-    static let options: [ModelOptionDefinition] = [
-        ModelOptionDefinition(
-            id: "disableThinking",
-            label: "Disable Thinking",
-            icon: "brain.head.profile",
-            kind: .toggle(default: true)
-        )
-    ]
+    static let options: [ModelOptionDefinition] = []
 
-    static let defaults: [String: ModelOptionValue] = [
-        "disableThinking": .bool(true)
-    ]
-
-    static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
+    static let defaults: [String: ModelOptionValue] = [:]
 }
 
 // MARK: - Auto Thinking Profile (chat-template driven)
