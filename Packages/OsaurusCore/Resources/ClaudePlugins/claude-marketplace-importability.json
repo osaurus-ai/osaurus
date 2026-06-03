@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "generatedAt": "2026-06-03T12:28:03+00:00",
+  "marketplace": "anthropics/claude-plugins-official",
+  "pluginCount": 208,
+  "nonImportable": [
+    "clangd-lsp",
+    "csharp-lsp",
+    "dash0",
+    "explanatory-output-style",
+    "gopls-lsp",
+    "jdtls-lsp",
+    "kotlin-lsp",
+    "learning-output-style",
+    "liquid-lsp",
+    "lua-lsp",
+    "neon",
+    "php-lsp",
+    "pyright-lsp",
+    "redis-development",
+    "ruby-lsp",
+    "rust-analyzer-lsp",
+    "security-guidance",
+    "swift-lsp",
+    "typescript-lsp"
+  ]
+}

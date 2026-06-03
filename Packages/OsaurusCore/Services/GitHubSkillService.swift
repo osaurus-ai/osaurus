@@ -67,6 +67,10 @@ public enum MarketplaceSource: Sendable {
 
     private enum ObjectKey: String, CodingKey {
         case source, url, sha, ref, path
+        // Aliases used by some marketplace entries (e.g. `fullstory`,
+        // `jfrog` in claude-plugins-official) that ship `repo`/`commit`
+        // instead of `url`/`sha`.
+        case repo, commit
     }
 
     /// Hand-rolled decode: try `String` first (legacy shape), fall back to the
@@ -80,14 +84,20 @@ public enum MarketplaceSource: Sendable {
         }
         let container = try decoder.container(keyedBy: ObjectKey.self)
         let kind = (try? container.decode(String.self, forKey: .source)) ?? "url"
-        guard let urlOrSlug = try? container.decode(String.self, forKey: .url) else {
+        // Accept `url` or its `repo` alias (bare `owner/repo` slug).
+        let urlValue = try? container.decode(String.self, forKey: .url)
+        let repoValue = try? container.decode(String.self, forKey: .repo)
+        guard let urlOrSlug = urlValue ?? repoValue else {
             throw DecodingError.dataCorruptedError(
                 forKey: .url,
                 in: container,
-                debugDescription: "MarketplaceSource object requires `url`"
+                debugDescription: "MarketplaceSource object requires `url` or `repo`"
             )
         }
-        let sha = try? container.decode(String.self, forKey: .sha)
+        // Prefer `sha`, then its `commit` alias, then `ref`.
+        let sha =
+            (try? container.decode(String.self, forKey: .sha))
+            ?? (try? container.decode(String.self, forKey: .commit))
         let ref = try? container.decode(String.self, forKey: .ref)
         let path = try? container.decode(String.self, forKey: .path)
         // Prefer a pinned sha over a moving ref for reproducibility.
@@ -197,6 +207,10 @@ public struct MarketplacePlugin: Codable, Sendable {
     public let repository: String?
     public let license: String?
     public let keywords: [String]?
+    /// Discovery category declared on the marketplace entry (e.g.
+    /// `development`, `productivity`, `database`). Drives the browse-tab
+    /// category chips. `nil` when the entry omits it.
+    public let category: String?
 
     public init(
         name: String,
@@ -209,7 +223,8 @@ public struct MarketplacePlugin: Codable, Sendable {
         homepage: String? = nil,
         repository: String? = nil,
         license: String? = nil,
-        keywords: [String]? = nil
+        keywords: [String]? = nil,
+        category: String? = nil
     ) {
         self.name = name
         self.description = description
@@ -222,6 +237,17 @@ public struct MarketplacePlugin: Codable, Sendable {
         self.repository = repository
         self.license = license
         self.keywords = keywords
+        self.category = category
+    }
+}
+
+/// Decodes `T` but never throws — a failed element yields `nil`. Used to make
+/// array decoding resilient so one malformed entry can't fail the whole list.
+private struct FailableDecodable<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        value = try? container.decode(T.self)
     }
 }
 
@@ -231,6 +257,37 @@ public struct GitHubMarketplace: Codable, Sendable {
     public let owner: MarketplaceOwner?
     public let metadata: MarketplaceMetadata?
     public let plugins: [MarketplacePlugin]
+
+    public init(
+        name: String,
+        owner: MarketplaceOwner?,
+        metadata: MarketplaceMetadata?,
+        plugins: [MarketplacePlugin]
+    ) {
+        self.name = name
+        self.owner = owner
+        self.metadata = metadata
+        self.plugins = plugins
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, owner, metadata, plugins
+    }
+
+    /// Lossy decode for `plugins`: entries that fail to decode (e.g. a future
+    /// `source` shape we don't understand) are skipped rather than failing the
+    /// entire catalog. The official marketplace ships 200+ entries; losing one
+    /// must not blank out the whole Browse grid.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = (try? container.decode(String.self, forKey: .name)) ?? ""
+        self.owner = try? container.decode(MarketplaceOwner.self, forKey: .owner)
+        self.metadata = try? container.decode(MarketplaceMetadata.self, forKey: .metadata)
+        let lossy =
+            (try? container.decode([FailableDecodable<MarketplacePlugin>].self, forKey: .plugins))
+            ?? []
+        self.plugins = lossy.compactMap { $0.value }
+    }
 }
 
 /// Preview of a skill available for import
@@ -439,6 +496,16 @@ public struct ClaudePluginManifest: Sendable {
     public var hasNonSkillArtifacts: Bool {
         !agents.isEmpty || !commands.isEmpty || claudeMdPath != nil || mcpJsonPath != nil
             || !auxMarkdownPaths.isEmpty
+    }
+
+    /// True when the plugin ships at least one component Osaurus can actually
+    /// import: a skill, agent, command, or MCP server. Plugins composed only
+    /// of `hooks` / `outputStyles` / `monitors` / `lspServers` / `themes` /
+    /// `bin` resolve to `false` here — there's nothing for Osaurus to install.
+    /// Auxiliary markdown (CLAUDE.md/README) does NOT count, since those are
+    /// only attached as references to skills that get imported.
+    public var hasImportableComponents: Bool {
+        !skills.isEmpty || !agents.isEmpty || !commands.isEmpty || mcpJsonPath != nil
     }
 }
 
@@ -659,6 +726,22 @@ public struct GitHubPluginsResult: Sendable {
     }
 }
 
+/// Lightweight result of fetching just a repo's `marketplace.json` without
+/// resolving each plugin's full manifest. Used by the browse/discovery grid
+/// where rendering 200+ entries should cost a single network request — the
+/// per-plugin `buildManifest` round-trips only happen at install time.
+public struct MarketplaceCatalog: Sendable {
+    public let repo: GitHubRepo
+    public let marketplace: GitHubMarketplace
+
+    public init(repo: GitHubRepo, marketplace: GitHubMarketplace) {
+        self.repo = repo
+        self.marketplace = marketplace
+    }
+
+    public var entries: [MarketplacePlugin] { marketplace.plugins }
+}
+
 /// Sibling-plugin dependency map computed by `resolvePluginDependencies(_:)`.
 ///
 /// Each key is a plugin name; the value is the set of *other* plugins it
@@ -734,6 +817,10 @@ public enum GitHubSkillError: Error, LocalizedError {
     /// optional date carries the `X-RateLimit-Reset` value so the UI can
     /// tell the user when to try again.
     case rateLimited(resetAt: Date?)
+    /// The plugin resolved cleanly but ships nothing Osaurus can import
+    /// (only hooks / output styles / monitors / etc.). Carries the plugin
+    /// name so the UI can name it in the message.
+    case noImportableComponents(pluginName: String)
 
     public var errorDescription: String? {
         switch self {
@@ -761,6 +848,9 @@ public enum GitHubSkillError: Error, LocalizedError {
                 return "GitHub rate-limited this app. Try again \(when)."
             }
             return "GitHub rate-limited this app. Sign in or wait an hour to retry."
+        case .noImportableComponents(let pluginName):
+            return
+                "\(pluginName) has no components Osaurus can import (it only ships hooks, output styles, or other unsupported parts)."
         }
     }
 }
@@ -982,6 +1072,41 @@ public final class GitHubSkillService: ObservableObject {
             self.error = skillError
             throw skillError
         }
+    }
+
+    /// Fetch just the repo's `marketplace.json` and return its entries
+    /// without resolving each plugin's full manifest.
+    ///
+    /// This is the cheap path that powers the browse/discovery grid: the
+    /// official `claude-plugins-official` marketplace lists 200+ plugins,
+    /// each carrying enough metadata (name, description, author, category,
+    /// homepage, source) to render a card. Resolving every manifest up front
+    /// would fan out to ~9 round-trips per plugin and blow GitHub's
+    /// unauthenticated rate limit, so `buildManifest` is deferred to install
+    /// time via `resolveManifest(rootRepo:entry:)`.
+    public func fetchMarketplaceCatalog(from urlString: String) async throws -> MarketplaceCatalog {
+        do {
+            var repo = try parseGitHubURL(urlString)
+            repo = try await detectDefaultBranch(repo)
+            let marketplace = try await fetchMarketplace(repo)
+            return MarketplaceCatalog(repo: repo, marketplace: marketplace)
+        } catch let err as GitHubSkillError {
+            throw err
+        } catch {
+            throw GitHubSkillError.networkError(error)
+        }
+    }
+
+    /// Resolve a single marketplace entry into a full `ClaudePluginManifest`.
+    ///
+    /// Wraps the private `buildManifest` so the browse grid can defer the
+    /// expensive per-plugin directory probing until the user actually
+    /// installs (or opens the detail for) one plugin.
+    public func resolveManifest(
+        rootRepo: GitHubRepo,
+        entry: MarketplacePlugin
+    ) async throws -> ClaudePluginManifest {
+        try await buildManifest(rootRepo: rootRepo, plugin: entry)
     }
 
     /// Fetch the SKILL.md content for a specific skill
