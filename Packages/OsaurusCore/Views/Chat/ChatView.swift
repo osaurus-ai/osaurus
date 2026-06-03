@@ -320,17 +320,17 @@ final class ChatSession: ObservableObject {
     private var sessionRedactionOrder: [String] = []
     static let maxSessionRedactions: Int = 256
 
-    /// Single debounced pipeline that recomputes the context-budget
-    /// estimate whenever any budget-relevant input changes: agent config /
-    /// feature toggles (`.agentUpdated`), active-agent switches
+    /// Single debounced pipeline that recomputes the context-budget preview
+    /// whenever any budget-relevant input changes: agent config / feature
+    /// toggles (`.agentUpdated`), active-agent switches
     /// (`.activeAgentChanged`), plugin/MCP/sandbox tool registration
-    /// (`.toolsListChanged`), sandbox status/provisioning
-    /// (`SandboxManager.State`), and folder mount/unmount
-    /// (`FolderContextService`). These are global singletons the session
-    /// does not otherwise observe, so without this the welcome-screen
-    /// estimate would only refresh on incidental re-renders and go stale
-    /// after a toggle. Debounced to coalesce the burst of signals a single
-    /// sandbox toggle / provisioning sequence emits.
+    /// (`.toolsListChanged`), folder mount/unmount (`FolderContextService`),
+    /// and the selected model (`$selectedModel`). These are global singletons
+    /// the session does not otherwise observe, so without this the
+    /// welcome-screen estimate would only refresh on incidental re-renders
+    /// and go stale after a toggle. Debounced to coalesce the burst of
+    /// signals a single sandbox toggle emits. See the pipeline in `init()`
+    /// for why memory and `SandboxManager.State` are deliberately excluded.
     nonisolated(unsafe) private var contextEstimateCancellable: AnyCancellable?
 
     init() {
@@ -475,26 +475,30 @@ final class ChatSession: ObservableObject {
 
         // Keep the welcome-screen context-budget estimate in sync with the
         // global singletons it reads but doesn't otherwise observe. Every
-        // signal maps to a single debounced recompute so a sandbox toggle
-        // (which fires .agentUpdated + .toolsListChanged + several
-        // SandboxManager.State @Published updates during provisioning)
-        // collapses into at most one recompute + re-render. The recompute
-        // itself is guarded on the composed shape (see
-        // `refreshContextEstimates`), so identical re-emissions don't churn
-        // the view.
-        // `$selectedModel` is included (and replays its current value on
-        // subscribe) so a model switch re-prices the size-class /
-        // model-family-dependent sections, and so the preview cache is
-        // populated shortly after init without waiting for a toggle.
+        // signal collapses (debounced) into a single cheap preview recompute,
+        // guarded on the composed shape (`recomputePreviewContext`) so
+        // identical re-emissions don't churn the view. `$selectedModel`
+        // replays its current value on subscribe, priming the preview cache
+        // and re-pricing model-family-dependent sections on a model switch.
+        //
+        // Scope is deliberately narrow (see #1324):
+        //   • The handler is `refreshPreviewEstimate()`, never
+        //     `refreshContextEstimates()` — the latter's `MemoryContextAssembler`
+        //     DB read doesn't depend on these signals, and fanning it out
+        //     per-signal across open chat windows saturated the cooperative
+        //     pool. Memory refreshes only at the lifecycle sites below.
+        //   • `SandboxManager.State` is not observed: the preview derives from
+        //     the agent snapshot + registered tools + folder + model, never
+        //     sandbox status. A sandbox toggle still re-prices via
+        //     .agentUpdated (autonomous flag) + .toolsListChanged (tools).
+        let voidNotification: (Notification.Name) -> AnyPublisher<Void, Never> = {
+            NotificationCenter.default.publisher(for: $0)
+                .map { _ in () }.eraseToAnyPublisher()
+        }
         let budgetSignals: [AnyPublisher<Void, Never>] = [
-            NotificationCenter.default.publisher(for: .agentUpdated)
-                .map { _ in () }.eraseToAnyPublisher(),
-            NotificationCenter.default.publisher(for: .activeAgentChanged)
-                .map { _ in () }.eraseToAnyPublisher(),
-            NotificationCenter.default.publisher(for: .toolsListChanged)
-                .map { _ in () }.eraseToAnyPublisher(),
-            SandboxManager.State.shared.objectWillChange
-                .map { _ in () }.eraseToAnyPublisher(),
+            voidNotification(.agentUpdated),
+            voidNotification(.activeAgentChanged),
+            voidNotification(.toolsListChanged),
             FolderContextService.shared.objectWillChange
                 .map { _ in () }.eraseToAnyPublisher(),
             $selectedModel.map { _ in () }.eraseToAnyPublisher(),
@@ -502,7 +506,7 @@ final class ChatSession: ObservableObject {
         contextEstimateCancellable = Publishers.MergeMany(budgetSignals)
             .debounce(for: .milliseconds(80), scheduler: RunLoop.main)
             .sink { [weak self] _ in
-                Task { @MainActor in await self?.refreshContextEstimates() }
+                Task { @MainActor in self?.refreshPreviewEstimate() }
             }
 
         // Always reconcile on init: the cache may already be loaded with a
@@ -1365,8 +1369,8 @@ final class ChatSession: ObservableObject {
     /// shape changed — compared via `cacheHint` (the static-prefix hash
     /// that already folds prompt sections + tool schemas) plus
     /// `toolTokens`. Identical recomputes return `false` so a burst of
-    /// redundant signals (e.g. SandboxManager.State publishing several
-    /// fields during provisioning) collapses to no re-render.
+    /// redundant signals (e.g. a sandbox toggle firing both .agentUpdated
+    /// and .toolsListChanged) collapses to no re-render.
     ///
     /// No-op when a real send context is cached (`cachedContext != nil`):
     /// that path owns the authoritative breakdown, so we drop any stale
@@ -1385,13 +1389,26 @@ final class ChatSession: ObservableObject {
             || previous?.toolTokens != preview.toolTokens
     }
 
-    /// Re-resolve every input the welcome-screen preview estimate needs and
-    /// emit a single `objectWillChange` when anything actually changed.
-    /// Driven by the debounced budget-input pipeline (agent config, sandbox
-    /// state, tool registration, folder, model) plus the lifecycle trigger
-    /// sites (agent change, session reset, session load). Single entry
-    /// point so every future async preview input lands here instead of
-    /// being scattered across call sites.
+    /// Cheap, synchronous preview-only resync: recompute the composed
+    /// preview shape and emit a single `objectWillChange` when it changed.
+    /// This is what the debounced budget-input pipeline drives. It must NOT
+    /// touch the memory DB — memory tokens don't depend on the agent / tool /
+    /// folder / model signals that feed the pipeline, and doing the
+    /// `MemoryContextAssembler` read here once per signal, multiplied across
+    /// open chat windows, saturated the cooperative pool (see #1324).
+    private func refreshPreviewEstimate() {
+        if recomputePreviewContext() {
+            objectWillChange.send()
+        }
+    }
+
+    /// Re-resolve every input the welcome-screen preview estimate needs —
+    /// including the async memory-section estimate — and emit a single
+    /// `objectWillChange` when anything actually changed. Driven only by the
+    /// lifecycle trigger sites (agent change, session reset, session load),
+    /// where it runs at most once per transition. The high-frequency
+    /// budget-input pipeline uses `refreshPreviewEstimate()` instead so it
+    /// never fans the memory DB read out across every signal.
     private func refreshContextEstimates() async {
         let previewChanged = recomputePreviewContext()
         let memoryChanged = await refreshMemoryTokens()
