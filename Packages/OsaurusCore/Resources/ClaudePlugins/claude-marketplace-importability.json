@@ -1,0 +1,3044 @@
+{
+  "version": 2,
+  "generatedAt": "2026-06-03T12:51:00+00:00",
+  "marketplace": "anthropics/claude-plugins-official",
+  "pluginCount": 208,
+  "nonImportable": [
+    "clangd-lsp",
+    "csharp-lsp",
+    "dash0",
+    "explanatory-output-style",
+    "gopls-lsp",
+    "jdtls-lsp",
+    "kotlin-lsp",
+    "learning-output-style",
+    "liquid-lsp",
+    "lua-lsp",
+    "neon",
+    "php-lsp",
+    "pyright-lsp",
+    "redis-development",
+    "ruby-lsp",
+    "rust-analyzer-lsp",
+    "security-guidance",
+    "swift-lsp",
+    "typescript-lsp"
+  ],
+  "plugins": {
+    "42crunch-api-security-testing": {
+      "skills": [
+        "42crunch Api Security Testing",
+        "42crunch Audit",
+        "42crunch Scan",
+        "42crunch Setup",
+        "Code To Oas",
+        "Postman To Oas"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "adobe-for-creativity": {
+      "skills": [
+        "Adobe Batch Edit Photos",
+        "Adobe Create Social Variations",
+        "Adobe Design From Template",
+        "Adobe Edit Quick Cut",
+        "Adobe Resize Photos And Videos",
+        "Adobe Retouch Portraits"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "agent-sdk-dev": {
+      "skills": [],
+      "agents": [
+        "Agent Sdk Verifier Py",
+        "Agent Sdk Verifier Ts"
+      ],
+      "commands": [
+        "new-sdk-app"
+      ],
+      "mcp": false
+    },
+    "agentforce-adlc": {
+      "skills": [
+        "Developing Agentforce",
+        "Observing Agentforce",
+        "Testing Agentforce"
+      ],
+      "agents": [
+        "Adlc Author",
+        "Adlc Engineer",
+        "Adlc Orchestrator",
+        "Adlc Qa"
+      ],
+      "commands": [],
+      "mcp": false
+    },
+    "ai-plugins": {
+      "skills": [
+        "Endor Setup"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "aikido": {
+      "skills": [
+        "Issues",
+        "Scan",
+        "Setup"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "airtable": {
+      "skills": [
+        "Airtable Cli",
+        "Airtable Filters",
+        "Airtable Overview"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "alloydb": {
+      "skills": [
+        "Alloydb Postgres Access Management",
+        "Alloydb Postgres Admin",
+        "Alloydb Postgres Data",
+        "Alloydb Postgres Health",
+        "Alloydb Postgres Monitor",
+        "Alloydb Postgres Optimize",
+        "Alloydb Postgres Replication"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "amazon-location-service": {
+      "skills": [
+        "Amazon Location Service"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "amplitude": {
+      "skills": [
+        "Add Analytics Instrumentation",
+        "Analyze Account Health",
+        "Analyze Ai Topics",
+        "Analyze Chart",
+        "Analyze Dashboard",
+        "Analyze Experiment",
+        "Analyze Feedback",
+        "Compare User Journeys",
+        "Create Chart",
+        "Create Dashboard",
+        "Daily Brief",
+        "Debug Replay",
+        "Diagnose Errors",
+        "Diff Intake",
+        "Discover Analytics Patterns",
+        "Discover Event Surfaces",
+        "Discover Opportunities",
+        "Instrument Events",
+        "Investigate Ai Session",
+        "Monitor Ai Quality",
+        "Monitor Experiments",
+        "Monitor Reliability",
+        "Replay Ux Audit",
+        "Review Agent Insights",
+        "Taxonomy",
+        "Weekly Brief",
+        "What Would Lenny Do"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "apollo": {
+      "skills": [
+        "Analytics",
+        "Enrich Lead",
+        "Prospect",
+        "Sequence Load"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "apollo-skills": {
+      "skills": [
+        "Apollo Client",
+        "Apollo Connectors",
+        "Apollo Federation",
+        "Apollo Ios",
+        "Apollo Kotlin",
+        "Apollo Mcp Server",
+        "Apollo Router",
+        "Apollo Router Plugin Creator",
+        "Apollo Server",
+        "Graphql Operations",
+        "Graphql Schema",
+        "Rover",
+        "Rust Best Practices",
+        "Skill Creator"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "appwrite": {
+      "skills": [
+        "Cli",
+        "Dart",
+        "Dotnet",
+        "Go",
+        "Kotlin",
+        "Php",
+        "Python",
+        "Ruby",
+        "Rust",
+        "Swift",
+        "Typescript"
+      ],
+      "agents": [],
+      "commands": [
+        "deploy-function",
+        "deploy-site"
+      ],
+      "mcp": true
+    },
+    "asana": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "astronomer-data-agents": {
+      "skills": [
+        "Airflow",
+        "Airflow Hitl",
+        "Airflow Plugins",
+        "Analyzing Data",
+        "Annotating Task Lineage",
+        "Authoring Dags",
+        "Blueprint",
+        "Checking Freshness",
+        "Cosmos Dbt Core",
+        "Cosmos Dbt Fusion",
+        "Creating Openlineage Extractors",
+        "Dag Factory",
+        "Debugging Dags",
+        "Delegating To Otto",
+        "Deploying Airflow",
+        "Managing Astro Deployments",
+        "Managing Astro Local Env",
+        "Migrating Ai Sdk To Common Ai",
+        "Migrating Airflow 2 To 3",
+        "Profiling Tables",
+        "Setting Up Astro Project",
+        "Testing Dags",
+        "Tracing Downstream Lineage",
+        "Tracing Upstream Lineage",
+        "Troubleshooting Astro Deployments",
+        "Warehouse Init"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "atlan": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "atlassian": {
+      "skills": [
+        "Capture Tasks From Meeting Notes",
+        "Generate Status Report",
+        "Search Company Knowledge",
+        "Spec To Backlog",
+        "Triage Issue"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "atomic-agents": {
+      "skills": [
+        "Create Atomic Agent",
+        "Create Atomic Context Provider",
+        "Create Atomic Schema",
+        "Create Atomic Tool",
+        "Framework",
+        "New App"
+      ],
+      "agents": [
+        "Atomic Explorer",
+        "Atomic Reviewer"
+      ],
+      "commands": [],
+      "mcp": false
+    },
+    "auth0": {
+      "skills": [
+        "Acul Screen Generator",
+        "Auth0 Android",
+        "Auth0 Angular",
+        "Auth0 Aspnetcore Api",
+        "Auth0 Aspnetcore Authentication",
+        "Auth0 Branding",
+        "Auth0 Cli",
+        "Auth0 Custom Domains",
+        "Auth0 Expo",
+        "Auth0 Express",
+        "Auth0 Fastapi Api",
+        "Auth0 Fastify",
+        "Auth0 Fastify Api",
+        "Auth0 Flask",
+        "Auth0 Flutter Native",
+        "Auth0 Flutter Web",
+        "Auth0 Ionic Angular",
+        "Auth0 Ionic React",
+        "Auth0 Ionic Vue",
+        "Auth0 Java Mvc Common",
+        "Auth0 Laravel",
+        "Auth0 Laravel Api",
+        "Auth0 Maui",
+        "Auth0 Mfa",
+        "Auth0 Migration",
+        "Auth0 Net Android",
+        "Auth0 Net Ios",
+        "Auth0 Nextjs",
+        "Auth0 Nuxt",
+        "Auth0 Php",
+        "Auth0 Php Api",
+        "Auth0 Quickstart",
+        "Auth0 React",
+        "Auth0 React Native",
+        "Auth0 Spa Js",
+        "Auth0 Springboot Api",
+        "Auth0 Swift",
+        "Auth0 Vue",
+        "Auth0 Winforms",
+        "Auth0 Wpf",
+        "Express Oauth2 Jwt Bearer",
+        "Go Jwt Middleware"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "aws-agents": {
+      "skills": [
+        "Agents Build",
+        "Agents Connect",
+        "Agents Debug",
+        "Agents Deploy",
+        "Agents Get Started",
+        "Agents Harden",
+        "Agents Optimize"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "aws-amplify": {
+      "skills": [
+        "Amplify Workflow"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "aws-core": {
+      "skills": [
+        "Amazon Bedrock",
+        "Aws Amplify",
+        "Aws Billing And Cost Management",
+        "Aws Cdk",
+        "Aws Cloudformation",
+        "Aws Containers",
+        "Aws Iam",
+        "Aws Messaging And Streaming",
+        "Aws Observability",
+        "Aws Sdk Js V3 Usage",
+        "Aws Sdk Python Usage",
+        "Aws Sdk Swift Usage",
+        "Aws Serverless"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "aws-data-analytics": {
+      "skills": [
+        "Connecting To Data Source",
+        "Creating Data Lake Table",
+        "Exploring Data Catalog",
+        "Finding Data Lake Assets",
+        "Ingesting Into Data Lake",
+        "Querying Data Lake",
+        "Storing And Querying Vectors"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "aws-dev-toolkit": {
+      "skills": [
+        "Agentcore",
+        "Api Gateway",
+        "Aws Architect",
+        "Aws Compare",
+        "Aws Debug",
+        "Aws Diagram",
+        "Aws Health Check",
+        "Aws Plan",
+        "Bedrock",
+        "Challenger",
+        "Cloudfront",
+        "Cost Check",
+        "Customer Ideation",
+        "Dynamodb",
+        "Ec2",
+        "Ecs",
+        "Ecs Soci",
+        "Eks",
+        "Iac Scaffold",
+        "Iam",
+        "Iot",
+        "Lambda",
+        "Messaging",
+        "Migration Apprunner To Ecs Express",
+        "Migration Azure To Aws",
+        "Migration Gcp To Aws",
+        "Mlops",
+        "Networking",
+        "Observability",
+        "Rds Aurora",
+        "S3",
+        "Security Review",
+        "Step Functions",
+        "Strands Agent",
+        "Well Architected"
+      ],
+      "agents": [
+        "Agentcore Sme",
+        "Aws Explorer",
+        "Bedrock Sme",
+        "Container Sme",
+        "Cost Optimizer",
+        "Iac Reviewer",
+        "Migration Advisor",
+        "Networking Sme",
+        "Observability Sme",
+        "Serverless Sme",
+        "Well Architected Reviewer"
+      ],
+      "commands": [],
+      "mcp": true
+    },
+    "aws-serverless": {
+      "skills": [
+        "Api Gateway",
+        "Aws Lambda",
+        "Aws Lambda Durable Functions",
+        "Aws Serverless Deployment"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "aws-startup-advisor": {
+      "skills": [
+        "Knowledge Base For Startups",
+        "Prompt Library For Startups",
+        "Start Building For Startups"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "azure": {
+      "skills": [
+        "Airunway Aks Setup",
+        "Appinsights Instrumentation",
+        "Azure Ai",
+        "Azure Aigateway",
+        "Azure Cloud Migrate",
+        "Azure Compliance",
+        "Azure Compute",
+        "Azure Cost",
+        "Azure Deploy",
+        "Azure Diagnostics",
+        "Azure Enterprise Infra Planner",
+        "Azure Hosted Copilot Sdk",
+        "Azure Kubernetes",
+        "Azure Kusto",
+        "Azure Messaging",
+        "Azure Prepare",
+        "Azure Quotas",
+        "Azure Rbac",
+        "Azure Reliability",
+        "Azure Resource Lookup",
+        "Azure Resource Visualizer",
+        "Azure Storage",
+        "Azure Upgrade",
+        "Azure Validate",
+        "Entra Agent Id",
+        "Entra App Registration",
+        "Microsoft Foundry"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "azure-cosmos-db-assistant": {
+      "skills": [
+        "Cosmosdb Best Practices"
+      ],
+      "agents": [
+        "Cosmosdb Expert"
+      ],
+      "commands": [
+        "cosmos-review",
+        "cosmos-setup",
+        "generate-skills"
+      ],
+      "mcp": false
+    },
+    "base44": {
+      "skills": [
+        "Base44 Cli",
+        "Base44 Sdk",
+        "Base44 Troubleshooter"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "bigdata-com": {
+      "skills": [
+        "Financial Research Analyst"
+      ],
+      "agents": [],
+      "commands": [
+        "catalyst-monitor",
+        "company-brief",
+        "country-analysis",
+        "country-sector-analysis",
+        "cross-sector",
+        "earnings-digest",
+        "earnings-preview",
+        "earnings-quality-screen",
+        "earnings-reaction",
+        "g7-comparison",
+        "investment-memo",
+        "moat-governance-review",
+        "peer-comparables",
+        "quick-take",
+        "regional-comparison",
+        "risk-assessment",
+        "scenario-analysis",
+        "sector-analysis",
+        "sector-playbook",
+        "thematic-research",
+        "valuation-snapshot",
+        "variant-perception"
+      ],
+      "mcp": true
+    },
+    "box": {
+      "skills": [
+        "Box",
+        "Box Legal Workflows",
+        "Box Legal Workflows Contract",
+        "Box Legal Workflows Intake",
+        "Box Legal Workflows Ma"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "brightdata-plugin": {
+      "skills": [
+        "Agent Onboarding",
+        "Brd Browser Debug",
+        "Bright Data Best Practices",
+        "Bright Data Mcp",
+        "Brightdata Cli",
+        "Competitive Intel",
+        "Data Feeds",
+        "Design Mirror",
+        "Proxy",
+        "Python Sdk Best Practices",
+        "Scrape",
+        "Scraper Builder",
+        "Scraper Studio",
+        "Search",
+        "Seo Audit"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "buildkite": {
+      "skills": [
+        "Buildkite Agent Runtime",
+        "Buildkite Api",
+        "Buildkite Cli",
+        "Buildkite Migration",
+        "Buildkite Pipelines",
+        "Buildkite Preflight"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "carta-cap-table": {
+      "skills": [
+        "Carta Compensation Benchmarks",
+        "Carta Compensation Rolematcher",
+        "Carta Conversion Calculator",
+        "Carta Discover Commands",
+        "Carta Grant Vesting",
+        "Carta Interaction Reference",
+        "Carta Market Benchmarks",
+        "Carta Portfolio Alerts",
+        "Carta Round History",
+        "Carta Valuation History",
+        "Carta Waterfall Scenarios"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "carta-crm": {
+      "skills": [
+        "Add Company",
+        "Add Contact",
+        "Add Deal",
+        "Add Fundraising",
+        "Add Investor",
+        "Add Note",
+        "Enrich Company",
+        "Lookup Fund Portfolio",
+        "Search Companies",
+        "Search Contacts",
+        "Search Deals",
+        "Search Fundraisings",
+        "Search Investors",
+        "Search Notes",
+        "Tutorial",
+        "Update Company",
+        "Update Contact",
+        "Update Deal",
+        "Update Fundraising",
+        "Update Investor",
+        "Update Note"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "carta-investors": {
+      "skills": [
+        "Carta Budget Actuals",
+        "Carta Budget Scenarios",
+        "Carta Budget Vs Actuals",
+        "Carta Consolidating Balance Sheet",
+        "Carta Consolidating Pnl",
+        "Carta Create Budget",
+        "Carta Download Tearsheet",
+        "Carta Explore Data",
+        "Carta Fetch Budget",
+        "Carta Form Adv",
+        "Carta Investors Tutorial",
+        "Carta Performance Benchmarks"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "cds-mcp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "chrome-devtools-mcp": {
+      "skills": [
+        "A11y Debugging",
+        "Chrome Devtools",
+        "Chrome Devtools Cli",
+        "Debug Optimize Lcp",
+        "Memory Leak Debugging",
+        "Troubleshooting"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "circle-skills": {
+      "skills": [
+        "Agent Wallet Policy",
+        "Bridge Stablecoin",
+        "Fund Agent Wallet",
+        "Pay Via Agent Wallet",
+        "Swap Tokens",
+        "Unify Balance",
+        "Use Agent Wallet",
+        "Use Arc",
+        "Use Circle Cli",
+        "Use Circle Wallets",
+        "Use Developer Controlled Wallets",
+        "Use Gateway",
+        "Use Modular Wallets",
+        "Use Smart Contract Platform",
+        "Use Usdc",
+        "Use User Controlled Wallets"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "circleback": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "clangd-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "claude-code-setup": {
+      "skills": [
+        "Claude Automation Recommender"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "claude-md-management": {
+      "skills": [
+        "Claude Md Improver"
+      ],
+      "agents": [],
+      "commands": [
+        "revise-claude-md"
+      ],
+      "mcp": false
+    },
+    "clickhouse": {
+      "skills": [
+        "Clickhouse Best Practices",
+        "Setup"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "clickhouse-best-practices": {
+      "skills": [
+        "Chdb Datastore",
+        "Chdb Sql",
+        "Clickhouse Architecture Advisor",
+        "Clickhouse Best Practices",
+        "Clickhouse Js Node Coding",
+        "Clickhouse Js Node Troubleshooting",
+        "Clickhousectl Cloud Deploy",
+        "Clickhousectl Local Dev"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "cloud-sql-postgresql": {
+      "skills": [
+        "Cloud Sql Postgres Admin",
+        "Cloud Sql Postgres Data",
+        "Cloud Sql Postgres Health",
+        "Cloud Sql Postgres Lifecycle",
+        "Cloud Sql Postgres Monitor",
+        "Cloud Sql Postgres Replication",
+        "Cloud Sql Postgres Vectorassist",
+        "Cloud Sql Postgres View Config"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "cloudflare": {
+      "skills": [
+        "Agents Sdk",
+        "Cloudflare",
+        "Cloudflare Email Service",
+        "Durable Objects",
+        "Sandbox Sdk",
+        "Web Perf",
+        "Workers Best Practices",
+        "Wrangler"
+      ],
+      "agents": [],
+      "commands": [
+        "build-agent",
+        "build-mcp"
+      ],
+      "mcp": true
+    },
+    "cloudinary": {
+      "skills": [
+        "Cloudinary Docs",
+        "Cloudinary Transformations"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "cockroachdb": {
+      "skills": [
+        "Cockroachdb Application Development",
+        "Cockroachdb Cost And Usage Management",
+        "Cockroachdb Integrations And Ecosystem",
+        "Cockroachdb Observability And Diagnostics",
+        "Cockroachdb Onboarding And Migrations",
+        "Cockroachdb Operations And Lifecycle",
+        "Cockroachdb Performance And Scaling",
+        "Cockroachdb Query And Schema Design",
+        "Cockroachdb Resilience And Disaster Recovery",
+        "Cockroachdb Security And Governance"
+      ],
+      "agents": [
+        "Cockroachdb Dba",
+        "Cockroachdb Developer",
+        "Cockroachdb Operator"
+      ],
+      "commands": [],
+      "mcp": true
+    },
+    "code-modernization": {
+      "skills": [],
+      "agents": [
+        "Architecture Critic",
+        "Business Rules Extractor",
+        "Legacy Analyst",
+        "Security Auditor",
+        "Test Engineer"
+      ],
+      "commands": [
+        "modernize-assess",
+        "modernize-brief",
+        "modernize-extract-rules",
+        "modernize-harden",
+        "modernize-map",
+        "modernize-reimagine",
+        "modernize-transform"
+      ],
+      "mcp": false
+    },
+    "code-review": {
+      "skills": [],
+      "agents": [],
+      "commands": [
+        "code-review"
+      ],
+      "mcp": false
+    },
+    "code-simplifier": {
+      "skills": [],
+      "agents": [
+        "Code Simplifier"
+      ],
+      "commands": [],
+      "mcp": false
+    },
+    "coderabbit": {
+      "skills": [
+        "Autofix",
+        "Code Review"
+      ],
+      "agents": [
+        "Code Reviewer"
+      ],
+      "commands": [
+        "coderabbit-review"
+      ],
+      "mcp": false
+    },
+    "codspeed": {
+      "skills": [
+        "Codspeed Optimize",
+        "Codspeed Setup Harness"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "commit-commands": {
+      "skills": [],
+      "agents": [],
+      "commands": [
+        "clean_gone",
+        "commit",
+        "commit-push-pr"
+      ],
+      "mcp": false
+    },
+    "context7": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "convex": {
+      "skills": [
+        "Design"
+      ],
+      "agents": [
+        "Convex Expert"
+      ],
+      "commands": [],
+      "mcp": true
+    },
+    "crowdstrike-falcon-foundry": {
+      "skills": [
+        "Api Integrations",
+        "Collections Development",
+        "Debugging Workflows",
+        "Development Workflow",
+        "E2e Testing",
+        "Functions Development",
+        "Functions Falcon Api",
+        "Security Patterns",
+        "Ui Development",
+        "Workflows Development"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "csharp-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "cwc-makers": {
+      "skills": [
+        "Cardputer Buddy",
+        "M5 Onboard"
+      ],
+      "agents": [],
+      "commands": [
+        "maker-setup"
+      ],
+      "mcp": false
+    },
+    "dash0": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "data": {
+      "skills": [
+        "Airflow",
+        "Airflow Hitl",
+        "Airflow Plugins",
+        "Analyzing Data",
+        "Annotating Task Lineage",
+        "Authoring Dags",
+        "Blueprint",
+        "Checking Freshness",
+        "Cosmos Dbt Core",
+        "Cosmos Dbt Fusion",
+        "Creating Openlineage Extractors",
+        "Dag Factory",
+        "Debugging Dags",
+        "Delegating To Otto",
+        "Deploying Airflow",
+        "Managing Astro Deployments",
+        "Managing Astro Local Env",
+        "Migrating Ai Sdk To Common Ai",
+        "Migrating Airflow 2 To 3",
+        "Profiling Tables",
+        "Setting Up Astro Project",
+        "Testing Dags",
+        "Tracing Downstream Lineage",
+        "Tracing Upstream Lineage",
+        "Troubleshooting Astro Deployments",
+        "Warehouse Init"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "data-agent-kit-starter-pack": {
+      "skills": [
+        "Accidental Data Loss Prevention",
+        "Bigquery Data Transfer Service",
+        "Building Data Apps",
+        "Data Autocleaning",
+        "Dataform Bigquery",
+        "Dbt Bigquery",
+        "Developing With Bigquery",
+        "Discovering Gcp Data Assets",
+        "Gcloud Auth Verification",
+        "Gcp Composer Troubleshooting",
+        "Gcp Data Pipelines",
+        "Gcp Dataflow",
+        "Gcp Pipeline Orchestration",
+        "Gcp Pipeline Resource Provisioning",
+        "Gcp Spark",
+        "Managing Python Dependencies",
+        "Ml Best Practices",
+        "Notebook Guidance"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "data-engineering": {
+      "skills": [
+        "Airflow",
+        "Airflow Hitl",
+        "Airflow Plugins",
+        "Analyzing Data",
+        "Annotating Task Lineage",
+        "Authoring Dags",
+        "Blueprint",
+        "Checking Freshness",
+        "Cosmos Dbt Core",
+        "Cosmos Dbt Fusion",
+        "Creating Openlineage Extractors",
+        "Dag Factory",
+        "Debugging Dags",
+        "Delegating To Otto",
+        "Deploying Airflow",
+        "Managing Astro Deployments",
+        "Managing Astro Local Env",
+        "Migrating Ai Sdk To Common Ai",
+        "Migrating Airflow 2 To 3",
+        "Profiling Tables",
+        "Setting Up Astro Project",
+        "Testing Dags",
+        "Tracing Downstream Lineage",
+        "Tracing Upstream Lineage",
+        "Troubleshooting Astro Deployments",
+        "Warehouse Init"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "databases-on-aws": {
+      "skills": [
+        "Dsql"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "datadog": {
+      "skills": [
+        "Ddconfig",
+        "Ddsetup",
+        "Ddtoolsets"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "datahub-skills": {
+      "skills": [
+        "Datahub Connector Planning",
+        "Datahub Connector Pr Review",
+        "Datahub Enrich",
+        "Datahub Lineage",
+        "Datahub Mfe Configure App",
+        "Datahub Mfe Create App",
+        "Datahub Quality",
+        "Datahub Search",
+        "Datahub Setup",
+        "Load Standards",
+        "Shared References",
+        "Using Datahub"
+      ],
+      "agents": [
+        "Comment Resolution Checker",
+        "Connector Researcher",
+        "Connector Validator",
+        "Metadata Searcher"
+      ],
+      "commands": [
+        "catalog-enrich",
+        "catalog-lineage",
+        "catalog-quality",
+        "catalog-search",
+        "catalog-setup",
+        "connector-planning",
+        "connector-review",
+        "load-standards"
+      ],
+      "mcp": false
+    },
+    "datarobot-agent-skills": {
+      "skills": [
+        "Datarobot Agent Assist",
+        "Datarobot App Framework Cicd",
+        "Datarobot Data Preparation",
+        "Datarobot External Agent Monitoring",
+        "Datarobot Feature Engineering",
+        "Datarobot Model Deployment",
+        "Datarobot Model Explainability",
+        "Datarobot Model Monitoring",
+        "Datarobot Model Training",
+        "Datarobot Predictions",
+        "Datarobot Setup"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "dataverse": {
+      "skills": [
+        "Dv Admin",
+        "Dv Connect",
+        "Dv Data",
+        "Dv Metadata",
+        "Dv Overview",
+        "Dv Query",
+        "Dv Security",
+        "Dv Solution"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "deploy-on-aws": {
+      "skills": [
+        "Aws Architecture Diagram",
+        "Deploy",
+        "Elastic Beanstalk"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "desktop-commander": {
+      "skills": [
+        "Desktop Commander Overview"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "discord": {
+      "skills": [
+        "Access",
+        "Configure"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "dominodatalab": {
+      "skills": [
+        "Ai Gateway",
+        "App Deployment",
+        "Data Connectivity",
+        "Datasets",
+        "Distributed Computing",
+        "Domino Data Sdk",
+        "Domino Governance",
+        "Domino Taxonomy",
+        "Domino Ui Bootstrap",
+        "Domino Ui Design",
+        "Environments",
+        "Experiment Tracking",
+        "Flows",
+        "Genai Tracing",
+        "Jobs",
+        "Launchers",
+        "Model Endpoints",
+        "Model Monitoring",
+        "Modeling Assistant",
+        "Netapp Volumes",
+        "Projects",
+        "Python Sdk",
+        "Workspaces"
+      ],
+      "agents": [
+        "Domino Debug",
+        "Domino Deploy",
+        "Domino Setup"
+      ],
+      "commands": [
+        "domino-app-init",
+        "domino-debug-proxy",
+        "domino-experiment-setup",
+        "domino-trace-setup"
+      ],
+      "mcp": true
+    },
+    "duckdb-skills": {
+      "skills": [
+        "Attach Db",
+        "Convert File",
+        "Duckdb Docs",
+        "Install Duckdb",
+        "Query",
+        "Read File",
+        "Read Memories",
+        "S3 Explore",
+        "Spatial"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "duende-skills": {
+      "skills": [
+        "Aspnetcore Authentication",
+        "Aspnetcore Authorization",
+        "Claims Authorization",
+        "Duende Bff",
+        "Identity Security Hardening",
+        "Identity Testing Patterns",
+        "Identityserver Api Protection",
+        "Identityserver Aspire",
+        "Identityserver Configuration",
+        "Identityserver Dcr",
+        "Identityserver Deployment",
+        "Identityserver Hosting Setup",
+        "Identityserver Key Management",
+        "Identityserver Saml",
+        "Identityserver Sessions Providers",
+        "Identityserver Stores",
+        "Identityserver Token Lifecycle",
+        "Identityserver Token Security",
+        "Identityserver Ui Flows",
+        "Identityserver Upgrade V7 To V8",
+        "Identityserver Usermanagement",
+        "Identityserver4 Migration",
+        "Oauth Oidc Protocols",
+        "Token Management"
+      ],
+      "agents": [
+        "Identity Server Specialist",
+        "Oauth Oidc Specialist"
+      ],
+      "commands": [],
+      "mcp": false
+    },
+    "exa": {
+      "skills": [
+        "Search"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "explanatory-output-style": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "expo": {
+      "skills": [
+        "Add App Clip",
+        "Building Native Ui",
+        "Eas Update Insights",
+        "Expo Api Routes",
+        "Expo Brownfield",
+        "Expo Cicd Workflows",
+        "Expo Deployment",
+        "Expo Dev Client",
+        "Expo Module",
+        "Expo Observe",
+        "Expo Tailwind Setup",
+        "Expo Ui Jetpack Compose",
+        "Expo Ui Swift Ui",
+        "Native Data Fetching",
+        "Upgrading Expo",
+        "Use Dom"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "fakechat": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "fastly-agent-toolkit": {
+      "skills": [
+        "Falco",
+        "Fastlike",
+        "Fastly",
+        "Fastly Cli",
+        "Fastly Ngwaf",
+        "Viceroy",
+        "Xvcl"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "feature-dev": {
+      "skills": [],
+      "agents": [
+        "Code Architect",
+        "Code Explorer",
+        "Code Reviewer"
+      ],
+      "commands": [
+        "feature-dev"
+      ],
+      "mcp": false
+    },
+    "fiftyone": {
+      "skills": [
+        "Fiftyone Code Style",
+        "Fiftyone Create Notebook",
+        "Fiftyone Dataset Curation",
+        "Fiftyone Dataset Export",
+        "Fiftyone Dataset Import",
+        "Fiftyone Dataset Inference",
+        "Fiftyone Develop Plugin",
+        "Fiftyone Embeddings Visualization",
+        "Fiftyone Eval Plugin",
+        "Fiftyone Find Duplicates",
+        "Fiftyone Generate Data Lens Connector",
+        "Fiftyone Issue Triage",
+        "Fiftyone Model Evaluation",
+        "Fiftyone Troubleshoot",
+        "Fiftyone Voodo Design",
+        "Fiftyone Zoo Remote Model"
+      ],
+      "agents": [],
+      "commands": [
+        "help",
+        "quickstart"
+      ],
+      "mcp": true
+    },
+    "figma": {
+      "skills": [
+        "Figma Code Connect",
+        "Figma Create New File",
+        "Figma Generate Design",
+        "Figma Generate Diagram",
+        "Figma Generate Library",
+        "Figma Use",
+        "Figma Use Figjam",
+        "Figma Use Slides"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "firebase": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "firecrawl": {
+      "skills": [
+        "Firecrawl Agent",
+        "Firecrawl Cli",
+        "Firecrawl Crawl",
+        "Firecrawl Download",
+        "Firecrawl Interact",
+        "Firecrawl Map",
+        "Firecrawl Monitor",
+        "Firecrawl Parse",
+        "Firecrawl Scrape",
+        "Firecrawl Search"
+      ],
+      "agents": [],
+      "commands": [
+        "skill-gen"
+      ],
+      "mcp": false
+    },
+    "forge-skills": {
+      "skills": [
+        "Forge App Builder",
+        "Forge App Review",
+        "Forge Connector",
+        "Forge Debugger"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "frontend-design": {
+      "skills": [
+        "Frontend Design"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "fullstory": {
+      "skills": [
+        "Comparisons",
+        "General Analysis",
+        "Session Review"
+      ],
+      "agents": [
+        "Session Context"
+      ],
+      "commands": [],
+      "mcp": true
+    },
+    "github": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "gitlab": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "gopls-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "greptile": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "hookify": {
+      "skills": [
+        "Writing Rules"
+      ],
+      "agents": [
+        "Conversation Analyzer"
+      ],
+      "commands": [
+        "configure",
+        "help",
+        "hookify",
+        "list"
+      ],
+      "mcp": false
+    },
+    "huggingface-skills": {
+      "skills": [
+        "Hf Cli",
+        "Huggingface Best",
+        "Huggingface Community Evals",
+        "Huggingface Datasets",
+        "Huggingface Gradio",
+        "Huggingface Llm Trainer",
+        "Huggingface Local Models",
+        "Huggingface Paper Publisher",
+        "Huggingface Papers",
+        "Huggingface Tool Builder",
+        "Huggingface Trackio",
+        "Huggingface Vision Trainer",
+        "Huggingface Zerogpu",
+        "Train Sentence Transformers",
+        "Transformers Js"
+      ],
+      "agents": [
+        "AGENTS"
+      ],
+      "commands": [],
+      "mcp": true
+    },
+    "hunter": {
+      "skills": [
+        "Campaign Setup",
+        "Company Enrichment",
+        "Discover",
+        "Domain Search",
+        "Email Finder",
+        "Email Verifier",
+        "List Builder",
+        "Person Enrichment",
+        "Prospecting"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "hyperframes": {
+      "skills": [
+        "Animejs",
+        "Contribute Catalog",
+        "Css Animations",
+        "Gsap",
+        "Hyperframes",
+        "Hyperframes Cli",
+        "Hyperframes Media",
+        "Hyperframes Registry",
+        "Lottie",
+        "Remotion To Hyperframes",
+        "Tailwind",
+        "Three",
+        "Typegpu",
+        "Waapi",
+        "Website To Hyperframes"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "imessage": {
+      "skills": [
+        "Access",
+        "Configure"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "intercom": {
+      "skills": [
+        "Customer 360",
+        "Install Cli",
+        "Install Messenger",
+        "Intercom Analysis"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "jdtls-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "jfrog": {
+      "skills": [
+        "Jfrog",
+        "Jfrog Package Safety And Download"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "kotlin-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "laravel-boost": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "learning-output-style": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "legalzoom": {
+      "skills": [
+        "Attorney Assist"
+      ],
+      "agents": [],
+      "commands": [
+        "review-contract"
+      ],
+      "mcp": true
+    },
+    "linear": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "liquid-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "liquid-skills": {
+      "skills": [
+        "Liquid Theme A11y",
+        "Liquid Theme Standards",
+        "Shopify Liquid Themes"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "logfire": {
+      "skills": [
+        "Logfire Instrumentation",
+        "Logfire Query",
+        "Logfire Ui"
+      ],
+      "agents": [],
+      "commands": [
+        "debug",
+        "dev-session",
+        "instrument",
+        "query"
+      ],
+      "mcp": true
+    },
+    "lua-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "lumen": {
+      "skills": [
+        "Doctor",
+        "Reindex"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "mapbox": {
+      "skills": [
+        "Mapbox Android Patterns",
+        "Mapbox Cartography",
+        "Mapbox Data Visualization Patterns",
+        "Mapbox Flutter Patterns",
+        "Mapbox Geospatial Operations",
+        "Mapbox Google Maps Migration",
+        "Mapbox Ios Patterns",
+        "Mapbox Location Grounding",
+        "Mapbox Maplibre Migration",
+        "Mapbox Mcp Devkit Patterns",
+        "Mapbox Mcp Runtime Patterns",
+        "Mapbox Search Integration",
+        "Mapbox Search Patterns",
+        "Mapbox Store Locator Patterns",
+        "Mapbox Style Patterns",
+        "Mapbox Style Quality",
+        "Mapbox Token Security",
+        "Mapbox Web Integration Patterns",
+        "Mapbox Web Performance Patterns"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "math-olympiad": {
+      "skills": [
+        "Math Olympiad"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "mcp-apps": {
+      "skills": [
+        "Add App To Server",
+        "Convert Web App",
+        "Create Mcp App",
+        "Migrate Oai App"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "mcp-server-dev": {
+      "skills": [
+        "Build Mcp App",
+        "Build Mcp Server",
+        "Build Mcpb"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "mcp-tunnels": {
+      "skills": [],
+      "agents": [],
+      "commands": [
+        "create-docker-mcp-tunnel"
+      ],
+      "mcp": false
+    },
+    "mercadopago": {
+      "skills": [
+        "Mp Integrate",
+        "Mp Review",
+        "Mp Test Setup",
+        "Mp Webhooks"
+      ],
+      "agents": [
+        "Mp Integration Expert"
+      ],
+      "commands": [
+        "mp-connect",
+        "mp-integrate",
+        "mp-review"
+      ],
+      "mcp": true
+    },
+    "microsoft-docs": {
+      "skills": [
+        "Microsoft Code Reference",
+        "Microsoft Docs",
+        "Microsoft Skill Creator"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "migration-to-aws": {
+      "skills": [
+        "Gcp To Aws"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "mintlify": {
+      "skills": [
+        "Mintlify"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "miro": {
+      "skills": [
+        "Miro Browse",
+        "Miro Code Review",
+        "Miro Code Spec",
+        "Miro Diagram",
+        "Miro Doc",
+        "Miro Table"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "mongodb": {
+      "skills": [
+        "Mongodb Atlas Stream Processing",
+        "Mongodb Connection",
+        "Mongodb Mcp Setup",
+        "Mongodb Natural Language Querying",
+        "Mongodb Query Optimizer",
+        "Mongodb Schema Design",
+        "Mongodb Search And Ai"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "neon": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "netlify-skills": {
+      "skills": [
+        "Netlify Ai Gateway",
+        "Netlify Blobs",
+        "Netlify Caching",
+        "Netlify Cli And Deploy",
+        "Netlify Config",
+        "Netlify Database",
+        "Netlify Deploy",
+        "Netlify Edge Functions",
+        "Netlify Forms",
+        "Netlify Frameworks",
+        "Netlify Functions",
+        "Netlify Identity",
+        "Netlify Image Cdn"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "netsuite-suitecloud": {
+      "skills": [
+        "Netsuite Ai Connector Instructions",
+        "Netsuite Sdf Roles And Permissions",
+        "Netsuite Uif Spa Reference"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "nightvision": {
+      "skills": [
+        "Api Discovery",
+        "Ci Cd Integration",
+        "Scan Configuration",
+        "Scan Triage"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "nimble": {
+      "skills": [
+        "Business Research",
+        "Healthcare",
+        "Human Resources",
+        "Marketing",
+        "Productivity",
+        "Seo",
+        "Web Search Tools"
+      ],
+      "agents": [
+        "Nimble Analyst",
+        "Nimble Researcher"
+      ],
+      "commands": [
+        "search"
+      ],
+      "mcp": true
+    },
+    "notion": {
+      "skills": [
+        "Notion"
+      ],
+      "agents": [],
+      "commands": [
+        "create-database-row",
+        "create-page",
+        "create-task",
+        "database-query",
+        "find",
+        "search"
+      ],
+      "mcp": true
+    },
+    "nvidia-skills": {
+      "skills": [
+        "Aiq Deploy",
+        "Aiq Research",
+        "Cuopt User Rules",
+        "Dynamo Interconnect Check",
+        "Dynamo Router Starter",
+        "Nemoclaw User Get Started",
+        "Omniverse Cad To Simready",
+        "Omniverse Realtime Viewer",
+        "Omniverse Usd Performance Tuning",
+        "Physical Ai Infrastructure Setup And Resilient Scaling",
+        "Physical Ai Neural Reconstruction"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "oracle-ai-data-platform-workbench-spark-connectors": {
+      "skills": [
+        "Aidp Alh",
+        "Aidp Aws S3",
+        "Aidp Azure Adls",
+        "Aidp Connectors Bootstrap",
+        "Aidp Connectors Overview",
+        "Aidp Epm Cloud",
+        "Aidp Essbase",
+        "Aidp Exacs",
+        "Aidp Excel",
+        "Aidp Fusion Bicc",
+        "Aidp Fusion Rest",
+        "Aidp Hive",
+        "Aidp Iceberg",
+        "Aidp Jdbc Custom",
+        "Aidp Mysql",
+        "Aidp Object Storage",
+        "Aidp Oracle Db",
+        "Aidp Peoplesoft",
+        "Aidp Postgresql",
+        "Aidp Rest Generic",
+        "Aidp Salesforce",
+        "Aidp Siebel",
+        "Aidp Snowflake",
+        "Aidp Sqlserver",
+        "Aidp Streaming Kafka"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "outputai": {
+      "skills": [
+        "Output Build Workflow",
+        "Output Credentials Edit",
+        "Output Credentials Env Vars",
+        "Output Credentials Init",
+        "Output Debug Workflow",
+        "Output Dev Agent Class",
+        "Output Dev Code Style",
+        "Output Dev Create Skeleton",
+        "Output Dev Credentials",
+        "Output Dev Eval Testing",
+        "Output Dev Evaluator Function",
+        "Output Dev Folder Structure",
+        "Output Dev Http Client Create",
+        "Output Dev Model Selection",
+        "Output Dev Prompt File",
+        "Output Dev Scenario File",
+        "Output Dev Skill File",
+        "Output Dev Step Function",
+        "Output Dev Types File",
+        "Output Dev Upgrade Prompt Models",
+        "Output Dev Workflow Cost",
+        "Output Dev Workflow Function",
+        "Output Error Direct Io",
+        "Output Error Http Client",
+        "Output Error Missing Schemas",
+        "Output Error Nondeterminism",
+        "Output Error Try Catch",
+        "Output Error Zod Import",
+        "Output Eval Audit",
+        "Output Eval Dataset Design",
+        "Output Eval Error Analysis",
+        "Output Eval Judge Prompt",
+        "Output Eval Validate Judge",
+        "Output Meta Post Flight",
+        "Output Meta Pre Flight",
+        "Output Meta Project Context",
+        "Output Migrate",
+        "Output Plan Workflow",
+        "Output Services Check",
+        "Output Workflow List",
+        "Output Workflow Reset",
+        "Output Workflow Result",
+        "Output Workflow Run",
+        "Output Workflow Runs List",
+        "Output Workflow Start",
+        "Output Workflow Status",
+        "Output Workflow Stop",
+        "Output Workflow Trace",
+        "Output Workflow Trace File"
+      ],
+      "agents": [
+        "Workflow_context_fetcher",
+        "Workflow_debugger",
+        "Workflow_planner",
+        "Workflow_prompt_writer",
+        "Workflow_quality"
+      ],
+      "commands": [],
+      "mcp": false
+    },
+    "pagerduty": {
+      "skills": [],
+      "agents": [],
+      "commands": [
+        "create-pagerduty-skill",
+        "pre-commit-risk-scoring"
+      ],
+      "mcp": true
+    },
+    "php-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "pigment": {
+      "skills": [
+        "Analyzing Pigment Data",
+        "Creating And Editing Pigment Views",
+        "Designing Pigment Boards",
+        "Integrating External Data",
+        "Modeling Pigment Applications",
+        "Optimizing Pigment Performance",
+        "Planning Cycles Pigment Applications",
+        "Securing Pigment Applications",
+        "Solving Specific Use Cases",
+        "Writing Pigment Formulas"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "pinecone": {
+      "skills": [
+        "Assistant",
+        "Cli",
+        "Docs",
+        "Full Text Search",
+        "Help",
+        "Mcp",
+        "N8n",
+        "Query",
+        "Quickstart"
+      ],
+      "agents": [],
+      "commands": [
+        "join-discord"
+      ],
+      "mcp": true
+    },
+    "planetscale": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "playground": {
+      "skills": [
+        "Playground"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "playwright": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "plugin-dev": {
+      "skills": [
+        "Agent Development",
+        "Command Development",
+        "Hook Development",
+        "Mcp Integration",
+        "Plugin Settings",
+        "Plugin Structure",
+        "Skill Development"
+      ],
+      "agents": [
+        "Agent Creator",
+        "Plugin Validator",
+        "Skill Reviewer"
+      ],
+      "commands": [
+        "create-plugin"
+      ],
+      "mcp": false
+    },
+    "posthog": {
+      "skills": [
+        "Analyzing Experiment Session Replays",
+        "Auditing Experiments Flags",
+        "Auditing Warehouse Data Health",
+        "Authoring Log Alerts",
+        "Cleaning Up Stale Feature Flags",
+        "Configuring Experiment Analytics",
+        "Configuring Experiment Rollout",
+        "Copying Flags Across Projects",
+        "Creating Experiments",
+        "Debugging Local Replay",
+        "Diagnosing Experiment Results",
+        "Diagnosing Failed Warehouse Syncs",
+        "Diagnosing Missing Recordings",
+        "Diagnosing Sdk Health",
+        "Diagnosing Stacktrace Symbolication",
+        "Downloading Batch Export Files",
+        "Exploring Apm Traces",
+        "Exploring Autocapture Events",
+        "Exploring Live Traffic",
+        "Exploring Llm Clusters",
+        "Exploring Llm Costs",
+        "Exploring Llm Evaluations",
+        "Exploring Llm Traces",
+        "Feature Usage Feed",
+        "Finding Deleted Feature Flags",
+        "Finding Experiments",
+        "Finding Replay For Issue",
+        "Formatting Insight Axes",
+        "Grouping Noisy Errors",
+        "Inbox Exploration",
+        "Instrument Error Tracking",
+        "Instrument Feature Flags",
+        "Instrument Integration",
+        "Instrument Llm Analytics",
+        "Instrument Logs",
+        "Instrument Product Analytics",
+        "Investigate Metric",
+        "Investigating Error Issue",
+        "Investigating Replay",
+        "Managing Experiment Lifecycle",
+        "Managing Path Cleaning Rules",
+        "Managing Subscriptions",
+        "Planning User Interviews",
+        "Querying Posthog Data",
+        "Setting Up A Data Warehouse Source",
+        "Signals",
+        "Signals Scout General",
+        "Skills Store",
+        "Suggesting Data Imports",
+        "Suppressing Noisy Errors",
+        "Triaging Error Issues",
+        "Triaging Visual Review Runs",
+        "Tuning Incremental Sync Config",
+        "Working With Skills"
+      ],
+      "agents": [
+        "Error Analyzer"
+      ],
+      "commands": [
+        "llma-cc-ingest",
+        "llma-cc-setup",
+        "llma-cc-status"
+      ],
+      "mcp": true
+    },
+    "postiz": {
+      "skills": [
+        "Postiz"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "postman": {
+      "skills": [
+        "Agent Ready Apis",
+        "Generate Spec",
+        "Postman Cli",
+        "Postman Context",
+        "Postman Knowledge",
+        "Postman Routing",
+        "Run Collection",
+        "Send Request"
+      ],
+      "agents": [
+        "Readiness Analyzer"
+      ],
+      "commands": [
+        "docs",
+        "generate-spec",
+        "mock",
+        "run-collection",
+        "search",
+        "security",
+        "send-request",
+        "setup",
+        "sync",
+        "test"
+      ],
+      "mcp": true
+    },
+    "pr-review-toolkit": {
+      "skills": [],
+      "agents": [
+        "Code Reviewer",
+        "Code Simplifier",
+        "Comment Analyzer",
+        "Pr Test Analyzer",
+        "Silent Failure Hunter",
+        "Type Design Analyzer"
+      ],
+      "commands": [
+        "review-pr"
+      ],
+      "mcp": false
+    },
+    "prisma": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "pydantic-ai": {
+      "skills": [
+        "Building Pydantic Ai Agents"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "pyright-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "qdrant-skills": {
+      "skills": [
+        "Qdrant Clients Sdk",
+        "Qdrant Deployment Options",
+        "Qdrant Model Migration",
+        "Qdrant Monitoring",
+        "Qdrant Performance Optimization",
+        "Qdrant Scaling",
+        "Qdrant Search Quality",
+        "Qdrant Version Upgrade"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "qodo-skills": {
+      "skills": [
+        "Qodo Get Rules",
+        "Qodo Pr Resolver"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "qt-development-skills": {
+      "skills": [
+        "Qt Cpp Docs",
+        "Qt Cpp Review",
+        "Qt Qml",
+        "Qt Qml Docs",
+        "Qt Qml Profiler",
+        "Qt Qml Review",
+        "Qt Qml Test",
+        "Qt Qml Test Run",
+        "Qt Ui Design"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "quarkus-agent": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "railway": {
+      "skills": [
+        "Use Railway"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "ralph-loop": {
+      "skills": [],
+      "agents": [],
+      "commands": [
+        "cancel-ralph",
+        "help",
+        "ralph-loop"
+      ],
+      "mcp": false
+    },
+    "rc": {
+      "skills": [
+        "Create Revenuecat Project",
+        "Integrate Revenuecat",
+        "Revenuecat",
+        "Revenuecat Charts",
+        "Revenuecat Customer Center",
+        "Revenuecat Entitlements Gate",
+        "Revenuecat Identify User",
+        "Revenuecat Migrate",
+        "Revenuecat Paywall",
+        "Revenuecat Purchase Flow",
+        "Revenuecat Status",
+        "Revenuecat Testing Setup",
+        "Revenuecat Troubleshoot"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "redis-development": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "remember": {
+      "skills": [
+        "Remember"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "resend": {
+      "skills": [
+        "Agent Email Inbox",
+        "Email Best Practices",
+        "React Email",
+        "Resend",
+        "Resend Cli"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "revenuecat": {
+      "skills": [
+        "Create Revenuecat Project",
+        "Integrate Revenuecat",
+        "Revenuecat",
+        "Revenuecat Charts",
+        "Revenuecat Customer Center",
+        "Revenuecat Entitlements Gate",
+        "Revenuecat Identify User",
+        "Revenuecat Migrate",
+        "Revenuecat Paywall",
+        "Revenuecat Purchase Flow",
+        "Revenuecat Status",
+        "Revenuecat Testing Setup",
+        "Revenuecat Troubleshoot"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "rootly": {
+      "skills": [
+        "Action",
+        "Alert",
+        "Announce",
+        "Ask",
+        "Brief",
+        "Cover",
+        "Deploy Check",
+        "Handoff",
+        "Lookup",
+        "My",
+        "Oncall",
+        "Respond",
+        "Retro",
+        "Setup",
+        "Status",
+        "Swap",
+        "Test",
+        "Trend"
+      ],
+      "agents": [
+        "Deploy Guardian",
+        "Incident Investigator",
+        "Retro Analyst"
+      ],
+      "commands": [],
+      "mcp": true
+    },
+    "ruby-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "runway-api": {
+      "skills": [
+        "Rw Api Reference",
+        "Rw Check Compatibility",
+        "Rw Check Org Details",
+        "Rw Fetch Api Reference",
+        "Rw Generate Audio",
+        "Rw Generate Image",
+        "Rw Generate Video",
+        "Rw Integrate Audio",
+        "Rw Integrate Character Embed",
+        "Rw Integrate Characters",
+        "Rw Integrate Documents",
+        "Rw Integrate Image",
+        "Rw Integrate Uploads",
+        "Rw Integrate Video",
+        "Rw Recipe Full Setup",
+        "Rw Setup Api Key",
+        "Use Runway Api"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "rust-analyzer-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "sagemaker-ai": {
+      "skills": [
+        "Dataset Evaluation",
+        "Dataset Transformation",
+        "Directory Management",
+        "Finetuning",
+        "Finetuning Setup",
+        "Hyperpod Cluster Debugger",
+        "Hyperpod Issue Report",
+        "Hyperpod Nccl",
+        "Hyperpod Node Debugger",
+        "Hyperpod Performance Debugger",
+        "Hyperpod Slurm Debugger",
+        "Hyperpod Ssm",
+        "Hyperpod Version Checker",
+        "Model Deployment",
+        "Model Evaluation",
+        "Planning",
+        "Use Case Specification"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "sanity": {
+      "skills": [
+        "Content Experimentation Best Practices",
+        "Content Modeling Best Practices",
+        "Portable Text Conversion",
+        "Portable Text Serialization",
+        "Sanity Best Practices",
+        "Seo Aeo Best Practices"
+      ],
+      "agents": [],
+      "commands": [
+        "deploy-schema",
+        "sanity",
+        "sanity-review",
+        "typegen"
+      ],
+      "mcp": true
+    },
+    "sap-cds-mcp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "sap-fiori-mcp-server": {
+      "skills": [
+        "Sap Fiori Add Visual Filter"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "sap-mdk-server": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "save-to-spotify": {
+      "skills": [
+        "Save To Spotify"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "security-guidance": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "semgrep": {
+      "skills": [],
+      "agents": [],
+      "commands": [
+        "setup-semgrep-plugin"
+      ],
+      "mcp": true
+    },
+    "sentry": {
+      "skills": [
+        "Sentry Android Sdk",
+        "Sentry Browser Sdk",
+        "Sentry Cloudflare Sdk",
+        "Sentry Cocoa Sdk",
+        "Sentry Code Review",
+        "Sentry Create Alert",
+        "Sentry Dotnet Sdk",
+        "Sentry Elixir Sdk",
+        "Sentry Feature Setup",
+        "Sentry Fix Issues",
+        "Sentry Flutter Sdk",
+        "Sentry Go Sdk",
+        "Sentry Nestjs Sdk",
+        "Sentry Nextjs Sdk",
+        "Sentry Node Sdk",
+        "Sentry Otel Exporter Setup",
+        "Sentry Php Sdk",
+        "Sentry Pr Code Review",
+        "Sentry Python Sdk",
+        "Sentry React Native Sdk",
+        "Sentry React Router Framework Sdk",
+        "Sentry React Sdk",
+        "Sentry Ruby Sdk",
+        "Sentry Sdk Setup",
+        "Sentry Sdk Skill Creator",
+        "Sentry Sdk Upgrade",
+        "Sentry Setup Ai Monitoring",
+        "Sentry Svelte Sdk",
+        "Sentry Tanstack Start Sdk",
+        "Sentry Workflow"
+      ],
+      "agents": [],
+      "commands": [
+        "seer"
+      ],
+      "mcp": true
+    },
+    "sentry-cli": {
+      "skills": [
+        "Sentry Cli"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "serena": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "servicenow-sdk": {
+      "skills": [
+        "Now Sdk Explain",
+        "Now Sdk Setup"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "session-report": {
+      "skills": [
+        "Session Report"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "shopify": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "shopify-ai-toolkit": {
+      "skills": [
+        "Shopify Admin",
+        "Shopify App Store Review",
+        "Shopify Custom Data",
+        "Shopify Customer",
+        "Shopify Dev",
+        "Shopify Functions",
+        "Shopify Hydrogen",
+        "Shopify Liquid",
+        "Shopify Onboarding Dev",
+        "Shopify Onboarding Merchant",
+        "Shopify Partner",
+        "Shopify Payments Apps",
+        "Shopify Polaris Admin Extensions",
+        "Shopify Polaris App Home",
+        "Shopify Polaris Checkout Extensions",
+        "Shopify Polaris Customer Account Extensions",
+        "Shopify Pos Ui",
+        "Shopify Storefront Graphql",
+        "Shopify Use Shopify Cli",
+        "Ucp"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "skill-creator": {
+      "skills": [
+        "Skill Creator"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "slack": {
+      "skills": [
+        "Slack Messaging",
+        "Slack Search"
+      ],
+      "agents": [],
+      "commands": [
+        "channel-digest",
+        "draft-announcement",
+        "find-discussions",
+        "standup",
+        "summarize-channel"
+      ],
+      "mcp": true
+    },
+    "snowflake-cortex-code": {
+      "skills": [
+        "Cortex Router",
+        "Cortex Run",
+        "Cortex Setup"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "sonarqube": {
+      "skills": [
+        "Sonar Analyze",
+        "Sonar Coverage",
+        "Sonar Dependency Risks",
+        "Sonar Duplication",
+        "Sonar Fix Issue",
+        "Sonar Integrate",
+        "Sonar List Issues",
+        "Sonar List Projects",
+        "Sonar Quality Gate"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "sonatype-guide": {
+      "skills": [
+        "Sonatype Guide"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "sourcegraph": {
+      "skills": [
+        "Searching Sourcegraph"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "spotify-ads-api": {
+      "skills": [
+        "Ads",
+        "Api Reference",
+        "Assets",
+        "Build Campaign",
+        "Bulk",
+        "Campaign Strategy",
+        "Campaigns",
+        "Clone",
+        "Configure",
+        "Dashboard",
+        "Export",
+        "Monitor",
+        "Report"
+      ],
+      "agents": [
+        "Spotify Ads Request Builder"
+      ],
+      "commands": [],
+      "mcp": false
+    },
+    "stripe": {
+      "skills": [
+        "Stripe Best Practices",
+        "Stripe Projects",
+        "Upgrade Stripe"
+      ],
+      "agents": [],
+      "commands": [
+        "explain-error",
+        "test-cards"
+      ],
+      "mcp": true
+    },
+    "sumup": {
+      "skills": [
+        "Sumup"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "supabase": {
+      "skills": [
+        "Supabase",
+        "Supabase Postgres Best Practices"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "superpowers": {
+      "skills": [
+        "Brainstorming",
+        "Dispatching Parallel Agents",
+        "Executing Plans",
+        "Finishing A Development Branch",
+        "Receiving Code Review",
+        "Requesting Code Review",
+        "Subagent Driven Development",
+        "Systematic Debugging",
+        "Test Driven Development",
+        "Using Git Worktrees",
+        "Using Superpowers",
+        "Verification Before Completion",
+        "Writing Plans",
+        "Writing Skills"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "swift-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "teamcity-cli": {
+      "skills": [
+        "Teamcity Cli"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "telegram": {
+      "skills": [
+        "Access",
+        "Configure"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "terraform": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "togetherai-skills": {
+      "skills": [
+        "Together Audio",
+        "Together Batch Inference",
+        "Together Chat Completions",
+        "Together Dedicated Containers",
+        "Together Dedicated Endpoints",
+        "Together Embeddings",
+        "Together Evaluations",
+        "Together Fine Tuning",
+        "Together Gpu Clusters",
+        "Together Images",
+        "Together Sandboxes",
+        "Together Video"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "twilio-developer-kit": {
+      "skills": [
+        "Sendgrid",
+        "Twilio"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "typescript-lsp": {
+      "skills": [],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "ui5": {
+      "skills": [
+        "Ui5 Best Practices",
+        "Ui5 Best Practices Integration Cards"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "ui5-typescript-conversion": {
+      "skills": [
+        "References"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "vanta-mcp-plugin": {
+      "skills": [
+        "Fix Test",
+        "List Tests",
+        "Test Remediation"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "vercel": {
+      "skills": [
+        "Ai Gateway",
+        "Ai Sdk",
+        "Auth",
+        "Bootstrap",
+        "Chat Sdk",
+        "Deployments Cicd",
+        "Env Vars",
+        "Knowledge Update",
+        "Marketplace",
+        "Next Cache Components",
+        "Next Forge",
+        "Next Upgrade",
+        "Nextjs",
+        "React Best Practices",
+        "Routing Middleware",
+        "Runtime Cache",
+        "Shadcn",
+        "Turbopack",
+        "Vercel Agent",
+        "Vercel Cli",
+        "Vercel Firewall",
+        "Vercel Functions",
+        "Vercel Sandbox",
+        "Vercel Storage",
+        "Verification",
+        "Workflow"
+      ],
+      "agents": [
+        "Ai Architect",
+        "Deployment Expert",
+        "Performance Optimizer"
+      ],
+      "commands": [
+        "_conventions",
+        "bootstrap",
+        "deploy",
+        "env",
+        "marketplace",
+        "status"
+      ],
+      "mcp": true
+    },
+    "vibe-prospecting": {
+      "skills": [
+        "Vibe Prospecting"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "windsor-ai": {
+      "skills": [
+        "Business Data"
+      ],
+      "agents": [
+        "Business Data Analyst"
+      ],
+      "commands": [
+        "campaign-report",
+        "windsor-sources",
+        "windsor-types"
+      ],
+      "mcp": true
+    },
+    "wix": {
+      "skills": [
+        "Wix App",
+        "Wix Design System",
+        "Wix Headless",
+        "Wix Manage"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "wordpress.com": {
+      "skills": [
+        "Site Specification"
+      ],
+      "agents": [],
+      "commands": [
+        "design-site",
+        "preview-designs",
+        "quick-build"
+      ],
+      "mcp": false
+    },
+    "workos": {
+      "skills": [
+        "Workos",
+        "Workos Widgets"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "youdotcom-agent-skills": {
+      "skills": [
+        "Teams Anthropic Integration",
+        "Ydc Ai Sdk Integration",
+        "Ydc Claude Agent Sdk Integration",
+        "Ydc Crewai Mcp Integration",
+        "Ydc Langchain Integration",
+        "Ydc Openai Agent Sdk Integration",
+        "Youdotcom Api",
+        "Youdotcom Cli"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": false
+    },
+    "zapier": {
+      "skills": [
+        "Create My Tools Profile",
+        "Zapier Setup",
+        "Zapier Status"
+      ],
+      "agents": [
+        "Zapier Mcp.agent"
+      ],
+      "commands": [],
+      "mcp": true
+    },
+    "zilliz": {
+      "skills": [
+        "Ask Zilliz",
+        "Backup",
+        "Billing",
+        "Cluster",
+        "Collection",
+        "Database",
+        "Diagnose",
+        "External Collection",
+        "Import",
+        "Index",
+        "Job",
+        "Monitoring",
+        "On Demand Cluster",
+        "Partition",
+        "Privatelink",
+        "Project Region",
+        "Quickstart",
+        "Setup",
+        "Status",
+        "User Role",
+        "Vector"
+      ],
+      "agents": [],
+      "commands": [
+        "quickstart",
+        "status"
+      ],
+      "mcp": false
+    },
+    "zoom-plugin": {
+      "skills": [
+        "Build Zoom Bot",
+        "Build Zoom Meeting App",
+        "Choose Zoom Approach",
+        "Cobrowse Sdk",
+        "Contact Center",
+        "Debug Zoom",
+        "Debug Zoom Integration",
+        "Design Mcp Workflow",
+        "General",
+        "Meeting Sdk",
+        "Oauth",
+        "Phone",
+        "Plan Zoom Integration",
+        "Plan Zoom Product",
+        "Probe Sdk",
+        "Rest Api",
+        "Rivet Sdk",
+        "Rtms",
+        "Scribe",
+        "Setup Zoom Mcp",
+        "Setup Zoom Oauth",
+        "Start",
+        "Summarizer",
+        "Team Chat",
+        "Translator",
+        "Ui Toolkit",
+        "Video Sdk",
+        "Virtual Agent",
+        "Webhooks",
+        "Websockets",
+        "Zoom Apps Sdk",
+        "Zoom Mcp"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "zoominfo": {
+      "skills": [
+        "Account Research",
+        "Build List",
+        "Buying Committee",
+        "Competitor Analysis",
+        "Enrich Company",
+        "Enrich Contact",
+        "Find Similar",
+        "Meeting Prep",
+        "Personalize Email",
+        "Recommend Contacts",
+        "Score Accounts",
+        "Score Leads",
+        "Tam Sizer",
+        "Tech Stack Snapshot"
+      ],
+      "agents": [],
+      "commands": [],
+      "mcp": true
+    },
+    "zscaler": {
+      "skills": [
+        "Cross Product",
+        "Easm",
+        "Zcc",
+        "Zdx",
+        "Zia",
+        "Zins",
+        "Zms",
+        "Zpa"
+      ],
+      "agents": [],
+      "commands": [
+        "app-health",
+        "audit-software",
+        "audit-ssl",
+        "check-access",
+        "compare-locations",
+        "create-access-rule",
+        "create-forwarding-rule",
+        "create-server-group",
+        "create-timeout-rule",
+        "diagnose-deeptrace",
+        "investigate-alerts",
+        "investigate-incident",
+        "investigate-sandbox",
+        "investigate-url",
+        "onboard-app",
+        "onboard-location",
+        "review-attack-surface",
+        "troubleshoot-connector",
+        "troubleshoot-experience",
+        "troubleshoot-user"
+      ],
+      "mcp": true
+    }
+  }
+}

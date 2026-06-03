@@ -61,74 +61,150 @@ struct PluginsView: View {
     // Search-filtered Claude plugins.
     @State private var filteredClaudePlugins: [ClaudePluginInstalled] = []
 
+    // Claude marketplace (Browse tab discovery surface).
+    @ObservedObject private var claudeMarketplace = ClaudeMarketplaceService.shared
+    /// Selected category key for the marketplace chips. `nil` == "All".
+    @State private var selectedCategory: String?
+    /// Search + category filtered marketplace entries.
+    @State private var filteredMarketplaceEntries: [MarketplacePlugin] = []
+    /// Detail navigation for a browsable (not-yet-installed) marketplace entry.
+    @State private var selectedMarketplaceEntry: MarketplacePlugin?
+
     // Success toast
     @State private var successMessage: String?
 
+    @ViewBuilder
+    private var pluginDetailOverlay: some View {
+        if let plugin = selectedPlugin {
+            PluginDetailView(
+                plugin: plugin,
+                missingPermissions: missingPermissionsPerPlugin[plugin.pluginId] ?? [],
+                onBack: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        selectedPlugin = nil
+                    }
+                },
+                onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
+                onUninstall: {
+                    try await repoService.uninstall(pluginId: plugin.pluginId)
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        selectedPlugin = nil
+                    }
+                },
+                onInstall: { try await repoService.install(pluginId: plugin.pluginId) },
+                onChange: { reload() }
+            )
+            .transition(.opacity.combined(with: .move(edge: .trailing)))
+        }
+    }
+
+    @ViewBuilder
+    private var claudeDetailOverlay: some View {
+        if let claudePlugin = selectedClaudePlugin {
+            ClaudePluginDetailView(
+                plugin: claudePlugin,
+                onBack: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        selectedClaudePlugin = nil
+                    }
+                },
+                onUpdate: { try await updateClaudePlugin(claudePlugin) },
+                onUninstall: {
+                    await uninstallClaudePlugin(claudePlugin)
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        selectedClaudePlugin = nil
+                    }
+                },
+                onConfigure: {
+                    claudeUserConfigTarget = claudePlugin
+                    showClaudeUserConfigSheet = true
+                },
+                onChange: {
+                    claudeAggregator.refresh()
+                    Task { await updateFilteredLists() }
+                }
+            )
+            .transition(.opacity.combined(with: .move(edge: .trailing)))
+        }
+    }
+
+    @ViewBuilder
+    private var marketplaceDetailOverlay: some View {
+        if let entry = selectedMarketplaceEntry {
+            ClaudeMarketplaceDetailView(
+                entry: entry,
+                onBack: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        selectedMarketplaceEntry = nil
+                    }
+                },
+                onInstall: {
+                    try await installMarketplaceEntry(entry)
+                    // `installMarketplaceEntry` refreshes the aggregator
+                    // synchronously, so the freshly installed plugin is now
+                    // available. Transition into the rich installed detail
+                    // (uninstall / previews / configure) for a continuous flow.
+                    if let installed = installedClaudePlugin(for: entry) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedMarketplaceEntry = nil
+                            selectedClaudePlugin = installed
+                        }
+                    }
+                }
+            )
+            .transition(.opacity.combined(with: .move(edge: .trailing)))
+        }
+    }
+
+    @ViewBuilder
+    private var successToastOverlay: some View {
+        if let message = successMessage {
+            VStack {
+                Spacer()
+                ThemedToastView(message, type: .success)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .padding(.bottom, 20)
+            }
+            .zIndex(100)
+        }
+    }
+
     var body: some View {
+        marketplaceObservers
+            .onChange(of: claudeSkillManager.skills.count) { _, _ in scheduleClaudeRefresh() }
+            .onChange(of: claudeScheduleManager.schedules.count) { _, _ in scheduleClaudeRefresh() }
+            .onChange(of: claudeSlashCommands.customCommands.count) { _, _ in scheduleClaudeRefresh() }
+            .onChange(of: claudeMCPManager.configuration.providers.count) { _, _ in
+                scheduleClaudeRefresh()
+            }
+    }
+
+    private var marketplaceObservers: some View {
+        decoratedContent
+            .onReceive(claudeAggregator.$plugins) { _ in
+                Task { await updateFilteredLists() }
+            }
+            .onReceive(claudeMarketplace.$entries) { _ in
+                Task { await updateFilteredLists() }
+            }
+            .onChange(of: selectedCategory) { _, _ in
+                Task { await updateFilteredLists() }
+            }
+    }
+
+    private var decoratedContent: some View {
         ZStack {
-            if selectedPlugin == nil && selectedClaudePlugin == nil {
+            if selectedPlugin == nil && selectedClaudePlugin == nil
+                && selectedMarketplaceEntry == nil
+            {
                 gridContent
                     .transition(.opacity.combined(with: .move(edge: .leading)))
             }
 
-            if let plugin = selectedPlugin {
-                PluginDetailView(
-                    plugin: plugin,
-                    missingPermissions: missingPermissionsPerPlugin[plugin.pluginId] ?? [],
-                    onBack: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedPlugin = nil
-                        }
-                    },
-                    onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
-                    onUninstall: {
-                        try await repoService.uninstall(pluginId: plugin.pluginId)
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedPlugin = nil
-                        }
-                    },
-                    onInstall: { try await repoService.install(pluginId: plugin.pluginId) },
-                    onChange: { reload() }
-                )
-                .transition(.opacity.combined(with: .move(edge: .trailing)))
-            }
-
-            if let claudePlugin = selectedClaudePlugin {
-                ClaudePluginDetailView(
-                    plugin: claudePlugin,
-                    onBack: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedClaudePlugin = nil
-                        }
-                    },
-                    onUpdate: { try await updateClaudePlugin(claudePlugin) },
-                    onUninstall: {
-                        await uninstallClaudePlugin(claudePlugin)
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedClaudePlugin = nil
-                        }
-                    },
-                    onConfigure: {
-                        claudeUserConfigTarget = claudePlugin
-                        showClaudeUserConfigSheet = true
-                    },
-                    onChange: {
-                        claudeAggregator.refresh()
-                        Task { await updateFilteredLists() }
-                    }
-                )
-                .transition(.opacity.combined(with: .move(edge: .trailing)))
-            }
-
-            if let message = successMessage {
-                VStack {
-                    Spacer()
-                    ThemedToastView(message, type: .success)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .padding(.bottom, 20)
-                }
-                .zIndex(100)
-            }
+            pluginDetailOverlay
+            claudeDetailOverlay
+            marketplaceDetailOverlay
+            successToastOverlay
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -146,6 +222,9 @@ struct PluginsView: View {
             // the badge / Update button reflect the latest state on tab
             // entry without blocking initial render.
             Task { await claudeAggregator.checkForUpdates() }
+            // Load the official Claude marketplace catalog once so the
+            // Browse tab's discovery grid is ready when the user switches.
+            claudeMarketplace.loadIfNeeded()
             withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
                 hasAppeared = true
             }
@@ -234,15 +313,6 @@ struct PluginsView: View {
                 )
             }
         }
-        .onReceive(claudeAggregator.$plugins) { _ in
-            Task { await updateFilteredLists() }
-        }
-        .onChange(of: claudeSkillManager.skills.count) { _, _ in scheduleClaudeRefresh() }
-        .onChange(of: claudeScheduleManager.schedules.count) { _, _ in scheduleClaudeRefresh() }
-        .onChange(of: claudeSlashCommands.customCommands.count) { _, _ in scheduleClaudeRefresh() }
-        .onChange(of: claudeMCPManager.configuration.providers.count) { _, _ in
-            scheduleClaudeRefresh()
-        }
     }
 
     /// Debounce aggregator refreshes so a burst of changes during an
@@ -288,6 +358,26 @@ struct PluginsView: View {
         await claudeSkillManager.refresh()
         claudeAggregator.refresh()
         await updateFilteredLists()
+    }
+
+    /// Resolve + install a single marketplace entry, then refresh the
+    /// installed-plugin surfaces and show a success toast. Throws so the
+    /// calling card / detail view can surface the failure.
+    private func installMarketplaceEntry(_ entry: MarketplacePlugin) async throws {
+        let report = try await claudeMarketplace.install(entry: entry)
+        await claudeSkillManager.refresh()
+        claudeAggregator.refresh()
+        await updateFilteredLists()
+        if let report {
+            let total =
+                report.totalImportedSkills + report.totalImportedAgents
+                + report.totalImportedCommands + report.totalImportedMCPProviders
+            showSuccess(
+                total > 0
+                    ? L("Installed \(total) items from \(entry.name)")
+                    : L("Installed \(entry.name)")
+            )
+        }
     }
 
     /// Honor a pending `osaurus://plugins-install?tool=<id>` deeplink request.
@@ -342,6 +432,8 @@ struct PluginsView: View {
                     installedTabContent
                 case .browse:
                     browseTabContent
+                case .claude:
+                    claudePluginsTabContent
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -380,6 +472,7 @@ struct PluginsView: View {
                 counts: [
                     .installed: installedPlugins.count + claudeCount,
                     .browse: filteredPlugins.count,
+                    .claude: filteredMarketplaceEntries.count,
                 ],
                 badges: (updatesAvailableCount + claudeUpdateCount) > 0
                     ? [.installed: updatesAvailableCount + claudeUpdateCount]
@@ -476,6 +569,35 @@ struct PluginsView: View {
 
     // MARK: - Browse Tab
 
+    private var twoColumnGrid: [GridItem] {
+        [
+            GridItem(.flexible(minimum: 300), spacing: 20),
+            GridItem(.flexible(minimum: 300), spacing: 20),
+        ]
+    }
+
+    /// The installed Claude plugin that corresponds to a marketplace entry,
+    /// if any. Used to route already-installed entries straight to the rich
+    /// installed-plugin detail (uninstall / previews / configure) instead of
+    /// the discovery surface.
+    private func installedClaudePlugin(for entry: MarketplacePlugin) -> ClaudePluginInstalled? {
+        guard let id = claudeMarketplace.pluginId(for: entry) else { return nil }
+        return claudeAggregator.plugins.first { $0.pluginId == id }
+    }
+
+    /// Open the best detail surface for a marketplace entry: the rich
+    /// installed detail when it's already installed, otherwise the discovery
+    /// detail with an Install call-to-action.
+    private func openMarketplaceEntry(_ entry: MarketplacePlugin) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            if let installed = installedClaudePlugin(for: entry) {
+                selectedClaudePlugin = installed
+            } else {
+                selectedMarketplaceEntry = entry
+            }
+        }
+    }
+
     private var browseTabContent: some View {
         Group {
             if let errorMessage = repoLastError {
@@ -483,7 +605,7 @@ struct PluginsView: View {
                     offlineBanner(message: errorMessage)
                         .padding(.horizontal, 24)
                         .padding(.top, 16)
-                    browseGrid
+                    nativeBrowseGrid
                 }
             } else if isRepoRefreshing && filteredPlugins.isEmpty {
                 loadingState
@@ -494,20 +616,26 @@ struct PluginsView: View {
                     subtitle: searchText.isEmpty ? nil : "Try a different search term"
                 )
             } else {
-                browseGrid
+                nativeBrowseGrid
             }
         }
     }
 
-    private var browseGrid: some View {
+    private var loadingState: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.2)
+            Text("Loading repository...", bundle: .module)
+                .font(.system(size: 14))
+                .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 60)
+    }
+
+    private var nativeBrowseGrid: some View {
         ScrollView {
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(minimum: 300), spacing: 20),
-                    GridItem(.flexible(minimum: 300), spacing: 20),
-                ],
-                spacing: 20
-            ) {
+            LazyVGrid(columns: twoColumnGrid, spacing: 20) {
                 ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
                     PluginCard(
                         plugin: plugin,
@@ -533,6 +661,90 @@ struct PluginsView: View {
         }
     }
 
+    // MARK: - Claude Plugins Tab (marketplace discovery)
+
+    private var claudePluginsTabContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if !claudeMarketplace.categories.isEmpty {
+                    MarketplaceCategoryChips(
+                        categories: claudeMarketplace.categories,
+                        totalCount: claudeMarketplace.entries.count,
+                        selected: $selectedCategory
+                    )
+                }
+                marketplaceSection
+            }
+            .padding(24)
+        }
+    }
+
+    @ViewBuilder
+    private var marketplaceSection: some View {
+        if claudeMarketplace.isLoading && claudeMarketplace.entries.isEmpty {
+            marketplaceLoadingGrid
+        } else if let error = claudeMarketplace.lastError, claudeMarketplace.entries.isEmpty {
+            marketplaceErrorView(error)
+        } else if filteredMarketplaceEntries.isEmpty {
+            marketplaceEmptyView
+        } else {
+            // Installed plugins are excluded upstream (they live in the
+            // Installed tab), so this grid is purely available discovery.
+            LazyVGrid(columns: twoColumnGrid, spacing: 20) {
+                ForEach(Array(filteredMarketplaceEntries.enumerated()), id: \.element.name) {
+                    index,
+                    entry in
+                    ClaudeMarketplaceCard(
+                        entry: entry,
+                        animationDelay: Double(min(index, 12)) * 0.04,
+                        hasAppeared: hasAppeared,
+                        onSelect: { openMarketplaceEntry(entry) },
+                        onInstall: { try await installMarketplaceEntry(entry) }
+                    )
+                }
+            }
+        }
+    }
+
+    private var marketplaceLoadingGrid: some View {
+        LazyVGrid(columns: twoColumnGrid, spacing: 20) {
+            ForEach(0 ..< 6, id: \.self) { _ in
+                MarketplaceSkeletonCard()
+            }
+        }
+    }
+
+    private func marketplaceErrorView(_ message: String) -> some View {
+        VStack(spacing: 12) {
+            offlineBanner(message: message)
+            Button(action: { Task { await claudeMarketplace.refresh() } }) {
+                Text("Retry", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(claudeMarketplace.isLoading)
+        }
+    }
+
+    private var marketplaceEmptyView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.system(size: 32, weight: .light))
+                .foregroundColor(theme.tertiaryText)
+            Text(
+                searchText.isEmpty
+                    ? "No plugins in this category yet"
+                    : "No plugins match your search",
+                bundle: .module
+            )
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
+    }
+
     // MARK: - Empty / Loading States
 
     private func emptyState(icon: String, title: String, subtitle: String?) -> some View {
@@ -550,18 +762,6 @@ struct PluginsView: View {
                     .font(.system(size: 13))
                     .foregroundColor(theme.tertiaryText)
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 60)
-    }
-
-    private var loadingState: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.2)
-            Text("Loading repository...", bundle: .module)
-                .font(.system(size: 14))
-                .foregroundColor(theme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.vertical, 60)
@@ -652,12 +852,32 @@ struct PluginsView: View {
         return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
     }
 
+    nonisolated private static func marketplaceEntryMatchesQuery(
+        _ entry: MarketplacePlugin,
+        query: String
+    ) -> Bool {
+        guard !query.isEmpty else { return true }
+        let queryLower = query.lowercased()
+        var candidates: [String] = [entry.name.lowercased()]
+        if let description = entry.description { candidates.append(description.lowercased()) }
+        if let author = entry.author?.name { candidates.append(author.lowercased()) }
+        if let category = entry.category { candidates.append(category.lowercased()) }
+        candidates.append(contentsOf: (entry.keywords ?? []).map { $0.lowercased() })
+        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+    }
+
     private func updateFilteredLists() async {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let currentPlugins = repoService.plugins
         let currentClaudePlugins = claudeAggregator.plugins
+        let currentMarketplace = claudeMarketplace.entries
+        let category = selectedCategory
+        // Installed Claude plugins live in the Installed tab. Exclude them from
+        // the marketplace discovery grid so they aren't duplicated across tabs.
+        let installedPluginIds = Set(currentClaudePlugins.map { $0.pluginId })
+        let marketplaceRepo = claudeMarketplace.repo
 
-        let (browseResult, installedResult, claudeResult) =
+        let (browseResult, installedResult, claudeResult, marketplaceResult) =
             await Task.detached(priority: .userInitiated) {
                 let browse = currentPlugins.filter { Self.pluginMatchesQuery($0, query: query) }
                 let installed =
@@ -668,7 +888,26 @@ struct PluginsView: View {
                     currentClaudePlugins
                     .filter { Self.claudePluginMatchesQuery($0, query: query) }
                     .sorted { $0.displayName.lowercased() < $1.displayName.lowercased() }
-                return (browse, installed, claude)
+                let marketplace =
+                    currentMarketplace
+                    .filter { entry in
+                        let categoryMatches =
+                            category == nil
+                            || ClaudeMarketplaceService.categoryKey(for: entry) == category
+                        let isInstalled: Bool = {
+                            guard let marketplaceRepo else { return false }
+                            let id = ClaudePluginInstaller.pluginId(
+                                repo: marketplaceRepo,
+                                pluginName: entry.name
+                            )
+                            return installedPluginIds.contains(id)
+                        }()
+                        return categoryMatches
+                            && !isInstalled
+                            && Self.marketplaceEntryMatchesQuery(entry, query: query)
+                    }
+                    .sorted { $0.name.lowercased() < $1.name.lowercased() }
+                return (browse, installed, claude, marketplace)
             }.value
 
         guard !Task.isCancelled else { return }
@@ -676,6 +915,7 @@ struct PluginsView: View {
         filteredPlugins = browseResult
         installedPlugins = installedResult
         filteredClaudePlugins = claudeResult
+        filteredMarketplaceEntries = marketplaceResult
 
         var permissionCount = 0
         var missingPerms: [String: [SystemPermission]] = [:]
@@ -2065,5 +2305,111 @@ private struct PluginRoutesSummary: View {
         case .verify: return .orange
         case .owner: return .blue
         }
+    }
+}
+
+// MARK: - Marketplace Category Chips
+
+/// Horizontal, scrollable filter chips for the Claude marketplace. The first
+/// chip ("All") clears the filter; each category chip shows its plugin count
+/// and adopts the shared category palette color when selected.
+private struct MarketplaceCategoryChips: View {
+    @Environment(\.theme) private var theme
+
+    let categories: [ClaudeMarketplaceCategory]
+    let totalCount: Int
+    @Binding var selected: String?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                chip(key: nil, label: L("All"), count: totalCount, color: theme.accentColor)
+                ForEach(categories) { category in
+                    chip(
+                        key: category.id,
+                        label: category.displayName,
+                        count: category.count,
+                        color: ClaudeMarketplacePalette.color(for: category.id)
+                    )
+                }
+            }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func chip(key: String?, label: String, count: Int, color: Color) -> some View {
+        let isSelected = selected == key
+        return Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                selected = key
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .foregroundColor(isSelected ? .white.opacity(0.85) : theme.tertiaryText)
+            }
+            .foregroundColor(isSelected ? .white : theme.secondaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(isSelected ? color : theme.tertiaryBackground)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(
+                        isSelected ? Color.clear : theme.cardBorder,
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Marketplace Skeleton Card
+
+/// Subtle shimmering placeholder shown while the marketplace catalog loads,
+/// so the Browse tab feels alive instead of blank.
+private struct MarketplaceSkeletonCard: View {
+    @Environment(\.theme) private var theme
+    @State private var shimmer = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.tertiaryBackground)
+                    .frame(width: 36, height: 36)
+                VStack(alignment: .leading, spacing: 6) {
+                    bar(width: 120, height: 12)
+                    bar(width: 64, height: 9)
+                }
+                Spacer()
+            }
+            bar(width: nil, height: 10)
+            bar(width: 220, height: 10)
+            Spacer(minLength: 0)
+            bar(width: 90, height: 9)
+        }
+        .frame(height: 132, alignment: .top)
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12).fill(theme.cardBackground))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1))
+        .opacity(shimmer ? 0.55 : 1.0)
+        .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: shimmer)
+        .onAppear { shimmer = true }
+    }
+
+    @ViewBuilder
+    private func bar(width: CGFloat?, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(theme.tertiaryBackground)
+            .frame(width: width, height: height)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
     }
 }

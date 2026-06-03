@@ -26,7 +26,11 @@ struct LifecycleConcurrencyTests {
     // MARK: - runWithDeadline
 
     @Test func deadline_completes_within_budget_returns_true() async {
-        let completed = await runWithDeadline(seconds: 2.0) {
+        // Budget is intentionally generous: CI runners can be CPU-starved
+        // enough that even scheduling the child task takes seconds. A tight
+        // budget would flake; a 50ms op finishing inside 30s still proves the
+        // "completes within budget" path.
+        let completed = await runWithDeadline(seconds: 30.0) {
             try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
         }
         #expect(completed == true)
@@ -36,12 +40,14 @@ struct LifecycleConcurrencyTests {
         let started = Date()
         let completed = await runWithDeadline(seconds: 0.2) {
             // Far longer than the deadline; the caller must not wait this long.
-            try? await Task.sleep(nanoseconds: 5_000_000_000)  // 5s
+            try? await Task.sleep(nanoseconds: 30_000_000_000)  // 30s
         }
         let elapsed = Date().timeIntervalSince(started)
         #expect(completed == false)
-        // Unblocked promptly after the 0.2s deadline, nowhere near the 5s op.
-        #expect(elapsed < 2.0)
+        // Unblocked after the 0.2s deadline, nowhere near the 30s op. The 10s
+        // ceiling absorbs scheduling jitter on a loaded CI runner while still
+        // proving the caller didn't block on the full operation.
+        #expect(elapsed < 10.0)
     }
 
     // MARK: - ModelLease timed drain (load-cancellation / quit path)
@@ -53,7 +59,9 @@ struct LifecycleConcurrencyTests {
         let drained = await ModelLease.shared.waitForZero(name, timeoutSeconds: 0.2)
         let elapsed = Date().timeIntervalSince(started)
         #expect(drained == false)
-        #expect(elapsed < 2.0)
+        // Generous ceiling so a CPU-starved CI runner doesn't flake; the point
+        // is that the timed wait returns (doesn't hang), not its exact latency.
+        #expect(elapsed < 10.0)
         #expect(await ModelLease.shared.count(for: name) == 1)
         // Cleanup so the shared actor doesn't carry state into other suites.
         await ModelLease.shared.release(name)

@@ -168,11 +168,13 @@ enum SkillsTab: String, CaseIterable, AnimatedTabItem {
 enum PluginsTab: String, CaseIterable, AnimatedTabItem {
     case installed = "Installed"
     case browse = "Browse"
+    case claude = "Claude Plugins"
 
     var title: String {
         switch self {
         case .installed: return L("Installed")
         case .browse: return L("Browse")
+        case .claude: return L("Claude Plugins")
         }
     }
 }

@@ -149,6 +149,222 @@ struct ClaudePluginSpecTests {
         #expect(parsed.unsupportedComponents.isEmpty)
     }
 
+    // MARK: - marketplace.json decoding (browse catalog)
+
+    /// The official `claude-plugins-official` marketplace mixes several
+    /// `source` shapes, including a `{ "source": "github", "repo": "...",
+    /// "commit": "..." }` form (used by `fullstory` / `jfrog`) that uses
+    /// `repo`/`commit` instead of `url`/`sha`. A single un-decodable entry
+    /// must NOT blank the whole catalog, and the alias shapes must resolve.
+    @Test func decodesMarketplaceWithMixedSourceShapesAndSkipsBadEntries() throws {
+        let json = #"""
+            {
+                "$schema": "https://example.com/schema.json",
+                "name": "Official",
+                "description": "Top-level description ignored by metadata.",
+                "owner": { "name": "Anthropic", "email": "support@anthropic.com" },
+                "plugins": [
+                    {
+                        "name": "string-source",
+                        "category": "development",
+                        "source": "./plugins/local"
+                    },
+                    {
+                        "name": "url-source",
+                        "category": "productivity",
+                        "source": {
+                            "source": "url",
+                            "url": "https://github.com/acme/widgets.git",
+                            "sha": "deadbeef"
+                        }
+                    },
+                    {
+                        "name": "subdir-source",
+                        "source": {
+                            "source": "git-subdir",
+                            "url": "https://github.com/acme/mono.git",
+                            "path": "plugins/foo",
+                            "ref": "main",
+                            "sha": "cafe"
+                        }
+                    },
+                    {
+                        "name": "github-repo-commit",
+                        "source": {
+                            "source": "github",
+                            "repo": "fullstorydev/fullstory-skills",
+                            "commit": "1ec5865",
+                            "sha": "384555c"
+                        }
+                    },
+                    {
+                        "name": "totally-broken",
+                        "source": { "source": "url" }
+                    }
+                ]
+            }
+            """#
+
+        let marketplace = try JSONDecoder().decode(
+            GitHubMarketplace.self,
+            from: Data(json.utf8)
+        )
+
+        #expect(marketplace.name == "Official")
+        // The broken entry (object source with neither url nor repo) is
+        // skipped; the other four decode.
+        let names = Set(marketplace.plugins.map { $0.name })
+        #expect(names == ["string-source", "url-source", "subdir-source", "github-repo-commit"])
+
+        // The category field is now decoded.
+        let stringSource = marketplace.plugins.first { $0.name == "string-source" }
+        #expect(stringSource?.category == "development")
+
+        // The `repo`/`commit` alias resolves to the right external repo.
+        let github = marketplace.plugins.first { $0.name == "github-repo-commit" }
+        if case .externalRepo(let repo, _)? = github?.source {
+            #expect(repo.owner == "fullstorydev")
+            #expect(repo.name == "fullstory-skills")
+        } else {
+            Issue.record("github/repo source did not decode to externalRepo")
+        }
+    }
+
+    // MARK: - Bundled importability catalog
+
+    /// The catalog ships in the OsaurusCore bundle and must parse. A missing
+    /// or malformed resource would silently disable hiding (everything shows),
+    /// so guard it here. We expect the known hooks/output-style plugins to be
+    /// listed as non-importable.
+    @Test func bundledImportabilityCatalogParsesAndListsKnownNonImportable() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog.bundled
+        #expect(!catalog.nonImportable.isEmpty)
+        #expect(catalog.isNonImportable(name: "explanatory-output-style"))
+        #expect(catalog.isNonImportable(name: "learning-output-style"))
+    }
+
+    /// The loader is a denylist: only explicitly listed names are hidden;
+    /// everything else (including unknown/new plugins) stays visible.
+    @Test func importabilityCatalogTreatsUnlistedNamesAsImportable() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog(
+            nonImportable: ["only-hooks-plugin"]
+        )
+        #expect(catalog.isNonImportable(name: "only-hooks-plugin"))
+        #expect(!catalog.isNonImportable(name: "some-skill-plugin"))
+        #expect(!catalog.isNonImportable(name: "brand-new-unclassified-plugin"))
+    }
+
+    /// The bundled catalog carries precomputed component summaries so the
+    /// detail view can render skill/agent/command/MCP chips without resolving
+    /// the manifest over the network. A missing or empty `plugins` map would
+    /// silently degrade every detail to "details unavailable", so guard it.
+    @Test func bundledCatalogCarriesComponentSummaries() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog.bundled
+        let summary = catalog.components(for: "agent-sdk-dev")
+        #expect(summary != nil)
+        #expect(summary?.isEmpty == false)
+        // agent-sdk-dev ships agents + a command but no skills.
+        #expect(summary?.agents.isEmpty == false)
+        #expect(summary?.commands.isEmpty == false)
+        #expect(summary?.skills.isEmpty == true)
+    }
+
+    /// Plugins classified as non-importable still have a summary entry; it is
+    /// just empty (no skills/agents/commands/mcp). The detail "Not importable"
+    /// state keys off `isEmpty`, so verify the catalog agrees with the denylist.
+    @Test func bundledCatalogNonImportableSummariesAreEmpty() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog.bundled
+        for name in catalog.nonImportable {
+            if let summary = catalog.components(for: name) {
+                #expect(summary.isEmpty, "Expected empty summary for non-importable \(name)")
+            }
+        }
+    }
+
+    /// Component lookups for plugins the catalog hasn't classified return nil
+    /// so the detail view falls back to its neutral "details unavailable" panel
+    /// instead of fetching live.
+    @Test func componentSummaryNilForUnclassifiedPlugin() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog(
+            nonImportable: [],
+            componentsByName: [
+                "known-plugin": .init(skills: ["A"], agents: [], commands: [], mcp: false)
+            ]
+        )
+        #expect(catalog.components(for: "known-plugin")?.skills == ["A"])
+        #expect(catalog.components(for: "brand-new-unclassified-plugin") == nil)
+    }
+
+    /// `ComponentSummary.isEmpty` only reports empty when every importable
+    /// channel is empty, including the MCP flag.
+    @Test func componentSummaryIsEmptyOnlyWhenAllChannelsEmpty() {
+        typealias Summary = ClaudeMarketplaceImportabilityCatalog.ComponentSummary
+        #expect(Summary(skills: [], agents: [], commands: [], mcp: false).isEmpty)
+        #expect(!Summary(skills: ["S"], agents: [], commands: [], mcp: false).isEmpty)
+        #expect(!Summary(skills: [], agents: [], commands: [], mcp: true).isEmpty)
+    }
+
+    // MARK: - hasImportableComponents
+
+    /// A manifest that only carries auxiliary markdown / hooks (no skills,
+    /// agents, commands, or MCP) ships nothing Osaurus can install, so the
+    /// browse + detail surfaces must treat it as non-importable.
+    @Test func hasImportableComponentsFalseForHooksOnlyManifest() {
+        let repo = GitHubRepo(owner: "anthropics", name: "claude-plugins-official")
+        let manifest = ClaudePluginManifest(
+            name: "explanatory-output-style",
+            description: "Output style only.",
+            source: "plugins/explanatory-output-style",
+            sourceRepo: repo,
+            claudeMdPath: "plugins/explanatory-output-style/CLAUDE.md",
+            auxMarkdownPaths: ["plugins/explanatory-output-style/CLAUDE.md"],
+            declaresHooks: true,
+            declaresUnsupportedComponents: ["outputStyles"]
+        )
+        #expect(manifest.hasImportableComponents == false)
+    }
+
+    /// Any one of skills / agents / commands / MCP flips importability true.
+    @Test func hasImportableComponentsTrueWhenAnyComponentPresent() {
+        let repo = GitHubRepo(owner: "acme", name: "widgets")
+
+        let withSkill = ClaudePluginManifest(
+            name: "s",
+            description: nil,
+            source: "s",
+            sourceRepo: repo,
+            skills: [ClaudeSkillEntry(path: "s/skills/foo")]
+        )
+        #expect(withSkill.hasImportableComponents)
+
+        let withAgent = ClaudePluginManifest(
+            name: "a",
+            description: nil,
+            source: "a",
+            sourceRepo: repo,
+            agents: [ClaudeAgentEntry(path: "a/agents/bar.md")]
+        )
+        #expect(withAgent.hasImportableComponents)
+
+        let withCommand = ClaudePluginManifest(
+            name: "c",
+            description: nil,
+            source: "c",
+            sourceRepo: repo,
+            commands: [ClaudeCommandEntry(path: "c/commands/baz.md")]
+        )
+        #expect(withCommand.hasImportableComponents)
+
+        let withMCP = ClaudePluginManifest(
+            name: "m",
+            description: nil,
+            source: "m",
+            sourceRepo: repo,
+            mcpJsonPath: "m/.mcp.json"
+        )
+        #expect(withMCP.hasImportableComponents)
+    }
+
     /// A plain-string `author` (still legal per the spec, used by a couple
     /// of community plugins) should populate `authorName` only, leaving
     /// email/url nil rather than failing decode.
