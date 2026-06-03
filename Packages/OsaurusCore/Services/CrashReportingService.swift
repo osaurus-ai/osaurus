@@ -6,10 +6,12 @@
 //  rest of the app never imports Sentry directly and every lifecycle decision
 //  flows through one gate.
 //
-//  This shares the *single* telemetry opt-in: it only ever starts when the
-//  user has granted consent through `TelemetryService` (the onboarding
-//  consent step, the existing-user prompt, or Settings → Privacy). There is
-//  no separate switch — one decision drives both analytics and crashes.
+//  Consent is independent from usage analytics (`TelemetryService`). Crash
+//  reporting is *opt-out*: enabled by default and active from launch unless the
+//  user has explicitly turned it off (onboarding, the existing-user prompt, or
+//  Settings → Privacy). Crashes carry no PII (see `startSentry`), so defaulting
+//  on maximises the signal that actually helps fix what breaks; analytics, by
+//  contrast, stays opt-in.
 //
 
 import Foundation
@@ -29,19 +31,23 @@ public final class CrashReportingService {
         private static let environment = "production"
     #endif
 
+    /// `UserDefaults` flag the consent UI toggles. Crash reporting is opt-out,
+    /// so the key is read as "enabled unless explicitly false": absent (a fresh
+    /// install or a user who never touched it) = on; `false` = the user turned
+    /// it off.
+    private static let consentKey = "crashReportingEnabled"
+
     /// Whether `SentrySDK.start` has been called this process. Guards against
-    /// double-starts and lets `applyConsent(false)` know there's something to
+    /// double-starts and lets `setEnabled(false)` know there's something to
     /// tear down.
     private var started = false
     public var isStarted: Bool { started }
 
     // MARK: - Testing seam
 
-    /// Reads the current consent decision. Production points at the shared
-    /// telemetry gate; tests inject a fixed value. `@MainActor` because the
-    /// production default reads `TelemetryService.shared` (and the whole
-    /// service is main-actor isolated anyway).
-    private let isConsented: @MainActor () -> Bool
+    /// Where the consent decision is persisted. Injectable so unit tests can
+    /// use an isolated suite instead of polluting `.standard`.
+    private let defaults: UserDefaults
 
     /// Resolves the Sentry DSN. Production reads it from the build config /
     /// Info.plist; tests inject a value (or nil to simulate a keyless build).
@@ -55,49 +61,58 @@ public final class CrashReportingService {
     /// Tears the SDK down. Production calls `SentrySDK.close()`; tests record it.
     private let closeSDK: @MainActor () -> Void
 
-    /// Default init wires everything to production (consent from
-    /// `TelemetryService.shared`, DSN from Info.plist, start/close to the
-    /// Sentry SDK); `shared` uses it. The parameters exist purely as a testing
-    /// seam — `init` is `internal`, so the app (which links OsaurusCore as a
-    /// product) still can't construct its own instance.
+    /// Default init wires everything to production (consent persisted in
+    /// `.standard`, DSN from Info.plist, start/close to the Sentry SDK);
+    /// `shared` uses it. The parameters exist purely as a testing seam —
+    /// `init` is `internal`, so the app (which links OsaurusCore as a product)
+    /// still can't construct its own instance.
     init(
-        isConsented: @escaping @MainActor () -> Bool = { TelemetryService.shared.isEnabled },
+        defaults: UserDefaults = .standard,
         resolveDSN: @escaping @MainActor () -> String? = CrashReportingService.resolveDSNFromConfig,
         startSDK: @escaping @MainActor (_ dsn: String, _ environment: String) -> Void =
             CrashReportingService.startSentry,
         closeSDK: @escaping @MainActor () -> Void = { SentrySDK.close() }
     ) {
-        self.isConsented = isConsented
+        self.defaults = defaults
         self.resolveDSN = resolveDSN
         self.startSDK = startSDK
         self.closeSDK = closeSDK
     }
 
+    // MARK: - Consent
+
+    /// Whether crash reporting is enabled. Opt-out: true unless the user has
+    /// explicitly turned it off, so a fresh install (absent key) reports on.
+    public var isEnabled: Bool {
+        defaults.object(forKey: Self.consentKey) as? Bool ?? true
+    }
+
     // MARK: - Lifecycle
 
-    /// Start crash reporting iff the user has consented and a DSN is
-    /// configured. Call once from `applicationDidFinishLaunching`, as early as
-    /// possible so the crash handler is installed before risky startup work.
+    /// Start crash reporting iff it's enabled and a DSN is configured. Call
+    /// once from `applicationDidFinishLaunching`, as early as possible so the
+    /// crash handler is installed before risky startup work.
     ///
-    /// Idempotent, and a silent no-op when consent is absent (undecided or
-    /// declined) or no DSN is configured — so contributor builds without a DSN,
-    /// and users who never opted in, never phone home. The intended tradeoff:
-    /// a crash on the very first launch *before* the user opts in is not
-    /// captured. Correct for an opt-in product.
+    /// Idempotent, and a silent no-op when crash reporting is disabled or no DSN
+    /// is configured — so contributor builds without a DSN never phone home.
+    /// Because reporting is opt-out (enabled by default), this boots Sentry on
+    /// the very first launch, so even first-run crashes are captured unless the
+    /// user has turned it off.
     public func startIfConsented() {
         guard !started else { return }
-        guard isConsented() else { return }
+        guard isEnabled else { return }
         guard let dsn = resolveDSN(), !dsn.isEmpty else { return }
         startSDK(dsn, Self.environment)
         started = true
     }
 
-    /// React to a consent change. Granting starts the SDK (so opting in from
-    /// onboarding or Settings turns on crash reporting from that point — the
-    /// crash handler itself becomes active on the next launch). Revoking closes
-    /// the SDK so nothing further is sent. Wired into
-    /// `TelemetryService.setEnabled(_:)`, so it tracks the single opt-in.
-    public func applyConsent(_ enabled: Bool) {
+    /// Record the consent decision and act on it. Persists the choice, then
+    /// starts the SDK if enabled (the crash handler becomes active immediately,
+    /// covering the rest of this session) or closes it if disabled so nothing
+    /// further is sent. Called from the onboarding consent step and
+    /// Settings → Privacy.
+    public func setEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Self.consentKey)
         if enabled {
             startIfConsented()
         } else {

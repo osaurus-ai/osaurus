@@ -144,9 +144,6 @@ public final class TelemetryService {
         } else {
             pending.removeAll()
         }
-        // This is the single opt-in for all diagnostics: keep crash reporting
-        // in lockstep with analytics so the two consents never diverge.
-        CrashReportingService.shared.applyConsent(enabled)
     }
 
     private func flushPending() {

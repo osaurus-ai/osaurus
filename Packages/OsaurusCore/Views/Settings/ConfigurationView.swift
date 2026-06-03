@@ -16,11 +16,15 @@ struct ConfigurationView: View {
     @State private var successMessage: String?
     @State private var isResetting = false
 
-    /// Telemetry consent. Mirrors `TelemetryService.shared.isEnabled` (true
-    /// only once the user has granted consent — see the onboarding consent
-    /// step). Applied immediately on change rather than via "Save Changes",
-    /// like the notification toggles, since it's a privacy switch.
+    /// Usage-analytics consent. Mirrors `TelemetryService.shared.isEnabled`
+    /// (opt-in: true only once the user has granted it). Applied immediately on
+    /// change rather than via "Save Changes", like the notification toggles,
+    /// since it's a privacy switch.
     @State private var tempTelemetryEnabled: Bool = false
+
+    /// Crash-reporting consent. Mirrors `CrashReportingService.shared.isEnabled`
+    /// (opt-out: defaults on). Applied immediately on change, as above.
+    @State private var tempCrashReportingEnabled: Bool = true
 
     // Chat settings state
     @State private var tempChatHotkey: Hotkey? = nil
@@ -258,6 +262,16 @@ struct ConfigurationView: View {
                                     )
                                     .onChange(of: tempTelemetryEnabled) { _, newValue in
                                         TelemetryService.shared.setEnabled(newValue)
+                                    }
+
+                                    SettingsToggle(
+                                        title: L("Send Crash Reports"),
+                                        description:
+                                            "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                                        isOn: $tempCrashReportingEnabled
+                                    )
+                                    .onChange(of: tempCrashReportingEnabled) { _, newValue in
+                                        CrashReportingService.shared.setEnabled(newValue)
                                     }
                                 }
                             }
@@ -642,6 +656,7 @@ struct ConfigurationView: View {
         .onAppear {
             loadConfiguration()
             tempTelemetryEnabled = TelemetryService.shared.isEnabled
+            tempCrashReportingEnabled = CrashReportingService.shared.isEnabled
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }

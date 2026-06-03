@@ -177,8 +177,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         TelemetryService.shared.configure()
 
         // Install the crash + app-hang handler as early as possible so it
-        // covers the rest of launch. No-ops unless the user has opted in
-        // (same single consent as analytics) and a Sentry DSN is configured.
+        // covers the rest of launch. Crash reporting is opt-out (on unless the
+        // user turned it off, independent of analytics); no-ops only when
+        // disabled or when no Sentry DSN is configured.
         CrashReportingService.shared.startIfConsented()
 
         // Detect repeated startup crashes and enter safe mode if needed
@@ -582,7 +583,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     id: requestId,
                     title: "Help improve Osaurus",
                     message: L(
-                        "Osaurus can send anonymous usage data and crash reports to help us understand how it's used and fix what breaks."
+                        "Osaurus can send anonymous usage data to help us understand how it's used and improve it."
                     ),
                     accessory: AnyView(TelemetryConsentDetails()),
                     buttons: [

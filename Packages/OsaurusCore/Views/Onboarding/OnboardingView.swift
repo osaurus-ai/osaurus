@@ -279,12 +279,13 @@ public struct OnboardingView: View {
             )
         case .consent:
             ConsentCTA(onFinish: {
-                // Record the consent choice *before* finishing: granting
-                // flushes the funnel events buffered during onboarding,
-                // declining drops them. `finishOnboarding` then fires
-                // `onboarding_completed`, which is sent or dropped per the
-                // choice just made.
+                // Record both consent choices *before* finishing. For usage
+                // data, granting flushes the funnel events buffered during
+                // onboarding and declining drops them; `finishOnboarding` then
+                // fires `onboarding_completed`, sent or dropped per that choice.
+                // Crash reporting is independent (opt-out) and applied here too.
                 TelemetryService.shared.setEnabled(consentState.shareUsageData)
+                CrashReportingService.shared.setEnabled(consentState.shareCrashReports)
                 finishOnboarding(via: .finishButton)
             })
         }

@@ -2160,18 +2160,18 @@
         }
       }
     },
-    "Anonymous, on by default, and yours to turn off right here." : {
+    "Anonymous, and yours to control right here." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anonym, standardmäßig aktiv und hier jederzeit abschaltbar."
+            "value" : "Anonym und hier jederzeit von dir steuerbar."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "匿名，默认开启，随时可在此关闭。"
+            "value" : "匿名，随时可在此控制。"
           }
         }
       }
@@ -15296,18 +15296,18 @@
         }
       }
     },
-    "Osaurus can send anonymous usage data and crash reports to help us understand how it's used and fix what breaks." : {
+    "Osaurus can send anonymous usage data to help us understand how it's used and improve it." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus kann anonyme Nutzungsdaten und Absturzberichte senden, damit wir verstehen, wie die App genutzt wird, und Fehler beheben können."
+            "value" : "Osaurus kann anonyme Nutzungsdaten senden, damit wir verstehen, wie die App genutzt wird, und sie verbessern können."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 可以发送匿名使用数据和崩溃报告，帮助我们了解应用的使用方式并修复问题。"
+            "value" : "Osaurus 可以发送匿名使用数据，帮助我们了解应用的使用方式并加以改进。"
           }
         }
       }
@@ -21077,6 +21077,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "发送匿名、汇总的使用分析，以帮助改进 Osaurus。绝不包含你的聊天、提示词、文件或密钥。可随时关闭。"
+          }
+        }
+      }
+    },
+    "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sende anonyme Absturz- und Hängeberichte, damit wir Fehler beheben können. Niemals enthalten sind deine Chats, Prompts, Dateien oder Schlüssel. Jederzeit abschaltbar."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送匿名崩溃和卡死报告，以便我们修复问题。绝不包含你的聊天、提示词、文件或密钥。可随时关闭。"
+          }
+        }
+      }
+    },
+    "Send crash reports" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Absturzberichte senden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送崩溃报告"
+          }
+        }
+      }
+    },
+    "Send Crash Reports" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Absturzberichte senden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送崩溃报告"
           }
         }
       }

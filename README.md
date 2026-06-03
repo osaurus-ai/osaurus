@@ -174,11 +174,11 @@ Document attachments keep structure where the file format exposes it: CSV/TSV ta
 
 Osaurus collects **anonymous, aggregated usage analytics** via [Aptabase](https://aptabase.com), an [open-source](https://github.com/aptabase/aptabase), privacy-first analytics project. We collect this only to understand broad user trends and preferences (how the app is used and where people run into friction) so we can make it better. It **never** includes your chats, prompts, files, model outputs, or keys. There are no accounts or device profiles, so events aren't tied to you.
 
-It's **consent-gated and opt-out**: nothing leaves your Mac without your consent. Anything recorded beforehand stays buffered locally and is transmitted *only* if you opt in. You can change your choice anytime in **Settings → Privacy → Share Anonymous Usage Data**.
+It's **consent-gated and opt-in**: nothing leaves your Mac unless you turn it on. Funnel events recorded during onboarding stay buffered locally and are transmitted *only* if you opt in. You can change your choice anytime in **Settings → Privacy → Share Anonymous Usage Data**.
 
 ### Crash reporting
 
-The same single opt-in also enables **crash and app-hang reporting** via [Sentry](https://sentry.io). It's limited to crash and hang diagnostics — no performance tracing, profiling, failed-request capture, network breadcrumbs, screenshots, or personal information; we drop the user object and device hostname from every event, on top of disabling PII. Crash reporting starts only when you've opted in and a DSN is configured, and stops when you opt out. Like analytics, it's off by default in source builds.
+**Crash and app-hang reporting** via [Sentry](https://sentry.io) is a **separate, independent** switch from usage analytics. Unlike analytics it's **opt-out** — on by default and active from launch — because crash reports carry no personal information and are what let us fix real bugs; you can turn it off anytime in **Settings → Privacy → Send Crash Reports**. It's limited to crash and hang diagnostics — no performance tracing, profiling, failed-request capture, network breadcrumbs, screenshots, or personal information; we drop the user object and device hostname from every event, on top of disabling PII. It needs a DSN to be configured, so like analytics it's off by default in source builds.
 
 ### Local development
 
