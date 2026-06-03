@@ -12,11 +12,9 @@ import SwiftUI
 
 enum VoiceTab: String, CaseIterable, AnimatedTabItem {
     case setup = "Setup"
-    case audioSettings = "Audio"
-    case voiceInput = "Voice Input"
-    case transcription = "Transcription"
+    case speechToText = "Speech To Text"
+    case textToSpeech = "Text To Speech"
     case vadMode = "VAD Mode"
-    case tts = "TTS"
     case models = "Models"
 
     var title: String { rawValue }
@@ -63,16 +61,12 @@ struct VoiceView: View {
             Group {
                 switch selectedTab {
                 case .setup:
-                    VoiceSetupTab(onComplete: { selectedTab = .audioSettings })
-                case .audioSettings:
-                    AudioSettingsTab()
-                case .voiceInput:
-                    VoiceInputSettingsTab()
-                case .transcription:
+                    VoiceSetupTab(onComplete: { selectedTab = .speechToText })
+                case .speechToText:
                     TranscriptionModeSettingsTab()
                 case .vadMode:
                     VADModeSettingsTab()
-                case .tts:
+                case .textToSpeech:
                     TTSModeSettingsTab()
                 case .models:
                     VoiceModelsTab()
@@ -91,7 +85,7 @@ struct VoiceView: View {
                 selectedTab = tab
                 managementState.voiceSubTabRequest = nil
             } else if isSetupComplete {
-                selectedTab = .audioSettings
+                selectedTab = .speechToText
             } else {
                 selectedTab = .setup
             }
