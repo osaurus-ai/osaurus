@@ -318,7 +318,7 @@ struct SwiftTransformersTokenizerLoaderTests {
     }
 
     @Test func gemma4FallbackCompactsClosedToolHistoryForLaterRequiredToolTurn() async throws {
-        let defaultPath = "/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK"
+        let defaultPath = "/Users/eric/models/OsaurusAI/gemma-4-12B-it-MXFP4"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA4_TEST_MODEL"] ?? defaultPath
         let modelURL = URL(fileURLWithPath: modelPath)
         guard
@@ -377,9 +377,11 @@ struct SwiftTransformersTokenizerLoaderTests {
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
         #expect(decoded.contains(finalUser), "Decoded: \(decoded)")
+        #expect(decoded.contains("The current assistant response MUST be a function call."), "Decoded: \(decoded)")
+        #expect(decoded.contains("For multiline string values, represent each line break with the two characters \\n"), "Decoded: \(decoded)")
         #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
         #expect(
-            decoded.contains("<|tool_call>call:line_count{text:<|\"|>one\ntwo<|\"|>}<tool_call|>"),
+            decoded.contains(#"<|tool_call>call:line_count{text:<|"|>one\ntwo<|"|>}<tool_call|>"#),
             "Decoded: \(decoded)"
         )
         #expect(!decoded.contains("<zyphra_tool_call>"), "Decoded: \(decoded)")
@@ -387,6 +389,60 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(!decoded.contains("The text contains 3 lines."), "Decoded: \(decoded)")
         #expect(!decoded.contains("call_line_count_1"), "Decoded: \(decoded)")
         #expect(!decoded.contains("Tool result: {\"lines\":3}"), "Decoded: \(decoded)")
+    }
+
+    @Test func gemma4FallbackRendersFirstTurnRequiredMultilineToolShape() async throws {
+        let defaultPath = "/Users/eric/models/OsaurusAI/gemma-4-12B-it-MXFP4"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                [
+                    "role": "user",
+                    "content": "Use the line_count tool on this exact text: red\ngreen\nblue",
+                ]
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains("The current assistant response MUST be a function call."), "Decoded: \(decoded)")
+        #expect(decoded.contains("For multiline string values, represent each line break with the two characters \\n"), "Decoded: \(decoded)")
+        #expect(
+            decoded.contains(#"<|tool_call>call:line_count{text:<|"|>red\ngreen\nblue<|"|>}<tool_call|>"#),
+            "Decoded: \(decoded)"
+        )
+        let unescapedActualNewlineValue = "<|" + "\"|>red\ngreen\nblue<|" + "\"|>"
+        #expect(!decoded.contains(unescapedActualNewlineValue), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<zyphra_tool_call>"), "Decoded: \(decoded)")
     }
 
     @Test func gemma3nLocalTokenizerDoesNotInventRequiredToolContractFromFallback() async throws {

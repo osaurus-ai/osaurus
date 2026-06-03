@@ -475,7 +475,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "e5acac9f89216d2b8b4e90a12fa14f939d26bc04"
+        let expectedRuntimeHardenedRevision = "43e0e82d515eb3de480fcb18bc0a6f2430d18389"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -2180,6 +2180,15 @@ struct RuntimePolicySourceTests {
             tokenizerLoader.contains("if isGemma {\n                throw error\n            }")
                 && !tokenizerLoader.contains("} else if isGemma {\n                ordered = ["),
             "Gemma-family native template runtime errors must not silently fall back to Gemma4 tool/minimal templates."
+        )
+        #expect(
+            tokenizerLoader.contains("normalizedModelType == \"gemma4_unified\"")
+                && tokenizerLoader.contains("let hasGemma4NativeToolSentinels =")
+                && tokenizerLoader.contains("upstream.convertTokenToId(\"<|tool_call>\") != nil")
+                && tokenizerLoader.contains("upstream.convertTokenToId(\"<|turn>\") != nil")
+                && tokenizerLoader.contains("Self.requiresToolChoice(adjustedContext)")
+                && tokenizerLoader.contains("label: \"Gemma4RequiredTool\""),
+            "Gemma4 unified required/named tool turns must route through the strict Gemma4WithTools fallback in Osaurus's production SwiftTransformersTokenizerLoader; the vMLX macro bridge is not the production path here."
         )
         #expect(
             reasoningCapability.contains("runtime code must not synthesize")

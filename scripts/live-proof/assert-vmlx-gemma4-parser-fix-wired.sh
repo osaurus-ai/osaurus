@@ -115,7 +115,7 @@ fi
 if [[ -f "$FALLBACKS" ]]; then
   pass "SwiftPM checkout ChatTemplateFallbacks.swift exists"
   if rg -Fq 'Do not wrap the argument value in quote characters' "$FALLBACKS" \
-    && rg -Fq 'do not add or remove whitespace or spaces after newlines' "$FALLBACKS"; then
+    && rg -Fq 'Do not add or remove whitespace or spaces after newlines' "$FALLBACKS"; then
     pass "Gemma4 required fallback warns against quoted/space-mutated argument values"
   else
     fail_msg "Gemma4 required fallback lacks quoted/space-mutated argument warning"

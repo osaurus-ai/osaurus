@@ -235,11 +235,16 @@ public actor GenerativeGreetingService {
             return first
         }
 
-        // Retry at a cooler temperature. A "boring" but well-formed
+        // Retry at a cooler temperature. A clean but slightly boring
         // retry is still preferred over throwing back to the static
-        // fallback (which also tends to open with Hello/Good morning).
+        // fallback. A malformed/corrupted retry is not: returning it
+        // would surface model-contract garbage in the empty state.
         let retryRaw = try await attempt(max(0.3, Self.temperature - 0.1))
-        return try Self.parse(retryRaw, expectedActions: expectedActions)
+        let retry = try Self.parse(retryRaw, expectedActions: expectedActions)
+        if Self.shouldRetryForQuality(retry, expectedActions: expectedActions) {
+            throw GenerativeGreetingError.missingFields
+        }
+        return retry
     }
 
     /// Quality gate that decides whether to spend a second model call
@@ -253,6 +258,9 @@ public actor GenerativeGreetingService {
         expectedActions: Int
     ) -> Bool {
         if greeting.actions.count < expectedActions { return true }
+        let fields = [greeting.greeting, greeting.subtitle]
+            + greeting.actions.flatMap { [$0.text, $0.prompt] }
+        if fields.contains(where: containsCorruptedGreetingText) { return true }
         let opener = greeting.greeting
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -261,6 +269,22 @@ public actor GenerativeGreetingService {
             if opener == banned || opener.hasPrefix(banned + " ") {
                 return true
             }
+        }
+        return false
+    }
+
+    private static func containsCorruptedGreetingText(_ text: String) -> Bool {
+        if text.contains("<") || text.contains(">") || text.contains("{") || text.contains("}") {
+            return true
+        }
+        if text.contains("__") || text.contains("000") {
+            return true
+        }
+        if text.range(
+            of: #"(?i)\bor0|\b0_|_provider|_tool|anthopm|anthropicm|\bI'\s+[a-z]"#,
+            options: .regularExpression
+        ) != nil {
+            return true
         }
         return false
     }
@@ -504,7 +528,7 @@ public actor GenerativeGreetingService {
             switch sizeClass {
             case .tiny:
                 return """
-                    Voice: friendly, specific, never opens with Welcome/Hello/Hey there. \
+                    Voice: friendly, specific, never opens with Welcome, Hello, or Hey there. \
                     Example output for evening, calm voice:
                     GREETING: Soho Delight
                     SUBTITLE: Map your next move with a quick win.
@@ -517,22 +541,22 @@ public actor GenerativeGreetingService {
         }()
 
         let actionLines: String = (1 ... expectedActions)
-            .map { "ACTION\($0): <icon>|<1-2 words>|<partial prompt ending in space>" }
+            .map { "ACTION\($0): icon|label|prompt words" }
             .joined(separator: "\n")
 
         let contractBlock = """
-            Output EXACTLY these lines, in this order, no extra text, no Markdown, no JSON, no code fences:
-            GREETING: <at most 6 words, no trailing punctuation>
-            SUBTITLE: <at most 12 words, ends with a period or question mark>
+            Output exactly these labeled lines, in this order, no extra text, no Markdown, no JSON, no code fences:
+            GREETING: short greeting without trailing punctuation
+            SUBTITLE: short sentence ending with a period or question mark
             \(actionLines)
 
             Field rules (strictly enforced):
             - Each ACTION line is three pipe-delimited fields. The pipe `|` is the only delimiter; \
             it must never appear inside any field.
-            - <icon> MUST be one of: \(iconList).
-            - <1-2 words> is a 1- or 2-word button label, max 14 characters. Concrete nouns or verbs, \
+            - icon MUST be one of: \(iconList).
+            - label is a 1- or 2-word button label, max 14 characters. Concrete nouns or verbs, \
             not sentences.
-            - <partial prompt ending in space> is what the user clicks to start typing; it must end \
+            - prompt words are what the user clicks to start typing; they must end \
             with a single trailing space and reference a specific noun, person, project, or domain \
             inferred from the agent's purpose (and, when available, the user knowledge above) — \
             never a generic "something" or "an idea".
@@ -722,13 +746,13 @@ public actor GenerativeGreetingService {
     /// `cap` step never strips internal whitespace.
     private static func parseActionPayload(_ payload: String) -> AgentQuickAction? {
         let parts = payload.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
-        guard parts.count >= 3 else { return nil }
+        guard parts.count == 3 else { return nil }
         let icon = parts[0].trimmingCharacters(in: .whitespaces)
         let text = parts[1].trimmingCharacters(in: .whitespaces)
         // Prompt may legitimately end with a single trailing space; only
         // trim leading whitespace + newlines, never trailing spaces.
-        let prompt = trimLeading(parts.dropFirst(2).joined(separator: "|"))
-        guard !text.isEmpty, !prompt.isEmpty else { return nil }
+        let prompt = trimLeading(parts[2])
+        guard iconAllowlist.contains(icon), !text.isEmpty, !prompt.isEmpty else { return nil }
         return sanitize(action: DTO.Action(icon: icon, text: text, prompt: prompt))
     }
 

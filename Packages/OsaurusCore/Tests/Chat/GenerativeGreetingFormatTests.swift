@@ -84,19 +84,43 @@ struct GenerativeGreetingFormatTests {
         }
     }
 
-    @Test("parse rejects an unknown icon by rewriting to sparkles")
-    func taggedLinesIconAllowlistFallback() throws {
-        // The parser doesn't reject unknown icons — it sanitises them
-        // to `sparkles` (matches the JSON path). Pin that contract so
-        // the UI never receives a `systemName:` that won't render.
+    @Test("parse rejects an unknown icon in tagged-line output")
+    func taggedLinesRejectUnknownIcon() {
         let raw = """
             GREETING: Test
             SUBTITLE: Pinning the icon allowlist.
             ACTION1: not.a.real.icon|Go|Draft a plan for\u{0020}
             ACTION2: definitely.fake|Plan|Sketch a path for\u{0020}
             """
-        let result = try GenerativeGreetingService.parse(raw, expectedActions: 2)
-        #expect(result.actions.allSatisfy { $0.icon == "sparkles" })
+        #expect(throws: GenerativeGreetingError.missingFields) {
+            try GenerativeGreetingService.parse(raw, expectedActions: 2)
+        }
+    }
+
+    @Test("parse rejects action payloads with extra pipe delimiters")
+    func taggedLinesRejectExtraActionPipes() {
+        let raw = """
+            GREETING: Test
+            SUBTITLE: Pinning the pipe delimiter.
+            ACTION1: sparkles|Go|Draft a plan for\u{0020}
+            ACTION2: calendar|Plan|Sketch|a path for\u{0020}
+            """
+        #expect(throws: GenerativeGreetingError.missingFields) {
+            try GenerativeGreetingService.parse(raw, expectedActions: 2)
+        }
+    }
+
+    @Test("quality gate rejects corrupted Gemma4 greeting fields")
+    func qualityGateTripsOnCorruptedGemma4Fields() {
+        let g = GenerativeGreeting(
+            greeting: "I' a doing well",
+            subtitle: "How can I assist with your infrastructure-related-setup_____?",
+            actions: [
+                AgentQuickAction(icon: "sparkles", text: "Cloud_", prompt: "Help me set up_ "),
+                AgentQuickAction(icon: "calendar", text: "Local", prompt: "Configure my local model "),
+            ]
+        )
+        #expect(GenerativeGreetingService.shouldRetryForQuality(g, expectedActions: 2))
     }
 
     // MARK: - Legacy JSON back-compat

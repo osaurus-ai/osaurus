@@ -225,6 +225,12 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         let modelTypeIsGemma3 =
             normalizedModelType == "gemma3"
             || normalizedModelType == "gemma3_text"
+        let modelTypeIsGemma4 =
+            normalizedModelType == "gemma4"
+            || normalizedModelType == "gemma4_text"
+            || normalizedModelType == "gemma4_moe"
+            || normalizedModelType == "gemma4_unified"
+            || normalizedModelType == "gemma4_unified_text"
         let modelTypeIsZayaVL =
             normalizedModelType == "zaya1_vl"
             || normalizedModelType == "zaya_vl"
@@ -265,6 +271,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             && upstream.convertTokenToId("<|im_start|>") != nil
             && upstream.convertTokenToId("<tool_call>") != nil
             && upstream.convertTokenToId("<im_patch>") != nil
+        let hasGemma4NativeToolSentinels =
+            upstream.convertTokenToId("<|tool_call>") != nil
+            && upstream.convertTokenToId("<|turn>") != nil
         if hasLagunaSentinel
             && (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
         {
@@ -363,7 +372,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 addGenerationPrompt: addGenerationPrompt
             )
         }
-        if upstream.bosToken == "<bos>",
+        if (modelTypeIsGemma4 || upstream.bosToken == "<bos>" || hasGemma4NativeToolSentinels),
             !(chatTemplateTools?.isEmpty ?? true),
             !modelTypeIsGemma3n,
             Self.requiresToolChoice(adjustedContext),
