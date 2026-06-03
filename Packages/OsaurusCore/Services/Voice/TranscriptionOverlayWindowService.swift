@@ -97,7 +97,10 @@ public final class TranscriptionOverlayWindowService: ObservableObject {
 
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // Native window shadow traces a black silhouette around the clear, rounded
+        // content. The SwiftUI view draws its own shadow, so disable the native one
+        // (matches the toast/notch overlays).
+        panel.hasShadow = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.hidesOnDeactivate = false
@@ -109,6 +112,10 @@ public final class TranscriptionOverlayWindowService: ObservableObject {
         let overlayView = createOverlayView()
         let hostingController = NSHostingController(rootView: AnyView(overlayView))
         hostingController.view.frame = NSRect(origin: .zero, size: panelSize)
+        // Ensure the hosting view's backing is transparent so nothing paints
+        // behind the rounded SwiftUI content.
+        hostingController.view.wantsLayer = true
+        hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
 
         panel.contentViewController = hostingController
 

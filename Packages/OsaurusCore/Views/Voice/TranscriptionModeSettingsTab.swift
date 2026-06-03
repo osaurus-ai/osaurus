@@ -6,6 +6,7 @@
 //  Configure hotkey, pause duration, and test the transcription feature.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Transcription Mode Settings Tab
@@ -22,6 +23,17 @@ struct TranscriptionModeSettingsTab: View {
     @State private var hotkey: Hotkey?
     @State private var hasLoadedSettings = false
 
+    // Shared voice settings (drive both chat voice input and Transcription Mode)
+    @State private var voiceInputEnabled: Bool = true
+    @State private var transcriptionStopMode: TranscriptionStopMode = .automatic
+    @State private var pauseDuration: Double = 1.5
+    @State private var confirmationDelay: Double = 2.0
+    @State private var silenceTimeoutSeconds: Double = 30.0
+
+    /// Polls accessibility permission while the tab is visible, since
+    /// `AXIsProcessTrusted()` won't notify us when the user grants it externally.
+    @State private var permissionRefreshTimer: Timer?
+
     private func loadSettings() {
         let config = TranscriptionConfigurationStore.load()
         transcriptionEnabled = config.transcriptionModeEnabled
@@ -36,6 +48,38 @@ struct TranscriptionModeSettingsTab: View {
         TranscriptionConfigurationStore.save(config)
     }
 
+    private func loadVoiceSettings() {
+        let config = SpeechConfigurationStore.load()
+        voiceInputEnabled = config.voiceInputEnabled
+        transcriptionStopMode = config.transcriptionStopMode
+        pauseDuration = config.pauseDuration
+        confirmationDelay = config.confirmationDelay
+        silenceTimeoutSeconds = config.silenceTimeoutSeconds
+    }
+
+    private func saveVoiceSettings() {
+        var config = SpeechConfigurationStore.load()
+        config.voiceInputEnabled = voiceInputEnabled
+        config.transcriptionStopMode = transcriptionStopMode
+        config.pauseDuration = pauseDuration
+        config.confirmationDelay = confirmationDelay
+        config.silenceTimeoutSeconds = silenceTimeoutSeconds
+        SpeechConfigurationStore.save(config)
+
+        NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
+    }
+
+    /// Formatted display for silence timeout
+    private var silenceTimeoutFormatted: String {
+        if silenceTimeoutSeconds >= 60 {
+            let minutes = Int(silenceTimeoutSeconds) / 60
+            let seconds = Int(silenceTimeoutSeconds) % 60
+            return seconds == 0 ? "\(minutes)m" : "\(minutes)m \(seconds)s"
+        } else {
+            return "\(Int(silenceTimeoutSeconds))s"
+        }
+    }
+
     /// Whether all requirements are met
     private var canEnableTranscription: Bool {
         keyboardService.hasAccessibilityPermission
@@ -47,6 +91,9 @@ struct TranscriptionModeSettingsTab: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
+                // Voice Input in Chat toggle
+                voiceInputToggleCard
+
                 // Transcription Mode Toggle Card
                 transcriptionToggleCard
 
@@ -59,6 +106,9 @@ struct TranscriptionModeSettingsTab: View {
                 if canEnableTranscription {
                     hotkeySettingsCard
                 }
+
+                // Shared transcription stop behavior (chat + Transcription Mode)
+                transcriptionBehaviorCard
 
                 // Test Area Card
                 if canEnableTranscription && transcriptionEnabled {
@@ -73,14 +123,43 @@ struct TranscriptionModeSettingsTab: View {
         .onAppear {
             if !hasLoadedSettings {
                 loadSettings()
+                loadVoiceSettings()
                 hasLoadedSettings = true
             }
-            // Refresh accessibility permission status
+            // Refresh accessibility permission status and keep it in sync while visible
+            keyboardService.checkAccessibilityPermission()
+            startPermissionRefresh()
+        }
+        .onDisappear {
+            stopPermissionRefresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // User may have just returned from System Settings after granting permission
             keyboardService.checkAccessibilityPermission()
         }
         .onReceive(NotificationCenter.default.publisher(for: .transcriptionConfigurationChanged)) { _ in
             loadSettings()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
+            loadVoiceSettings()
+        }
+    }
+
+    // MARK: - Permission Refresh
+
+    private func startPermissionRefresh() {
+        stopPermissionRefresh()
+        let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            Task { @MainActor in
+                keyboardService.checkAccessibilityPermission()
+            }
+        }
+        permissionRefreshTimer = timer
+    }
+
+    private func stopPermissionRefresh() {
+        permissionRefreshTimer?.invalidate()
+        permissionRefreshTimer = nil
     }
 
     // MARK: - Transcription Toggle Card
@@ -388,6 +467,245 @@ struct TranscriptionModeSettingsTab: View {
                 }
 
                 Spacer()
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Voice Input Toggle Card
+
+    private var voiceInputToggleCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(
+                            voiceInputEnabled
+                                ? theme.successColor.opacity(0.15) : theme.accentColor.opacity(0.15)
+                        )
+                    Image(systemName: voiceInputEnabled ? "mic.fill" : "mic")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(voiceInputEnabled ? theme.successColor : theme.accentColor)
+                }
+                .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Voice Input in Chat", bundle: .module)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text(
+                        voiceInputEnabled
+                            ? "Microphone button enabled in chat input"
+                            : "Enable microphone button in the chat input area"
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $voiceInputEnabled)
+                    .toggleStyle(SwitchToggleStyle(tint: theme.successColor))
+                    .labelsHidden()
+                    .onChange(of: voiceInputEnabled) { _, _ in
+                        saveVoiceSettings()
+                    }
+            }
+
+            if voiceInputEnabled {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.accentColor)
+                    Text("A microphone button will appear in the chat input when voice is ready", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.1))
+                )
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            voiceInputEnabled ? theme.successColor.opacity(0.3) : theme.cardBorder,
+                            lineWidth: 1
+                        )
+                )
+        )
+    }
+
+    // MARK: - Transcription Behavior Card
+
+    /// Stop mode / pause / confirmation / silence. These settings govern both
+    /// chat voice input and the Transcription Mode overlay.
+    private var transcriptionBehaviorCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(theme.accentColor.opacity(0.15))
+                    Image(systemName: "timer")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Transcription Behavior", bundle: .module)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text("Applies to both chat voice input and Transcription Mode", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+            }
+
+            // Voice Stop Mode Picker
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Stop Mode", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    Text("Choose how the app knows when you've finished speaking.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
+
+                ThemedTabPicker(
+                    selection: $transcriptionStopMode,
+                    tabs: TranscriptionStopMode.allCases.map { ($0, $0.displayName) }
+                )
+                .frame(maxWidth: .infinity)
+                .onChange(of: transcriptionStopMode) { _, _ in
+                    saveVoiceSettings()
+                }
+
+                Text(transcriptionStopMode.description)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .padding(.top, 4)
+
+            Divider()
+                .background(theme.cardBorder)
+
+            // Pause Duration Slider
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Pause Detection", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    Spacer()
+
+                    Text(
+                        transcriptionStopMode == .manual || pauseDuration == 0
+                            ? "Disabled" : String(format: "%.1fs", pauseDuration)
+                    )
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.accentColor)
+                }
+
+                Slider(value: $pauseDuration, in: 0 ... 5, step: 0.5)
+                    .tint(theme.accentColor)
+                    .disabled(transcriptionStopMode == .manual)
+                    .opacity(transcriptionStopMode == .manual ? 0.5 : 1)
+                    .onChange(of: pauseDuration) { _, _ in
+                        saveVoiceSettings()
+                    }
+
+                if transcriptionStopMode == .manual {
+                    Text("Auto-stop is disabled in manual stop mode.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                } else {
+                    Text(
+                        pauseDuration == 0
+                            ? "Auto-stop disabled. You must stop transcription manually."
+                            : "Stops after \(String(format: "%.1f", pauseDuration)) seconds of silence"
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            Divider()
+                .background(theme.cardBorder)
+
+            // Confirmation Delay Slider
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Confirmation Delay", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    Spacer()
+
+                    Text(String(format: "%.1fs", confirmationDelay))
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.accentColor)
+                }
+
+                Slider(value: $confirmationDelay, in: 1 ... 5, step: 0.5)
+                    .tint(theme.accentColor)
+                    .disabled(transcriptionStopMode == .manual || pauseDuration == 0)
+                    .opacity(transcriptionStopMode == .manual || pauseDuration == 0 ? 0.5 : 1)
+                    .onChange(of: confirmationDelay) { _, _ in
+                        saveVoiceSettings()
+                    }
+
+                Text("Time to cancel before a chat message is automatically sent", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            Divider()
+                .background(theme.cardBorder)
+
+            // Silence Timeout Slider
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Silence Timeout", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    Spacer()
+
+                    Text(silenceTimeoutFormatted)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.accentColor)
+                }
+
+                Slider(value: $silenceTimeoutSeconds, in: 10 ... 120, step: 5)
+                    .tint(theme.accentColor)
+                    .onChange(of: silenceTimeoutSeconds) { _, _ in
+                        saveVoiceSettings()
+                    }
+
+                Text("Auto-stop or close voice input after this duration of silence", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
             }
         }
         .padding(20)

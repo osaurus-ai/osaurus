@@ -95,10 +95,7 @@ public struct TranscriptionOverlayView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .fixedSize()
-        .background(overlayBackground)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .overlay(borderOverlay)
-        .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 4)
+        .modifier(OverlayGlassBackground(cornerRadius: cornerRadius))
         // Subtle entrance animation
         .scaleEffect(isAppeared ? 1.0 : 0.95)
         .opacity(isAppeared ? 1.0 : 0)
@@ -108,30 +105,40 @@ public struct TranscriptionOverlayView: View {
             }
         }
     }
+}
 
-    // MARK: - Border Overlay
+// MARK: - Glass Background
 
-    private var borderOverlay: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .stroke(theme.cardBorder, lineWidth: 1)
-    }
+/// Applies Liquid Glass to the overlay on macOS 26+, with a clean themed
+/// fallback (solid rounded card + border + shadow) on earlier systems.
+private struct OverlayGlassBackground: ViewModifier {
+    @Environment(\.theme) private var theme
+    let cornerRadius: CGFloat
 
-    // MARK: - Background
-
-    private var overlayBackground: some View {
-        ZStack {
-            // Frosted glass effect
-            if #available(macOS 13.0, *) {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            } else {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(theme.cardBackground.opacity(0.95))
-            }
-
-            // Tint overlay for depth
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(theme.cardBackground.opacity(0.85))
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+                .glassEffect(
+                    .clear,
+                    in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(theme.cardBorder, lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.22), radius: 16, x: 0, y: 6)
+        } else {
+            content
+                .background(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(theme.cardBackground.opacity(theme.isDark ? 0.95 : 0.98))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(theme.cardBorder, lineWidth: 1)
+                )
+                .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 4)
         }
     }
 }

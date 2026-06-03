@@ -853,7 +853,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     @objc private func handleOpenTTSSettings(_ notification: Notification) {
         Task { @MainActor in
-            ManagementStateManager.shared.voiceSubTabRequest = "TTS"
+            ManagementStateManager.shared.voiceSubTabRequest = VoiceTab.textToSpeech.rawValue
             showManagementWindow(initialTab: .voice)
         }
     }
