@@ -468,12 +468,14 @@ struct RuntimePolicySourceTests {
         // [AVAILABLE_TOOLS]/XML function-call contract instead of leaking
         // role-token/DSML fragments in Osaurus tool turns, plus the Gemma4
         // Zyphra XML tool-call parser used by live JANG_4M multiline tool
-        // envelopes.
+        // envelopes, plus Gemma4 unified 12B config dispatch, processor
+        // tool-schema preservation, quoted native call:value parsing, and the
+        // explicit unsupported boundary for unproven unified image/audio/video.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "25f8111552005fdc6ef12cd2c8298a782d4e2052"
+        let expectedRuntimeHardenedRevision = "23e4d1a5261c7529ebf434ec0eb888f16e5ab58b"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)

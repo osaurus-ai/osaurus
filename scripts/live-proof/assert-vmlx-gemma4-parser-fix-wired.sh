@@ -7,8 +7,15 @@ RESOLVED="$ROOT/Packages/OsaurusCore/Package.resolved"
 CHECKOUT="$ROOT/Packages/OsaurusCore/.build/checkouts/vmlx-swift"
 PARSER="$CHECKOUT/Libraries/MLXLMCommon/ReasoningParser.swift"
 TOOL_PARSER="$CHECKOUT/Libraries/MLXLMCommon/Tool/Parsers/GemmaFunctionParser.swift"
+TOKENIZER_MACROS="$CHECKOUT/Libraries/MLXHuggingFaceMacros/HuggingFaceIntegrationMacros.swift"
+FALLBACKS="$CHECKOUT/Libraries/MLXLMCommon/ChatTemplates/ChatTemplateFallbacks.swift"
+VLM="$CHECKOUT/Libraries/MLXVLM/Models/Gemma4.swift"
+VLM_FACTORY="$CHECKOUT/Libraries/MLXVLM/VLMModelFactory.swift"
+LLM_FACTORY="$CHECKOUT/Libraries/MLXLLM/LLMModelFactory.swift"
 TESTS="$CHECKOUT/Tests/MLXLMCommonFocusedTests/Gemma4ThoughtChannelParserFocusedTests.swift"
 TOOL_TESTS="$CHECKOUT/Tests/MLXLMTests/ToolCallEdgeCasesTests.swift"
+VLM_TESTS="$CHECKOUT/Tests/MLXLMTests/Gemma4VLMTests.swift"
+SOURCE_TESTS="$CHECKOUT/Tests/MLXLMCommonFocusedTests/NoHiddenReasoningCloseBiasFocusedTests.swift"
 EXPECTED_VMLX_REVISION="$(sed -nE 's/.*revision: "([0-9a-f]{40})".*/\1/p' "$PKG" | head -1 || true)"
 fail=0
 
@@ -83,8 +90,94 @@ if [[ -f "$TOOL_PARSER" ]]; then
   else
     fail_msg "SwiftPM checkout lacks Gemma tool whitespace parser fix"
   fi
+  if rg -Fq 'JSONDecoder().decode(String.self' "$TOOL_PARSER"; then
+    pass "SwiftPM checkout contains Gemma4 quoted native string argument parser fix"
+  else
+    fail_msg "SwiftPM checkout lacks Gemma4 quoted native string argument parser fix"
+  fi
+  if rg -Fq 'Gemma-4 parser unwraps redundant quotes around literal-newline escaped values' "$TOOL_TESTS" \
+    && rg -Fq 'String(value.dropFirst().dropLast())' "$TOOL_PARSER"; then
+    pass "SwiftPM checkout contains Gemma4 literal-newline quoted argument parser fix"
+  else
+    fail_msg "SwiftPM checkout lacks Gemma4 literal-newline quoted argument parser fix"
+  fi
+  if rg -Fq 'decodeQuotedStringLiteral' "$TOOL_PARSER" \
+    && rg -Fq 'Gemma-4 parser unwraps redundant quotes around raw literal-newline values' "$TOOL_TESTS"; then
+    pass "SwiftPM checkout contains Gemma4 raw literal-newline quoted argument parser fix"
+  else
+    fail_msg "SwiftPM checkout lacks Gemma4 raw literal-newline quoted argument parser fix"
+  fi
 else
   warn "SwiftPM vmlx tool parser missing; cannot inspect Gemma tool whitespace fix"
+  fail=1
+fi
+
+if [[ -f "$FALLBACKS" ]]; then
+  pass "SwiftPM checkout ChatTemplateFallbacks.swift exists"
+  if rg -Fq 'Do not wrap the argument value in quote characters' "$FALLBACKS" \
+    && rg -Fq 'do not add or remove whitespace or spaces after newlines' "$FALLBACKS"; then
+    pass "Gemma4 required fallback warns against quoted/space-mutated argument values"
+  else
+    fail_msg "Gemma4 required fallback lacks quoted/space-mutated argument warning"
+  fi
+else
+  warn "SwiftPM vmlx fallbacks missing; cannot inspect Gemma4 required fallback"
+  fail=1
+fi
+
+if [[ -f "$TOKENIZER_MACROS" ]]; then
+  pass "SwiftPM checkout HuggingFaceIntegrationMacros.swift exists"
+  if rg -Fq 'let gemmaRequiredToolChoice' "$TOKENIZER_MACROS" \
+    && rg -Fq 'chat-template required tools -> Gemma4WithTools fallback engaged' "$TOKENIZER_MACROS" \
+    && rg -Fq 'MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools' "$TOKENIZER_MACROS"; then
+    pass "Gemma4 required tool_choice routes through explicit Gemma fallback"
+  else
+    fail_msg "Gemma4 required tool_choice does not route through explicit Gemma fallback"
+  fi
+else
+  warn "SwiftPM vmlx tokenizer macro source missing; cannot inspect Gemma4 required-tool template routing"
+  fail=1
+fi
+
+if [[ -f "$VLM" ]]; then
+  pass "SwiftPM checkout Gemma4.swift exists"
+  if rg -Fq 'toolSchemas: input.tools' "$VLM"; then
+    pass "Gemma4 processor preserves tool schemas into LMInput"
+  else
+    fail_msg "Gemma4 processor does not preserve tool schemas into LMInput"
+  fi
+  if rg -Fq 'LMInput.audio and LMInput.video must be nil' "$VLM" \
+    && rg -Fq 'featuresList.append(embedVision(unifiedVisionEmbedder(singleImage)))' "$VLM" \
+    && rg -Fq 'hidden = patchNorm2(hidden)' "$VLM" \
+    && rg -Fq 'hidden = posNorm(hidden + posHidden.asType(hidden.dtype))' "$VLM" \
+    && rg -Fq 'func callAsFunction(_ x: MLXArray) -> MLXArray { proj(rmsNormNoScale(x)) }' "$VLM" \
+    && rg -Fq 'var softTokenCounts: [Int] = []' "$VLM" \
+    && rg -Fq 'softTokenCounts.append(patchCount / (config.poolingKernelSize * config.poolingKernelSize))' "$VLM" \
+    && rg -Fq 'tokenizer.convertTokenToId("<|image>")' "$VLM" \
+    && rg -Fq 'tokenizer.convertTokenToId("<image|>")' "$VLM"; then
+    pass "Gemma4 unified image path uses upstream embedder order and exact soft-token expansion"
+  else
+    fail_msg "Gemma4 unified image/audio boundary or image embedder wiring is incomplete"
+  fi
+  if rg -Fq 'Gemma4 unified image inputs are not production-supported yet' "$VLM"; then
+    fail_msg "Gemma4 unified image path is still guarded as unsupported in the pinned checkout"
+  fi
+else
+  warn "SwiftPM vmlx Gemma4.swift missing; cannot inspect Gemma4 VLM wiring"
+  fail=1
+fi
+
+if [[ -f "$VLM_FACTORY" ]] && [[ -f "$LLM_FACTORY" ]]; then
+  if rg -Fq '"gemma4_unified": create(Gemma4Configuration.self, Gemma4.init)' "$VLM_FACTORY" \
+    && rg -Fq '"Gemma4UnifiedProcessor": create(' "$VLM_FACTORY" \
+    && rg -Fq 'Gemma4ProcessorConfiguration.self, Gemma4Processor.init)' "$VLM_FACTORY" \
+    && rg -Fq '"gemma4_unified_text": create(Gemma4TextConfiguration.self, Gemma4TextModel.init)' "$LLM_FACTORY"; then
+    pass "Gemma4 unified model, processor, and text aliases are registered"
+  else
+    fail_msg "Gemma4 unified registry aliases are incomplete"
+  fi
+else
+  warn "SwiftPM vmlx factory files missing; cannot inspect Gemma4 unified registry"
   fail=1
 fi
 
@@ -105,8 +198,28 @@ if [[ -f "$TOOL_TESTS" ]]; then
   else
     fail_msg "SwiftPM checkout lacks Gemma tool whitespace regression"
   fi
+  if rg -q 'Gemma-4 parser accepts live 12B quoted native string argument' "$TOOL_TESTS" \
+    && rg -q 'Gemma-4 processor routes live 12B quoted native tool-call without visible leak' "$TOOL_TESTS" \
+    && rg -q 'Gemma-4 parser unwraps redundant quotes around raw literal-newline values' "$TOOL_TESTS"; then
+    pass "SwiftPM checkout contains Gemma4 12B native quoted tool-call regressions"
+  else
+    fail_msg "SwiftPM checkout lacks Gemma4 12B native quoted tool-call regressions"
+  fi
 else
   warn "SwiftPM vmlx tool tests missing; cannot inspect Gemma tool whitespace regression"
+  fail=1
+fi
+
+if [[ -f "$VLM_TESTS" ]] && [[ -f "$SOURCE_TESTS" ]]; then
+  if rg -q 'gemma4Unified12BConfigDecode' "$VLM_TESTS" \
+    && rg -q 'gemma4UnifiedProcessorConfigDecode' "$VLM_TESTS" \
+    && rg -q 'gemma4VLMProcessorPreservesToolsIntoLMInputSchemas' "$SOURCE_TESTS"; then
+    pass "SwiftPM checkout contains Gemma4 unified config and schema-preservation regressions"
+  else
+    fail_msg "SwiftPM checkout lacks Gemma4 unified config/schema-preservation regressions"
+  fi
+else
+  warn "SwiftPM vmlx Gemma4 unified tests missing; cannot inspect config/schema regressions"
   fail=1
 fi
 
