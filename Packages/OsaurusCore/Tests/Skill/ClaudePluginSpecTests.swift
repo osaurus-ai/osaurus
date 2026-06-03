@@ -254,6 +254,56 @@ struct ClaudePluginSpecTests {
         #expect(!catalog.isNonImportable(name: "brand-new-unclassified-plugin"))
     }
 
+    /// The bundled catalog carries precomputed component summaries so the
+    /// detail view can render skill/agent/command/MCP chips without resolving
+    /// the manifest over the network. A missing or empty `plugins` map would
+    /// silently degrade every detail to "details unavailable", so guard it.
+    @Test func bundledCatalogCarriesComponentSummaries() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog.bundled
+        let summary = catalog.components(for: "agent-sdk-dev")
+        #expect(summary != nil)
+        #expect(summary?.isEmpty == false)
+        // agent-sdk-dev ships agents + a command but no skills.
+        #expect(summary?.agents.isEmpty == false)
+        #expect(summary?.commands.isEmpty == false)
+        #expect(summary?.skills.isEmpty == true)
+    }
+
+    /// Plugins classified as non-importable still have a summary entry; it is
+    /// just empty (no skills/agents/commands/mcp). The detail "Not importable"
+    /// state keys off `isEmpty`, so verify the catalog agrees with the denylist.
+    @Test func bundledCatalogNonImportableSummariesAreEmpty() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog.bundled
+        for name in catalog.nonImportable {
+            if let summary = catalog.components(for: name) {
+                #expect(summary.isEmpty, "Expected empty summary for non-importable \(name)")
+            }
+        }
+    }
+
+    /// Component lookups for plugins the catalog hasn't classified return nil
+    /// so the detail view falls back to its neutral "details unavailable" panel
+    /// instead of fetching live.
+    @Test func componentSummaryNilForUnclassifiedPlugin() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog(
+            nonImportable: [],
+            componentsByName: [
+                "known-plugin": .init(skills: ["A"], agents: [], commands: [], mcp: false)
+            ]
+        )
+        #expect(catalog.components(for: "known-plugin")?.skills == ["A"])
+        #expect(catalog.components(for: "brand-new-unclassified-plugin") == nil)
+    }
+
+    /// `ComponentSummary.isEmpty` only reports empty when every importable
+    /// channel is empty, including the MCP flag.
+    @Test func componentSummaryIsEmptyOnlyWhenAllChannelsEmpty() {
+        typealias Summary = ClaudeMarketplaceImportabilityCatalog.ComponentSummary
+        #expect(Summary(skills: [], agents: [], commands: [], mcp: false).isEmpty)
+        #expect(!Summary(skills: ["S"], agents: [], commands: [], mcp: false).isEmpty)
+        #expect(!Summary(skills: [], agents: [], commands: [], mcp: true).isEmpty)
+    }
+
     // MARK: - hasImportableComponents
 
     /// A manifest that only carries auxiliary markdown / hooks (no skills,

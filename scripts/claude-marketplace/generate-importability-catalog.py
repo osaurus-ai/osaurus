@@ -160,25 +160,34 @@ def repo_tree(owner: str, repo: str) -> dict[str, str] | None:
     return entries
 
 
-def is_importable(base: str, entries: dict[str, str]) -> bool:
-    """Replicate buildManifest's component discovery exactly.
+def _title_case_dashes(leaf: str) -> str:
+    """Mirror ClaudeSkillEntry/ClaudeAgentEntry.displayName: split on '-',
+    uppercase only the first letter of each word, join with spaces."""
+    return " ".join(w[:1].upper() + w[1:] for w in leaf.split("-") if w)
 
-    Osaurus marks a plugin importable when, under its base path, it has:
-      - a `skills/<dir>` subdirectory (ANY real directory — SKILL.md is not
+
+def classify_components(base: str, entries: dict[str, str]) -> dict:
+    """Replicate buildManifest's component discovery exactly and return the
+    importable component summary used by the detail view.
+
+    Osaurus discovers, under the plugin's base path:
+      - skills: ANY real directory directly under `skills/` (SKILL.md is not
         required; symlinks/submodules are NOT directories so they don't count),
-      - an `agents/<file>.md` file,
-      - a `commands/<file>.md` file, or
-      - a `.mcp.json` file at the plugin root.
+      - agents: `agents/<file>.md` files,
+      - commands: `commands/<file>.md` files,
+      - mcp: a `.mcp.json` file at the plugin root.
+
+    Display names match the Swift `displayName` derivations: skills + agents
+    title-case the dash-separated leaf; commands keep the bare file stem.
     """
     prefix = f"{base}/" if base else ""
-
-    # MCP server config at the plugin root.
-    if entries.get(f"{prefix}.mcp.json") is not None:
-        return True
-
     skills_dir = f"{prefix}skills"
     agents_dir = f"{prefix}agents"
     commands_dir = f"{prefix}commands"
+
+    skills: list[str] = []
+    agents: list[str] = []
+    commands: list[str] = []
 
     for path, etype in entries.items():
         # Skill: a real directory directly under `<base>/skills/`.
@@ -187,24 +196,33 @@ def is_importable(base: str, entries: dict[str, str]) -> bool:
             and path.startswith(f"{skills_dir}/")
             and path[len(skills_dir) + 1:].count("/") == 0
         ):
-            return True
+            skills.append(_title_case_dashes(path.rsplit("/", 1)[-1]))
         # Agent: `<base>/agents/<file>.md` (direct child file).
-        if (
+        elif (
             etype == "blob"
             and path.startswith(f"{agents_dir}/")
             and path.endswith(".md")
             and path[len(agents_dir) + 1:].count("/") == 0
         ):
-            return True
+            stem = path.rsplit("/", 1)[-1][:-3]  # strip ".md"
+            agents.append(_title_case_dashes(stem))
         # Command: `<base>/commands/<file>.md` (direct child file).
-        if (
+        elif (
             etype == "blob"
             and path.startswith(f"{commands_dir}/")
             and path.endswith(".md")
             and path[len(commands_dir) + 1:].count("/") == 0
         ):
-            return True
-    return False
+            commands.append(path.rsplit("/", 1)[-1][:-3])  # bare stem
+
+    mcp = entries.get(f"{prefix}.mcp.json") is not None
+
+    # Match the Swift sort order (displayName ascending) for stable output.
+    skills.sort()
+    agents.sort()
+    commands.sort()
+
+    return {"skills": skills, "agents": agents, "commands": commands, "mcp": mcp}
 
 
 def main() -> int:
@@ -213,6 +231,7 @@ def main() -> int:
     plugins = marketplace.get("plugins", [])
     print(f"  {len(plugins)} plugins")
 
+    components: dict[str, dict] = {}
     non_importable: list[str] = []
     unresolved: list[str] = []
 
@@ -221,8 +240,20 @@ def main() -> int:
         if not name:
             continue
 
-        # Legacy plugins declaring explicit `skills: [..]` are always importable.
-        if plugin.get("skills"):
+        # Legacy plugins declaring explicit `skills: [..]` are always
+        # importable; record the declared skill names as components.
+        legacy_skills = plugin.get("skills")
+        if legacy_skills:
+            skills = sorted(
+                _title_case_dashes(str(s).rstrip("/").rsplit("/", 1)[-1])
+                for s in legacy_skills
+            )
+            components[name] = {
+                "skills": skills,
+                "agents": [],
+                "commands": [],
+                "mcp": False,
+            }
             continue
 
         resolved = resolve_source(plugin)
@@ -233,33 +264,42 @@ def main() -> int:
         owner, repo, base = resolved
         paths = repo_tree(owner, repo)
         if paths is None:
-            # Could not fetch tree -> leave visible (unknown).
+            # Could not fetch tree -> omit (treated as unknown / visible).
             unresolved.append(name)
             continue
 
-        if not is_importable(base, paths):
+        summary = classify_components(base, paths)
+        components[name] = summary
+        importable = bool(
+            summary["skills"] or summary["agents"] or summary["commands"] or summary["mcp"]
+        )
+        if not importable:
             non_importable.append(name)
             print(f"  [{i}/{len(plugins)}] {name}: NON-IMPORTABLE ({owner}/{repo}/{base})")
 
     non_importable.sort()
+    # Emit plugins sorted by name for a stable, reviewable diff.
+    components = dict(sorted(components.items()))
 
     catalog = {
-        "version": 1,
+        "version": 2,
         "generatedAt": datetime.datetime.now(datetime.timezone.utc)
         .replace(microsecond=0)
         .isoformat(),
         "marketplace": f"{MARKETPLACE_OWNER}/{MARKETPLACE_REPO}",
         "pluginCount": len(plugins),
         "nonImportable": non_importable,
+        "plugins": components,
     }
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
 
     print(f"\nWrote {OUTPUT_PATH.relative_to(REPO_ROOT)}")
+    print(f"  classified: {len(components)}")
     print(f"  non-importable: {len(non_importable)}")
     if unresolved:
-        print(f"  unresolved (left visible): {len(unresolved)}")
+        print(f"  unresolved (left visible, no detail): {len(unresolved)}")
     return 0
 
 

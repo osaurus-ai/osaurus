@@ -47,7 +47,6 @@ struct ClaudeMarketplaceCard: View {
     @Environment(\.theme) private var theme
 
     let entry: MarketplacePlugin
-    let isInstalled: Bool
     let animationDelay: Double
     let hasAppeared: Bool
     let onSelect: () -> Void
@@ -63,6 +62,33 @@ struct ClaudeMarketplaceCard: View {
     private var accent: Color { theme.accentColor }
     /// Muted per-category tint, used only for the small category badge.
     private var categoryColor: Color { ClaudeMarketplacePalette.color(for: categoryKey) }
+
+    /// Precomputed importable component summary (skills / agents / commands /
+    /// MCP) for this plugin, from the bundled catalog. Drives the at-a-glance
+    /// "what does this ship" hint without any network access.
+    private var componentSummary: ClaudeMarketplaceImportabilityCatalog.ComponentSummary? {
+        ClaudeMarketplaceImportabilityCatalog.bundled.components(for: entry.name)
+    }
+
+    /// Compact "6 skills · 1 MCP" hint, or nil when there's nothing to import
+    /// or the plugin isn't classified yet.
+    private var componentHint: String? {
+        guard let summary = componentSummary, !summary.isEmpty else { return nil }
+        var parts: [String] = []
+        if !summary.skills.isEmpty {
+            parts.append("\(summary.skills.count) skill\(summary.skills.count == 1 ? "" : "s")")
+        }
+        if !summary.agents.isEmpty {
+            parts.append("\(summary.agents.count) agent\(summary.agents.count == 1 ? "" : "s")")
+        }
+        if !summary.commands.isEmpty {
+            parts.append(
+                "\(summary.commands.count) command\(summary.commands.count == 1 ? "" : "s")"
+            )
+        }
+        if summary.mcp { parts.append("MCP") }
+        return parts.joined(separator: " · ")
+    }
 
     var body: some View {
         Button(action: onSelect) {
@@ -129,16 +155,7 @@ struct ClaudeMarketplaceCard: View {
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
 
-                HStack(spacing: 6) {
-                    categoryBadge
-                    if isInstalled {
-                        StatusCapsuleBadge(
-                            icon: "checkmark.circle.fill",
-                            text: "Installed",
-                            color: .green
-                        )
-                    }
-                }
+                categoryBadge
             }
 
             Spacer(minLength: 8)
@@ -168,7 +185,20 @@ struct ClaudeMarketplaceCard: View {
     }
 
     private var footerRow: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
+            if let hint = componentHint {
+                HStack(spacing: 3) {
+                    Image(systemName: "shippingbox.fill")
+                        .font(.system(size: 9, weight: .medium))
+                    Text(hint)
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .foregroundColor(theme.tertiaryText)
+                .layoutPriority(1)
+            }
+            Spacer(minLength: 6)
             if let author = entry.author?.name, !author.isEmpty {
                 HStack(spacing: 3) {
                     Image(systemName: "person")
@@ -176,10 +206,10 @@ struct ClaudeMarketplaceCard: View {
                     Text(author)
                         .font(.system(size: 10, weight: .medium))
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
                 .foregroundColor(theme.tertiaryText)
             }
-            Spacer(minLength: 0)
             if entry.homepage != nil {
                 Image(systemName: "link")
                     .font(.system(size: 9, weight: .medium))
@@ -190,12 +220,7 @@ struct ClaudeMarketplaceCard: View {
 
     @ViewBuilder
     private var installControl: some View {
-        if isInstalled {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 16))
-                .foregroundColor(.green)
-                .frame(width: 28, height: 28)
-        } else if isInstalling {
+        if isInstalling {
             ProgressView()
                 .scaleEffect(0.6)
                 .frame(width: 28, height: 28)
@@ -215,9 +240,7 @@ struct ClaudeMarketplaceCard: View {
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: 12)
             .strokeBorder(
-                isHovered
-                    ? accent.opacity(0.3)
-                    : isInstalled ? Color.green.opacity(0.2) : theme.cardBorder,
+                isHovered ? accent.opacity(0.3) : theme.cardBorder,
                 lineWidth: isHovered ? 1.5 : 1
             )
     }

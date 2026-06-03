@@ -133,16 +133,24 @@ struct PluginsView: View {
         if let entry = selectedMarketplaceEntry {
             ClaudeMarketplaceDetailView(
                 entry: entry,
-                repo: claudeMarketplace.repo,
-                isInstalled: installedMarketplaceIds.contains(
-                    claudeMarketplace.pluginId(for: entry) ?? ""
-                ),
                 onBack: {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                         selectedMarketplaceEntry = nil
                     }
                 },
-                onInstall: { try await installMarketplaceEntry(entry) }
+                onInstall: {
+                    try await installMarketplaceEntry(entry)
+                    // `installMarketplaceEntry` refreshes the aggregator
+                    // synchronously, so the freshly installed plugin is now
+                    // available. Transition into the rich installed detail
+                    // (uninstall / previews / configure) for a continuous flow.
+                    if let installed = installedClaudePlugin(for: entry) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedMarketplaceEntry = nil
+                            selectedClaudePlugin = installed
+                        }
+                    }
+                }
             )
             .transition(.opacity.combined(with: .move(edge: .trailing)))
         }
@@ -568,10 +576,26 @@ struct PluginsView: View {
         ]
     }
 
-    /// Installed Claude plugin ids, used so marketplace cards can show an
-    /// "Installed" state without re-fetching anything.
-    private var installedMarketplaceIds: Set<String> {
-        Set(claudeAggregator.plugins.map { $0.pluginId })
+    /// The installed Claude plugin that corresponds to a marketplace entry,
+    /// if any. Used to route already-installed entries straight to the rich
+    /// installed-plugin detail (uninstall / previews / configure) instead of
+    /// the discovery surface.
+    private func installedClaudePlugin(for entry: MarketplacePlugin) -> ClaudePluginInstalled? {
+        guard let id = claudeMarketplace.pluginId(for: entry) else { return nil }
+        return claudeAggregator.plugins.first { $0.pluginId == id }
+    }
+
+    /// Open the best detail surface for a marketplace entry: the rich
+    /// installed detail when it's already installed, otherwise the discovery
+    /// detail with an Install call-to-action.
+    private func openMarketplaceEntry(_ entry: MarketplacePlugin) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            if let installed = installedClaudePlugin(for: entry) {
+                selectedClaudePlugin = installed
+            } else {
+                selectedMarketplaceEntry = entry
+            }
+        }
     }
 
     private var browseTabContent: some View {
@@ -664,23 +688,17 @@ struct PluginsView: View {
         } else if filteredMarketplaceEntries.isEmpty {
             marketplaceEmptyView
         } else {
-            let installed = installedMarketplaceIds
+            // Installed plugins are excluded upstream (they live in the
+            // Installed tab), so this grid is purely available discovery.
             LazyVGrid(columns: twoColumnGrid, spacing: 20) {
                 ForEach(Array(filteredMarketplaceEntries.enumerated()), id: \.element.name) {
                     index,
                     entry in
                     ClaudeMarketplaceCard(
                         entry: entry,
-                        isInstalled: installed.contains(
-                            claudeMarketplace.pluginId(for: entry) ?? ""
-                        ),
                         animationDelay: Double(min(index, 12)) * 0.04,
                         hasAppeared: hasAppeared,
-                        onSelect: {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                selectedMarketplaceEntry = entry
-                            }
-                        },
+                        onSelect: { openMarketplaceEntry(entry) },
                         onInstall: { try await installMarketplaceEntry(entry) }
                     )
                 }
@@ -854,6 +872,10 @@ struct PluginsView: View {
         let currentClaudePlugins = claudeAggregator.plugins
         let currentMarketplace = claudeMarketplace.entries
         let category = selectedCategory
+        // Installed Claude plugins live in the Installed tab. Exclude them from
+        // the marketplace discovery grid so they aren't duplicated across tabs.
+        let installedPluginIds = Set(currentClaudePlugins.map { $0.pluginId })
+        let marketplaceRepo = claudeMarketplace.repo
 
         let (browseResult, installedResult, claudeResult, marketplaceResult) =
             await Task.detached(priority: .userInitiated) {
@@ -872,7 +894,16 @@ struct PluginsView: View {
                         let categoryMatches =
                             category == nil
                             || ClaudeMarketplaceService.categoryKey(for: entry) == category
+                        let isInstalled: Bool = {
+                            guard let marketplaceRepo else { return false }
+                            let id = ClaudePluginInstaller.pluginId(
+                                repo: marketplaceRepo,
+                                pluginName: entry.name
+                            )
+                            return installedPluginIds.contains(id)
+                        }()
                         return categoryMatches
+                            && !isInstalled
                             && Self.marketplaceEntryMatchesQuery(entry, query: query)
                     }
                     .sorted { $0.name.lowercased() < $1.name.lowercased() }

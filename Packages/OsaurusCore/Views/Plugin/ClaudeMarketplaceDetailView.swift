@@ -2,10 +2,10 @@
 //  ClaudeMarketplaceDetailView.swift
 //  osaurus
 //
-//  Detail surface for a browsable Claude marketplace entry. Lazily resolves
-//  the plugin's full manifest (the expensive directory-probe step deferred by
-//  the browse grid) to reveal its components and README, with a prominent
-//  Install call-to-action. Visually mirrors `ClaudePluginDetailView`.
+//  Detail surface for a browsable Claude marketplace entry. Renders the
+//  plugin's importable components from the precomputed bundled catalog so
+//  opening a detail makes zero GitHub requests; only the explicit Install
+//  action resolves the manifest live. Visually mirrors `ClaudePluginDetailView`.
 //
 
 import AppKit
@@ -17,21 +17,22 @@ struct ClaudeMarketplaceDetailView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let entry: MarketplacePlugin
-    let repo: GitHubRepo?
-    let isInstalled: Bool
     let onBack: () -> Void
     let onInstall: () async throws -> Void
 
     @State private var hasAppeared = false
-    @State private var manifest: ClaudePluginManifest?
-    @State private var isResolving = false
-    @State private var resolveError: String?
-    @State private var readmeContent: String?
-    @State private var didStartResolve = false
 
     @State private var isInstalling = false
     @State private var errorMessage: String?
     @State private var showError = false
+
+    /// Precomputed importable components for this plugin, from the bundled
+    /// catalog. `nil` means the plugin is unclassified (e.g. newly added
+    /// upstream), in which case we show a neutral "details unavailable" state
+    /// rather than fetching live.
+    private var componentSummary: ClaudeMarketplaceImportabilityCatalog.ComponentSummary? {
+        ClaudeMarketplaceImportabilityCatalog.bundled.components(for: entry.name)
+    }
 
     private var categoryKey: String { ClaudeMarketplaceService.categoryKey(for: entry) }
     /// Calm app accent for the icon + primary action.
@@ -46,6 +47,17 @@ struct ClaudeMarketplaceDetailView: View {
             .joined(separator: " ")
     }
 
+    /// Total importable artifacts the plugin ships, as a short label for the
+    /// hero stat badge (mirrors the installed detail's "N artifacts" badge).
+    private func componentCountText(
+        _ summary: ClaudeMarketplaceImportabilityCatalog.ComponentSummary
+    ) -> String {
+        let total =
+            summary.skills.count + summary.agents.count + summary.commands.count
+            + (summary.mcp ? 1 : 0)
+        return "\(total) component\(total == 1 ? "" : "s")"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             detailHeaderBar
@@ -53,9 +65,6 @@ struct ClaudeMarketplaceDetailView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     heroHeader.padding(.bottom, 8)
                     componentsSection
-                    if let readme = readmeContent, !readme.isEmpty {
-                        readmeSection(readme)
-                    }
                     externalLinksSection
                 }
                 .padding(24)
@@ -67,7 +76,6 @@ struct ClaudeMarketplaceDetailView: View {
         .animation(.easeOut(duration: 0.2), value: hasAppeared)
         .onAppear {
             withAnimation { hasAppeared = true }
-            resolveIfNeeded()
         }
         .themedAlert(
             "Installation Failed",
@@ -154,6 +162,13 @@ struct ClaudeMarketplaceDetailView: View {
                     if let license = entry.license, !license.isEmpty {
                         heroStatBadge(icon: "doc.text", text: license, color: theme.tertiaryText)
                     }
+                    if let summary = componentSummary, !summary.isEmpty {
+                        heroStatBadge(
+                            icon: "shippingbox.fill",
+                            text: componentCountText(summary),
+                            color: theme.accentColor
+                        )
+                    }
                 }
             }
 
@@ -170,16 +185,7 @@ struct ClaudeMarketplaceDetailView: View {
 
     @ViewBuilder
     private var installControl: some View {
-        if isInstalled {
-            HStack(spacing: 5) {
-                Image(systemName: "checkmark.circle.fill").font(.system(size: 12))
-                Text("Installed", bundle: .module).font(.system(size: 13, weight: .semibold))
-            }
-            .foregroundColor(.green)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.12)))
-        } else if let manifest, !manifest.hasImportableComponents {
+        if let summary = componentSummary, summary.isEmpty {
             HStack(spacing: 5) {
                 Image(systemName: "minus.circle").font(.system(size: 12))
                 Text("Not importable", bundle: .module).font(.system(size: 13, weight: .semibold))
@@ -201,7 +207,7 @@ struct ClaudeMarketplaceDetailView: View {
                     Text("Install", bundle: .module).font(.system(size: 13, weight: .semibold))
                 }
                 .foregroundColor(.white)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(accent))
             }
@@ -222,17 +228,18 @@ struct ClaudeMarketplaceDetailView: View {
 
     // MARK: - Components
 
+    @ViewBuilder
     private var componentsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeader(title: "Components", icon: "shippingbox.fill")
-            if isResolving {
-                resolvingPlaceholder
-            } else if let error = resolveError {
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.warningColor)
-            } else if let manifest {
-                componentChips(for: manifest)
+            if let summary = componentSummary {
+                if summary.isEmpty {
+                    notImportablePanel
+                } else {
+                    componentChips(for: summary)
+                }
+            } else {
+                unclassifiedPanel
             }
         }
         .padding(16)
@@ -246,114 +253,77 @@ struct ClaudeMarketplaceDetailView: View {
         )
     }
 
-    private var resolvingPlaceholder: some View {
-        HStack(spacing: 10) {
-            ProgressView().scaleEffect(0.7)
-            Text("Inspecting plugin contents…", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-        }
-    }
-
     @ViewBuilder
-    private func componentChips(for manifest: ClaudePluginManifest) -> some View {
-        if !manifest.hasImportableComponents {
-            notImportablePanel(for: manifest)
-        } else {
-            VStack(alignment: .leading, spacing: 14) {
-                if !manifest.skills.isEmpty {
-                    componentGroup(
-                        kind: .skill,
-                        count: manifest.skills.count,
-                        names: manifest.skills.map(\.displayName)
-                    )
-                }
-                if !manifest.agents.isEmpty {
-                    componentGroup(
-                        kind: .schedule,
-                        count: manifest.agents.count,
-                        names: manifest.agents.map(\.displayName)
-                    )
-                }
-                if !manifest.commands.isEmpty {
-                    componentGroup(
-                        kind: .command,
-                        count: manifest.commands.count,
-                        names: manifest.commands.map { "/\($0.displayName)" }
-                    )
-                }
-                if manifest.mcpJsonPath != nil {
-                    componentGroup(kind: .mcp, count: 1, names: ["MCP server(s)"])
-                }
+    private func componentChips(
+        for summary: ClaudeMarketplaceImportabilityCatalog.ComponentSummary
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if !summary.skills.isEmpty {
+                componentGroup(
+                    kind: .skill,
+                    count: summary.skills.count,
+                    names: summary.skills
+                )
+            }
+            if !summary.agents.isEmpty {
+                componentGroup(
+                    kind: .schedule,
+                    count: summary.agents.count,
+                    names: summary.agents
+                )
+            }
+            if !summary.commands.isEmpty {
+                componentGroup(
+                    kind: .command,
+                    count: summary.commands.count,
+                    names: summary.commands.map { "/\($0)" }
+                )
+            }
+            if summary.mcp {
+                componentGroup(kind: .mcp, count: 1, names: ["MCP server(s)"])
             }
         }
     }
 
-    /// Shown when a resolved plugin has nothing Osaurus can import. Explains
-    /// the supported set and lists what the plugin actually ships (hooks /
-    /// unsupported components) so the user understands why there's no install.
-    @ViewBuilder
-    private func notImportablePanel(for manifest: ClaudePluginManifest) -> some View {
-        let shipped = shippedComponentLabels(for: manifest)
+    /// Shown when the catalog classified the plugin as importing nothing
+    /// Osaurus supports. These are normally hidden from the grid, so this is a
+    /// safety net rather than a common state.
+    private var notImportablePanel: some View {
+        infoPanel(
+            title: "Nothing to import into Osaurus",
+            message:
+                "Osaurus imports skills, agents, commands, and MCP servers. This plugin ships none of those."
+        )
+    }
+
+    /// Shown when the bundled catalog has not classified this plugin yet
+    /// (e.g. it was added upstream after the last catalog refresh).
+    private var unclassifiedPanel: some View {
+        infoPanel(
+            title: "Component details unavailable",
+            message:
+                "This plugin isn't in the bundled catalog yet. Install to import its skills, agents, commands, and MCP servers, or open the homepage to learn more."
+        )
+    }
+
+    private func infoPanel(title: LocalizedStringKey, message: LocalizedStringKey) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "minus.circle")
+                Image(systemName: "info.circle")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Nothing to import into Osaurus", bundle: .module)
+                    Text(title, bundle: .module)
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundColor(theme.primaryText)
-                    Text(
-                        "Osaurus imports skills, agents, commands, and MCP servers. This plugin ships none of those.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(message, bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
-
-            if !shipped.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("It ships", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                    FlowLayout(spacing: 6) {
-                        ForEach(shipped, id: \.self) { label in
-                            Text(label)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(
-                                    Capsule().fill(theme.tertiaryText.opacity(0.12))
-                                )
-                        }
-                    }
-                }
-            }
-
-            if entry.homepage != nil {
-                Text("Open the homepage below to learn what it does.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
         }
-    }
-
-    /// Human-readable labels for the unsupported parts a plugin declares.
-    private func shippedComponentLabels(for manifest: ClaudePluginManifest) -> [String] {
-        var labels: [String] = []
-        if manifest.declaresHooks { labels.append("Hooks") }
-        labels.append(
-            contentsOf: manifest.declaresUnsupportedComponents.map {
-                $0.prefix(1).uppercased() + $0.dropFirst()
-            }
-        )
-        return labels
     }
 
     private func componentGroup(
@@ -385,25 +355,6 @@ struct ClaudeMarketplaceDetailView: View {
                 }
             }
         }
-    }
-
-    // MARK: - README
-
-    private func readmeSection(_ content: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(title: "README", icon: "doc.text.fill")
-            MarkdownMessageView(text: content, baseWidth: 600)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - External links
@@ -489,45 +440,6 @@ struct ClaudeMarketplaceDetailView: View {
                 errorMessage = error.localizedDescription
                 showError = true
             }
-        }
-    }
-
-    private func resolveIfNeeded() {
-        guard !didStartResolve, let repo else { return }
-        didStartResolve = true
-        isResolving = true
-        Task { @MainActor in
-            defer { isResolving = false }
-            do {
-                let resolved = try await GitHubSkillService.shared.resolveManifest(
-                    rootRepo: repo,
-                    entry: entry
-                )
-                manifest = resolved
-                await loadReadme(for: resolved)
-            } catch let err as GitHubSkillError {
-                resolveError = err.localizedDescription
-            } catch {
-                resolveError = error.localizedDescription
-            }
-        }
-    }
-
-    /// Best-effort README fetch from the plugin's source. Picks the README
-    /// discovered during manifest resolution (`auxMarkdownPaths`) and falls
-    /// back to `<source>/README.md`.
-    private func loadReadme(for manifest: ClaudePluginManifest) async {
-        let readmePath: String =
-            manifest.auxMarkdownPaths.first(where: { $0.hasSuffix("README.md") })
-            ?? (manifest.source.isEmpty ? "README.md" : "\(manifest.source)/README.md")
-        let content = await GitHubFetchLimiter.shared.runNoThrow {
-            await GitHubSkillService.shared.fetchOptionalFileContent(
-                from: manifest.sourceRepo,
-                path: readmePath
-            )
-        }
-        if let content {
-            readmeContent = content
         }
     }
 }
