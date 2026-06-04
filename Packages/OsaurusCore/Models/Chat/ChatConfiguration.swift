@@ -71,9 +71,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         return name
     }
 
-    /// Global sandbox execution config used by the built-in Default agent.
-    public var defaultAutonomousExec: AutonomousExecConfig?
-
     // MARK: - Preflight Search Settings
     /// Controls how aggressively pre-flight capability search loads context (nil defaults to .balanced)
     public var preflightSearchMode: PreflightSearchMode?
@@ -83,13 +80,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// directly, keeping the prompt stable across turns for maximum KV-cache reuse. Recommended
     /// when osaurus is acting as a plain LLM backend for an external agent.
     public var disableTools: Bool
-
-    /// Default tool selection mode for the built-in Default agent (nil => .auto).
-    public var defaultToolSelectionMode: ToolSelectionMode?
-    /// Manually selected tool names for the built-in Default agent (used when mode is .manual).
-    public var defaultManualToolNames: [String]?
-    /// Manually selected skill names for the built-in Default agent (used when mode is .manual).
-    public var defaultManualSkillNames: [String]?
 
     // MARK: - Clipboard Settings
     /// When true, Osaurus will monitor the clipboard for new text content to offer as context.
@@ -122,12 +112,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel: String? = nil,
         coreModelProvider: String? = nil,
         coreModelName: String? = nil,
-        defaultAutonomousExec: AutonomousExecConfig? = nil,
         preflightSearchMode: PreflightSearchMode? = nil,
         disableTools: Bool = false,
-        defaultToolSelectionMode: ToolSelectionMode? = nil,
-        defaultManualToolNames: [String]? = nil,
-        defaultManualSkillNames: [String]? = nil,
         enableClipboardMonitoring: Bool = true,
         generativeGreetingsEnabled: Bool = false,
         greetingPersona: String = ""
@@ -142,12 +128,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.defaultModel = defaultModel
         self.coreModelProvider = coreModelProvider
         self.coreModelName = coreModelName
-        self.defaultAutonomousExec = defaultAutonomousExec
         self.preflightSearchMode = preflightSearchMode
         self.disableTools = disableTools
-        self.defaultToolSelectionMode = defaultToolSelectionMode
-        self.defaultManualToolNames = defaultManualToolNames
-        self.defaultManualSkillNames = defaultManualSkillNames
         self.enableClipboardMonitoring = enableClipboardMonitoring
         self.generativeGreetingsEnabled = generativeGreetingsEnabled
         self.greetingPersona = greetingPersona
@@ -165,27 +147,11 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
         coreModelProvider = try container.decodeIfPresent(String.self, forKey: .coreModelProvider)
         coreModelName = try container.decodeIfPresent(String.self, forKey: .coreModelName)
-        defaultAutonomousExec = try container.decodeIfPresent(
-            AutonomousExecConfig.self,
-            forKey: .defaultAutonomousExec
-        )
         preflightSearchMode = try container.decodeIfPresent(
             PreflightSearchMode.self,
             forKey: .preflightSearchMode
         )
         disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
-        defaultToolSelectionMode = try container.decodeIfPresent(
-            ToolSelectionMode.self,
-            forKey: .defaultToolSelectionMode
-        )
-        defaultManualToolNames = try container.decodeIfPresent(
-            [String].self,
-            forKey: .defaultManualToolNames
-        )
-        defaultManualSkillNames = try container.decodeIfPresent(
-            [String].self,
-            forKey: .defaultManualSkillNames
-        )
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
         // Master switch for AI-generated greetings. Older persisted JSON
         // may carry an `enableGenerativeGreetings` boolean from a prior
@@ -219,7 +185,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             // `AppConfiguration` picks exactly the same value.
             coreModelProvider: nil,
             coreModelName: defaultCoreModelNameIfAvailable,
-            defaultAutonomousExec: nil,
             preflightSearchMode: .balanced,
             enableClipboardMonitoring: true,
             // Master AI-greetings switch defaults to OFF: cold-start cost

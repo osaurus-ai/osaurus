@@ -144,44 +144,6 @@ public enum ToolSecretsKeychain {
         deleteAllMatchingPrefix("\(pluginId).")
     }
 
-    // MARK: - Migration Support
-
-    /// Returns all legacy (non-agent-scoped) keychain entries for a given plugin.
-    /// Legacy accounts match `"{pluginId}.{key}"` but NOT `"{uuid}.{pluginId}.{key}"`.
-    public static func legacySecrets(for pluginId: String) -> [String: String] {
-        let legacyPrefix = "\(pluginId)."
-        let allItems = fetchAllItems(attributesOnly: false)
-
-        var secrets: [String: String] = [:]
-        for item in allItems {
-            guard let account = item[kSecAttrAccount as String] as? String,
-                account.hasPrefix(legacyPrefix),
-                !isAgentScopedAccount(account),
-                let data = item[kSecValueData as String] as? Data,
-                let value = String(data: data, encoding: .utf8)
-            else { continue }
-
-            secrets[String(account.dropFirst(legacyPrefix.count))] = value
-        }
-        return secrets
-    }
-
-    /// Delete all legacy (non-agent-scoped) entries for a plugin.
-    public static func deleteLegacySecrets(for pluginId: String) {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return }
-        let legacyPrefix = "\(pluginId)."
-        let allItems = fetchAllItems(attributesOnly: true)
-
-        for item in allItems {
-            guard let account = item[kSecAttrAccount as String] as? String,
-                account.hasPrefix(legacyPrefix),
-                !isAgentScopedAccount(account)
-            else { continue }
-
-            Keychain.delete(service: service, account: account)
-        }
-    }
-
     // MARK: - Internal Helpers
 
     private static func agentAccount(agentId: UUID, pluginId: String, key: String) -> String {

@@ -83,7 +83,6 @@ public struct OsaurusIdentity: Sendable {
         }
 
         UserDefaults.standard.set(false, forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
-        UserDefaults.standard.set(false, forKey: IdentityDefaultsKey.agentAddressesMigrated)
     }
 
     // MARK: - Request Signing

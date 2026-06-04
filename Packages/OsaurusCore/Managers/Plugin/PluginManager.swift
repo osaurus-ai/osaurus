@@ -314,7 +314,6 @@ final class PluginManager {
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
         }
 
-        migrateGlobalConfigToPerAgent()
         observeTunnelStatus()
         // Per-plugin first-delivery sweep, each step bracketed by the
         // `.currently_loading` marker. A SIGABRT inside the plugin's
@@ -472,65 +471,6 @@ final class PluginManager {
             loaded.plugin.notifyConfigBatchSync(changes, agentId: agentId, force: force)
         } else {
             loaded.plugin.notifyConfigBatch(changes, agentId: agentId, force: force)
-        }
-    }
-
-    // MARK: - One-Time Migration (global config → per-agent)
-
-    /// UserDefaults key tracking which plugin ids have already been
-    /// migrated from legacy global keychain entries to per-agent ones.
-    /// Persisted (not a process-lifetime static) so plugins installed
-    /// AFTER startup also get migrated on the next `_loadAll` pass —
-    /// the old once-per-process gate would skip them entirely.
-    /// Internal so unit tests can read/write the persisted set
-    /// directly without needing to construct fake plugins. Production
-    /// callers go through `migrateGlobalConfigToPerAgent()`.
-    static let migratedPluginIdsDefaultsKey = "PluginManager.migratedPluginIds"
-
-    static func loadMigratedPluginIds() -> Set<String> {
-        let raw = UserDefaults.standard.array(forKey: migratedPluginIdsDefaultsKey) as? [String] ?? []
-        return Set(raw)
-    }
-
-    static func saveMigratedPluginIds(_ ids: Set<String>) {
-        UserDefaults.standard.set(Array(ids), forKey: migratedPluginIdsDefaultsKey)
-    }
-
-    /// Copies legacy global keychain entries (`{pluginId}.{key}`) into
-    /// agent-scoped entries (`{agentId}.{pluginId}.{key}`) for every agent
-    /// that has the plugin enabled, then removes the legacy entries.
-    /// Tracks migration state per plugin id in UserDefaults so a plugin
-    /// installed mid-session still receives migration on its first scan.
-    private func migrateGlobalConfigToPerAgent() {
-        var migrated = Self.loadMigratedPluginIds()
-        let agents = AgentManager.shared.agents
-        let pluginIds = plugins.map { $0.plugin.id }
-
-        var didChange = false
-        for pluginId in pluginIds where !migrated.contains(pluginId) {
-            let legacySecrets = ToolSecretsKeychain.legacySecrets(for: pluginId)
-            // Mark migrated even if there are no legacy secrets — we've
-            // checked once and there's nothing to do on subsequent runs.
-            migrated.insert(pluginId)
-            didChange = true
-            guard !legacySecrets.isEmpty else { continue }
-
-            let destinations = agents.map { $0.id }
-
-            for agentId in destinations {
-                for (key, value) in legacySecrets {
-                    // Only copy if the agent doesn't already have a value for this key.
-                    if ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: agentId) == nil {
-                        ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
-                    }
-                }
-            }
-
-            ToolSecretsKeychain.deleteLegacySecrets(for: pluginId)
-        }
-
-        if didChange {
-            Self.saveMigratedPluginIds(migrated)
         }
     }
 

@@ -50,12 +50,6 @@ public enum IdentityDefaultsKey {
     /// `OsaurusIdentity.wipe()` cleanup keeps clearing it on reset for
     /// users upgrading from older builds. New code paths never read it.
     public static let masterMnemonicAcknowledged = "masterMnemonicAcknowledged"
-
-    /// One-shot migration flag set by `AgentManager` after it has back-filled
-    /// derived addresses for agents created before the address feature shipped.
-    /// Resetting the identity clears this so freshly-onboarded agents go back
-    /// through the migration path.
-    public static let agentAddressesMigrated = "agentAddressesMigrated"
 }
 
 /// Returned once after initial identity setup.

@@ -378,7 +378,10 @@ struct SwiftTransformersTokenizerLoaderTests {
 
         #expect(decoded.contains(finalUser), "Decoded: \(decoded)")
         #expect(decoded.contains("The current assistant response MUST be a function call."), "Decoded: \(decoded)")
-        #expect(decoded.contains("For multiline string values, represent each line break with the two characters \\n"), "Decoded: \(decoded)")
+        #expect(
+            decoded.contains("For multiline string values, represent each line break with the two characters \\n"),
+            "Decoded: \(decoded)"
+        )
         #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
         #expect(
             decoded.contains(#"<|tool_call>call:line_count{text:<|"|>one\ntwo<|"|>}<tool_call|>"#),
@@ -435,7 +438,10 @@ struct SwiftTransformersTokenizerLoaderTests {
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
         #expect(decoded.contains("The current assistant response MUST be a function call."), "Decoded: \(decoded)")
-        #expect(decoded.contains("For multiline string values, represent each line break with the two characters \\n"), "Decoded: \(decoded)")
+        #expect(
+            decoded.contains("For multiline string values, represent each line break with the two characters \\n"),
+            "Decoded: \(decoded)"
+        )
         #expect(
             decoded.contains(#"<|tool_call>call:line_count{text:<|"|>red\ngreen\nblue<|"|>}<tool_call|>"#),
             "Decoded: \(decoded)"
