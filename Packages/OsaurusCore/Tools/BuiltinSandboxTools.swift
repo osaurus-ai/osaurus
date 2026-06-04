@@ -1751,7 +1751,9 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                 "cwd": .object([
                     "type": .string("string"),
                     "description": .string(
-                        "Working directory (default: agent home). Rejected if outside allowed roots."
+                        "Working directory. Defaults to your home (`\(home)`) — OMIT unless you "
+                            + "need a different directory. Use a path relative to home (e.g. `src`) "
+                            + "or absolute under your home; system paths like `/root` are rejected."
                     ),
                 ]),
                 "timeout": .object([

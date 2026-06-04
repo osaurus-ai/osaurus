@@ -821,6 +821,12 @@ public struct SystemPromptComposer: Sendable {
             let installedPackages = SandboxPackageManifest.shared.installed(
                 agentId: agentId.uuidString
             )
+            // Derived identically to how the sandbox tools register their
+            // home (`SandboxToolRegistrar` -> `BuiltinSandboxTools.register`)
+            // so the prompt names the exact path `cwd` validation accepts.
+            let sandboxHome = OsaurusPaths.inContainerAgentHome(
+                SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+            )
             composer.append(
                 .static(
                     id: "sandbox",
@@ -828,6 +834,7 @@ public struct SystemPromptComposer: Sendable {
                     content: SystemPromptTemplates.sandbox(
                         secretNames: secretNames,
                         installedPackages: installedPackages,
+                        home: sandboxHome,
                         hostReadCombined: executionMode.hostReadContext != nil
                     )
                 )

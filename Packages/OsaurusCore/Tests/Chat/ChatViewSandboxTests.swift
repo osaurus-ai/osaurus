@@ -51,6 +51,28 @@ struct ChatViewSandboxTests {
         #expect(sandboxPrompt.contains("sandbox_read_file"))
     }
 
+    /// The sandbox section must state the agent's ABSOLUTE home (so the
+    /// model stops guessing `/root` for `cwd`) and tell it to default
+    /// there. Pins both the prompt env-block and the threaded home path.
+    @Test
+    func buildSystemPrompt_sandboxStatesAbsoluteHomeAndCwdDefault() async {
+        let sandboxCtx = await SystemPromptComposer.composeChatContext(
+            agentId: Agent.defaultId,
+            executionMode: .sandbox(hostRead: nil)
+        )
+        let prompt = sandboxCtx.prompt
+
+        let expectedHome = OsaurusPaths.inContainerAgentHome(
+            SandboxAgentProvisioner.linuxName(for: Agent.defaultId.uuidString)
+        )
+        #expect(expectedHome.isEmpty == false)
+        // The absolute home path is named verbatim in the env block...
+        #expect(prompt.contains(expectedHome))
+        // ...with the "default there / omit cwd" guidance.
+        #expect(prompt.contains("default"))
+        #expect(prompt.contains("`cwd`"))
+    }
+
     @Test
     func buildSystemPrompt_combinedMode_emitsSandboxAndReadOnlyWorkspaceSections() async {
         let folder = FolderContext(

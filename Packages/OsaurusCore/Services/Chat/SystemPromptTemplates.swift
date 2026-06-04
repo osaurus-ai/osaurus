@@ -195,14 +195,14 @@ public enum SystemPromptTemplates {
     public static func sandbox(
         secretNames: [String] = [],
         installedPackages: SandboxPackageManifest.Installed = .init(),
+        home: String = "",
         hostReadCombined: Bool = false
     ) -> String {
         var section = """
 
             \(sandboxSectionHeading)
 
-            \(sandboxEnvironmentBlock)
-            Files persist across messages.
+            \(sandboxEnvironmentBlock(home: home))
 
             \(hostReadCombined ? sandboxToolGuideCombined : sandboxToolGuide)
 
@@ -236,17 +236,30 @@ public enum SystemPromptTemplates {
     static let sandboxReadFileHintCombined =
         "`file_read` with `tail_lines` (works on `/workspace/...` sandbox paths too)"
 
-    private static let sandboxEnvironmentBlock = """
-        You have an isolated Alpine Linux ARM64 sandbox. Your home directory \
-        (`~`) is your sandbox home; files persist across messages.
+    /// Environment framing for the sandbox section. When `home` is supplied
+    /// (the live composer always passes it), the opening line states the
+    /// agent's ABSOLUTE home path and that commands run there by default —
+    /// without this, models reliably guess the Linux convention `/root` for
+    /// `cwd` on the first turn and eat a rejection. Falls back to the generic
+    /// `~` wording when `home` is empty (callers that don't know it).
+    private static func sandboxEnvironmentBlock(home: String) -> String {
+        let homeLine =
+            home.isEmpty
+            ? "Your home directory (`~`) is your sandbox home; files persist across messages."
+            : "Your home directory is `\(home)` (also `~` / `$HOME`); commands run there by "
+                + "default — you don't need to pass `cwd` unless you want a different directory. "
+                + "Files persist across messages."
+        return """
+            You have an isolated Alpine Linux ARM64 sandbox. \(homeLine)
 
-        Internet access is available — fetch live or external data (weather, \
-        web pages, APIs) directly with `curl`, `wget`, Python `requests`, or \
-        Node `fetch`; you don't need a dedicated tool for it.
+            Internet access is available — fetch live or external data (weather, \
+            web pages, APIs) directly with `curl`, `wget`, Python `requests`, or \
+            Node `fetch`; you don't need a dedicated tool for it.
 
-        Installed: bash, python3, node, git, curl, wget, jq, rg, sqlite3, \
-        build-base, cmake, vim, tree, and standard POSIX utilities.
-        """
+            Installed: bash, python3, node, git, curl, wget, jq, rg, sqlite3, \
+            build-base, cmake, vim, tree, and standard POSIX utilities.
+            """
+    }
 
     private static let sandboxToolGuide = """
         Tool dispatch:
