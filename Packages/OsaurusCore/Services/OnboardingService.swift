@@ -97,9 +97,15 @@ public final class OnboardingService: ObservableObject {
 
         print("[OnboardingService] Factory reset complete. Terminating via normal flow...")
 
-        // terminate the app normally so cleanup is handled correctly
+        // terminate the app normally so cleanup is handled correctly.
+        // The synchronous termination teardown can block the main thread for a
+        // couple of seconds, but it's a deliberate, app-ending operation — not a
+        // defect — so pause hang tracking around it to avoid a false-positive
+        // app-hang report. (No resume needed; the process is exiting.)
         await MainActor.run {
-            NSApplication.shared.terminate(nil)
+            CrashReportingService.shared.withAppHangTrackingPaused {
+                NSApplication.shared.terminate(nil)
+            }
         }
     }
 
