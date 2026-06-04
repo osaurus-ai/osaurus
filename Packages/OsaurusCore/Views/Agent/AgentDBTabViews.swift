@@ -949,12 +949,14 @@ public struct DataTabView: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.nameFieldStringValue = "\(selectedTable ?? "rows").csv"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let csv = renderCSV(columns: columns.map(\.name), rows: rows)
-        do {
-            try csv.write(to: url, atomically: true, encoding: .utf8)
-        } catch {
-            loadError = "CSV write failed: \(error.localizedDescription)"
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            let csv = renderCSV(columns: columns.map(\.name), rows: rows)
+            do {
+                try csv.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                loadError = "CSV write failed: \(error.localizedDescription)"
+            }
         }
     }
 

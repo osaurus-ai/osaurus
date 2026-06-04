@@ -36,37 +36,36 @@ enum ChatSessionExportCoordinator {
         panel.allowedContentTypes = [contentType(for: format)]
         panel.title = panelTitle(format)
 
-        let response = panel.runModal()
-        guard response == .OK, let url = panel.url else { return }
-
-        let progressId = UUID()
-
-        // Only surface the progress alert if the export hasn't finished
-        // within the threshold, so quick markdown writes don't flash a
-        // dialog the user can't read.
-        let progressThreshold: Duration = .seconds(2.5)
-        let displayTask = Task { @MainActor in
-            do {
-                try await Task.sleep(for: progressThreshold)
-            } catch {
-                return  // cancelled before the threshold elapsed
-            }
-            ThemedAlertCenter.shared.present(
-                ThemedAlertRequest(
-                    id: progressId,
-                    title: progressTitle(format),
-                    message: "Working on \"\(full.title)\". This may take a moment for larger chats.",
-                    accessory: AnyView(ExportProgressIndicator()),
-                    buttons: [.cancel("Hide")],
-                    onDismiss: {
-                        ThemedAlertCenter.shared.dismiss(scope: scope, id: progressId)
-                    }
-                ),
-                scope: scope
-            )
-        }
-
         Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+
+            let progressId = UUID()
+
+            // Only surface the progress alert if the export hasn't finished
+            // within the threshold, so quick markdown writes don't flash a
+            // dialog the user can't read.
+            let progressThreshold: Duration = .seconds(2.5)
+            let displayTask = Task { @MainActor in
+                do {
+                    try await Task.sleep(for: progressThreshold)
+                } catch {
+                    return  // cancelled before the threshold elapsed
+                }
+                ThemedAlertCenter.shared.present(
+                    ThemedAlertRequest(
+                        id: progressId,
+                        title: progressTitle(format),
+                        message: "Working on \"\(full.title)\". This may take a moment for larger chats.",
+                        accessory: AnyView(ExportProgressIndicator()),
+                        buttons: [.cancel("Hide")],
+                        onDismiss: {
+                            ThemedAlertCenter.shared.dismiss(scope: scope, id: progressId)
+                        }
+                    ),
+                    scope: scope
+                )
+            }
+
             let result: Result<Void, Error>
             do {
                 switch format {

@@ -585,7 +585,8 @@ private struct SandboxPluginsTabContent: View {
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        if panel.runModal() == .OK, let url = panel.url {
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
             do {
                 let plugin = try pluginLibrary.importFromFile(url)
                 ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
@@ -608,7 +609,8 @@ private struct SandboxPluginsTabContent: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "\(plugin.id).json"
-        if panel.runModal() == .OK, let url = panel.url {
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
             try? data.write(to: url, options: .atomic)
         }
     }

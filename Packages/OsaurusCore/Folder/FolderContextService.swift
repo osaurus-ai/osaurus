@@ -56,7 +56,7 @@ public final class FolderContextService: ObservableObject {
         panel.message = L("Choose a folder for the AI to work with")
         panel.prompt = L("Select")
 
-        guard panel.runModal() == .OK, let url = panel.url else {
+        guard await panel.beginModal() == .OK, let url = panel.url else {
             return nil
         }
 

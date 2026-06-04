@@ -2680,7 +2680,8 @@ extension FloatingInputCard {
             ? "Select files to attach (\(mediaCapabilities.summary) supported)"
             : "Select files to attach"
 
-        if panel.runModal() == .OK {
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK else { return }
             for url in panel.urls {
                 attachIfAllowed(url: url)
             }
