@@ -2148,7 +2148,8 @@ private struct TranscriptionTestRow: View {
         panel.message = L("Select an audio file to transcribe")
         panel.prompt = L("Select")
 
-        if panel.runModal() == .OK, let url = panel.url {
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
             loadFile(from: url)
         }
     }

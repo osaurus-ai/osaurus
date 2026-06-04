@@ -168,11 +168,13 @@ final class DirectoryPickerService: ObservableObject {
         panel.title = L("Choose Models Directory")
         panel.message = L("Select a directory where MLX models will be stored")
 
-        guard panel.runModal() == .OK, let url = panel.url else {
-            return
-        }
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else {
+                return
+            }
 
-        saveDirectory(url)
+            saveDirectory(url)
+        }
     }
 
     /// Save directory selection from SwiftUI file picker

@@ -401,33 +401,29 @@ public struct StorageSettingsView: View {
                     "Pick a folder to write the plaintext backup to. We'll re-prompt for rotation after the backup completes."
                 )
         }
-        guard panel.runModal() == .OK, let dest = panel.url else { return }
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let dest = panel.url else { return }
 
-        let backupDir = dest.appendingPathComponent("osaurus-plaintext-backup", isDirectory: true)
-        isWorking = true
-        errorMessage = nil
-        Task {
+            let backupDir = dest.appendingPathComponent("osaurus-plaintext-backup", isDirectory: true)
+            isWorking = true
+            errorMessage = nil
             do {
                 let summary = try await StorageExportService.shared.exportPlaintextBackup(to: backupDir)
-                await MainActor.run {
-                    self.isWorking = false
-                    self.hasExportedBackupThisSession = true
-                    switch reason {
-                    case .userInitiated:
-                        self.lastSummary =
-                            "Wrote \(summary.databasesExported) databases, \(summary.jsonFilesDecrypted) config files, and \(summary.blobsDecrypted) attachments to \(summary.destination.lastPathComponent)."
-                        NSWorkspace.shared.activateFileViewerSelecting([backupDir])
-                    case .beforeRotate:
-                        self.lastSummary =
-                            "Backup written to \(summary.destination.lastPathComponent). You can now rotate the key safely."
-                        self.showRotateConfirm = true
-                    }
+                self.isWorking = false
+                self.hasExportedBackupThisSession = true
+                switch reason {
+                case .userInitiated:
+                    self.lastSummary =
+                        "Wrote \(summary.databasesExported) databases, \(summary.jsonFilesDecrypted) config files, and \(summary.blobsDecrypted) attachments to \(summary.destination.lastPathComponent)."
+                    NSWorkspace.shared.activateFileViewerSelecting([backupDir])
+                case .beforeRotate:
+                    self.lastSummary =
+                        "Backup written to \(summary.destination.lastPathComponent). You can now rotate the key safely."
+                    self.showRotateConfirm = true
                 }
             } catch {
-                await MainActor.run {
-                    self.isWorking = false
-                    self.errorMessage = error.localizedDescription
-                }
+                self.isWorking = false
+                self.errorMessage = error.localizedDescription
             }
         }
     }
