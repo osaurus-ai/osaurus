@@ -98,7 +98,7 @@ struct osaurusTests {
     }
 
     // NOTE: The legacy `Router`-based endpoint tests were relocated to
-    // handler-level integration tests in `RouterEndpointMigrationTests.swift`
+    // handler-level integration tests in `HTTPHandlerEndpointTests.swift`
     // when the dead `Router.swift` reference dispatcher was removed. The
     // production HTTP path is owned entirely by `HTTPHandler`.
 

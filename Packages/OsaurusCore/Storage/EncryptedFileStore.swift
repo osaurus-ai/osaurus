@@ -103,14 +103,6 @@ public enum EncryptedFileStore {
         }
     }
 
-    /// Returns true when `data` looks like an EncryptedFileStore envelope
-    /// (correct magic + sane length). Used by the migrator to skip
-    /// already-encrypted files.
-    public static func looksLikeEnvelope(_ data: Data) -> Bool {
-        guard data.count >= 1 + 12 + 16 else { return false }
-        return data.first == version
-    }
-
     /// Returns true when `url` already points at an encrypted artifact
     /// (sniffs the first byte; doesn't validate the tag).
     public static func isEncryptedFile(_ url: URL) -> Bool {
@@ -153,31 +145,5 @@ public enum EncryptedFileStore {
     public static func plaintextURL(for encryptedURL: URL) -> URL {
         guard encryptedURL.pathExtension == "osec" else { return encryptedURL }
         return encryptedURL.deletingPathExtension()
-    }
-}
-
-// MARK: - Convenience: load preferring encrypted, fall back to plaintext
-
-extension EncryptedFileStore {
-    /// Try the `.osec` twin first; on failure, fall back to the
-    /// plaintext file (used during migration when both may briefly
-    /// coexist). Returns `nil` when neither is readable.
-    public static func readWithLegacyFallback(plaintextURL: URL, key: SymmetricKey? = nil) -> Data? {
-        let enc = encryptedURL(for: plaintextURL)
-        if let data = try? read(enc, key: key) { return data }
-        return try? Data(contentsOf: plaintextURL)
-    }
-
-    /// Try decoding from `.osec` first, then the plaintext file. Returns
-    /// `nil` if neither is decodable as `T`.
-    public static func readJSONWithLegacyFallback<T: Decodable>(
-        _ plaintextURL: URL,
-        as type: T.Type,
-        key: SymmetricKey? = nil
-    ) -> T? {
-        let enc = encryptedURL(for: plaintextURL)
-        if let value = try? readJSON(enc, as: type, key: key) { return value }
-        guard let raw = try? Data(contentsOf: plaintextURL) else { return nil }
-        return try? JSONDecoder().decode(type, from: raw)
     }
 }

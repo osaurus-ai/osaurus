@@ -57,39 +57,13 @@ public final class RemoteProviderManager: ObservableObject {
     /// Provider IDs created from Bonjour discovery — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
 
-    private static let openaiNativeMigratedKey = "remoteProvider.openaiNativeMigrated"
-
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
-        migrateOpenAIProvidersToNativeIfNeeded()
 
         // Initialize states for all providers
         for provider in configuration.providers {
             providerStates[provider.id] = RemoteProviderState(providerId: provider.id)
         }
-    }
-
-    /// One-time migration: upgrade api.openai.com providers from .openaiLegacy (/chat/completions)
-    /// to .openai (/responses API), introduced when the two types were split.
-    private func migrateOpenAIProvidersToNativeIfNeeded() {
-        guard !UserDefaults.standard.bool(forKey: Self.openaiNativeMigratedKey) else { return }
-
-        var didChange = false
-        for i in configuration.providers.indices {
-            let host = configuration.providers[i].host.lowercased()
-            let shouldMigrate =
-                configuration.providers[i].providerType == .openaiLegacy
-                && host.contains("openai.com")
-            if shouldMigrate {
-                configuration.providers[i].providerType = .openResponses
-                didChange = true
-            }
-        }
-
-        if didChange {
-            RemoteProviderConfigurationStore.save(configuration)
-        }
-        UserDefaults.standard.set(true, forKey: Self.openaiNativeMigratedKey)
     }
 
     // MARK: - Provider Management

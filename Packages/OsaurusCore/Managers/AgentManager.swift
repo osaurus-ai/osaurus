@@ -93,7 +93,6 @@ public final class AgentManager: ObservableObject {
 
     private init() {
         refresh()
-        migrateAgentAddressesIfNeeded()
 
         // Load saved active agent
         if let savedId = loadActiveAgentId() {
@@ -508,46 +507,14 @@ public final class AgentManager: ObservableObject {
     // MARK: - Active Agent Persistence
 
     private static let activeAgentKey = "activeAgentId"
-    private static let agentAddressesMigratedKey = IdentityDefaultsKey.agentAddressesMigrated
 
     private func loadActiveAgentId() -> UUID? {
-        migrateActiveAgentFileIfNeeded()
         guard let string = UserDefaults.standard.string(forKey: Self.activeAgentKey) else { return nil }
         return UUID(uuidString: string)
     }
 
     private func saveActiveAgentId(_ id: UUID) {
         UserDefaults.standard.set(id.uuidString, forKey: Self.activeAgentKey)
-    }
-
-    /// One-time migration marker for pre-identity installs. Address assignment
-    /// requires the master key and can prompt for Keychain/biometric access, so
-    /// launch must not run it automatically. Explicit UI paths still call
-    /// `assignAddress(to:)` when the user chooses an identity action.
-    private func migrateAgentAddressesIfNeeded() {
-        guard !UserDefaults.standard.bool(forKey: Self.agentAddressesMigratedKey) else { return }
-        UserDefaults.standard.set(true, forKey: Self.agentAddressesMigratedKey)
-    }
-
-    /// One-time migration: read the legacy active.txt file into UserDefaults, then delete it.
-    private func migrateActiveAgentFileIfNeeded() {
-        guard UserDefaults.standard.string(forKey: Self.activeAgentKey) == nil else { return }
-
-        let legacyFiles = [
-            OsaurusPaths.agents().appendingPathComponent("active.txt"),
-            OsaurusPaths.root().appendingPathComponent("ActivePersonaId.txt"),
-        ]
-        let fm = FileManager.default
-        for file in legacyFiles {
-            guard fm.fileExists(atPath: file.path),
-                let data = try? Data(contentsOf: file),
-                let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                let uuid = UUID(uuidString: str)
-            else { continue }
-            UserDefaults.standard.set(uuid.uuidString, forKey: Self.activeAgentKey)
-            try? fm.removeItem(at: file)
-            return
-        }
     }
 }
 

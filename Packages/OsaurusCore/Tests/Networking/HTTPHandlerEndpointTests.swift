@@ -1,5 +1,5 @@
 //
-//  RouterEndpointMigrationTests.swift
+//  HTTPHandlerEndpointTests.swift
 //  OsaurusCoreTests
 //
 //  Handler-level coverage relocated from the (now-deleted) `Router.swift`
@@ -19,7 +19,7 @@ import Testing
 
 @testable import OsaurusCore
 
-struct RouterEndpointMigrationTests {
+struct HTTPHandlerEndpointTests {
 
     @Test func health_endpoint_returns_healthy_json() async throws {
         let server = try await startServer()
