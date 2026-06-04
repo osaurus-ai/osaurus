@@ -4,8 +4,7 @@
 //
 //  Enumerates every at-rest SQLCipher database under `~/.osaurus/`:
 //  the core databases, one per installed plugin, and one per agent
-//  that opted in to the Agent DB feature. This used to live on the
-//  (now-removed) storage migrator; it's a standalone catalog now
+//  that opted in to the Agent DB feature. It's a standalone catalog
 //  because key rotation (`StorageExportService.rotateStorageKey`)
 //  and plaintext export (`StorageExportService.exportPlaintextBackup`)
 //  both need the same discovery logic.

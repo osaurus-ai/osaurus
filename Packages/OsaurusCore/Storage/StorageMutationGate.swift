@@ -2,10 +2,9 @@
 //  StorageMutationGate.swift
 //  osaurus
 //
-//  Slim readiness gate for at-rest storage. There's no at-rest
-//  migration anymore, so the only thing the gate guards is key
-//  rotation: `StorageExportService.rotateStorageKey` calls
-//  `beginMutating()` before it quiesces + rekeys every database and
+//  Slim readiness gate for at-rest storage. The only thing the gate
+//  guards is key rotation: `StorageExportService.rotateStorageKey`
+//  calls `beginMutating()` before it quiesces + rekeys every database and
 //  `endMutating()` after. While `isMutating` is true, any
 //  `*Database.open()` that hits `blockingAwaitNotMutating()` parks so
 //  it can't open a half-rekeyed file with the wrong key.

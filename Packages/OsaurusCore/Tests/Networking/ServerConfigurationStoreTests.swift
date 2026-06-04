@@ -24,7 +24,6 @@ struct ServerConfigurationStoreTests {
         #expect(decoded.numberOfThreads == defaults.numberOfThreads)
         #expect(decoded.backlog == defaults.backlog)
         #expect(decoded.genTopP == defaults.genTopP)
-        #expect(decoded.genMaxKVSize == nil)
         #expect(decoded.globalProxyURL == nil)
         #expect(decoded.modelIdleResidencyPolicy == defaults.modelIdleResidencyPolicy)
     }
@@ -47,9 +46,6 @@ struct ServerConfigurationStoreTests {
         config.port = 5555
         config.exposeToNetwork = true
         config.genTopP = 0.7
-        // NOTE: `genMaxKVSize` is deliberately not set here. It is a legacy
-        // decode-only field that is no longer encoded, so it can't round-trip
-        // through save/load and would break the `loaded == config` assertion.
         config.globalProxyURL = "http://proxy.example.com:8080"
 
         ServerConfigurationStore.save(config)
@@ -57,23 +53,6 @@ struct ServerConfigurationStoreTests {
 
         #expect(loaded != nil)
         #expect(loaded == config)
-    }
-
-    @Test @MainActor func genMaxKVSize_isNotPersisted_butStillDecodes() async throws {
-        // Encoding a config with a set `genMaxKVSize` must drop it (decode-only
-        // legacy field), while an existing file that still carries the key
-        // decodes fine for back-compat.
-        var config = ServerConfiguration.default
-        config.genMaxKVSize = 16384
-        let encoded = try JSONEncoder().encode(config)
-        let obj = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-        #expect(obj?["genMaxKVSize"] == nil)
-
-        let legacyJSON = """
-            { "port": 1337, "genMaxKVSize": 8192 }
-            """.data(using: .utf8)!
-        let decoded = try JSONDecoder().decode(ServerConfiguration.self, from: legacyJSON)
-        #expect(decoded.genMaxKVSize == 8192)
     }
 
     /// Decoding pre-migration JSON files that contained now-removed cache*
@@ -92,7 +71,8 @@ struct ServerConfigurationStoreTests {
                 "genKVGroupSize": 64,
                 "genQuantizedKVStart": 512,
                 "genPrefillStepSize": 1024,
-                "genTurboQuant": true
+                "genTurboQuant": true,
+                "genMaxKVSize": 8192
             }
             """
         let decoded = try JSONDecoder().decode(

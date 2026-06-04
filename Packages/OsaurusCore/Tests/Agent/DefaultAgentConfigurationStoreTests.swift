@@ -2,19 +2,13 @@
 //  DefaultAgentConfigurationStoreTests.swift
 //  OsaurusCoreTests
 //
-//  Validates the Phase-B store that splits the built-in Default
-//  agent's settings out of `ChatConfiguration` into its own
-//  `~/.osaurus/config/default-agent.json` file:
+//  Validates the store that holds the built-in Default agent's
+//  settings in its own `~/.osaurus/config/default-agent.json` file:
 //
 //   * round-trip — `save(_:)` followed by `load()` returns the same
 //     value with the cache invalidated, so the next live read sees
 //     the new on-disk state.
-//   * one-shot migration — on first load with no `default-agent.json`
-//     present, the relevant fields are copied off `ChatConfiguration`
-//     so the user's existing persona / model / autonomous-exec
-//     selection survives the split. `migrateFromChatConfiguration`
-//     is invoked directly to keep this test source-only and avoid
-//     touching the global `ChatConfigurationStore` cache.
+//   * Codable defaults — missing fields fall back to clean defaults.
 //
 
 import Foundation
@@ -71,58 +65,6 @@ struct DefaultAgentConfigurationStoreTests {
                 #expect(reloaded == configured)
             }
         }
-    }
-
-    // MARK: - Migration
-
-    @Test
-    @MainActor
-    func migration_copiesPhaseAFieldsFromChatConfiguration() {
-        // Use the synchronous helper directly to keep this test off
-        // the live `ChatConfigurationStore` (which would write to
-        // `chat.json` in the real Osaurus config directory).
-        var chat = ChatConfiguration.default
-        chat.systemPrompt = "Migrated persona"
-        chat.defaultModel = "mlx-community/Phi-3-mini"
-        chat.temperature = 0.7
-        chat.maxTokens = 2048
-        chat.disableTools = true
-        chat.defaultAutonomousExec = AutonomousExecConfig(enabled: true)
-        chat.defaultToolSelectionMode = .manual
-        chat.defaultManualToolNames = ["osaurus_describe", "osaurus_list"]
-        chat.defaultManualSkillNames = ["coder"]
-
-        let migrated = DefaultAgentConfigurationStore.migrateFromChatConfiguration(chat)
-
-        #expect(migrated.systemPrompt == "Migrated persona")
-        #expect(migrated.defaultModel == "mlx-community/Phi-3-mini")
-        #expect(migrated.temperature == 0.7)
-        #expect(migrated.maxTokens == 2048)
-        #expect(migrated.disableTools == true)
-        #expect(migrated.autonomousExec?.enabled == true)
-        #expect(migrated.toolSelectionMode == .manual)
-        #expect(migrated.manualToolNames == ["osaurus_describe", "osaurus_list"])
-        #expect(migrated.manualSkillNames == ["coder"])
-    }
-
-    @Test
-    @MainActor
-    func migration_handlesEmptyChatConfiguration() {
-        let chat = ChatConfiguration.default
-        let migrated = DefaultAgentConfigurationStore.migrateFromChatConfiguration(chat)
-
-        // A clean install must yield a clean default-agent config —
-        // no garbage values, no implicit prompts. `disableTools`
-        // tracks the chat-side default which is currently `false`.
-        #expect(migrated.systemPrompt == chat.systemPrompt)
-        #expect(migrated.defaultModel == chat.defaultModel)
-        #expect(migrated.temperature == chat.temperature)
-        #expect(migrated.maxTokens == chat.maxTokens)
-        #expect(migrated.disableTools == chat.disableTools)
-        #expect(migrated.autonomousExec == nil)
-        #expect(migrated.toolSelectionMode == nil)
-        #expect(migrated.manualToolNames == nil)
-        #expect(migrated.manualSkillNames == nil)
     }
 
     // MARK: - Codable defaults

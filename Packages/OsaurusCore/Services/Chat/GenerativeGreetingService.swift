@@ -258,7 +258,8 @@ public actor GenerativeGreetingService {
         expectedActions: Int
     ) -> Bool {
         if greeting.actions.count < expectedActions { return true }
-        let fields = [greeting.greeting, greeting.subtitle]
+        let fields =
+            [greeting.greeting, greeting.subtitle]
             + greeting.actions.flatMap { [$0.text, $0.prompt] }
         if fields.contains(where: containsCorruptedGreetingText) { return true }
         let opener = greeting.greeting

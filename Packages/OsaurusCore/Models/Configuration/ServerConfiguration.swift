@@ -49,17 +49,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Default top-p sampling for generation (can be overridden per request)
     public var genTopP: Float
 
-    /// Legacy: maximum KV cache size in tokens.
-    ///
-    /// No longer applied at runtime — vmlx-swift's `CacheCoordinator` owns
-    /// KV cache sizing per model (sliding-window vs global vs SSM layers each
-    /// have their own per-layer cache geometry). Forcing a global rotating
-    /// window from osaurus historically caused broadcast crashes on
-    /// sliding-window models like Gemma-4. The field is decoded for backward
-    /// compatibility with existing config files but the Settings UI no longer
-    /// exposes it; new configs should leave it `nil`.
-    public var genMaxKVSize: Int?
-
     // KV cache quantization (kvBits, kvGroupSize, quantizedKVStart, turboQuant)
     // and prefill step sizing are owned by the vmlx-swift package.
 
@@ -95,7 +84,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case numberOfThreads
         case backlog
         case genTopP
-        case genMaxKVSize
         case allowedOrigins
         case globalProxyURL
         case modelEvictionPolicy
@@ -120,7 +108,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Int.self, forKey: .numberOfThreads) ?? defaults.numberOfThreads
         self.backlog = try container.decodeIfPresent(Int32.self, forKey: .backlog) ?? defaults.backlog
         self.genTopP = try container.decodeIfPresent(Float.self, forKey: .genTopP) ?? defaults.genTopP
-        self.genMaxKVSize = try container.decodeIfPresent(Int.self, forKey: .genMaxKVSize)
         self.allowedOrigins =
             try container.decodeIfPresent([String].self, forKey: .allowedOrigins)
             ?? defaults.allowedOrigins
@@ -139,11 +126,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             ?? defaults.maxPairingBodyBytes
     }
 
-    /// Custom encoder so the legacy, no-longer-applied `genMaxKVSize` is NOT
-    /// written to new config files. It remains in `CodingKeys` + `init(from:)`
-    /// for backward-compatible decoding of existing files, but persisting it
-    /// would keep resurrecting a dead field. Every other property is encoded
-    /// exactly as the synthesized conformance would have.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(port, forKey: .port)
@@ -154,7 +136,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         try container.encode(numberOfThreads, forKey: .numberOfThreads)
         try container.encode(backlog, forKey: .backlog)
         try container.encode(genTopP, forKey: .genTopP)
-        // genMaxKVSize intentionally NOT encoded — legacy decode-only field.
         try container.encode(allowedOrigins, forKey: .allowedOrigins)
         try container.encodeIfPresent(globalProxyURL, forKey: .globalProxyURL)
         try container.encode(modelEvictionPolicy, forKey: .modelEvictionPolicy)
@@ -172,7 +153,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         numberOfThreads: Int,
         backlog: Int32,
         genTopP: Float,
-        genMaxKVSize: Int?,
         allowedOrigins: [String] = [],
         globalProxyURL: String? = nil,
         modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel,
@@ -188,7 +168,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.numberOfThreads = numberOfThreads
         self.backlog = backlog
         self.genTopP = genTopP
-        self.genMaxKVSize = genMaxKVSize
         self.allowedOrigins = allowedOrigins
         self.globalProxyURL = globalProxyURL
         self.modelEvictionPolicy = modelEvictionPolicy
@@ -208,7 +187,6 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             numberOfThreads: ProcessInfo.processInfo.activeProcessorCount,
             backlog: 256,
             genTopP: 1.0,
-            genMaxKVSize: nil,
             allowedOrigins: [],
             globalProxyURL: nil,
             modelEvictionPolicy: .strictSingleModel,

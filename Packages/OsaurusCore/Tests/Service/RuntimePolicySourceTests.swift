@@ -230,18 +230,6 @@ struct RuntimePolicySourceTests {
         #expect(server.contains("apiKeyValidatorProvider: { validatorSnapshot.value() }"))
         #expect(!server.contains("let validator = Self.buildValidator"))
 
-        let agents = try Self.source("Managers/AgentManager.swift")
-        let migrationStart = try #require(agents.range(of: "private func migrateAgentAddressesIfNeeded()"))
-        let migrationEnd = try #require(
-            agents.range(
-                of: "    }\n\n    /// One-time migration: read the legacy active.txt file",
-                range: migrationStart.upperBound ..< agents.endIndex
-            )
-        )
-        let migrationBody = String(agents[migrationStart.lowerBound ..< migrationEnd.upperBound])
-        #expect(!migrationBody.contains("assignAddress(to: agent)"))
-        #expect(!migrationBody.contains("MasterKey.getPrivateKey"))
-
         let managementBadges = try Self.source("Managers/ManagementBadgeStore.swift")
         #expect(!managementBadges.contains("MasterKey.exists()"))
         #expect(managementBadges.contains("startup badges must not trigger"))

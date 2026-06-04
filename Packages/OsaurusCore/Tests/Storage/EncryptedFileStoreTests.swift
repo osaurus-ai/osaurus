@@ -110,13 +110,4 @@ struct EncryptedFileStoreTests {
             _ = try EncryptedFileStore.read(url, key: makeKey())
         }
     }
-
-    @Test
-    func legacyFallbackReadsPlaintextWhenEncryptedMissing() throws {
-        let url = tempFile("config.json")
-        let plaintext = Data("{\"v\":1}".utf8)
-        try plaintext.write(to: url)
-        let read = EncryptedFileStore.readWithLegacyFallback(plaintextURL: url, key: makeKey())
-        #expect(read == plaintext)
-    }
 }
