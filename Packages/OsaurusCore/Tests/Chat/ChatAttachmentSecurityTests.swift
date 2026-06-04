@@ -115,6 +115,23 @@ struct ChatAttachmentSecurityTests {
         #expect(forwarded.imageUrls[0].hasPrefix("data:image/png;base64,"))
     }
 
+    @Test func buildUserChatMessage_hydratesSpilledImagesWhenSupported() throws {
+        let imageData = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A])
+        let hash = try AttachmentBlobStore.write(imageData)
+        let imageRef = Attachment(kind: .imageRef(hash: hash, byteCount: imageData.count))
+
+        let message = ChatSession.buildUserChatMessage(
+            content: "look",
+            attachments: [imageRef],
+            supportsImages: true,
+            supportsAudio: false,
+            supportsVideo: false
+        )
+
+        #expect(message.imageUrls.count == 1)
+        #expect(message.imageDataFromParts == [imageData])
+    }
+
     @Test func buildUserChatMessage_alignsLocalLiveAudioSamplesWithAudioInputs() {
         let droppedAudio = Attachment.audio(Data([0x01]), format: "wav", filename: "dropped.wav")
         let liveAudio = Attachment.audio(Data([0x02, 0x03]), format: "wav", filename: "voice.wav")

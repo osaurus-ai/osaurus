@@ -191,6 +191,9 @@ struct ModelMediaCapabilitiesMCDCTests {
     func d6_gemmaVLM() {
         #expect(ModelMediaCapabilities.from(modelId: "google/gemma-3-27b-it") == .imageOnly)
         #expect(ModelMediaCapabilities.from(modelId: "OsaurusAI/Gemma-4-it-26B-A4B") == .imageOnly)
+        #expect(ModelMediaCapabilities.from(modelId: "gemma-4-12b-it-jang_4m") == .imageOnly)
+        #expect(ModelMediaCapabilities.from(modelId: "gemma-4-12b-it-mxfp4") == .imageOnly)
+        #expect(ModelMediaCapabilities.from(modelId: "gemma-4-12b-it-mxfp8") == .imageOnly)
     }
 
     // MARK: - D7: Mistral 3 / 3.5 (image only via Pixtral wrap)

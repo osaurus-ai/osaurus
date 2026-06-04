@@ -859,7 +859,7 @@ final class ChatSession: ObservableObject {
         supportsVideo: Bool
     ) -> ChatMessage {
         let messageText = buildUserMessageText(content: content, attachments: attachments)
-        let imageData = supportsImages ? attachments.images : []
+        let imageData = supportsImages ? attachments.loadImages() : []
         let audioPayloads =
             supportsAudio
             ? attachments.compactMap(audioPayload)
