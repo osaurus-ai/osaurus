@@ -772,6 +772,9 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: begin model=\(name, privacy: .public) id=\(id, privacy: .public) policy=\(policy.rawValue, privacy: .public)"
         )
+        // Timeline breadcrumb so a main-thread hang that surfaces with an unsymbolicated
+        // native stack still shows whether a model load was in flight. Model id only, no PII.
+        CrashReportingService.recordBreadcrumb(category: "model.load", message: "begin model=\(name)")
 
         while true {
             try Task.checkCancellation()
@@ -997,6 +1000,8 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: task value returned model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public)"
             )
+            CrashReportingService.recordBreadcrumb(
+                category: "model.load", message: "loaded model=\(name) elapsedMs=\(elapsedMs)")
             return try await finishLoadedContainer(
                 name: name,
                 holder: holder,
