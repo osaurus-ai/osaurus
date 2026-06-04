@@ -475,8 +475,11 @@ struct RuntimePolicySourceTests {
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
-        // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "454f16efe6b867bc33cb74d6d5cb554227949445"
+        // moduleAliases for that collision. The revision additionally adds
+        // descriptive guards for over-rank MLXArray subscripts (the getItemND
+        // slice loop and the ellipsis-expansion path) so those fatal traps fail
+        // with the offending shape instead of opaquely.
+        let expectedRuntimeHardenedRevision = "ecf092854dd0bf70c8dcd5ea71f97f031002daa1"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
