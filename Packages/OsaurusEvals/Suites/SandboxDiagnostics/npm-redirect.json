@@ -1,0 +1,17 @@
+{
+  "id": "sandbox_diagnostics.npm-redirect",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • bare `npm install` redirects to sandbox_install",
+  "query": "",
+  "notes": "A model ran `npm install express` directly in the agent home instead of sandbox_install (manager:\"npm\"). Bare npm in the home is exactly what produced the `Tracker idealTree already exists` failures (here exit 1). The self-heal hint must fire and point at sandbox_install so the isolated node workspace + recovery harness applies.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "npm install express lodash",
+      "exitCode": 1,
+      "stderr": "npm error code EACCES\nnpm error syscall mkdir\nnpm error path /home/agent/node_modules",
+      "expectHint": true,
+      "hintContains": "sandbox_install"
+    }
+  }
+}

@@ -192,7 +192,11 @@ public enum SystemPromptTemplates {
     /// NOT included here — they live as top-level sections gated on
     /// file-mutation tools being in the schema, so folder-mode agents
     /// doing real edits get the same discipline.
-    public static func sandbox(secretNames: [String] = [], hostReadCombined: Bool = false) -> String {
+    public static func sandbox(
+        secretNames: [String] = [],
+        installedPackages: SandboxPackageManifest.Installed = .init(),
+        hostReadCombined: Bool = false
+    ) -> String {
         var section = """
 
             \(sandboxSectionHeading)
@@ -205,9 +209,13 @@ public enum SystemPromptTemplates {
             \(sandboxRuntimeHints(hostReadCombined: hostReadCombined))
 
             """
-        // The runtime hints block ends with a single `\n`; the secrets
-        // block is its own logical subsection, so prepend a blank-line
-        // separator instead of having it run on as a sixth bullet.
+        // The runtime hints block ends with a single `\n`; each of these is
+        // its own logical subsection, so prepend a blank-line separator
+        // instead of having them run on as extra bullets.
+        let installed = installedPackagesPromptBlock(installedPackages)
+        if !installed.isEmpty {
+            section += "\n" + installed
+        }
         let secrets = secretsPromptBlock(secretNames)
         if !secrets.isEmpty {
             section += "\n" + secrets
@@ -270,10 +278,44 @@ public enum SystemPromptTemplates {
         let logReadHint = hostReadCombined ? sandboxReadFileHintCombined : sandboxReadFileHint
         return """
             Runtime hints:
-            - Install Python, Node, or system deps with `sandbox_pip_install`, `sandbox_npm_install`, or `sandbox_install`.
+            - Install Python, Node, or system deps with `sandbox_install` (`manager`: `pip` / `npm` / `apk`).
             - Use \(logReadHint) to inspect large logs.
             - The sandbox is disposable; experiment freely.
             - Your `SOUL.md` at `~/SOUL.md` records stable preferences across sessions. Edit it with `sandbox_write_file` when you observe a durable pattern; edits apply on the next session.
+            """
+    }
+
+    /// Per-manager cap on how many package names are listed before
+    /// collapsing into a `+N more` tail. Keeps the always-on prefix bounded
+    /// even for an agent that has installed dozens of packages.
+    static let installedPackagesPromptCap = 12
+
+    /// Compact, capped summary of what's already installed in the sandbox,
+    /// grouped by manager. Lives in the static prefix (KV-cache safe) and
+    /// reflects manifest state as of session start. Returns `""` when
+    /// nothing is recorded so the composer can append unconditionally.
+    static func installedPackagesPromptBlock(_ installed: SandboxPackageManifest.Installed) -> String {
+        guard !installed.isEmpty else { return "" }
+
+        func line(_ label: String, _ names: [String]) -> String? {
+            guard !names.isEmpty else { return nil }
+            let shown = names.prefix(installedPackagesPromptCap)
+            var joined = shown.joined(separator: ", ")
+            let overflow = names.count - shown.count
+            if overflow > 0 { joined += ", +\(overflow) more" }
+            return "- \(label): \(joined)"
+        }
+
+        let lines = [
+            line("System (apk)", installed.apk),
+            line("Python (pip)", installed.pip),
+            line("Node (npm)", installed.npm),
+        ].compactMap { $0 }
+
+        return """
+            Already installed (don't reinstall — call directly):
+            \(lines.joined(separator: "\n"))
+
             """
     }
 

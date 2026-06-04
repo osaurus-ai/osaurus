@@ -24,14 +24,16 @@ enum BuiltinSandboxTools {
     ///     in-place edit via `old_string`)
     ///   - exec: `sandbox_exec` (foreground OR background via flag),
     ///     `sandbox_process` (poll/wait/kill background jobs)
-    ///   - installs: `sandbox_install` / `sandbox_pip_install` /
-    ///     `sandbox_npm_install`
+    ///   - installs: `sandbox_install` (one tool; `manager` selects
+    ///     `apk` / `pip` / `npm`)
     ///
     /// Removed-by-design (use the consolidated alternative):
     ///   - `sandbox_list_directory` → `sandbox_search_files(target:"files")`
     ///   - `sandbox_find_files` → `sandbox_search_files(target:"files")`
     ///   - `sandbox_move` / `sandbox_delete` → `sandbox_exec("mv …" / "rm …")`
     ///   - `sandbox_exec_background` → `sandbox_exec(background:true)`
+    ///   - `sandbox_pip_install` / `sandbox_npm_install` →
+    ///     `sandbox_install(manager:"pip" / "npm")`
     ///   - `sandbox_run_script` / `sandbox_execute_code` →
     ///     `sandbox_write_file` the script then `sandbox_exec` to run it
     ///     (e.g. `python3 script.py`), or `sandbox_exec` with a heredoc
@@ -81,13 +83,8 @@ enum BuiltinSandboxTools {
             SandboxProcessTool(agentId: agentId, agentName: agentName, home: home),
             runtimeManaged: true
         )
-        registry.registerSandboxTool(SandboxInstallTool(agentName: agentName), runtimeManaged: true)
         registry.registerSandboxTool(
-            SandboxPipInstallTool(agentId: agentId, agentName: agentName, home: home),
-            runtimeManaged: true
-        )
-        registry.registerSandboxTool(
-            SandboxNpmInstallTool(agentId: agentId, agentName: agentName, home: home),
+            SandboxInstallTool(agentId: agentId, agentName: agentName, home: home),
             runtimeManaged: true
         )
 
@@ -614,6 +611,12 @@ public func shellCommandFailureHint(
     guard exitCode != 0 else { return nil }
     let loweredStderr = stderr.lowercased()
 
+    // Checked first: a failed bare package-manager install is a strong,
+    // unambiguous signal regardless of the stderr shape, and the redirect
+    // (use `sandbox_install`) is more valuable than any generic parse hint.
+    if let hint = installRedirectHint(command: command) {
+        return hint
+    }
     if let hint = inlineCodeHint(command: command, stderr: loweredStderr) {
         return hint
     }
@@ -680,6 +683,54 @@ private func unbalancedQuoteHint(stderr loweredStderr: String) -> String? {
         + "that need it). For code or data with awkward quoting, "
         + "`sandbox_write_file` avoids shell quoting entirely."
 }
+
+/// A bare package-manager install run directly through `sandbox_exec`
+/// (e.g. `apk add curl`, `pip install numpy`, `npm install express`) that
+/// failed. These skip the dedicated `sandbox_install` tool's index
+/// refresh, venv/workspace bootstrap, retry harness, and per-agent
+/// serialization — `apk` always fails unprivileged, and bare pip/npm are
+/// exactly what produced the historical venv/`idealTree` breakages. Redirect
+/// the model to `sandbox_install` with the matching `manager`.
+///
+/// Matched at a statement boundary (start, or after `&&` / `||` / `;` / `|`)
+/// so an install string buried in an argument doesn't false-fire, and only
+/// on failure (`shellCommandFailureHint` already gates on a non-zero exit)
+/// so a working install is never nagged.
+private func installRedirectHint(command: String) -> String? {
+    func matches(_ pattern: String) -> Bool {
+        guard
+            let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        else { return false }
+        return regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil
+    }
+
+    let manager: String
+    if matches(apkInstallPattern) {
+        manager = "apk"
+    } else if matches(pipInstallPattern) {
+        manager = "pip"
+    } else if matches(npmInstallPattern) {
+        manager = "npm"
+    } else {
+        return nil
+    }
+
+    return
+        "This is a bare `\(manager)` install run through `sandbox_exec`, which skips the "
+        + "index refresh / venv / workspace bootstrap, retry harness, and per-agent "
+        + "serialization (and `apk` needs root). Use `sandbox_install` with "
+        + "`manager: \"\(manager)\"` and a `packages` array instead — e.g. "
+        + "`{\"manager\": \"\(manager)\", \"packages\": [\"…\"]}`."
+}
+
+/// Statement-boundary prefix shared by the install detectors: start of
+/// string or immediately after a shell separator, with optional `sudo`.
+private let installStatementBoundary = #"(?:^|&&|\|\||;|\|)\s*(?:sudo\s+)?"#
+private let apkInstallPattern = installStatementBoundary + #"apk\s+add\b"#
+private let pipInstallPattern =
+    installStatementBoundary + #"(?:pip3?|python3?\s+-m\s+pip)\s+install\b"#
+private let npmInstallPattern =
+    installStatementBoundary + #"(?:npm\s+(?:install|i|add)|yarn\s+add|pnpm\s+(?:add|install))\b"#
 
 private let sandboxDefaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -956,16 +1007,20 @@ private func installResultEnvelope(
     result: ContainerExecResult,
     retried: Bool = false
 ) -> String {
-    let combined = truncateForModel(result.stdout + result.stderr, maxChars: 20_000)
     if result.succeeded {
+        // Drop the verbose installer log on success — it's pure noise in
+        // the model's context (resolved-dependency trees, progress bars).
+        // The `installed` list + a one-line summary is all the model needs;
+        // failures below still carry full output for debugging.
         var payload: [String: Any] = [
             "installed": packages,
             "exit_code": Int(result.exitCode),
-            "output": combined,
+            "summary": "Installed \(packages.count) package(s): \(packages.joined(separator: ", ")).",
         ]
         if retried { payload["retried"] = true }
         return ToolEnvelope.success(tool: tool, result: payload)
     }
+    let combined = truncateForModel(result.stdout + result.stderr, maxChars: 20_000)
     let stage = retried ? "after retry" : ""
     let header =
         stage.isEmpty
@@ -1033,10 +1088,12 @@ private func runInstallWithRecovery(
     packages: [String],
     attempt: @Sendable () async throws -> ContainerExecResult,
     isRecoverable: @Sendable (ContainerExecResult) -> Bool,
-    cleanup: @Sendable () async throws -> Void
+    cleanup: @Sendable () async throws -> Void,
+    onSuccess: (@Sendable ([String]) -> Void)? = nil
 ) async throws -> String {
     let first = try await attempt()
     if first.succeeded || !isRecoverable(first) {
+        if first.succeeded { onSuccess?(packages) }
         return installResultEnvelope(tool: tool, packages: packages, result: first, retried: false)
     }
     do {
@@ -1050,6 +1107,7 @@ private func runInstallWithRecovery(
         )
     }
     let second = try await attempt()
+    if second.succeeded { onSuccess?(packages) }
     return installResultEnvelope(tool: tool, packages: packages, result: second, retried: true)
 }
 
@@ -2353,28 +2411,48 @@ actor SandboxInstallLock {
 
 // MARK: - sandbox_install
 
+/// Single install entry point. One tool, one `manager` switch — replaces
+/// the former `sandbox_install` / `sandbox_pip_install` / `sandbox_npm_install`
+/// trio so the model has one obvious dependency tool instead of three
+/// near-identical ones to disambiguate. Each manager keeps its original
+/// command body, exec context (root for apk, agent for pip/npm), recovery
+/// signatures, and serialization key — the consolidation is purely at the
+/// dispatch layer.
 private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_install"
     let description =
-        "Install system packages via `apk` (runs as root) — available globally inside the container. "
-        + "**Use this instead of `sandbox_exec(\"apk add …\")`** so the auto-refresh + retry "
-        + "harness runs and concurrent installs don't collide on apk's lock. Example: "
-        + "`{\"packages\": [\"ffmpeg\"]}`. For Python or Node packages prefer "
-        + "`sandbox_pip_install` / `sandbox_npm_install`."
+        "Install packages into the sandbox. Pass `manager`: `apk` for system packages "
+        + "(runs as root, e.g. `ffmpeg`), `pip` for Python packages (into the agent venv at "
+        + "`~/.venv/`), or `npm` for Node packages (into a per-agent workspace). "
+        + "**Use this instead of `sandbox_exec(\"apk add …\" / \"pip install …\" / \"npm install …\")`** "
+        + "so the index refresh, venv/workspace bootstrap, retry harness, and per-agent "
+        + "serialization apply. Installed `python3`/CLI binaries land on your PATH — call them "
+        + "from any `sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
+    let agentId: String
     let agentName: String
+    let home: String
 
     var parameters: JSONValue? {
         .object([
             "type": .string("object"),
             "additionalProperties": .bool(false),
             "properties": .object([
+                "manager": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("apk"), .string("pip"), .string("npm")]),
+                    "description": .string(
+                        "Package manager: `apk` (system, root-wide), `pip` (Python venv), `npm` (Node workspace)."
+                    ),
+                ]),
                 "packages": .object([
                     "type": .string("array"),
                     "items": .object(["type": .string("string")]),
-                    "description": .string("Apk package names, e.g. `[\"ffmpeg\", \"imagemagick\"]`."),
-                ])
+                    "description": .string(
+                        "Package names, e.g. `[\"ffmpeg\"]` (apk), `[\"numpy\"]` (pip), `[\"express\"]` (npm)."
+                    ),
+                ]),
             ]),
-            "required": .array([.string("packages")]),
+            "required": .array([.string("manager"), .string("packages")]),
         ])
     }
 
@@ -2382,14 +2460,42 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
+        let managerReq = requireString(
+            args,
+            "manager",
+            expected: "one of `apk`, `pip`, `npm`",
+            tool: name
+        )
+        guard case .value(let managerRaw) = managerReq else { return managerReq.failureEnvelope ?? "" }
+
         let pkgsReq = requireStringArray(
             args,
             "packages",
-            expected: "non-empty array of apk package names",
+            expected: "non-empty array of package names",
             tool: name
         )
         guard case .value(let packages) = pkgsReq else { return pkgsReq.failureEnvelope ?? "" }
 
+        switch managerRaw.lowercased() {
+        case "apk":
+            return try await installApk(packages: packages)
+        case "pip":
+            return try await installPip(packages: packages)
+        case "npm":
+            return try await installNpm(packages: packages)
+        default:
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Unknown `manager` \"\(managerRaw)\". Use one of `apk`, `pip`, `npm`.",
+                tool: name,
+                retryable: false
+            )
+        }
+    }
+
+    // MARK: apk (system, root-wide)
+
+    private func installApk(packages: [String]) async throws -> String {
         let pkgList = packages.joined(separator: " ")
         // `apk update` first refreshes the package index — cheap when the
         // cache is fresh, and eliminates "no such package" errors caused
@@ -2399,6 +2505,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         let installCmd = "apk update --quiet || true; apk add --no-cache \(pkgList)"
 
         let toolName = self.name
+        let id = agentId
         // apk is global to the container — every agent's install hits
         // the same package database and apk's own lockfile. Serialize
         // through a single synthetic key so cross-agent calls don't
@@ -2428,54 +2535,21 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                     // Force-refresh the index — the most common apk recovery
                     // signal is a stale cache or transient lock.
                     _ = try await runAsRoot("apk update", timeout: 60)
+                },
+                onSuccess: { installed in
+                    SandboxPackageManifest.shared.record(
+                        agentId: id,
+                        manager: .apk,
+                        packages: installed
+                    )
                 }
             )
         }
     }
-}
 
-// MARK: - sandbox_pip_install
+    // MARK: pip (Python venv)
 
-private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_pip_install"
-    let description =
-        "Install Python packages via pip into the agent's venv at `~/.venv/`. **Use this instead "
-        + "of `sandbox_exec(\"pip install …\")`** so the venv bootstrap, retry harness, and "
-        + "per-agent serialization apply. Auto-creates the venv on first use. The venv's "
-        + "`python3` and installed scripts are on your PATH — call them from any `sandbox_exec` "
-        + "cwd. 240s timeout (covers cold-cache installs of large packages). Example: "
-        + "`{\"packages\": [\"numpy\", \"flask\"]}`."
-    let agentId: String
-    let agentName: String
-    let home: String
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "packages": .object([
-                    "type": .string("array"),
-                    "items": .object(["type": .string("string")]),
-                    "description": .string("Python package names, e.g. `[\"numpy\", \"flask\"]`."),
-                ])
-            ]),
-            "required": .array([.string("packages")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let pkgsReq = requireStringArray(
-            args,
-            "packages",
-            expected: "non-empty array of pip package names",
-            tool: name
-        )
-        guard case .value(let packages) = pkgsReq else { return pkgsReq.failureEnvelope ?? "" }
-
+    private func installPip(packages: [String]) async throws -> String {
         let venvPath = agentVenvPath(home: home)
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/python3",
@@ -2536,56 +2610,21 @@ private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
                         + " && '\(venvPath)/bin/pip' cache purge >/dev/null 2>&1"
                         + " || true"
                     _ = try await runAsAgent(cleanupCmd, timeout: 30)
+                },
+                onSuccess: { installed in
+                    SandboxPackageManifest.shared.record(
+                        agentId: id,
+                        manager: .pip,
+                        packages: installed
+                    )
                 }
             )
         }
     }
-}
 
-// MARK: - sandbox_npm_install
+    // MARK: npm (Node workspace)
 
-private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_npm_install"
-    let description =
-        "Install Node packages via `npm install` into a per-agent project workspace at "
-        + "`~/.osaurus/node_workspace/`. **Use this instead of `sandbox_exec(\"npm install …\")`** "
-        + "so the workdir bootstrap, recovery harness, and per-agent serialization apply — bare "
-        + "`npm install` in the agent home is what produced the original `Tracker idealTree "
-        + "already exists` failures. Bootstraps a `package.json` on first use; subsequent calls "
-        + "accumulate into the same workspace. Installed CLI binaries are on your PATH "
-        + "automatically — call them from any `sandbox_exec` cwd. 240s timeout. Example: "
-        + "`{\"packages\": [\"express\", \"lodash\"]}`."
-    let agentId: String
-    let agentName: String
-    let home: String
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "packages": .object([
-                    "type": .string("array"),
-                    "items": .object(["type": .string("string")]),
-                    "description": .string("npm package names, e.g. `[\"express\", \"lodash\"]`."),
-                ])
-            ]),
-            "required": .array([.string("packages")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let pkgsReq = requireStringArray(
-            args,
-            "packages",
-            expected: "non-empty array of npm package names",
-            tool: name
-        )
-        guard case .value(let packages) = pkgsReq else { return pkgsReq.failureEnvelope ?? "" }
-
+    private func installNpm(packages: [String]) async throws -> String {
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/node && test -x /usr/bin/npm",
             timeout: 10
@@ -2656,6 +2695,13 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
                         + " && rm -rf node_modules/.package-lock.json .package-lock.json"
                         + " && npm cache clean --force >/dev/null 2>&1 || true"
                     _ = try await runAsAgent(cleanupCmd, timeout: 60)
+                },
+                onSuccess: { installed in
+                    SandboxPackageManifest.shared.record(
+                        agentId: id,
+                        manager: .npm,
+                        packages: installed
+                    )
                 }
             )
         }

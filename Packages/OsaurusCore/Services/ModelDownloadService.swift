@@ -183,7 +183,9 @@ final class ModelDownloadService: ObservableObject {
         // Recompute whenever a download completes, a model is deleted, or the
         // models directory changes — all of which already post this.
         localModelsObserver = NotificationCenter.default.addObserver(
-            forName: .localModelsChanged, object: nil, queue: .main
+            forName: .localModelsChanged,
+            object: nil,
+            queue: .main
         ) { _ in
             Task { @MainActor in ModelDownloadService.shared.refreshTotalDownloadedSize() }
         }

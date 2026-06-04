@@ -1,0 +1,17 @@
+{
+  "id": "sandbox_diagnostics.apk-redirect",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • bare `apk add` redirects to sandbox_install",
+  "query": "",
+  "notes": "A model ran `apk add curl` directly in sandbox_exec. apk needs root, so the unprivileged agent shell fails to lock the package database (exit 1). The self-heal hint must fire and point at sandbox_install (manager:\"apk\") so the refresh + retry + cross-agent serialization harness applies instead of a bare bash install.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "apk add curl ffmpeg",
+      "exitCode": 1,
+      "stderr": "ERROR: Unable to lock database: Permission denied\nERROR: Failed to open apk database: Permission denied",
+      "expectHint": true,
+      "hintContains": "sandbox_install"
+    }
+  }
+}

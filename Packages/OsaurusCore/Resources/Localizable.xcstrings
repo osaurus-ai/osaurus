@@ -16440,6 +16440,7 @@
       }
     },
     "Installed npm packages in sandbox" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -16480,6 +16481,7 @@
       }
     },
     "Installed Python packages in sandbox" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -16528,6 +16530,7 @@
       }
     },
     "Installing npm packages in sandbox" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -16544,6 +16547,7 @@
       }
     },
     "Installing Python packages in sandbox" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

@@ -134,14 +134,6 @@ enum ToolDisplayName {
             L("Installing dependencies in sandbox"),
             L("Installed dependencies in sandbox")
         ),
-        "sandbox_npm_install": ToolLabel(
-            L("Installing npm packages in sandbox"),
-            L("Installed npm packages in sandbox")
-        ),
-        "sandbox_pip_install": ToolLabel(
-            L("Installing Python packages in sandbox"),
-            L("Installed Python packages in sandbox")
-        ),
         "sandbox_process": ToolLabel(L("Managing a process in sandbox"), L("Managed a process in sandbox")),
         "sandbox_plugin_register": ToolLabel(
             L("Registering a plugin in sandbox"),

@@ -1,0 +1,17 @@
+{
+  "id": "sandbox_diagnostics.pip-redirect",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • bare `pip install` redirects to sandbox_install",
+  "query": "",
+  "notes": "A model ran `pip install numpy` directly in sandbox_exec instead of sandbox_install (manager:\"pip\"). Bare pip skips the per-agent venv bootstrap + retry harness and routinely fails (here exit 1). The self-heal hint must fire and point at sandbox_install so the venv-scoped install path applies.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "pip install numpy flask",
+      "exitCode": 1,
+      "stderr": "ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied",
+      "expectHint": true,
+      "hintContains": "sandbox_install"
+    }
+  }
+}

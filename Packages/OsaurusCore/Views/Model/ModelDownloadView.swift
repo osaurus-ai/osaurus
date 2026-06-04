@@ -1305,7 +1305,6 @@ struct ModelDownloadView: View {
         }
     }
 
-
     private static func isOsaurusAI(_ model: MLXModel) -> Bool {
         model.id.lowercased().hasPrefix("osaurusai/")
     }
