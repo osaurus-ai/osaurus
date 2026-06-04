@@ -249,7 +249,13 @@ public final class TTSService: ObservableObject {
 
         let config = TTSConfigurationStore.load()
         let trimmedOverride = voiceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let voice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.voice)
+        let requestedVoice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.voice)
+        // Fall back to the default when the configured/overridden voice isn't a
+        // known PocketTTS voice. A stale or invalid value (e.g. a renamed voice)
+        // otherwise 404s fetching its voice prompt and playback dies silently.
+        let voice =
+            PocketTTSVoiceCatalog.availableVoices.contains(requestedVoice)
+            ? requestedVoice : TTSConfiguration.defaultVoice
         let temperature = Float(config.temperature)
 
         playbackTask = Task { [weak self] in
