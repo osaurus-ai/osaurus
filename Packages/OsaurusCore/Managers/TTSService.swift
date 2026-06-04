@@ -64,8 +64,14 @@ public final class TTSService: ObservableObject {
     private var playbackTask: Task<Void, Never>?
     private var initTask: Task<Void, Never>?
 
-    private let audioEngine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
+    // Lazy so the singleton can be touched at launch (e.g. `refreshModelState`)
+    // without paying for audio-stack construction on the main thread. Building
+    // `AVAudioPlayerNode` synchronously queries the AudioComponent registrar
+    // over XPC, which can stall launch for seconds under memory pressure. These
+    // are only realized on first playback via `configureEngineIfNeeded`, which
+    // is user-initiated and off the launch critical path.
+    private lazy var audioEngine = AVAudioEngine()
+    private lazy var playerNode = AVAudioPlayerNode()
     private let sourceFormat: AVAudioFormat = {
         AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
