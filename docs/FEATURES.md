@@ -647,7 +647,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 | Tool              | Category | Description                                                       |
 | ----------------- | -------- | ----------------------------------------------------------------- |
 | `file_read`       | Core     | Read a file (text ranges, `tail_lines`/`max_chars`, bounded XLSX sheet previews) **or** list a directory (with `max_depth`, project-aware ignore patterns) — the path decides. A directory returns a structured `kind: "listing"` with `entries[]` (each a ready-to-use `path`), not an ASCII tree |
-| `file_write`      | Core     | Create or overwrite                                               |
+| `file_write`      | Core     | Create or overwrite UTF-8 text files; refuses `.xlsx`-family workbook targets so structured workbook output goes through the XLSX/spreadsheet path |
 | `file_edit`       | Core     | Surgical exact-string replacement                                 |
 | `file_search`     | Core     | ripgrep-style content search, or `target="files"` filename-glob find |
 | `shell_run`       | Core     | Run a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, tests, git, installs. |

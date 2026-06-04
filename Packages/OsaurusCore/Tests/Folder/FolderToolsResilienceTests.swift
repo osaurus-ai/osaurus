@@ -250,6 +250,41 @@ struct FolderToolsResilienceTests {
         #expect(FileManager.default.fileExists(atPath: path))
     }
 
+    @Test func fileWrite_rejectsWorkbookPackagesWithoutTouchingExistingFile() async throws {
+        let root = tmpRoot()
+        let existing = root.appendingPathComponent("report.xlsx")
+        let original = Data([0x50, 0x4B, 0x03, 0x04, 0x00])
+        try original.write(to: existing)
+
+        let tool = FileWriteTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "report.xlsx", "content": "not a workbook"}"#
+        )
+
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureKind(result) == "rejected")
+        #expect(failureField(result) == "path")
+        #expect(result.contains("structured workbook"))
+        let after = try Data(contentsOf: existing)
+        #expect(after == original)
+    }
+
+    @Test func fileWrite_allowsCSVTextOutput() async throws {
+        let root = tmpRoot()
+        let tool = FileWriteTool(rootPath: root)
+
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "report.csv", "content": "month,total\nJan,1200\n"}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        let written = try String(
+            contentsOf: root.appendingPathComponent("report.csv"),
+            encoding: .utf8
+        )
+        #expect(written == "month,total\nJan,1200\n")
+    }
+
     @Test @MainActor func fileWrite_unknownKeyIsRejected() {
         // `additionalProperties: false` kicks in during preflight
         // validation; the model gets a structured envelope pointing at

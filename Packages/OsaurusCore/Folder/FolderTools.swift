@@ -1331,9 +1331,11 @@ struct FileReadTool: OsaurusTool {
 struct FileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
-        "Create a new file or overwrite an existing file with the provided content. **Use this "
-        + "instead of `echo` / `cat` heredoc in `shell_run`.** Parent directories will be created "
-        + "if they don't exist. You MUST provide the file contents in the `content` parameter."
+        "Create a new UTF-8 text file or overwrite an existing text file with the provided content. "
+        + "**Use this instead of `echo` / `cat` heredoc in `shell_run`.** Parent directories will "
+        + "be created if they don't exist. You MUST provide the file contents in the `content` "
+        + "parameter. Do not use this for `.xlsx` workbooks; use a spreadsheet/XLSX tool or write "
+        + "CSV text instead."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1356,6 +1358,9 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
 
     private let rootPath: URL
+    private static let structuredWorkbookExtensions: Set<String> = [
+        "xlsx", "xlsm", "xltx", "xltm", "xlsb", "xls",
+    ]
 
     init(rootPath: URL) {
         self.rootPath = rootPath
@@ -1388,6 +1393,13 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         }
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        if let rejected = Self.structuredWorkbookWriteRejection(
+            path: relativePath,
+            fileExtension: fileURL.pathExtension.lowercased(),
+            toolName: name
+        ) {
+            return rejected
+        }
 
         // Capture previous state for undo
         let existed = FileManager.default.fileExists(atPath: fileURL.path)
@@ -1422,6 +1434,26 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         return ToolEnvelope.success(
             tool: name,
             text: "\(action) \(relativePath) (\(lineCount) lines, \(content.count) characters)"
+        )
+    }
+
+    private static func structuredWorkbookWriteRejection(
+        path: String,
+        fileExtension ext: String,
+        toolName: String
+    ) -> String? {
+        guard structuredWorkbookExtensions.contains(ext) else { return nil }
+        return ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "Refused to write '\(path)' with file_write: .\(ext) is a structured workbook "
+                + "package, but file_write only writes UTF-8 text. Use a spreadsheet/XLSX "
+                + "tool for workbook output, or write CSV/TSV text instead.",
+            field: "path",
+            expected: "path for a UTF-8 text file; for .\(ext), use a workbook writer or CSV/TSV",
+            tool: toolName,
+            retryable: false,
+            metadata: ["extension": ext]
         )
     }
 }
