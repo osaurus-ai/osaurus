@@ -287,10 +287,22 @@ final class ModelManager: NSObject, ObservableObject {
     /// effective models directory. Called when the user changes the storage
     /// location so the UI reflects which models exist at the new path.
     func refreshDownloadStates() {
-        downloadService.syncStates(for: availableModels + suggestedModels)
-        let localModels = Self.discoverLocalModels()
-        mergeAvailable(with: localModels)
-        checkForDeprecatedModels()
+        let models = availableModels + suggestedModels
+        // Warm each model's on-disk cache and discover local models off the
+        // main thread, then apply published state on main. Both otherwise run a
+        // `contentsOfDirectory` scan on the main thread per refresh. The
+        // off-main step captures only Sendable values (no `self`) and returns
+        // its result, so nothing isolated crosses the task boundary.
+        Task { @MainActor [weak self] in
+            let localModels = await Task.detached(priority: .utility) { () -> [MLXModel] in
+                for model in models { _ = model.isDownloaded }
+                return ModelManager.discoverLocalModels()
+            }.value
+            guard let self else { return }
+            self.downloadService.syncStates(for: models)
+            self.mergeAvailable(with: localModels)
+            self.checkForDeprecatedModels()
+        }
     }
 
     /// Fetch MLX-compatible models from Hugging Face and merge into availableModels.

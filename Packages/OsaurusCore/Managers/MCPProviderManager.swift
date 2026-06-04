@@ -674,7 +674,14 @@ public final class MCPProviderManager: ObservableObject {
             let tokens = try await ensureFreshOAuthTokens(for: provider)
             headers["Authorization"] = "Bearer \(tokens.accessToken)"
         case .bearerToken:
-            if let token = provider.getToken(), !token.isEmpty {
+            // Reading the token from the Keychain blocks on a securityd XPC round
+            // trip plus decryption — done off the main actor so it can't hang the
+            // UI (this method is `@MainActor`).
+            let providerId = provider.id
+            let token = await Task.detached(priority: .userInitiated) {
+                MCPProviderKeychain.getToken(for: providerId)
+            }.value
+            if let token, !token.isEmpty {
                 headers["Authorization"] = "Bearer \(token)"
             }
         case .none:
@@ -697,7 +704,12 @@ public final class MCPProviderManager: ObservableObject {
 
     /// Refresh OAuth tokens proactively if they are at-or-near expiry.
     private func ensureFreshOAuthTokens(for provider: MCPProvider) async throws -> MCPOAuthTokens {
-        guard let tokens = MCPProviderKeychain.getOAuthTokens(for: provider.id) else {
+        // Off the main actor: the Keychain read blocks on securityd XPC + decrypt.
+        let providerId = provider.id
+        let stored = await Task.detached(priority: .userInitiated) {
+            MCPProviderKeychain.getOAuthTokens(for: providerId)
+        }.value
+        guard let tokens = stored else {
             throw MCPProviderError.connectionFailed("Sign in required")
         }
         guard tokens.isExpired else { return tokens }

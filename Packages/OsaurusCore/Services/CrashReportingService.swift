@@ -122,6 +122,34 @@ public final class CrashReportingService {
         }
     }
 
+    // MARK: - Runtime telemetry
+
+    /// Run `body` with Sentry's app-hang watchdog paused.
+    ///
+    /// Use for work that is *expected* to block the main thread for a while — e.g. a
+    /// synchronous accessibility/automation plugin call that drives another app and waits on
+    /// it — so a legitimately long operation isn't reported as a false-positive app hang.
+    /// Other main-thread hangs stay covered. A no-op (just runs `body`) when crash reporting
+    /// isn't running.
+    public func withAppHangTrackingPaused<T>(_ body: () throws -> T) rethrows -> T {
+        guard started else { return try body() }
+        SentrySDK.pauseAppHangTracking()
+        defer { SentrySDK.resumeAppHangTracking() }
+        return try body()
+    }
+
+    /// Record a breadcrumb on the active Sentry scope so the next captured event (e.g. an app
+    /// hang) shows what was happening. Pass identifiers only — never user content or PII.
+    ///
+    /// `static` and `nonisolated` so hot, off-main paths (such as plugin tool invocation) can
+    /// annotate without hopping to the main actor, which can deadlock when the main thread is
+    /// busy. A no-op when crash reporting isn't running (Sentry drops breadcrumbs with no SDK).
+    public nonisolated static func recordBreadcrumb(category: String, message: String) {
+        let crumb = Breadcrumb(level: .info, category: category)
+        crumb.message = message
+        SentrySDK.addBreadcrumb(crumb)
+    }
+
     // MARK: - DSN resolution
 
     /// Key precedence mirrors `TelemetryService.resolveAppKey()`:

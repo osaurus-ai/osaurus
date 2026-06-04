@@ -64,8 +64,14 @@ public final class TTSService: ObservableObject {
     private var playbackTask: Task<Void, Never>?
     private var initTask: Task<Void, Never>?
 
-    private let audioEngine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
+    // Lazy so the singleton can be touched at launch (e.g. `refreshModelState`)
+    // without paying for audio-stack construction on the main thread. Building
+    // `AVAudioPlayerNode` synchronously queries the AudioComponent registrar
+    // over XPC, which can stall launch for seconds under memory pressure. These
+    // are only realized on first playback via `configureEngineIfNeeded`, which
+    // is user-initiated and off the launch critical path.
+    private lazy var audioEngine = AVAudioEngine()
+    private lazy var playerNode = AVAudioPlayerNode()
     private let sourceFormat: AVAudioFormat = {
         AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -243,7 +249,13 @@ public final class TTSService: ObservableObject {
 
         let config = TTSConfigurationStore.load()
         let trimmedOverride = voiceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let voice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.voice)
+        let requestedVoice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.voice)
+        // Fall back to the default when the configured/overridden voice isn't a
+        // known PocketTTS voice. A stale or invalid value (e.g. a renamed voice)
+        // otherwise 404s fetching its voice prompt and playback dies silently.
+        let voice =
+            PocketTTSVoiceCatalog.availableVoices.contains(requestedVoice)
+            ? requestedVoice : TTSConfiguration.defaultVoice
         let temperature = Float(config.temperature)
 
         playbackTask = Task { [weak self] in

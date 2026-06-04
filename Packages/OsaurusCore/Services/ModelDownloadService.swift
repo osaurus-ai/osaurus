@@ -66,6 +66,14 @@ final class ModelDownloadService: ObservableObject {
     /// Last download failure surfaced to the UI.
     @Published var downloadAlert: DownloadAlertInfo?
 
+    /// Cached total on-disk size of downloaded models. Computed off the main
+    /// thread by `refreshTotalDownloadedSize` (a recursive filesystem walk) and
+    /// published here so the header can read it without blocking the UI.
+    @Published private(set) var totalDownloadedSizeBytes: Int64 = 0
+
+    /// Keeps the cached size fresh when models are added/removed.
+    private var localModelsObserver: NSObjectProtocol?
+
     /// Categorised failure info shown in the alert. The `title` describes
     /// the kind of failure, `message` is the human-readable cause, and
     /// `details` is a copyable diagnostic line users can paste into bug
@@ -168,6 +176,17 @@ final class ModelDownloadService: ObservableObject {
     private struct PausedSnapshot {
         let inFlightFilePath: String?
         let resumeData: Data?
+    }
+
+    init() {
+        refreshTotalDownloadedSize()
+        // Recompute whenever a download completes, a model is deleted, or the
+        // models directory changes — all of which already post this.
+        localModelsObserver = NotificationCenter.default.addObserver(
+            forName: .localModelsChanged, object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in ModelDownloadService.shared.refreshTotalDownloadedSize() }
+        }
     }
 
     // MARK: - Download Methods
@@ -636,18 +655,27 @@ final class ModelDownloadService: ObservableObject {
         activeDownloadTasks[modelId] != nil
     }
 
-    var totalDownloadedSize: Int64 {
-        let models = ModelManager.discoverLocalModels()
-        return
-            models
-            .filter { $0.isDownloaded }
-            .reduce(Int64(0)) { partial, model in
-                partial + (Self.directoryAllocatedSize(at: model.localDirectory) ?? 0)
-            }
-    }
+    var totalDownloadedSize: Int64 { totalDownloadedSizeBytes }
 
     var totalDownloadedSizeString: String {
-        ByteCountFormatter.string(fromByteCount: totalDownloadedSize, countStyle: .file)
+        ByteCountFormatter.string(fromByteCount: totalDownloadedSizeBytes, countStyle: .file)
+    }
+
+    /// Recompute the on-disk size of all downloaded models off the main thread,
+    /// then publish it. The walk (`discoverLocalModels` plus a recursive size
+    /// sum per model) is far too expensive to run synchronously in a SwiftUI
+    /// body, which is where the header reads `totalDownloadedSizeString`.
+    func refreshTotalDownloadedSize() {
+        Task { @MainActor [weak self] in
+            let bytes = await Task.detached(priority: .utility) { () -> Int64 in
+                ModelManager.discoverLocalModels()
+                    .filter { $0.isDownloaded }
+                    .reduce(Int64(0)) { partial, model in
+                        partial + (ModelDownloadService.directoryAllocatedSize(at: model.localDirectory) ?? 0)
+                    }
+            }.value
+            self?.totalDownloadedSizeBytes = bytes
+        }
     }
 
     // MARK: - State Management
@@ -924,7 +952,7 @@ final class ModelDownloadService: ObservableObject {
         }
     }
 
-    static func directoryAllocatedSize(at url: URL) -> Int64? {
+    nonisolated static func directoryAllocatedSize(at url: URL) -> Int64? {
         let fileManager = FileManager.default
         var total: Int64 = 0
         guard

@@ -937,6 +937,14 @@ struct MLXBatchAdapter {
             throw error
         }
 
+        // Timeline breadcrumb for diagnosing main-thread hangs that surface with an
+        // unsymbolicated native (MLX/Metal) stack: records what inference was in flight.
+        // Identifiers and counts only, never prompt content.
+        CrashReportingService.recordBreadcrumb(
+            category: "inference.generate",
+            message: "begin model=\(modelName) promptTokens=\(prepared.promptTokens.count) batch=\(maxBatchSize)"
+        )
+
         let engine = await Registry.shared.engine(
             for: modelName,
             container: container,
@@ -1018,6 +1026,10 @@ struct MLXBatchAdapter {
         // `prepareInput` while the previous request is still materializing
         // cache tensors on Metal.
         trace?.mark("batch_submit")
+        CrashReportingService.recordBreadcrumb(
+            category: "inference.generate",
+            message: "submit model=\(modelName) batch=\(maxBatchSize)"
+        )
         let upstream = await engine.generate(
             input: prepared.input,
             parameters: mlxParams

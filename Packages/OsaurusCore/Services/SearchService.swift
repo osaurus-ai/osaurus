@@ -26,6 +26,23 @@ struct SearchService {
 
     // MARK: - Search Matching
 
+    /// Query-side work (trim, tokenize, normalize, lowercase) hoisted out of
+    /// the per-target loop. Filtering many targets with the same query would
+    /// otherwise redo all of it once per target — the dominant cost when the
+    /// model catalog is large.
+    struct PreparedQuery {
+        let tokens: [String]
+        let normalized: String
+        let lowercased: String
+
+        init(_ query: String) {
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.tokens = SearchService.tokenize(trimmed)
+            self.normalized = SearchService.normalizeForSearch(trimmed)
+            self.lowercased = trimmed.lowercased()
+        }
+    }
+
     /// Returns true if query matches target via token matching, normalized
     /// substring, or (when `allowFuzzy`) sequential character matching.
     ///
@@ -33,21 +50,29 @@ struct SearchService {
     /// fields (name, id). Subsequence matching against prose-length strings
     /// like a description produces false positives
     static func matches(query: String, in target: String, allowFuzzy: Bool = true) -> Bool {
-        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return true }
+        matches(PreparedQuery(query), in: target, allowFuzzy: allowFuzzy)
+    }
 
-        if tokenizedMatch(query: query, in: target) {
-            return true
-        }
+    /// Prepared-query variant. A query with no alphanumeric tokens (empty or
+    /// punctuation-only) matches everything, mirroring the original early-out
+    /// in `matches`/`tokenizedMatch`.
+    static func matches(_ query: PreparedQuery, in target: String, allowFuzzy: Bool = true) -> Bool {
+        guard !query.tokens.isEmpty else { return true }
 
-        let normalizedQuery = normalizeForSearch(query)
+        let targetTokens = tokenize(target)
         let normalizedTarget = normalizeForSearch(target)
-        if normalizedTarget.contains(normalizedQuery) {
+
+        let tokenized = query.tokens.allSatisfy { queryToken in
+            targetTokens.contains { $0.contains(queryToken) } || normalizedTarget.contains(queryToken)
+        }
+        if tokenized { return true }
+
+        if normalizedTarget.contains(query.normalized) {
             return true
         }
 
         guard allowFuzzy else { return false }
-        return fuzzyMatch(query: query, in: target)
+        return fuzzyMatch(lowercasedQuery: query.lowercased, inLowercased: target.lowercased())
     }
 
     /// Returns true if all query tokens are found in target (order independent).
@@ -65,9 +90,12 @@ struct SearchService {
 
     /// Returns true if all query characters appear in target in order (subsequence match).
     static func fuzzyMatch(query: String, in target: String) -> Bool {
-        let query = query.lowercased()
-        let target = target.lowercased()
+        fuzzyMatch(lowercasedQuery: query.lowercased(), inLowercased: target.lowercased())
+    }
 
+    /// Subsequence match with both sides already lowercased, so the query side
+    /// can be lowercased once and reused across many targets.
+    static func fuzzyMatch(lowercasedQuery query: String, inLowercased target: String) -> Bool {
         var queryIndex = query.startIndex
         var targetIndex = target.startIndex
 
@@ -87,14 +115,16 @@ struct SearchService {
     /// Fuzzy subsequence matching is enabled only for the short identifier
     /// fields (name, id)
     static func filterModels(_ models: [MLXModel], with searchText: String) -> [MLXModel] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return models }
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return models }
 
+        // Prepare the query once, then reuse it for every model and field.
+        let query = PreparedQuery(trimmed)
         return models.filter { model in
-            matches(query: query, in: model.name)
-                || matches(query: query, in: model.id)
-                || matches(query: query, in: model.description, allowFuzzy: false)
-                || matches(query: query, in: model.downloadURL, allowFuzzy: false)
+            matches(query, in: model.name)
+                || matches(query, in: model.id)
+                || matches(query, in: model.description, allowFuzzy: false)
+                || matches(query, in: model.downloadURL, allowFuzzy: false)
         }
     }
 }
