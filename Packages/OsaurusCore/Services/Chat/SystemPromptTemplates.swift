@@ -66,7 +66,7 @@ public enum SystemPromptTemplates {
         - `todo(markdown)` — write or replace the user-visible task list. Use it when the request has 3+ obvious steps; skip for trivial work. Each call replaces the whole list, so to mark items done re-send the full list with the new boxes.
         - `complete(summary)` — call once at the very end (never alongside other tools) with WHAT you did + HOW you verified it. Vague placeholders ("done", "looks good") are rejected; partial work should be reported honestly.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
-        - `share_artifact(...)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd) — files in `/tmp` won't be findable. If unsure where you wrote it, verify with `sandbox_search_files(target="files", pattern="<name>")` first. For inline text/markdown, use `content`+`filename` mode and skip the file write entirely. **When using `sandbox_execute_code`, call `share_artifact` from the model layer AFTER the script returns — the helper module does not expose it because in-script calls would silently fail to render the artifact card.**
+        - `share_artifact(...)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd) — files in `/tmp` won't be findable. If unsure where you wrote it, verify with `sandbox_search_files(target="files", pattern="<name>")` first. For inline text/markdown, use `content`+`filename` mode and skip the file write entirely.
         """
 
     // MARK: - Grounding
@@ -245,8 +245,7 @@ public enum SystemPromptTemplates {
         - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`content` whole-file, or `old_string`+`new_string` to edit).
         - Search: `sandbox_search_files` with `target="content"` or `target="files"`.
         - Shell: `sandbox_exec` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them.
-        - Python: `sandbox_execute_code` (runs Python directly) with `osaurus_tools` helpers (`read_file`, `write_file`, `edit_file`, `search_files`, `terminal`) — the default for ANY Python.
-        - NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks. Use `sandbox_execute_code`, or `sandbox_write_file` the script then run the file.
+        - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
         - Run independent calls in parallel; chain dependent shell steps with `&&`.
         """
 
@@ -259,8 +258,7 @@ public enum SystemPromptTemplates {
         - Read files / list dirs / search: `file_read` (reads a file or lists a directory — the path decides), `file_search` (they reach both your workspace and `/workspace/...` sandbox paths — see `## Files`).
         - Sandbox writes: `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — your workspace is read-only).
         - Shell: `sandbox_exec` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them.
-        - Python: `sandbox_execute_code` (runs Python directly) with `osaurus_tools` helpers (`read_file`, `write_file`, `edit_file`, `search_files`, `terminal`) — the default for ANY Python.
-        - NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks. Use `sandbox_execute_code`, or `sandbox_write_file` the script then run the file.
+        - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
         - Run independent calls in parallel; chain dependent shell steps with `&&`.
         """
 
@@ -457,7 +455,7 @@ public enum SystemPromptTemplates {
             - **Workspace** (your read-only host folder) — the default. For "what's in my workspace / on my Desktop", use `file_read` (it reads a file or lists a directory) and `file_search`. Relative paths and `/Users/...` paths are the workspace.
             - **Sandbox** scratch area — pass a `/workspace/...` path to the SAME `file_read` / `file_search`.
 
-            The workspace is read-only: create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` / `sandbox_execute_code` (they run in the sandbox, which has no copy of the workspace — `file_read` a workspace file and pass its content in if a command needs it). Surface results with `share_artifact`. \(secretLine)
+            The workspace is read-only: create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` (it runs in the sandbox, which has no copy of the workspace — `file_read` a workspace file and pass its content in if a command needs it). Surface results with `share_artifact`. \(secretLine)
             """
     }
 

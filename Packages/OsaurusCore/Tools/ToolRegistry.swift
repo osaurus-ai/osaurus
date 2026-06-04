@@ -1091,8 +1091,8 @@ final class ToolRegistry: ObservableObject {
             // the single, path-routed read family the model sees, so hide
             // the redundant sandbox read tools (`file_read` / `file_search`
             // serve `/workspace/...` paths via the bridge; `file_read` also
-            // lists directories). They stay registered for the
-            // `sandbox_execute_code` Python bridge, which dispatches by name.
+            // lists directories). They stay registered (just hidden from the
+            // schema) so tear-down and capability indexing see them.
             excluded.formUnion(Self.sandboxReadToolNames)
         }
         if mode.usesHostFolderTools || mode.usesSandboxTools {
@@ -1103,7 +1103,7 @@ final class ToolRegistry: ObservableObject {
 
     /// Sandbox read tools made redundant by the unified, path-routed host
     /// `file_*` tools in combined mode. Hidden from the schema there (still
-    /// registered for the `sandbox_execute_code` bridge).
+    /// registered so tear-down and capability indexing track them).
     static let sandboxReadToolNames: Set<String> = [
         "sandbox_read_file", "sandbox_search_files",
     ]

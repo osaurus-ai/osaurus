@@ -126,7 +126,6 @@ enum ToolDisplayName {
 
         // Sandbox — "in sandbox" suffix makes the execution context explicit.
         "sandbox_exec": ToolLabel(L("Running a command in sandbox"), L("Ran a command in sandbox")),
-        "sandbox_execute_code": ToolLabel(L("Running code in sandbox"), L("Ran code in sandbox")),
         "sandbox_read_file": ToolLabel(L("Reading a file in sandbox"), L("Read a file in sandbox")),
         "sandbox_write_file": ToolLabel(L("Writing a file in sandbox"), L("Wrote a file in sandbox")),
         "sandbox_edit_file": ToolLabel(L("Editing a file in sandbox"), L("Edited a file in sandbox")),

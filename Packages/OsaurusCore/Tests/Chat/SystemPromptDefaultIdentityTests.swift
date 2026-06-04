@@ -41,7 +41,6 @@ struct SystemPromptDefaultIdentityTests {
         "sandbox_search_files",
         "sandbox_exec",
         "sandbox_process",
-        "sandbox_execute_code",
         "sandbox_pip_install",
         "sandbox_npm_install",
         "sandbox_install",

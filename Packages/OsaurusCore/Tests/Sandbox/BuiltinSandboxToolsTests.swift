@@ -375,42 +375,6 @@ struct BuiltinSandboxToolsTests {
     }
 
     @Test @MainActor
-    func sandboxExecuteCode_writesHelpersAndRunsPython() async throws {
-        let runner = MockSandboxToolCommandRunner(
-            rootResults: [],
-            agentResults: [],
-            execResults: [.init(stdout: "{\"ok\": true}", stderr: "", exitCode: 0)]
-        )
-
-        let output = try await withRegisteredSandboxTools(runner: runner) {
-            try await ToolRegistry.shared.execute(
-                name: "sandbox_execute_code",
-                argumentsJSON: #"{"code":"from osaurus_tools import read_file\nprint(read_file('foo.txt'))"}"#
-            )
-        }
-
-        let payload = try successPayload(output)
-        #expect(payload["exit_code"] as? Int == 0)
-        #expect((payload["stdout"] as? String)?.contains("ok") == true)
-        #expect(payload["tool_calls"] != nil)
-
-        // The exec command should stage osaurus_tools.py + the script,
-        // then invoke python3 with the helpers dir on PYTHONPATH.
-        let calls = await runner.calls
-        guard case .exec(_, let command, let env) = try #require(calls.first) else {
-            Issue.record("Expected exec call")
-            return
-        }
-        #expect(command.contains(".osaurus/osaurus_tools.py"))
-        #expect(command.contains(".tmp/exec_"))
-        #expect(command.contains("OSAURUS_SCRIPT_ID="))
-        #expect(command.contains("PYTHONPATH="))
-        #expect(command.contains("python3"))
-        #expect(env["VIRTUAL_ENV"]?.contains(".venv") == true)
-        #expect(env["PATH"]?.contains(".venv/bin") == true)
-    }
-
-    @Test @MainActor
     func sandboxExec_backgroundReturnsPidAndLogFile() async throws {
         // Background mode collapses the old `sandbox_exec_background`
         // into a flag on `sandbox_exec`. Pid + log_file ride back in

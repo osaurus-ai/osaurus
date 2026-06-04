@@ -41,10 +41,8 @@ struct ChatViewSandboxTests {
 
         #expect(standardPrompt.contains(SystemPromptTemplates.sandboxSectionHeading) == false)
         #expect(sandboxPrompt.contains(SystemPromptTemplates.sandboxSectionHeading))
-        // Pinning a tool name keeps the sandbox section honest. Switched
-        // from `sandbox_run_script` (deleted) to `sandbox_execute_code`
-        // which is now the canonical Python power tool.
-        #expect(sandboxPrompt.contains("sandbox_execute_code"))
+        // Pinning a tool name keeps the sandbox section honest.
+        #expect(sandboxPrompt.contains("sandbox_exec"))
         // Plain sandbox (no host folder) must NOT emit the combined
         // read-only workspace section or the unified Files block.
         #expect(sandboxPrompt.contains("## Host Workspace (read-only)") == false)

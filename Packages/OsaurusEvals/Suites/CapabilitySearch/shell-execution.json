@@ -3,12 +3,12 @@
   "domain": "capability_search",
   "label": "capability search • run shell script",
   "query": "run shell script",
-  "notes": "Tracking-only. `sandbox_exec` and `sandbox_execute_code` are excluded from the search index by ToolIndexService.syncFromRegistry (runtimeManagedToolNames). No recall fix \u2014 BM25, embedder, or threshold \u2014 can rescue this case while the indexer-side exclusion stays. Resolution requires either un-excluding sandbox tools from the index or rewriting the case to target an indexed tool. Excluded from recall_floors.json on purpose.",
+  "notes": "Tracking-only. `sandbox_exec` is excluded from the search index by ToolIndexService.syncFromRegistry (runtimeManagedToolNames). No recall fix \u2014 BM25, embedder, or threshold \u2014 can rescue this case while the indexer-side exclusion stays. Resolution requires either un-excluding sandbox tools from the index or rewriting the case to target an indexed tool. Excluded from recall_floors.json on purpose.",
   "fixtures": {},
   "expect": {
     "capabilitySearch": {
       "expectedTools": {
-        "anyOf": ["sandbox_exec", "sandbox_execute_code"],
+        "anyOf": ["sandbox_exec"],
         "minMatches": 1
       }
     }

@@ -24,7 +24,6 @@ enum BuiltinSandboxTools {
     ///     in-place edit via `old_string`)
     ///   - exec: `sandbox_exec` (foreground OR background via flag),
     ///     `sandbox_process` (poll/wait/kill background jobs)
-    ///   - power tool: `sandbox_execute_code` (Python orchestration)
     ///   - installs: `sandbox_install` / `sandbox_pip_install` /
     ///     `sandbox_npm_install`
     ///
@@ -33,8 +32,10 @@ enum BuiltinSandboxTools {
     ///   - `sandbox_find_files` → `sandbox_search_files(target:"files")`
     ///   - `sandbox_move` / `sandbox_delete` → `sandbox_exec("mv …" / "rm …")`
     ///   - `sandbox_exec_background` → `sandbox_exec(background:true)`
-    ///   - `sandbox_run_script` → `sandbox_execute_code` for Python, or
-    ///     `sandbox_exec` with a heredoc for short bash/node snippets.
+    ///   - `sandbox_run_script` / `sandbox_execute_code` →
+    ///     `sandbox_write_file` the script then `sandbox_exec` to run it
+    ///     (e.g. `python3 script.py`), or `sandbox_exec` with a heredoc
+    ///     for short bash/node snippets.
     ///   - `sandbox_edit_file` → `sandbox_write_file` with `old_string` +
     ///     `new_string` (presence of `old_string` selects the edit path).
     @MainActor
@@ -78,15 +79,6 @@ enum BuiltinSandboxTools {
         )
         registry.registerSandboxTool(
             SandboxProcessTool(agentId: agentId, agentName: agentName, home: home),
-            runtimeManaged: true
-        )
-        registry.registerSandboxTool(
-            SandboxExecuteCodeTool(
-                agentId: agentId,
-                agentName: agentName,
-                home: home,
-                maxCommandsPerTurn: maxCmdsPerTurn
-            ),
             runtimeManaged: true
         )
         registry.registerSandboxTool(SandboxInstallTool(agentName: agentName), runtimeManaged: true)
@@ -147,33 +139,6 @@ extension BuiltinSandboxTools {
     /// provisions. Exposed so the prompt composer can suppress it from
     /// snapshots / schemas without duplicating the literal.
     public static let initPendingToolName = "sandbox_init_pending"
-
-    /// Tool names a `sandbox_execute_code` Python script is allowed to
-    /// dispatch via the host bridge. Hard-coded (not derived from the
-    /// live registry) so adding a new sandbox built-in can't silently
-    /// expose it to in-script callers — opt-in by adding a name here.
-    ///
-    /// Deliberately excluded:
-    ///   - `sandbox_execute_code` itself (no recursive launches).
-    ///   - `sandbox_init_pending` (placeholder only registered while the
-    ///     container is booting; calling it from a script is meaningless).
-    ///   - `share_artifact` and the chat-layer-intercepted tools (`todo`,
-    ///     `complete`, `clarify`, `speak`, `sandbox_secret_set`,
-    ///     `sandbox_plugin_register`). Their post-execute UI hooks only
-    ///     fire for top-level tool calls; calling them from inside a
-    ///     script would silently no-op the chat surfacing. The model
-    ///     should call them at the model layer instead.
-    public static let executeCodeBridgeAllowedTools: Set<String> = [
-        "sandbox_read_file",
-        "sandbox_write_file",
-        "sandbox_search_files",
-        "sandbox_exec",
-        "sandbox_process",
-        "sandbox_install",
-        "sandbox_pip_install",
-        "sandbox_npm_install",
-        "sandbox_secret_check",
-    ]
 }
 
 /// Placeholder tool registered when sandbox is enabled but the container
@@ -676,10 +641,9 @@ private func inlineCodeHint(command: String, stderr loweredStderr: String) -> St
     return
         "This looks like multi-line code embedded in a shell `-c` / `-e` "
         + "string whose escaping broke — the shell tried to parse your code "
-        + "as commands (hence the syntax error). Don't re-escape it. For "
-        + "Python, call `sandbox_execute_code` with the script in `code` (no "
-        + "shell escaping). Otherwise `sandbox_write_file` the script to a "
-        + "file, then `sandbox_exec` runs that file."
+        + "as commands (hence the syntax error). Don't re-escape it. "
+        + "`sandbox_write_file` the script to a file (no shell escaping), "
+        + "then `sandbox_exec` runs that file (e.g. `python3 script.py`)."
 }
 
 /// Unterminated heredoc: the `<<DELIM` body was never closed, so the
@@ -714,8 +678,7 @@ private func unbalancedQuoteHint(stderr loweredStderr: String) -> String? {
         + "stray or unclosed quote (a common slip is wrapping the WHOLE "
         + "command in quotes; pass it verbatim and quote only the arguments "
         + "that need it). For code or data with awkward quoting, "
-        + "`sandbox_execute_code` (Python) or `sandbox_write_file` avoid "
-        + "shell quoting entirely."
+        + "`sandbox_write_file` avoids shell quoting entirely."
 }
 
 private let sandboxDefaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -1691,9 +1654,9 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         yourself with `&` / `nohup` / `disown` — pass `background:true` so \
         the runtime can track it.
 
-        This is for a shell command LINE. For a multi-line script use \
-        `sandbox_execute_code` (Python) or `sandbox_write_file` the script \
-        then run the file — NEVER inline multi-line code in `python3 -c` / \
+        This is for a shell command LINE. For a multi-line script, \
+        `sandbox_write_file` the script then run the file (e.g. \
+        `python3 script.py`) — NEVER inline multi-line code in `python3 -c` / \
         `node -e`: the JSON→shell→code escaping breaks and bash mis-parses \
         the body. Pass the command verbatim — do NOT wrap the whole command \
         in an extra quote; quote only the individual arguments that need it.
@@ -2697,428 +2660,4 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
             )
         }
     }
-}
-
-// MARK: - sandbox_execute_code
-//
-// Python orchestration: write a Python script that imports the same
-// sandbox tools as Python helpers (`from osaurus_tools import …`) and
-// runs them in-process. Use when the model needs ≥3 tool calls with
-// logic between them, output filtering before it lands in context,
-// conditional branching, or looping. The helpers RPC back to the host
-// via the bridge socket so the tools run with the same authority and
-// accounting as direct calls.
-
-private struct SandboxExecuteCodeTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_execute_code"
-    let description = """
-        Run a Python script in the sandbox with the `osaurus_tools` helpers \
-        (read_file, write_file, search_files, terminal). The script runs \
-        directly — this is the home for any multi-line Python. Reach for it \
-        especially when:
-        - You need ≥3 tool calls with processing logic between them.
-        - You need to filter / reduce a large tool output before it enters \
-          your context (e.g. read 5 logs, return the top 10 errors).
-        - You need conditional branching or loops (fetch N pages, retry \
-          on failure, walk a directory tree).
-
-        Available helpers (no install needed):
-            from osaurus_tools import read_file, write_file, edit_file, \
-                search_files, terminal
-
-        Each helper mirrors the equivalent sandbox tool 1:1. They return \
-        Python dicts (the same JSON envelope you would see from a direct \
-        call). Print your final result to stdout.
-
-        Surfacing artifacts: `share_artifact` is NOT exposed to the script \
-        — call it AFTER `sandbox_execute_code` returns, as a separate \
-        top-level tool call against the file path your script wrote. \
-        Surfacing from inside the script would silently no-op the chat \
-        artifact card.
-
-        Installing packages: call `sandbox_pip_install` / `sandbox_install` \
-        BEFORE `sandbox_execute_code` (they live at the model layer), or \
-        run `terminal("pip install …")` from inside the script for a \
-        one-shot install.
-
-        WHEN NOT TO USE:
-        - You need to look at one tool result before deciding the next \
-          step — make a normal tool call instead.
-        - You only need ONE tool call — call it directly.
-
-        LIMITS:
-        - 5-minute hard timeout, 50KB stdout cap (40% head + 60% tail).
-        - At most 50 tool calls per script.
-        - Per-turn command count is shared with other `sandbox_exec` calls.
-        """
-    let agentId: String
-    let agentName: String
-    let home: String
-    let maxCommandsPerTurn: Int
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "code": .object([
-                    "type": .string("string"),
-                    "description": .string(
-                        "Python source. Import helpers via `from osaurus_tools import "
-                            + "read_file, write_file, edit_file, search_files, terminal`. "
-                            + "Print the final result to stdout. (`share_artifact` is "
-                            + "intentionally not exposed — call it AFTER this tool returns.)"
-                    ),
-                ]),
-                "timeout": .object([
-                    "type": .string("integer"),
-                    "description": .string("Timeout in seconds (default 300, max 300)."),
-                    "default": .number(300),
-                ]),
-                "cwd": .object([
-                    "type": .string("string"),
-                    "description": .string(
-                        "Working directory (default: agent home). Rejected if outside allowed roots."
-                    ),
-                ]),
-            ]),
-            "required": .array([.string("code")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        guard
-            SandboxExecLimiter.shared.checkAndIncrement(
-                agentName: agentName,
-                limit: maxCommandsPerTurn
-            )
-        else {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message:
-                    "Per-turn command limit reached (\(maxCommandsPerTurn) commands). "
-                    + "Wait until the next turn or chain more steps inside one `sandbox_execute_code` call.",
-                tool: name,
-                retryable: false
-            )
-        }
-
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let codeReq = requireString(
-            args,
-            "code",
-            expected: "non-empty Python source",
-            tool: name
-        )
-        guard case .value(let code) = codeReq else { return codeReq.failureEnvelope ?? "" }
-
-        let cwd: String
-        if let cwdArg = args["cwd"] as? String, !cwdArg.isEmpty {
-            let cwdReq = requirePath(cwdArg, home: home, field: "cwd", tool: name)
-            guard case .value(let resolvedCwd) = cwdReq else { return cwdReq.failureEnvelope ?? "" }
-            cwd = resolvedCwd
-        } else {
-            cwd = home
-        }
-
-        // 5min hard cap; the per-turn SandboxExecLimiter still applies
-        // on top so the model can't burn its turn budget on one script.
-        let timeout = min(max(coerceInt(args["timeout"]) ?? 300, 1), 300)
-
-        // Script id scopes the tool-call counter on the host bridge so
-        // one runaway script can't exceed its 50-call budget by reusing
-        // an old id. We snapshot the task-local chat context here so the
-        // bridge handler can re-establish it for each dispatched tool —
-        // without that, session-aware tools (`sandbox_secret_check`,
-        // anything plugin-namespaced if the allow-list is widened later)
-        // would resolve to "no active session" from inside the script.
-        let scriptId = UUID().uuidString
-        let context = SandboxExecuteCodeBudget.ScriptContext(
-            agentId: ChatExecutionContext.currentAgentId,
-            sessionId: ChatExecutionContext.currentSessionId,
-            assistantTurnId: ChatExecutionContext.currentAssistantTurnId,
-            batchId: ChatExecutionContext.currentBatchId
-        )
-        await SandboxExecuteCodeBudget.shared.start(scriptId: scriptId, context: context)
-        defer { Task { await SandboxExecuteCodeBudget.shared.finish(scriptId: scriptId) } }
-
-        let helpersDir = "\(home)/.osaurus"
-        let helpersPath = "\(helpersDir)/osaurus_tools.py"
-        let scriptPath = "\(home)/.tmp/exec_\(UUID().uuidString.prefix(8)).py"
-
-        // Stage the helper module + the user's code under the agent home,
-        // run it, then clean up. The helper module RPCs to the host via
-        // the Unix socket at `/tmp/osaurus-bridge.sock`, reading the
-        // per-user bearer token from `/run/osaurus/$USER.token` (mode
-        // 0600, owned by the agent user — set up by
-        // `SandboxManager.provisionBridgeToken`).
-        let escapedHelpers = shellEscapeSingleQuoted(SandboxExecuteCodeHelpers.pythonSource)
-        let escapedCode = shellEscapeSingleQuoted(code)
-        let writeHelpers =
-            "mkdir -p '\(helpersDir)' '\(home)/.tmp' && "
-            + "printf '%s' '\(escapedHelpers)' > '\(helpersPath)'"
-        let writeCode = "printf '%s' '\(escapedCode)' > '\(scriptPath)'"
-
-        var command = writeHelpers + " && " + writeCode
-        command += " && cd '\(cwd)' && OSAURUS_SCRIPT_ID='\(scriptId)' "
-        command += "PYTHONPATH='\(helpersDir)':$PYTHONPATH "
-        command += "python3 '\(scriptPath)'"
-        command += "; EXIT=$?; rm -f '\(scriptPath)'; exit $EXIT"
-
-        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
-            user: "agent-\(agentName)",
-            command: command,
-            env: agentShellEnvironment(agentId: agentId, home: home, cwd: cwd),
-            cwd: cwd,
-            timeout: TimeInterval(timeout),
-            streamToLogs: true,
-            logSource: agentName
-        )
-
-        let toolCalls = await SandboxExecuteCodeBudget.shared.callCount(scriptId: scriptId)
-        return sandboxSuccess(
-            tool: name,
-            result: [
-                "stdout": truncateForModel(result.stdout),
-                "stderr": truncateForModel(result.stderr, maxChars: 10_000),
-                "exit_code": Int(result.exitCode),
-                "tool_calls": toolCalls,
-                "cwd": cwd,
-            ]
-        )
-    }
-}
-
-/// Tracks the number of bridge tool calls each `sandbox_execute_code`
-/// script makes plus the chat execution context that should be re-applied
-/// to dispatched tools. The per-script cap (50) is
-/// enforced inside `HostAPIBridgeServer.handleSandboxToolCall` by
-/// reading this counter via the `OSAURUS_SCRIPT_ID` request header.
-public actor SandboxExecuteCodeBudget {
-    public static let shared = SandboxExecuteCodeBudget()
-
-    /// Capped at 50 so a runaway loop can't burn the whole turn's
-    /// compute. Configurable per-script from the host side if we ever
-    /// need to lift it.
-    public static let maxCallsPerScript = 50
-
-    /// Snapshot of the chat-engine task locals at the moment a script
-    /// started. The bridge dispatcher re-applies them with
-    /// `ChatExecutionContext.$… .withValue` so dispatched tools resolve
-    /// to the same session as a direct top-level call would have.
-    public struct ScriptContext: Sendable {
-        public let agentId: UUID?
-        public let sessionId: String?
-        public let assistantTurnId: UUID?
-        public let batchId: UUID?
-    }
-
-    private struct Entry {
-        var calls: Int
-        let context: ScriptContext
-    }
-
-    private var entries: [String: Entry] = [:]
-
-    /// Begin tracking a `sandbox_execute_code` script. `context` carries
-    /// the chat-engine task locals captured at script-start time so the
-    /// bridge handler can re-apply them around each dispatched tool.
-    func start(scriptId: String, context: ScriptContext) {
-        entries[scriptId] = Entry(calls: 0, context: context)
-    }
-
-    func finish(scriptId: String) {
-        entries.removeValue(forKey: scriptId)
-    }
-
-    /// Try to charge one tool-call against this script's budget.
-    /// Returns `true` when the script is tracked AND the cap hasn't been
-    /// reached, `false` otherwise — a `false` return is the host's
-    /// signal to reject the bridge call. The actual call count for the
-    /// result envelope comes from `callCount(scriptId:)`.
-    public func tryIncrement(scriptId: String) -> Bool {
-        guard var entry = entries[scriptId], entry.calls < Self.maxCallsPerScript
-        else { return false }
-        entry.calls += 1
-        entries[scriptId] = entry
-        return true
-    }
-
-    public func callCount(scriptId: String) -> Int {
-        entries[scriptId]?.calls ?? 0
-    }
-
-    /// Returns the chat-engine context snapshot for a tracked script id.
-    /// Returns nil if the id isn't known — the bridge handler treats that
-    /// as a rejected call.
-    public func context(scriptId: String) -> ScriptContext? {
-        entries[scriptId]?.context
-    }
-}
-
-/// Source of the Python helper module that gets staged under each agent's
-/// home on every `sandbox_execute_code` call. Talks to the host bridge via
-/// the Unix socket already used by `osaurus-host`. Each helper returns a
-/// dict (the parsed envelope) so callers can branch on `ok`/`kind` etc.
-enum SandboxExecuteCodeHelpers {
-    static let pythonSource: String = #"""
-        # osaurus_tools -- sandbox helpers for sandbox_execute_code scripts.
-        #
-        # Each helper mirrors the same-named built-in sandbox tool. They make a
-        # JSON POST to the host bridge at /api/sandbox-tool/{name} over the Unix
-        # socket mounted at /tmp/osaurus-bridge.sock. The bearer token is read
-        # from /run/osaurus/$USER.token (mode 0600, owned by the agent user).
-        # The decoded JSON response is returned as a dict.
-        #
-        # `share_artifact` is intentionally NOT exposed here -- calling it from
-        # inside a script would create the marker envelope but the chat-layer
-        # post-processor that turns it into a real artifact card only fires for
-        # top-level tool calls. Surface artifacts by calling `share_artifact`
-        # from the model layer, AFTER `sandbox_execute_code` returns.
-
-        import getpass
-        import json
-        import os
-        import socket
-
-        _BRIDGE_SOCKET_PATH = "/tmp/osaurus-bridge.sock"
-        _TOKEN_PATH_TEMPLATE = "/run/osaurus/{user}.token"
-        _SCRIPT_ID_HEADER = "X-Osaurus-Script-Id"
-
-
-        class SandboxToolError(RuntimeError):
-            """Raised when the bridge round-trip itself fails (transport-level)."""
-
-
-        def _read_token() -> str:
-            user = os.environ.get("USER") or getpass.getuser()
-            path = _TOKEN_PATH_TEMPLATE.format(user=user)
-            try:
-                with open(path, "r", encoding="utf-8") as fh:
-                    token = fh.read().strip()
-            except OSError as exc:
-                raise SandboxToolError(
-                    f"could not read bridge token at {path}: {exc}. "
-                    f"sandbox_execute_code helpers must run inside a provisioned sandbox agent."
-                ) from exc
-            if not token:
-                raise SandboxToolError(f"bridge token at {path} is empty")
-            return token
-
-
-        def _send_http(method: str, path: str, headers: dict, body: bytes, timeout: float = 300.0) -> tuple:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(timeout)
-            try:
-                sock.connect(_BRIDGE_SOCKET_PATH)
-            except OSError as exc:
-                sock.close()
-                raise SandboxToolError(
-                    f"could not connect to host bridge at {_BRIDGE_SOCKET_PATH}: {exc}"
-                ) from exc
-
-            request_line = f"{method} {path} HTTP/1.1\r\n"
-            full_headers = {"Host": "osaurus", "Connection": "close"}
-            full_headers.update(headers)
-            full_headers["Content-Length"] = str(len(body))
-            if body and "Content-Type" not in full_headers:
-                full_headers["Content-Type"] = "application/json"
-
-            try:
-                sock.sendall(request_line.encode("utf-8"))
-                for name, value in full_headers.items():
-                    sock.sendall(f"{name}: {value}\r\n".encode("utf-8"))
-                sock.sendall(b"\r\n")
-                if body:
-                    sock.sendall(body)
-
-                chunks = []
-                while True:
-                    data = sock.recv(65536)
-                    if not data:
-                        break
-                    chunks.append(data)
-            finally:
-                sock.close()
-
-            raw = b"".join(chunks)
-            head, _, response_body = raw.partition(b"\r\n\r\n")
-            status_line = head.split(b"\r\n", 1)[0].decode("latin-1") if head else ""
-            parts = status_line.split(" ", 2)
-            status = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 500
-            return status, response_body
-
-
-        def _call(tool_name: str, args: dict) -> dict:
-            body = json.dumps({"arguments": args}).encode("utf-8")
-            headers = {"Authorization": f"Bearer {_read_token()}"}
-            script_id = os.environ.get("OSAURUS_SCRIPT_ID", "")
-            if script_id:
-                headers[_SCRIPT_ID_HEADER] = script_id
-            status, raw = _send_http(
-                "POST",
-                f"/api/sandbox-tool/{tool_name}",
-                headers=headers,
-                body=body,
-            )
-            text = raw.decode("utf-8", errors="replace")
-            if not text:
-                return {"ok": False, "kind": "execution_error", "message": "empty bridge response"}
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError as exc:
-                raise SandboxToolError(f"bridge returned non-JSON ({status}): {text[:200]}") from exc
-            if status >= 400 and isinstance(parsed, dict) and "ok" not in parsed:
-                # Wrap raw {"error": "..."} responses in the standard envelope shape
-                # so user code can branch on `result["ok"]` uniformly.
-                return {
-                    "ok": False,
-                    "kind": "execution_error",
-                    "message": parsed.get("error", text),
-                    "tool": tool_name,
-                }
-            return parsed
-
-
-        def read_file(path: str, **kwargs) -> dict:
-            """Read a file from the sandbox. See `sandbox_read_file` for arg shapes."""
-            return _call("sandbox_read_file", {"path": path, **kwargs})
-
-
-        def write_file(path: str, content: str) -> dict:
-            """Write content to a file in the sandbox. See `sandbox_write_file`."""
-            return _call("sandbox_write_file", {"path": path, "content": content})
-
-
-        def edit_file(path: str, old_string: str, new_string: str) -> dict:
-            """Targeted exact-string replacement via `sandbox_write_file` (old_string selects the edit path)."""
-            return _call(
-                "sandbox_write_file",
-                {"path": path, "old_string": old_string, "new_string": new_string},
-            )
-
-
-        def search_files(pattern: str, target: str = "content", **kwargs) -> dict:
-            """Search file contents (rg) or names (find). See `sandbox_search_files`."""
-            payload = {"pattern": pattern, "target": target}
-            payload.update(kwargs)
-            return _call("sandbox_search_files", payload)
-
-
-        def terminal(command: str, **kwargs) -> dict:
-            """Run a shell command. Foreground or background via `background=True`. See `sandbox_exec`."""
-            return _call("sandbox_exec", {"command": command, **kwargs})
-
-
-        __all__ = [
-            "read_file",
-            "write_file",
-            "edit_file",
-            "search_files",
-            "terminal",
-            "SandboxToolError",
-        ]
-        """#
 }

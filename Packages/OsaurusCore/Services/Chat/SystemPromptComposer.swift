@@ -1166,7 +1166,6 @@ public struct SystemPromptComposer: Sendable {
         // sandbox built-ins
         "sandbox_write_file", "sandbox_exec",
         "sandbox_install", "sandbox_pip_install", "sandbox_npm_install",
-        "sandbox_execute_code",
         // folder tools
         "file_write", "file_edit", "shell_run",
     ]

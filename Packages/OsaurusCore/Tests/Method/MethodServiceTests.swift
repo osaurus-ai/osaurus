@@ -19,11 +19,11 @@ struct MethodServiceExtractToolIdsTests {
                 action: git status
               - tool: web_fetch
                 action: GET /health
-              - tool: sandbox_execute_code
+              - tool: sandbox_exec
                 action: run test
             """
         let result = await MethodService.shared.extractToolIds(from: yaml)
-        #expect(result == ["terminal", "web_fetch", "sandbox_execute_code"])
+        #expect(result == ["terminal", "web_fetch", "sandbox_exec"])
     }
 
     @Test func extractsToolIdsDeduplicates() async {

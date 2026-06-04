@@ -163,13 +163,13 @@ In sandbox mode, the composer also reads the agent's `~/SOUL.md` and emits it as
 
 Artifacts are persisted under `~/.osaurus/artifacts/<sessionId>/` and rendered inline in the chat thread. See [`SharedArtifact.swift`](../Packages/OsaurusCore/Models/Chat/SharedArtifact.swift).
 
-#### `share_artifact` and `sandbox_execute_code`
+#### `share_artifact` and sandbox scripts
 
-`share_artifact` is **NOT** exposed to the `osaurus_tools` Python helper module. Calling it from inside a `sandbox_execute_code` script would create the marker envelope but the chat-layer post-processor that turns it into a real artifact card only fires for top-level tool calls — so an in-script `share_artifact` would silently no-op the chat UI even though the script "succeeds". The bridge endpoint enforces the same rule by hard-coding its allow-list to the file/exec helpers only.
+`share_artifact` is a top-level (model-layer) tool. The chat-layer post-processor that turns its marker envelope into a real artifact card only fires for top-level tool calls — so producing a file and surfacing it are two separate steps.
 
 The right pattern is two top-level tool calls:
 
-1. `sandbox_execute_code({"code": "…write julia.png…"})` — script does the work, prints the resulting path to stdout.
+1. `sandbox_write_file` the script + `sandbox_exec("python3 script.py")` — the script does the work and writes the file (e.g. `julia.png`).
 2. `share_artifact({"path": "julia.png", "description": "…"})` — model surfaces the file as a chat card.
 
 #### Failure modes
