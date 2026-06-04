@@ -148,35 +148,59 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         }
     }
 
+    /// Compute a permission's granted state without touching the main actor.
+    ///
+    /// The EventKit / Contacts / AVFoundation / CoreGraphics authorization-status APIs and the
+    /// full-disk / screen-recording probes are all thread-safe, so they can be queried from a
+    /// background thread. This matters because `EKEventStore.authorizationStatus(for:)` performs a
+    /// *synchronous XPC round-trip* to the EventKit daemon; running that on the main thread can
+    /// hang the UI for seconds.
+    ///
+    /// Returns `nil` for permissions whose state lives on the main actor (the location manager and
+    /// the cached automation states); callers resolve those on the `MainActor`.
+    nonisolated private static func isGrantedOffMain(_ permission: SystemPermission) -> Bool? {
+        switch permission {
+        case .calendar:
+            return EKEventStore.authorizationStatus(for: .event) == .fullAccess
+        case .reminders:
+            return EKEventStore.authorizationStatus(for: .reminder) == .fullAccess
+        case .accessibility:
+            return AXIsProcessTrusted()
+        case .contacts:
+            return CNContactStore.authorizationStatus(for: .contacts) == .authorized
+        case .disk:
+            return SystemPermissionProbe.fullDiskAccessGranted()
+        case .microphone:
+            return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        case .screenRecording:
+            return SystemPermissionProbe.screenRecordingGranted()
+        case .location, .automation, .automationCalendar, .automationMail, .notes, .maps:
+            return nil
+        }
+    }
+
     /// Refresh all permission states and publish updates
     func refreshAllPermissions() {
-        // Run checks in background to avoid blocking main thread
+        // Perform the system checks off the main thread. Several of them (notably the EventKit
+        // authorization status) make synchronous XPC calls that can block for seconds, which would
+        // hang the UI if run on the main actor.
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
 
-            // Perform checks
             var newStates: [SystemPermission: Bool] = [:]
-
             for permission in SystemPermission.allCases {
-                if permission.isAutomationBased {
-                    // Skip automation permissions to avoid launching apps/running scripts
-                    // Use last known state
-                    await MainActor.run {
-                        newStates[permission] = self.permissionStates[permission]
-                    }
-                    continue
-                }
-
-                // Other checks need to be on MainActor? Accessibility/Disk usually safe on background
-                // but let's be careful. AXIsProcessTrusted is thread-safe.
-                // FileManager checks are thread-safe.
-                await MainActor.run {
-                    newStates[permission] = self.isGranted(permission)
+                if let granted = Self.isGrantedOffMain(permission) {
+                    newStates[permission] = granted
                 }
             }
 
-            // Update state on MainActor
+            // Automation states use the last known cached value and location reads the
+            // main-actor CLLocationManager, so both must be resolved on the MainActor.
             await MainActor.run {
+                for permission in SystemPermission.allCases where permission.isAutomationBased {
+                    newStates[permission] = self.permissionStates[permission]
+                }
+                newStates[.location] = self.checkLocationPermission()
                 self.setPermissions(newStates)
             }
         }
@@ -196,18 +220,26 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// Refresh only permissions that don't require launching apps or disrupting user flow
     /// Automation checks (Calendar & General) are excluded because they run AppleScript
     private func refreshNonDisruptivePermissions() {
-        for permission in SystemPermission.allCases {
-            // Skip automation permissions - they require running AppleScript which can be disruptive
-            // We only check these when the user explicitly clicks "Grant" or "Test"
-            if permission.isAutomationBased {
-                continue
+        // This runs every couple of seconds from a timer while the Permissions pane is open.
+        // Check off the main thread: `isGranted` can synchronously block on EventKit XPC, which
+        // would hang the UI.
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self = self else { return }
+
+            var results: [SystemPermission: Bool] = [:]
+            for permission in SystemPermission.allCases where !permission.isAutomationBased {
+                // Skip automation permissions - they require running AppleScript which can be
+                // disruptive. We only check those when the user explicitly clicks "Grant"/"Test".
+                if let granted = Self.isGrantedOffMain(permission) {
+                    results[permission] = granted
+                }
             }
 
-            // For other permissions (Accessibility, Disk), the checks are cheap/safe
-            let granted = isGranted(permission)
-            Task { @MainActor in
-                // Only update if changed to avoid unnecessary saves, although setPermission handles it efficiently enough
-                if self.permissionStates[permission] != granted {
+            await MainActor.run {
+                // Location reads the main-actor CLLocationManager.
+                results[.location] = self.checkLocationPermission()
+                // Only update if changed to avoid unnecessary saves.
+                for (permission, granted) in results where self.permissionStates[permission] != granted {
                     self.setPermission(permission, isGranted: granted)
                 }
             }
