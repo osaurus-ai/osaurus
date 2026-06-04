@@ -91,8 +91,8 @@ struct ModelProfileRegistryTests {
         #expect(profile?.thinkingOption == nil)
     }
 
-    @Test("Gemma 4 does not expose chat Thinking toggle until explicit thinking is production-clean")
-    func gemma4_noChatThinkingToggle() {
+    @Test("Gemma 4 exposes chat Thinking toggle without synthesizing hidden defaults")
+    func gemma4_exposesChatThinkingToggle() {
         for id in [
             "gemma-4-26b-a4b-it-jang_4m-crack",
             "dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK",
@@ -100,12 +100,28 @@ struct ModelProfileRegistryTests {
             "gemma-4-12b-it-jang_4m",
             "gemma-4-12b-it-mxfp4",
             "gemma-4-12b-it-mxfp8",
+            "dealign.ai/Gemma-4-12B-it-MXFP8-CRACK",
         ] {
             let profile = ModelProfileRegistry.profile(for: id)
             #expect(profile?.displayName == Gemma4RuntimeProfile.displayName)
-            #expect(profile?.thinkingOption == nil)
+            #expect(profile?.thinkingOption?.id == "disableThinking")
+            #expect(profile?.thinkingOption?.inverted == true)
             let normalized = ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)
             #expect(normalized["disableThinking"] == nil)
+
+            let explicitOff = ModelProfileRegistry.normalizedOptions(
+                for: id,
+                persisted: ["disableThinking": .bool(true)]
+            )
+            #expect(explicitOff["disableThinking"]?.boolValue == true)
+            #expect(ModelProfileRegistry.thinkingEnabled(for: id, values: explicitOff) == false)
+
+            let explicitOn = ModelProfileRegistry.normalizedOptions(
+                for: id,
+                persisted: ["disableThinking": .bool(false)]
+            )
+            #expect(explicitOn["disableThinking"]?.boolValue == false)
+            #expect(ModelProfileRegistry.thinkingEnabled(for: id, values: explicitOn) == true)
         }
     }
 

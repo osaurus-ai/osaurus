@@ -86,6 +86,12 @@ struct CapabilityFromModelIdTests {
         "LiquidAI/LFM2-VL-1.6B",
         "google/gemma-3-12b-it",
         "google/gemma-4-it-mxfp4",
+        "dealign.ai/Gemma-4-12B-it-MXFP4-CRACK",
+        "dealign.ai/Gemma-4-12B-it-MXFP8-CRACK",
+        "dealign.ai/Gemma-4-12B-it-JANG_4M-CRACK",
+        "dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK",
+        "dealign.ai/Gemma-4-31B-A4B-it-MXFP4-CRACK",
+        "OsaurusAI/Gemma-4-31B-it-JANG_4M",
         "Zyphra/ZAYA1-VL-8B-MXFP4",
         "zaya1-vl-8b-mxfp4",  // flat-layout picker form
     ])

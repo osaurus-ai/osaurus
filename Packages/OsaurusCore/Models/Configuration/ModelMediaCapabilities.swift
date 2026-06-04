@@ -148,7 +148,15 @@ public enum ModelMediaCapabilities {
             "gemma-3", "gemma3",
             "gemma-4-it",  // VLM Gemma 4 (the dense LLM gemma-4 also exists)
             "gemma-4-12b-it",
+            "gemma-4-26b-it",
+            "gemma-4-26b-a4b-it",
+            "gemma-4-31b-it",
+            "gemma-4-31b-a4b-it",
             "gemma4-12b-it",
+            "gemma4-26b-it",
+            "gemma4-26b-a4b-it",
+            "gemma4-31b-it",
+            "gemma4-31b-a4b-it",
         ]
         if imageOnlyPatterns.contains(where: lower.contains) {
             return .imageOnly

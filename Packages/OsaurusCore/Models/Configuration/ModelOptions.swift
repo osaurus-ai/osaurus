@@ -431,11 +431,10 @@ struct ZayaThinkingProfile: ModelProfile {
 
 // MARK: - Gemma 4 Runtime Profile
 
-/// Gemma-4 chat templates expose an `enable_thinking` kwarg, but current
-/// Gemma-4 12B live rows show explicit thinking is not production-clean enough
-/// for the chat input Thinking chip. Keep a family profile so Gemma-4 does not
-/// fall through to `AutoThinkingProfile`, while leaving explicit API
-/// `enable_thinking` requests to the lower runtime path.
+/// Gemma-4 chat templates expose an `enable_thinking` kwarg and pipe-wrapped
+/// `<|think|>` markers. Expose the same chat-input Thinking chip as other
+/// local reasoning models, but do not synthesize a hidden request default:
+/// omitted options still let the model bundle/runtime decide.
 struct Gemma4RuntimeProfile: ModelProfile {
     static let displayName = "Gemma 4"
 
@@ -444,9 +443,20 @@ struct Gemma4RuntimeProfile: ModelProfile {
         return lower.contains("gemma-4") || lower.contains("gemma4")
     }
 
-    static let options: [ModelOptionDefinition] = []
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "disableThinking",
+            label: "Disable Thinking",
+            icon: "brain.head.profile",
+            kind: .toggle(default: true)
+        )
+    ]
 
-    static let defaults: [String: ModelOptionValue] = [:]
+    static let defaults: [String: ModelOptionValue] = [
+        "disableThinking": .bool(true)
+    ]
+
+    static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
 }
 
 // MARK: - Auto Thinking Profile (chat-template driven)
