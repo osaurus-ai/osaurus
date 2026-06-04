@@ -15,7 +15,7 @@ public final class ClipboardService: ObservableObject {
     public static let shared = ClipboardService()
 
     /// Supported content types on the clipboard
-    public enum ClipboardContent: Equatable {
+    public enum ClipboardContent: Equatable, Sendable {
         case text(String)
         case image(Data)
         case file(URL)
@@ -49,6 +49,8 @@ public final class ClipboardService: ObservableObject {
 
     private var lastChangeCount: Int = NSPasteboard.general.changeCount
     private var timer: AnyCancellable?
+    /// Guards against overlapping pasteboard reads if one outlives the poll interval.
+    private var isChecking = false
     private let keyboardService = KeyboardSimulationService.shared
 
     private init() {
@@ -75,37 +77,66 @@ public final class ClipboardService: ObservableObject {
         timer = nil
     }
 
-    /// Explicitly check the pasteboard for changes
+    /// Explicitly check the pasteboard for changes.
+    ///
+    /// Fire-and-forget entry point for the polling timer. The actual reads run off the
+    /// main actor (see `refreshFromPasteboardIfChanged`) because `NSPasteboard` reads make
+    /// synchronous XPC round-trips to the pasteboard server that can block for seconds and
+    /// hang the UI.
     public func checkPasteboard() {
-        let pb = NSPasteboard.general
-        guard pb.changeCount != lastChangeCount else { return }
+        Task { await refreshFromPasteboardIfChanged() }
+    }
 
-        print("[ClipboardService] Pasteboard change detected. Count: \(pb.changeCount) (was \(lastChangeCount))")
-        lastChangeCount = pb.changeCount
+    /// Timer entry point: skip if a previous read is still in flight, otherwise refresh.
+    private func refreshFromPasteboardIfChanged() async {
+        guard !isChecking else { return }
+        isChecking = true
+        defer { isChecking = false }
+        await performPasteboardRefresh()
+    }
 
-        let newContent = detectContent(in: pb)
+    /// Read the pasteboard off the main thread and, if its content changed, publish it.
+    private func performPasteboardRefresh() async {
+        let knownChangeCount = lastChangeCount
 
-        if let content = newContent {
-            // Only update if content actually changed
-            if content != currentContent {
-                print("[ClipboardService] New content detected: \(content.redactedDiagnosticDescription)")
-                currentContent = content
-                hasNewContent = true
+        // `changeCount`, `readObjects`, `data(forType:)` and `string(forType:)` all make
+        // synchronous XPC calls; keep them off the main actor so a slow pasteboard server or
+        // content provider can't hang the UI.
+        let snapshot = await Task.detached(priority: .utility) {
+            () -> (changeCount: Int, content: ClipboardContent?)? in
+            let pb = NSPasteboard.general
+            let changeCount = pb.changeCount
+            guard changeCount != knownChangeCount else { return nil }
+            return (changeCount, Self.detectContent(in: pb))
+        }.value
 
-                // Identify the source application
-                if let frontmost = NSWorkspace.shared.frontmostApplication {
-                    lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
-                    print("[ClipboardService] Source app identified: \(lastSourceApp ?? "unknown")")
-                }
-            } else {
-                print("[ClipboardService] Change detected but content is identical to current.")
-            }
-        } else {
+        guard let snapshot else { return }
+        print("[ClipboardService] Pasteboard change detected. Count: \(snapshot.changeCount) (was \(knownChangeCount))")
+        lastChangeCount = snapshot.changeCount
+
+        guard let content = snapshot.content else {
             print("[ClipboardService] Change detected but no meaningful content found on pasteboard.")
+            return
+        }
+
+        // Only update if content actually changed
+        guard content != currentContent else {
+            print("[ClipboardService] Change detected but content is identical to current.")
+            return
+        }
+
+        print("[ClipboardService] New content detected: \(content.redactedDiagnosticDescription)")
+        currentContent = content
+        hasNewContent = true
+
+        // Identify the source application
+        if let frontmost = NSWorkspace.shared.frontmostApplication {
+            lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
+            print("[ClipboardService] Source app identified: \(lastSourceApp ?? "unknown")")
         }
     }
 
-    private func detectContent(in pb: NSPasteboard) -> ClipboardContent? {
+    nonisolated private static func detectContent(in pb: NSPasteboard) -> ClipboardContent? {
         // 1. try file URLs (copied files in Finder)
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], let url = urls.first {
             // check if it's a supported document or image
@@ -154,7 +185,7 @@ public final class ClipboardService: ObservableObject {
             try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
             if pb.changeCount != startChangeCount {
                 print("[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(pb.changeCount)")
-                checkPasteboard()
+                await performPasteboardRefresh()
 
                 if case .text(let text) = currentContent {
                     return text
