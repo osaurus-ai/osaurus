@@ -409,6 +409,34 @@ struct SchemaValidatorCoercionTests {
         #expect(r.field == "scope")
     }
 
+    @Test func nullableEnumAcceptsRequiredNull() {
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "query": .object([
+                    "type": .array([.string("string"), .string("null")]),
+                    "enum": .array([.string("prefix cache"), .string("tool usage"), .null]),
+                ]),
+                "verbose": .object(["type": .string("boolean")]),
+            ]),
+            "required": .array([.string("query"), .string("verbose")]),
+            "additionalProperties": .bool(false),
+        ])
+
+        let nativeNull = SchemaValidator.validate(
+            arguments: ["query": NSNull(), "verbose": true],
+            against: schema
+        )
+        #expect(nativeNull.isValid, "got: \(nativeNull.errorMessage ?? "?")")
+
+        let coerced = SchemaValidator.coerceArguments(
+            ["query": "null", "verbose": true],
+            against: schema
+        )
+        let stringNull = SchemaValidator.validate(arguments: coerced, against: schema)
+        #expect(stringNull.isValid, "got: \(stringNull.errorMessage ?? "?")")
+    }
+
     // MARK: - Nested `properties:` wrapper rescue
 
     private let renderChartLikeSchema: JSONValue = .object([

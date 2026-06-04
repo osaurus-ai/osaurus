@@ -70,13 +70,16 @@ public struct SchemaValidator {
         _ obj: [String: Any],
         schemaObject: [String: JSONValue]
     ) -> ValidationResult {
+        let properties = propertiesMap(schemaObject)
         for key in requiredKeys(schemaObject) {
-            if obj[key] == nil || obj[key] is NSNull {
+            let propertySchema: [String: JSONValue]? = {
+                if case .object(let prop)? = properties[key] { return prop }
+                return nil
+            }()
+            if obj[key] == nil || (obj[key] is NSNull && propertySchema.map(permitsNull) != true) {
                 return .fail("Missing required property: \(key)", field: key)
             }
         }
-
-        let properties = propertiesMap(schemaObject)
 
         // `additionalProperties: false` rejects keys not declared in
         // `properties`. JSON Schema's default is to allow extras, and we
@@ -116,6 +119,11 @@ public struct SchemaValidator {
         schemaObject: [String: JSONValue],
         key: String?
     ) -> ValidationResult {
+        if value is NSNull {
+            guard permitsNull(schemaObject) else { return typeMismatch("non-null", key: key) }
+            return enumCheck(value: value, schemaObject: schemaObject, key: key)
+        }
+
         // First-match dispatch on combinators. We match OpenAI's
         // observed JSON-Schema usage: `oneOf` and `anyOf` are common
         // tool-arg patterns; `allOf` is rare. We treat `oneOf` and
@@ -348,6 +356,7 @@ public struct SchemaValidator {
 
     private static func equalJSONValues(_ a: Any, _ b: Any) -> Bool {
         switch (a, b) {
+        case (_ as NSNull, _ as NSNull): return true
         case (let x as String, let y as String): return x == y
         case (let x as Bool, let y as Bool): return x == y
         case (let x as Int, let y as Int): return x == y
@@ -402,6 +411,13 @@ public struct SchemaValidator {
         _ value: Any,
         schemaObject: [String: JSONValue]
     ) -> Any {
+        if let s = value as? String,
+            s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "null",
+            permitsNull(schemaObject)
+        {
+            return NSNull()
+        }
+
         let typeName: String? = {
             if case .string(let t)? = schemaObject["type"] { return t }
             return nil
@@ -564,6 +580,23 @@ public struct SchemaValidator {
     ) -> Any? {
         guard let s = value as? String, let coerced = coercer(s) else { return nil }
         return coerced
+    }
+
+    private static func permitsNull(_ schemaObject: [String: JSONValue]) -> Bool {
+        if case .bool(true)? = schemaObject["nullable"] {
+            return true
+        }
+        if case .array(let entries)? = schemaObject["type"],
+            entries.contains(.string("null"))
+        {
+            return true
+        }
+        if case .array(let entries)? = schemaObject["enum"],
+            entries.contains(.null)
+        {
+            return true
+        }
+        return false
     }
 }
 

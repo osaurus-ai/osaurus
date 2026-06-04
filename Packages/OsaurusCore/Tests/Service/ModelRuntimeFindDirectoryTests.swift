@@ -55,6 +55,40 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(resolved?.resolvingSymlinksInPath().path == realModel.resolvingSymlinksInPath().path)
     }
 
+    @Test("Friendly non-CRACK id resolves to local CRACK bundle")
+    func friendlyNonCrackIdResolvesToLocalCrackBundle() throws {
+        let root = try makeIsolatedDir()
+        let repo = root.appendingPathComponent("dealign.ai", isDirectory: true)
+            .appendingPathComponent("Gemma-4-12B-it-MXFP8-CRACK", isDirectory: true)
+        try populateValidModel(at: repo)
+
+        let resolved = ModelRuntime.resolveLocalModelDirectory(
+            forModelId: "gemma-4-12b-it-mxfp8",
+            in: root
+        )
+        #expect(resolved?.resolvingSymlinksInPath().path == repo.resolvingSymlinksInPath().path)
+    }
+
+    @Test("Friendly CRACK id resolves by basename under arbitrary publisher org")
+    func friendlyCrackIdResolvesByBasenameUnderPublisherOrg() throws {
+        let root = try makeIsolatedDir()
+        let repo = root.appendingPathComponent("dealign.ai", isDirectory: true)
+            .appendingPathComponent("Gemma-4-12B-it-MXFP4-CRACK", isDirectory: true)
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        try Data(#"{"model_type":"gemma4_unified"}"#.utf8).write(
+            to: repo.appendingPathComponent("config.json")
+        )
+        try Data("dummy".utf8).write(
+            to: repo.appendingPathComponent("model-00001-of-00010.safetensors")
+        )
+
+        let resolved = ModelRuntime.resolveLocalModelDirectory(
+            forModelId: "gemma-4-12b-it-mxfp4-crack",
+            in: root
+        )
+        #expect(resolved?.resolvingSymlinksInPath().path == repo.resolvingSymlinksInPath().path)
+    }
+
     @Test("Missing config.json returns nil even when safetensors exist")
     func missingConfigRejects() throws {
         let (root, realModel) = try makeRoot()

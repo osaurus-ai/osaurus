@@ -3065,6 +3065,31 @@ public actor ModelRuntime {
             partial.appendingPathComponent(component, isDirectory: true)
         }
         let fm = FileManager.default
+        func loadableBundle(_ candidateURL: URL) -> URL? {
+            let resolved = candidateURL.resolvingSymlinksInPath()
+            let hasConfig = fm.fileExists(atPath: resolved.appendingPathComponent("config.json").path)
+            guard hasConfig else {
+                return nil
+            }
+            let directWeightSentinels = [
+                "model.safetensors",
+                "weights.safetensors",
+                "model-00001-of-00001.safetensors",
+            ]
+            if directWeightSentinels.contains(where: {
+                fm.fileExists(atPath: resolved.appendingPathComponent($0).path)
+            }) {
+                return resolved
+            }
+            for shardCount in 2 ... 256 {
+                let candidate = String(format: "model-00001-of-%05d.safetensors", shardCount)
+                if fm.fileExists(atPath: resolved.appendingPathComponent(candidate).path) {
+                    return resolved
+                }
+            }
+            return nil
+        }
+
         // Resolve symlinks before `contentsOfDirectory`: on macOS
         // `contentsOfDirectory(at:)` returns POSIX ENOTDIR when the URL points
         // at a symbolic link to a directory (even though the target itself is
@@ -3074,27 +3099,59 @@ public actor ModelRuntime {
         // every load despite `scanLocalModels` discovering the same repo —
         // that discovery path already resolves symlinks per-level, so keeping
         // the two symmetric here closes the asymmetry.
-        let resolved = url.resolvingSymlinksInPath()
-        let hasConfig = fm.fileExists(atPath: resolved.appendingPathComponent("config.json").path)
-        guard hasConfig else {
+        if let direct = loadableBundle(url) {
+            return direct
+        }
+
+        let requested = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !requested.isEmpty else { return nil }
+        let requestedBase = requested.split(separator: "/").last.map(String.init) ?? requested
+        func withoutCrackSuffix(_ value: String) -> String {
+            value.hasSuffix("-crack") ? String(value.dropLast("-crack".count)) : value
+        }
+        let requestedAliases: Set<String> = [
+            requested,
+            requestedBase,
+            withoutCrackSuffix(requested),
+            withoutCrackSuffix(requestedBase),
+        ]
+
+        func scan(_ directory: URL, prefix: [String], maxDepth: Int) -> URL? {
+            guard maxDepth > 0,
+                let entries = try? fm.contentsOfDirectory(
+                    at: directory,
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                    options: [.skipsHiddenFiles]
+                )
+            else { return nil }
+
+            for entry in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                let resolved = entry.resolvingSymlinksInPath()
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: resolved.path, isDirectory: &isDir),
+                    isDir.boolValue
+                else { continue }
+
+                let components = prefix + [entry.lastPathComponent]
+                if let bundle = loadableBundle(entry) {
+                    let full = components.joined(separator: "/").lowercased()
+                    let base = entry.lastPathComponent.lowercased()
+                    let aliases: Set<String> = [
+                        full, base, withoutCrackSuffix(full), withoutCrackSuffix(base),
+                    ]
+                    if !requestedAliases.isDisjoint(with: aliases) {
+                        return bundle
+                    }
+                    continue
+                }
+
+                if let match = scan(resolved, prefix: components, maxDepth: maxDepth - 1) {
+                    return match
+                }
+            }
             return nil
         }
-        let directWeightSentinels = [
-            "model.safetensors",
-            "weights.safetensors",
-            "model-00001-of-00001.safetensors",
-        ]
-        if directWeightSentinels.contains(where: {
-            fm.fileExists(atPath: resolved.appendingPathComponent($0).path)
-        }) {
-            return resolved
-        }
-        for shardCount in 2 ... 256 {
-            let candidate = String(format: "model-00001-of-%05d.safetensors", shardCount)
-            if fm.fileExists(atPath: resolved.appendingPathComponent(candidate).path) {
-                return resolved
-            }
-        }
-        return nil
+
+        return scan(base, prefix: [], maxDepth: 3)
     }
 }
