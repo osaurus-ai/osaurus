@@ -1080,35 +1080,181 @@ struct ModelDownloadView: View {
             "\(type)|\(filterState.sizeCategory?.rawValue ?? "_")|\(filterState.paramCategory?.rawValue ?? "_")|\(filterState.performance?.rawValue ?? "_")|\(filterState.family ?? "_")"
     }
 
-    /// Consolidates all list computations. Each input pipeline runs once.
-    private func computeGridLists() -> GridLists {
-        let mem = systemMonitor.totalMemoryGB
+    /// Value snapshot of everything `makeGridLists` reads, captured on the main
+    /// actor so the filter/sort pipeline can run off it on a background task
+    /// without touching view or manager state.
+    struct GridListInput: Sendable {
+        let availableModels: [MLXModel]
+        let suggestedModels: [MLXModel]
+        let deduplicatedModels: [MLXModel]
+        let downloadStates: [String: DownloadState]
+        let searchText: String
+        let filterState: ModelManager.ModelFilterState
+        let selectedTab: ModelListTab
+        let sortOption: ModelSortOption
+        let totalMemoryGB: Double
+    }
+
+    /// Snapshot the current inputs. Must run on the main actor.
+    private func makeGridListInput() -> GridListInput {
+        GridListInput(
+            availableModels: modelManager.availableModels,
+            suggestedModels: modelManager.suggestedModels,
+            deduplicatedModels: modelManager.deduplicatedModels(),
+            downloadStates: modelManager.downloadStates,
+            searchText: debouncedSearchText,
+            filterState: filterState,
+            selectedTab: selectedTab,
+            sortOption: sortOption,
+            totalMemoryGB: systemMonitor.totalMemoryGB
+        )
+    }
+
+    /// Consolidates all list computations. Pure over `GridListInput` so it can
+    /// run off the main thread — the search/filter/sort pass over a large model
+    /// catalog otherwise blocked the main thread on every input change.
+    nonisolated static func makeGridLists(_ input: GridListInput) -> GridLists {
+        let mem = input.totalMemoryGB
+        let sortOption = input.sortOption
+        let filterState = input.filterState
+        let searchText = input.searchText
+        let downloadStates = input.downloadStates
+
+        func isActive(_ m: MLXModel) -> Bool {
+            switch downloadStates[m.id] ?? .notStarted {
+            case .downloading, .paused: return true
+            default: return false
+            }
+        }
+        // True when the model is on disk or actively downloading/paused — keeps
+        // imported/non-curated models visible in the All tab.
+        func isUserModel(_ m: MLXModel) -> Bool {
+            m.isDownloaded || isActive(m)
+        }
+        func compatibilityRank(_ m: MLXModel) -> Int {
+            switch m.compatibility(totalMemoryGB: mem) {
+            case .compatible: return 0
+            case .tight: return 1
+            case .tooLarge: return 2
+            case .unknown: return 3
+            }
+        }
+        func applySort(_ models: [MLXModel]) -> [MLXModel] {
+            switch sortOption {
+            case .recommended, .nameAsc:
+                return models.sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                }
+            case .downloadsDesc:
+                return models.sorted { lhs, rhs in
+                    let l = lhs.downloads ?? -1
+                    let r = rhs.downloads ?? -1
+                    if l != r { return l > r }
+                    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                }
+            case .compatibility:
+                return models.sorted { lhs, rhs in
+                    let l = compatibilityRank(lhs)
+                    let r = compatibilityRank(rhs)
+                    if l != r { return l < r }
+                    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                }
+            case .sizeAsc, .sizeDesc:
+                return models.sorted { lhs, rhs in
+                    let l = lhs.totalSizeEstimateBytes ?? Int64.max
+                    let r = rhs.totalSizeEstimateBytes ?? Int64.max
+                    if l != r { return sortOption == .sizeAsc ? l < r : l > r }
+                    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                }
+            case .newest, .oldest:
+                return models.sorted { lhs, rhs in
+                    switch (lhs.releasedAt, rhs.releasedAt) {
+                    case let (l?, r?):
+                        if l != r { return sortOption == .newest ? l > r : l < r }
+                    case (_?, nil):
+                        return true
+                    case (nil, _?):
+                        return false
+                    case (nil, nil):
+                        break
+                    }
+                    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                }
+            }
+        }
+        func sortedSuggested(_ filtered: [MLXModel]) -> [MLXModel] {
+            if sortOption != .recommended {
+                return applySort(filtered)
+            }
+            let curatedIds = ModelManager.curatedSuggestedIds
+            return filtered.sorted { lhs, rhs in
+                let lhsCurated = curatedIds.contains(lhs.id.lowercased())
+                let rhsCurated = curatedIds.contains(rhs.id.lowercased())
+                if lhsCurated != rhsCurated { return lhsCurated }
+
+                if lhsCurated && lhs.isTopSuggestion != rhs.isTopSuggestion {
+                    return lhs.isTopSuggestion
+                }
+
+                switch (lhs.releasedAt, rhs.releasedAt) {
+                case let (l?, r?) where l != r:
+                    return l > r
+                case (.some, .none):
+                    return true
+                case (.none, .some):
+                    return false
+                default:
+                    break
+                }
+
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        }
+        func computeDownloadedList() -> [MLXModel] {
+            let all = input.deduplicatedModels
+            let active = all.filter(isActive)
+            let completed = all.filter { $0.isDownloaded }
+            var seen: Set<String> = []
+            var merged: [MLXModel] = []
+            for m in active + completed {
+                let k = m.id.lowercased()
+                if !seen.contains(k) {
+                    seen.insert(k)
+                    merged.append(m)
+                }
+            }
+            let searched = SearchService.filterModels(merged, with: searchText)
+            let filtered = filterState.apply(to: searched, totalMemoryGB: mem)
+            let activeGroup = applySort(filtered.filter(isActive))
+            let restGroup = applySort(filtered.filter { !isActive($0) })
+            return activeGroup + restGroup
+        }
 
         // All tab = OsaurusAI catalog + models the user owns/is downloading +
         // (when searching) anything matching the query. without the latter two,
         // imported/pasted repos inserted into `availableModels` are filtered
         // out and never appear
-        let hasQuery = !debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let allTabBase = modelManager.availableModels.filter { model in
-            Self.isOsaurusAI(model) || isUserModel(model) || hasQuery
+        let hasQuery = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let allTabBase = input.availableModels.filter { model in
+            isOsaurusAI(model) || isUserModel(model) || hasQuery
         }
-        let osaurusSuggested = modelManager.suggestedModels.filter { Self.isOsaurusAI($0) }
+        let osaurusSuggested = input.suggestedModels.filter { isOsaurusAI($0) }
 
-        let availSearched = SearchService.filterModels(allTabBase, with: debouncedSearchText)
+        let availSearched = SearchService.filterModels(allTabBase, with: searchText)
         let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
-        let allFiltered = applySort(to: availFiltered)
+        let allFiltered = applySort(availFiltered)
 
-        let suggSearched = SearchService.filterModels(osaurusSuggested, with: debouncedSearchText)
+        let suggSearched = SearchService.filterModels(osaurusSuggested, with: searchText)
         let suggFiltered = filterState.apply(to: suggSearched, totalMemoryGB: mem)
         let suggested = sortedSuggested(suggFiltered)
 
         let recommendedIds = Set(suggested.map { $0.id.lowercased() })
         let others = allFiltered.filter { !recommendedIds.contains($0.id.lowercased()) }
 
-        let downloaded = computeDownloadedList(memory: mem)
+        let downloaded = computeDownloadedList()
 
         let displayed: [MLXModel]
-        switch selectedTab {
+        switch input.selectedTab {
         case .all: displayed = suggested + others
         case .downloaded: displayed = downloaded
         }
@@ -1118,153 +1264,50 @@ struct ModelDownloadView: View {
 
     /// Eager refresh of the cached snapshot. Called from `.onAppear` and
     /// from every `.onChange` of a user-driven input — these flips
-    /// should feel immediate.
+    /// should feel immediate. Inputs are snapshotted now (on the main actor);
+    /// the filter/sort pass runs off the main thread and the result is applied
+    /// back on main.
     private func refreshGridLists() {
         gridListsRefreshTask?.cancel()
-        gridListsRefreshTask = nil
-        gridListsSnapshot = computeGridLists()
+        let input = makeGridListInput()
+        gridListsRefreshTask = Task { @MainActor in
+            let lists = await Task.detached(priority: .userInitiated) {
+                Self.makeGridLists(input)
+            }.value
+            // A superseded task must not touch the snapshot or the handle —
+            // the task that cancelled it now owns both.
+            guard !Task.isCancelled else { return }
+            gridListsSnapshot = lists
+            gridListsRefreshTask = nil
+        }
     }
 
     /// Debounced refresh for `modelManager.objectWillChange` bursts so
     /// the grid doesn't re-filter+sort on every download progress chunk.
     /// `.throttle` on the publisher already caps to ~5 Hz; the extra
-    /// 50 ms sleep here coalesces any same-tick publishes.
+    /// 50 ms sleep here coalesces any same-tick publishes. Inputs are
+    /// snapshotted after the debounce (on main) so they reflect the latest
+    /// state, then the pass runs off the main thread.
     private func scheduleGridListsRefresh() {
         guard gridListsRefreshTask == nil else { return }
         gridListsRefreshTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(50))
-            if !Task.isCancelled {
-                gridListsSnapshot = computeGridLists()
-            }
+            guard !Task.isCancelled else { return }
+            let input = makeGridListInput()
+            let lists = await Task.detached(priority: .userInitiated) {
+                Self.makeGridLists(input)
+            }.value
+            // A superseded task must not touch the snapshot or the handle —
+            // the task that cancelled it now owns both.
+            guard !Task.isCancelled else { return }
+            gridListsSnapshot = lists
             gridListsRefreshTask = nil
         }
     }
 
-    private func sortedSuggested(_ filtered: [MLXModel]) -> [MLXModel] {
-        if sortOption != .recommended {
-            return applySort(to: filtered)
-        }
-        let curatedIds = ModelManager.curatedSuggestedIds
-        return filtered.sorted { lhs, rhs in
-            let lhsCurated = curatedIds.contains(lhs.id.lowercased())
-            let rhsCurated = curatedIds.contains(rhs.id.lowercased())
-            if lhsCurated != rhsCurated { return lhsCurated }
-
-            if lhsCurated && lhs.isTopSuggestion != rhs.isTopSuggestion {
-                return lhs.isTopSuggestion
-            }
-
-            switch (lhs.releasedAt, rhs.releasedAt) {
-            case let (l?, r?) where l != r:
-                return l > r
-            case (.some, .none):
-                return true
-            case (.none, .some):
-                return false
-            default:
-                break
-            }
-
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
-    }
-
-    private func computeDownloadedList(memory mem: Double) -> [MLXModel] {
-        let all = modelManager.deduplicatedModels()
-        let isActive: (MLXModel) -> Bool = { m in
-            switch modelManager.downloadStates[m.id] ?? .notStarted {
-            case .downloading, .paused: return true
-            default: return false
-            }
-        }
-        let active = all.filter(isActive)
-        let completed = all.filter { $0.isDownloaded }
-        var seen: Set<String> = []
-        var merged: [MLXModel] = []
-        for m in active + completed {
-            let k = m.id.lowercased()
-            if !seen.contains(k) {
-                seen.insert(k)
-                merged.append(m)
-            }
-        }
-        let searched = SearchService.filterModels(merged, with: debouncedSearchText)
-        let filtered = filterState.apply(to: searched, totalMemoryGB: mem)
-        let activeGroup = applySort(to: filtered.filter(isActive))
-        let restGroup = applySort(to: filtered.filter { !isActive($0) })
-        return activeGroup + restGroup
-    }
-
-    /// Apply the active `sortOption` to a list. `.recommended` falls back to
-    /// alphabetical so the "Others" section in the All tab stays stable.
-    private func applySort(to models: [MLXModel]) -> [MLXModel] {
-        switch sortOption {
-        case .recommended, .nameAsc:
-            return models.sorted { lhs, rhs in
-                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
-        case .downloadsDesc:
-            // Models without a known HF download count drop to the bottom.
-            return models.sorted { lhs, rhs in
-                let l = lhs.downloads ?? -1
-                let r = rhs.downloads ?? -1
-                if l != r { return l > r }
-                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
-        case .compatibility:
-            return models.sorted { lhs, rhs in
-                let l = compatibilityRank(lhs)
-                let r = compatibilityRank(rhs)
-                if l != r { return l < r }
-                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
-        case .sizeAsc, .sizeDesc:
-            return models.sorted { lhs, rhs in
-                let l = lhs.totalSizeEstimateBytes ?? Int64.max
-                let r = rhs.totalSizeEstimateBytes ?? Int64.max
-                if l != r { return sortOption == .sizeAsc ? l < r : l > r }
-                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
-        case .newest, .oldest:
-            // Models without a known HF `lastModified` timestamp drop to the
-            // bottom so dated entries always lead the list regardless of order.
-            return models.sorted { lhs, rhs in
-                switch (lhs.releasedAt, rhs.releasedAt) {
-                case let (l?, r?):
-                    if l != r { return sortOption == .newest ? l > r : l < r }
-                case (_?, nil):
-                    return true
-                case (nil, _?):
-                    return false
-                case (nil, nil):
-                    break
-                }
-                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
-        }
-    }
 
     private static func isOsaurusAI(_ model: MLXModel) -> Bool {
         model.id.lowercased().hasPrefix("osaurusai/")
-    }
-
-    /// True when the model is on disk or actively downloading/paused — keeps
-    /// imported/non-curated models visible in the All tab.
-    private func isUserModel(_ model: MLXModel) -> Bool {
-        if model.isDownloaded { return true }
-        switch modelManager.downloadStates[model.id] ?? .notStarted {
-        case .downloading, .paused: return true
-        default: return false
-        }
-    }
-
-    private func compatibilityRank(_ model: MLXModel) -> Int {
-        switch model.compatibility(totalMemoryGB: systemMonitor.totalMemoryGB) {
-        case .compatible: return 0
-        case .tight: return 1
-        case .tooLarge: return 2
-        case .unknown: return 3
-        }
     }
 
     /// Count of completed (on-disk) downloaded models respecting current search and filters
