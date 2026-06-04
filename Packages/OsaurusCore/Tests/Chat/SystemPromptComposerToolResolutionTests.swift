@@ -217,7 +217,8 @@ struct SystemPromptComposerToolResolutionTests {
         // The unified `file_*` read tools must tell the model (at the
         // schema level) that they also reach `/workspace/...` sandbox
         // paths, and the hidden `sandbox_read_file` must remain registered
-        // so the `sandbox_execute_code` Python bridge can still dispatch it.
+        // (just suppressed from the schema) so tear-down and capability
+        // indexing keep tracking it.
         // The note rides the FULL spec (turn-1 bootstrap compaction keeps
         // only the first sentence; the `## Files` prompt block carries the
         // routing on turn 1), so assert against `alwaysLoadedSpecs`.
@@ -242,11 +243,11 @@ struct SystemPromptComposerToolResolutionTests {
 
                     // Hidden from the schema...
                     #expect(byName["sandbox_read_file"] == nil)
-                    // ...but still registered (callable for the Python bridge).
+                    // ...but still registered (tear-down + capability indexing).
                     let callable = ToolRegistry.shared.specs(forTools: ["sandbox_read_file"])
                     #expect(
                         callable.count == 1,
-                        "sandbox_read_file must stay registered for the execute-code bridge"
+                        "sandbox_read_file must stay registered even when hidden"
                     )
                 }
             }

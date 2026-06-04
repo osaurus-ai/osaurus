@@ -731,15 +731,12 @@ See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 | `sandbox_write_file` | Write | Write a whole file (`content`, creates parent directories) **or** edit it in place (`old_string`+`new_string`, exact match) — the presence of `old_string` selects the edit path. Use instead of `echo`/`cat` heredoc / `sed` / `awk`. |
 | `sandbox_exec` | Exec | Run shell command. Foreground (default) or `background:true` for servers/long jobs. |
 | `sandbox_process` | Exec | Manage background jobs from `sandbox_exec(background:true)` — `poll` / `wait` / `kill`. |
-| `sandbox_execute_code` | Exec | Run a Python script that imports sandbox tools as helpers (`from osaurus_tools import …`). Use for ≥3 tool calls with logic between them. |
-| `sandbox_install` | Package | Install via apk (root) |
-| `sandbox_pip_install` | Package | Install via pip |
-| `sandbox_npm_install` | Package | Install via npm |
+| `sandbox_install` | Package | Install packages — one tool, `manager` selects `apk` (system, root), `pip` (Python venv), or `npm` (Node workspace). Replaces the old `sandbox_pip_install` + `sandbox_npm_install`. |
 | `sandbox_secret_check` | Secret | Check whether a secret exists (never reveals value) |
 | `sandbox_secret_set` | Secret | Store a secret directly or prompt the user |
 | `sandbox_plugin_register` | Plugin | Register an agent-created plugin (requires `pluginCreate`) |
 
-The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, `sandbox_run_script`, and `sandbox_edit_file` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`), an argument (`old_string`+`new_string` on `sandbox_write_file` for in-place edits), or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script`'s use case — multi-step Python orchestration — moved to `sandbox_execute_code`.
+The previously-discrete `sandbox_list_directory`, `sandbox_find_files`, `sandbox_move`, `sandbox_delete`, `sandbox_exec_background`, `sandbox_run_script`, `sandbox_edit_file`, and `sandbox_execute_code` tools were dropped. Their behaviour now comes from a flag (`background:true` on `sandbox_exec`, `target` on `sandbox_search_files`), an argument (`old_string`+`new_string` on `sandbox_write_file` for in-place edits), or a direct shell invocation (`mv` / `rm` in `sandbox_exec`). `sandbox_run_script` and `sandbox_execute_code`'s use case — multi-step scripts/orchestration — is now `sandbox_write_file` the script then `sandbox_exec` to run it (e.g. `python3 script.py`). The `sandbox_pip_install` / `sandbox_npm_install` tools were folded into `sandbox_install` (pick the manager with `manager:"pip"` / `"npm"`); a failed bare `apk add` / `pip install` / `npm install` in `sandbox_exec` surfaces a self-heal hint pointing at `sandbox_install`.
 
 `share_artifact` is a global built-in (registered in `ToolRegistry`, available in plain chat / folder / sandbox alike) so it does not appear in this sandbox-specific table.
 

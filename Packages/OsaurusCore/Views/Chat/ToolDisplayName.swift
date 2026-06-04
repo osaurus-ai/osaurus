@@ -126,7 +126,6 @@ enum ToolDisplayName {
 
         // Sandbox — "in sandbox" suffix makes the execution context explicit.
         "sandbox_exec": ToolLabel(L("Running a command in sandbox"), L("Ran a command in sandbox")),
-        "sandbox_execute_code": ToolLabel(L("Running code in sandbox"), L("Ran code in sandbox")),
         "sandbox_read_file": ToolLabel(L("Reading a file in sandbox"), L("Read a file in sandbox")),
         "sandbox_write_file": ToolLabel(L("Writing a file in sandbox"), L("Wrote a file in sandbox")),
         "sandbox_edit_file": ToolLabel(L("Editing a file in sandbox"), L("Edited a file in sandbox")),
@@ -134,14 +133,6 @@ enum ToolDisplayName {
         "sandbox_install": ToolLabel(
             L("Installing dependencies in sandbox"),
             L("Installed dependencies in sandbox")
-        ),
-        "sandbox_npm_install": ToolLabel(
-            L("Installing npm packages in sandbox"),
-            L("Installed npm packages in sandbox")
-        ),
-        "sandbox_pip_install": ToolLabel(
-            L("Installing Python packages in sandbox"),
-            L("Installed Python packages in sandbox")
         ),
         "sandbox_process": ToolLabel(L("Managing a process in sandbox"), L("Managed a process in sandbox")),
         "sandbox_plugin_register": ToolLabel(

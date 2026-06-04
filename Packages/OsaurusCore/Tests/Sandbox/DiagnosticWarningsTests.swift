@@ -97,7 +97,7 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "bash: -c: line 3: syntax error near unexpected token `('"
         )
-        #expect(warnings.contains { $0.contains("sandbox_execute_code") })
+        #expect(warnings.contains { $0.contains("sandbox_write_file") })
         #expect(warnings.contains { $0.contains("shell `-c` / `-e`") })
     }
 
@@ -108,7 +108,7 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "SyntaxError: Unexpected end of file"
         )
-        #expect(warnings.contains { $0.contains("sandbox_execute_code") })
+        #expect(warnings.contains { $0.contains("sandbox_write_file") })
     }
 
     @Test func cleanInlinePythonOneLinerDoesNotTriggerEscapeHint() {
@@ -120,7 +120,7 @@ struct DiagnosticWarningsTests {
             stdout: "1\n",
             stderr: ""
         )
-        #expect(warnings.allSatisfy { !$0.contains("sandbox_execute_code") })
+        #expect(warnings.allSatisfy { !$0.contains("sandbox_write_file") })
     }
 
     @Test func pythonRuntimeErrorDoesNotTriggerEscapeHint() {
@@ -133,7 +133,7 @@ struct DiagnosticWarningsTests {
             stderr:
                 "Traceback (most recent call last):\n  File \"<string>\", line 1\nModuleNotFoundError: No module named 'nope'"
         )
-        #expect(warnings.allSatisfy { !$0.contains("sandbox_execute_code") })
+        #expect(warnings.allSatisfy { !$0.contains("sandbox_write_file") })
     }
 
     @Test func shellSyntaxErrorWithoutInlineCodeFlagDoesNotTriggerEscapeHint() {
@@ -146,7 +146,7 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "bash: command substitution: line 1: syntax error: unexpected end of file"
         )
-        #expect(warnings.allSatisfy { !$0.contains("sandbox_execute_code") })
+        #expect(warnings.allSatisfy { !$0.contains("sandbox_write_file") })
     }
 
     // MARK: - Unbalanced-quote hint
@@ -199,8 +199,67 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "bash: -c: line 2: unexpected EOF while looking for matching `\"'"
         )
-        #expect(warnings.contains { $0.contains("sandbox_execute_code") })
+        #expect(warnings.contains { $0.contains("sandbox_write_file") })
         #expect(warnings.allSatisfy { !$0.contains("unbalanced") })
+    }
+
+    // MARK: - Bare install-command redirect
+
+    @Test func bareApkAddFailureRedirectsToSandboxInstall() {
+        let warnings = diagnosticWarnings(
+            command: "apk add curl ffmpeg",
+            exitCode: 1,
+            stdout: "",
+            stderr: "ERROR: Unable to lock database: Permission denied"
+        )
+        #expect(warnings.contains { $0.contains("sandbox_install") })
+        #expect(warnings.contains { $0.contains("\"apk\"") })
+    }
+
+    @Test func barePipInstallFailureRedirectsToSandboxInstall() {
+        let warnings = diagnosticWarnings(
+            command: "pip install numpy flask",
+            exitCode: 1,
+            stdout: "",
+            stderr: "ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied"
+        )
+        #expect(warnings.contains { $0.contains("sandbox_install") })
+        #expect(warnings.contains { $0.contains("\"pip\"") })
+    }
+
+    @Test func bareNpmInstallFailureRedirectsToSandboxInstall() {
+        let warnings = diagnosticWarnings(
+            command: "cd /tmp && npm install express",
+            exitCode: 1,
+            stdout: "",
+            stderr: "npm error code EACCES"
+        )
+        #expect(warnings.contains { $0.contains("sandbox_install") })
+        #expect(warnings.contains { $0.contains("\"npm\"") })
+    }
+
+    @Test func successfulInstallIsNotNagged() {
+        // The redirect is failure-gated: a working command (even a bare
+        // `pip install`) exits 0 and must stay silent.
+        let warnings = diagnosticWarnings(
+            command: "pip install numpy",
+            exitCode: 0,
+            stdout: "Successfully installed numpy-1.26.0",
+            stderr: ""
+        )
+        #expect(warnings.allSatisfy { !$0.contains("sandbox_install") })
+    }
+
+    @Test func nonInstallCommandDoesNotTriggerInstallRedirect() {
+        // A command that merely *mentions* an install string as an
+        // argument (not a statement) must not false-fire.
+        let warnings = diagnosticWarnings(
+            command: "echo 'run pip install later'",
+            exitCode: 1,
+            stdout: "",
+            stderr: "some unrelated failure"
+        )
+        #expect(warnings.allSatisfy { !$0.contains("sandbox_install") })
     }
 
     // MARK: - Combined-mode sandbox_exec host-path backstop

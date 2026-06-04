@@ -1911,7 +1911,9 @@ extension AppDelegate {
             // fires on later switches, so this captures the initial tab too.
             let shownTab = initialTab ?? ManagementStateManager.shared.selectedTab
             CrashReportingService.recordBreadcrumb(
-                category: "navigation", message: "management.window \(shownTab.rawValue)")
+                category: "navigation",
+                message: "management.window \(shownTab.rawValue)"
+            )
             let windowManager = WindowManager.shared
             let themeManager = ThemeManager.shared
             let root = ManagementView(

@@ -818,12 +818,23 @@ public struct SystemPromptComposer: Sendable {
         // OR size class), so this gate is KV-cache safe.
         if !effectiveToolsOff, executionMode.usesSandboxTools {
             let secretNames = AgentSecretsKeychain.secretIDs(agentId: agentId)
+            let installedPackages = SandboxPackageManifest.shared.installed(
+                agentId: agentId.uuidString
+            )
+            // Derived identically to how the sandbox tools register their
+            // home (`SandboxToolRegistrar` -> `BuiltinSandboxTools.register`)
+            // so the prompt names the exact path `cwd` validation accepts.
+            let sandboxHome = OsaurusPaths.inContainerAgentHome(
+                SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+            )
             composer.append(
                 .static(
                     id: "sandbox",
                     label: "Chat Sandbox",
                     content: SystemPromptTemplates.sandbox(
                         secretNames: secretNames,
+                        installedPackages: installedPackages,
+                        home: sandboxHome,
                         hostReadCombined: executionMode.hostReadContext != nil
                     )
                 )
@@ -1165,8 +1176,7 @@ public struct SystemPromptComposer: Sendable {
     static let mutationToolNames: Set<String> = [
         // sandbox built-ins
         "sandbox_write_file", "sandbox_exec",
-        "sandbox_install", "sandbox_pip_install", "sandbox_npm_install",
-        "sandbox_execute_code",
+        "sandbox_install",
         // folder tools
         "file_write", "file_edit", "shell_run",
     ]

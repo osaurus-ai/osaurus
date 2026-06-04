@@ -108,7 +108,7 @@ struct BootstrapSpecCompactionTests {
         let tool = Tool(
             type: "function",
             function: ToolFunction(
-                name: "sandbox_pip_install",
+                name: "sandbox_install",
                 description:
                     "Install Python packages via pip into the agent's venv at `~/.venv/`. "
                     + "**Use this instead of sandbox_exec.** Example: foo.",

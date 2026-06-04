@@ -66,7 +66,7 @@ public enum SystemPromptTemplates {
         - `todo(markdown)` — write or replace the user-visible task list. Use it when the request has 3+ obvious steps; skip for trivial work. Each call replaces the whole list, so to mark items done re-send the full list with the new boxes.
         - `complete(summary)` — call once at the very end (never alongside other tools) with WHAT you did + HOW you verified it. Vague placeholders ("done", "looks good") are rejected; partial work should be reported honestly.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
-        - `share_artifact(...)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd) — files in `/tmp` won't be findable. If unsure where you wrote it, verify with `sandbox_search_files(target="files", pattern="<name>")` first. For inline text/markdown, use `content`+`filename` mode and skip the file write entirely. **When using `sandbox_execute_code`, call `share_artifact` from the model layer AFTER the script returns — the helper module does not expose it because in-script calls would silently fail to render the artifact card.**
+        - `share_artifact(...)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd) — files in `/tmp` won't be findable. If unsure where you wrote it, verify with `sandbox_search_files(target="files", pattern="<name>")` first. For inline text/markdown, use `content`+`filename` mode and skip the file write entirely.
         """
 
     // MARK: - Grounding
@@ -192,22 +192,30 @@ public enum SystemPromptTemplates {
     /// NOT included here — they live as top-level sections gated on
     /// file-mutation tools being in the schema, so folder-mode agents
     /// doing real edits get the same discipline.
-    public static func sandbox(secretNames: [String] = [], hostReadCombined: Bool = false) -> String {
+    public static func sandbox(
+        secretNames: [String] = [],
+        installedPackages: SandboxPackageManifest.Installed = .init(),
+        home: String = "",
+        hostReadCombined: Bool = false
+    ) -> String {
         var section = """
 
             \(sandboxSectionHeading)
 
-            \(sandboxEnvironmentBlock)
-            Files persist across messages.
+            \(sandboxEnvironmentBlock(home: home))
 
             \(hostReadCombined ? sandboxToolGuideCombined : sandboxToolGuide)
 
             \(sandboxRuntimeHints(hostReadCombined: hostReadCombined))
 
             """
-        // The runtime hints block ends with a single `\n`; the secrets
-        // block is its own logical subsection, so prepend a blank-line
-        // separator instead of having it run on as a sixth bullet.
+        // The runtime hints block ends with a single `\n`; each of these is
+        // its own logical subsection, so prepend a blank-line separator
+        // instead of having them run on as extra bullets.
+        let installed = installedPackagesPromptBlock(installedPackages)
+        if !installed.isEmpty {
+            section += "\n" + installed
+        }
         let secrets = secretsPromptBlock(secretNames)
         if !secrets.isEmpty {
             section += "\n" + secrets
@@ -228,25 +236,37 @@ public enum SystemPromptTemplates {
     static let sandboxReadFileHintCombined =
         "`file_read` with `tail_lines` (works on `/workspace/...` sandbox paths too)"
 
-    private static let sandboxEnvironmentBlock = """
-        You have an isolated Alpine Linux ARM64 sandbox. Your home directory \
-        (`~`) is your sandbox home; files persist across messages.
+    /// Environment framing for the sandbox section. When `home` is supplied
+    /// (the live composer always passes it), the opening line states the
+    /// agent's ABSOLUTE home path and that commands run there by default —
+    /// without this, models reliably guess the Linux convention `/root` for
+    /// `cwd` on the first turn and eat a rejection. Falls back to the generic
+    /// `~` wording when `home` is empty (callers that don't know it).
+    private static func sandboxEnvironmentBlock(home: String) -> String {
+        let homeLine =
+            home.isEmpty
+            ? "Your home directory (`~`) is your sandbox home; files persist across messages."
+            : "Your home directory is `\(home)` (also `~` / `$HOME`); commands run there by "
+                + "default — you don't need to pass `cwd` unless you want a different directory. "
+                + "Files persist across messages."
+        return """
+            You have an isolated Alpine Linux ARM64 sandbox. \(homeLine)
 
-        Internet access is available — fetch live or external data (weather, \
-        web pages, APIs) directly with `curl`, `wget`, Python `requests`, or \
-        Node `fetch`; you don't need a dedicated tool for it.
+            Internet access is available — fetch live or external data (weather, \
+            web pages, APIs) directly with `curl`, `wget`, Python `requests`, or \
+            Node `fetch`; you don't need a dedicated tool for it.
 
-        Installed: bash, python3, node, git, curl, wget, jq, rg, sqlite3, \
-        build-base, cmake, vim, tree, and standard POSIX utilities.
-        """
+            Installed: bash, python3, node, git, curl, wget, jq, rg, sqlite3, \
+            build-base, cmake, vim, tree, and standard POSIX utilities.
+            """
+    }
 
     private static let sandboxToolGuide = """
         Tool dispatch:
         - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`content` whole-file, or `old_string`+`new_string` to edit).
         - Search: `sandbox_search_files` with `target="content"` or `target="files"`.
         - Shell: `sandbox_exec` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them.
-        - Python: `sandbox_execute_code` (runs Python directly) with `osaurus_tools` helpers (`read_file`, `write_file`, `edit_file`, `search_files`, `terminal`) — the default for ANY Python.
-        - NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks. Use `sandbox_execute_code`, or `sandbox_write_file` the script then run the file.
+        - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
         - Run independent calls in parallel; chain dependent shell steps with `&&`.
         """
 
@@ -259,8 +279,7 @@ public enum SystemPromptTemplates {
         - Read files / list dirs / search: `file_read` (reads a file or lists a directory — the path decides), `file_search` (they reach both your workspace and `/workspace/...` sandbox paths — see `## Files`).
         - Sandbox writes: `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — your workspace is read-only).
         - Shell: `sandbox_exec` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them.
-        - Python: `sandbox_execute_code` (runs Python directly) with `osaurus_tools` helpers (`read_file`, `write_file`, `edit_file`, `search_files`, `terminal`) — the default for ANY Python.
-        - NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks. Use `sandbox_execute_code`, or `sandbox_write_file` the script then run the file.
+        - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
         - Run independent calls in parallel; chain dependent shell steps with `&&`.
         """
 
@@ -272,10 +291,44 @@ public enum SystemPromptTemplates {
         let logReadHint = hostReadCombined ? sandboxReadFileHintCombined : sandboxReadFileHint
         return """
             Runtime hints:
-            - Install Python, Node, or system deps with `sandbox_pip_install`, `sandbox_npm_install`, or `sandbox_install`.
+            - Install Python, Node, or system deps with `sandbox_install` (`manager`: `pip` / `npm` / `apk`).
             - Use \(logReadHint) to inspect large logs.
             - The sandbox is disposable; experiment freely.
             - Your `SOUL.md` at `~/SOUL.md` records stable preferences across sessions. Edit it with `sandbox_write_file` when you observe a durable pattern; edits apply on the next session.
+            """
+    }
+
+    /// Per-manager cap on how many package names are listed before
+    /// collapsing into a `+N more` tail. Keeps the always-on prefix bounded
+    /// even for an agent that has installed dozens of packages.
+    static let installedPackagesPromptCap = 12
+
+    /// Compact, capped summary of what's already installed in the sandbox,
+    /// grouped by manager. Lives in the static prefix (KV-cache safe) and
+    /// reflects manifest state as of session start. Returns `""` when
+    /// nothing is recorded so the composer can append unconditionally.
+    static func installedPackagesPromptBlock(_ installed: SandboxPackageManifest.Installed) -> String {
+        guard !installed.isEmpty else { return "" }
+
+        func line(_ label: String, _ names: [String]) -> String? {
+            guard !names.isEmpty else { return nil }
+            let shown = names.prefix(installedPackagesPromptCap)
+            var joined = shown.joined(separator: ", ")
+            let overflow = names.count - shown.count
+            if overflow > 0 { joined += ", +\(overflow) more" }
+            return "- \(label): \(joined)"
+        }
+
+        let lines = [
+            line("System (apk)", installed.apk),
+            line("Python (pip)", installed.pip),
+            line("Node (npm)", installed.npm),
+        ].compactMap { $0 }
+
+        return """
+            Already installed (don't reinstall — call directly):
+            \(lines.joined(separator: "\n"))
+
             """
     }
 
@@ -457,7 +510,7 @@ public enum SystemPromptTemplates {
             - **Workspace** (your read-only host folder) — the default. For "what's in my workspace / on my Desktop", use `file_read` (it reads a file or lists a directory) and `file_search`. Relative paths and `/Users/...` paths are the workspace.
             - **Sandbox** scratch area — pass a `/workspace/...` path to the SAME `file_read` / `file_search`.
 
-            The workspace is read-only: create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` / `sandbox_execute_code` (they run in the sandbox, which has no copy of the workspace — `file_read` a workspace file and pass its content in if a command needs it). Surface results with `share_artifact`. \(secretLine)
+            The workspace is read-only: create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` (it runs in the sandbox, which has no copy of the workspace — `file_read` a workspace file and pass its content in if a command needs it). Surface results with `share_artifact`. \(secretLine)
             """
     }
 

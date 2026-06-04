@@ -1001,7 +1001,9 @@ public actor ModelRuntime {
                 "loadContainer: task value returned model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public)"
             )
             CrashReportingService.recordBreadcrumb(
-                category: "model.load", message: "loaded model=\(name) elapsedMs=\(elapsedMs)")
+                category: "model.load",
+                message: "loaded model=\(name) elapsedMs=\(elapsedMs)"
+            )
             return try await finishLoadedContainer(
                 name: name,
                 holder: holder,

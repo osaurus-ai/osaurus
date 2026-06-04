@@ -3,7 +3,7 @@
   "domain": "sandbox_diagnostics",
   "label": "sandbox_diagnostics • multi-line python3 -c parse error surfaces escape hint",
   "query": "",
-  "notes": "Reproduces the canonical local-model failure: a multi-line script embedded in `python3 -c \"…\"` whose JSON→shell→code escaping broke, so bash mis-parsed the body and exited with `syntax error near unexpected token '('`. The self-heal hint must fire and point at sandbox_execute_code.",
+  "notes": "Reproduces the canonical local-model failure: a multi-line script embedded in `python3 -c \"…\"` whose JSON→shell→code escaping broke, so bash mis-parsed the body and exited with `syntax error near unexpected token '('`. The self-heal hint must fire and point at sandbox_write_file (write the script to a file, then run it with sandbox_exec).",
   "fixtures": {},
   "expect": {
     "sandboxDiagnostics": {
@@ -11,7 +11,7 @@
       "exitCode": 2,
       "stderr": "bash: -c: line 3: syntax error near unexpected token `('",
       "expectHint": true,
-      "hintContains": "sandbox_execute_code"
+      "hintContains": "sandbox_write_file"
     }
   }
 }

@@ -148,8 +148,8 @@ struct SandboxIntegrationTests {
 
         try await withProvisionedSandboxTools {
             let pipPayload = try await executeSandboxTool(
-                "sandbox_pip_install",
-                arguments: ["packages": ["flask", "pytest"]]
+                "sandbox_install",
+                arguments: ["manager": "pip", "packages": ["flask", "pytest"]]
             )
             #expect(pipPayload["exit_code"] as? Int == 0)
 
@@ -185,7 +185,7 @@ struct SandboxIntegrationTests {
         try await withProvisionedSandboxTools {
             let installPayload = try await executeSandboxTool(
                 "sandbox_install",
-                arguments: ["packages": ["nodejs", "npm"]]
+                arguments: ["manager": "apk", "packages": ["nodejs", "npm"]]
             )
             #expect(installPayload["exit_code"] as? Int == 0)
 
@@ -218,7 +218,7 @@ struct SandboxIntegrationTests {
         try await withProvisionedSandboxTools {
             let installPayload = try await executeSandboxTool(
                 "sandbox_install",
-                arguments: ["packages": ["go"]]
+                arguments: ["manager": "apk", "packages": ["go"]]
             )
             #expect(installPayload["exit_code"] as? Int == 0)
 

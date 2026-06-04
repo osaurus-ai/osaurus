@@ -317,6 +317,14 @@ public enum OsaurusPaths {
         agentRunsDirectory(for: agentId).appendingPathComponent("\(runId.uuidString).json")
     }
 
+    /// Host-side record of which sandbox packages have been installed for
+    /// an agent: `~/.osaurus/agents/<uuid>/installed-packages.json`. Seeded
+    /// by `SandboxAgentProvisioner` (lazy reconcile) and appended to by
+    /// `sandbox_install`; surfaced as a compact line in the system prompt.
+    public static func agentPackageManifestFile(for id: UUID) -> URL {
+        agentDirectory(for: id).appendingPathComponent("installed-packages.json")
+    }
+
     /// Cross-agent scheduler database: `~/.osaurus/scheduler.sqlite`.
     /// Owns `agent_next_run`, `agent_runs`, `agent_pause`. Encrypted.
     public static func schedulerDatabaseFile() -> URL {

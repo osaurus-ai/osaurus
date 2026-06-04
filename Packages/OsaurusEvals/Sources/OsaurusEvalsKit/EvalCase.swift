@@ -226,7 +226,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     /// `inlineCodeEscapeHint` and asserts whether the hint fired
     /// (`expectHint`). When `hintContains` is set on a positive case the
     /// returned hint must additionally contain that substring — used to
-    /// pin that the recovery instruction still names `sandbox_execute_code`.
+    /// pin that the recovery instruction still names `sandbox_write_file`.
     public struct SandboxDiagnosticsExpectations: Sendable, Codable {
         public let command: String
         public let exitCode: Int

@@ -100,6 +100,11 @@ public final class SandboxAgentProvisioner {
             // contract — both matter here, after `provisionBridgeToken`
             // already established the agent user.
             await Self.seedSoulIfMissing(agentName: agentName)
+            // Lazy reconcile: one cheap pip/npm listing per provision so the
+            // installed-packages prompt line reflects real container state
+            // (including packages a previous session added). Non-throwing —
+            // a failed listing just leaves the manifest as-is.
+            await Self.reconcilePackageManifest(agentId: agentId, agentName: agentName)
         }
         inFlight[agentId] = task
         defer { inFlight[agentId] = nil }
@@ -126,6 +131,10 @@ public final class SandboxAgentProvisioner {
         // Same hygiene for the install-lock queue — entries are tiny
         // but accumulate across long sessions if we don't clear them.
         await SandboxInstallLock.shared.clear(agentName: agentName)
+        // Drop the installed-package manifest so a re-provisioned agent
+        // (or one whose container was rebuilt) starts from observed truth
+        // rather than a stale list.
+        SandboxPackageManifest.shared.clear(agentId: agentId)
 
         var removedContainerUser = false
         var skippedContainerUserCleanup = false
@@ -236,6 +245,72 @@ public final class SandboxAgentProvisioner {
                 "[Soul] seed exec for agent-\(agentName) threw: \(error.localizedDescription)"
             )
         }
+    }
+
+    // MARK: - Installed-package manifest reconcile
+
+    /// pip/setuptools/wheel are venv plumbing, not something the agent
+    /// "installed" — drop them so the prompt line lists only real deps.
+    nonisolated private static let pipReconcileIgnore: Set<String> = ["pip", "setuptools", "wheel"]
+
+    /// Refresh the host-side installed-package manifest from real container
+    /// state. Lists the agent's pip venv and reads its npm workspace
+    /// `package.json`; `apk` is intentionally skipped — the base image
+    /// carries hundreds of system packages (already named in the prompt's
+    /// environment block), and `apk add` can't succeed unprivileged via
+    /// `sandbox_exec`, so apk only ever enters the manifest through the
+    /// root-running `sandbox_install` tool, which records itself.
+    ///
+    /// Non-throwing: a missing venv / `package.json` (the common first-run
+    /// case) leaves that manager untouched (`nil`) rather than wiping a
+    /// tool-recorded list.
+    nonisolated static func reconcilePackageManifest(agentId: String, agentName: String) async {
+        let home = OsaurusPaths.inContainerAgentHome(agentName)
+        let venv = "\(home)/.venv"
+        let nodeWorkdir = "\(home)/.osaurus/node_workspace"
+
+        var pip: [String]? = nil
+        // No `|| true`: when the venv doesn't exist the command exits
+        // non-zero, so we leave `pip` nil and don't clobber prior records.
+        if let result = try? await SandboxManager.shared.execAsAgent(
+            agentName,
+            command: "'\(venv)/bin/pip' list --format=freeze"
+        ), result.succeeded {
+            pip = result.stdout
+                .split(separator: "\n")
+                .compactMap { line -> String? in
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    guard !trimmed.isEmpty else { return nil }
+                    // `name==version`, `name @ file://…`, or editable installs.
+                    let name =
+                        trimmed
+                        .split(whereSeparator: { $0 == "=" || $0 == " " || $0 == "@" })
+                        .first
+                        .map(String.init)
+                    guard let name, !pipReconcileIgnore.contains(name.lowercased()) else { return nil }
+                    return name
+                }
+        }
+
+        var npm: [String]? = nil
+        if let result = try? await SandboxManager.shared.execAsAgent(
+            agentName,
+            command: "cat '\(nodeWorkdir)/package.json'"
+        ), result.succeeded,
+            let data = result.stdout.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
+            var keys: [String] = []
+            for field in ["dependencies", "devDependencies"] {
+                if let deps = object[field] as? [String: Any] {
+                    keys.append(contentsOf: deps.keys)
+                }
+            }
+            npm = keys
+        }
+
+        guard pip != nil || npm != nil else { return }
+        SandboxPackageManifest.shared.reconcile(agentId: agentId, apk: nil, pip: pip, npm: npm)
     }
 
     private func removeHostWorkspace(at url: URL) -> Bool {

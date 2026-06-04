@@ -223,7 +223,7 @@ struct BuiltinToolResilienceTests {
                 "sandbox_install not registered"
             )
             let outcome = registry.preflightForTest(
-                argumentsJSON: #"{"packages": "[\"ffmpeg\", \"imagemagick\"]"}"#,
+                argumentsJSON: #"{"manager": "apk", "packages": "[\"ffmpeg\", \"imagemagick\"]"}"#,
                 schema: parameters,
                 toolName: "sandbox_install"
             )

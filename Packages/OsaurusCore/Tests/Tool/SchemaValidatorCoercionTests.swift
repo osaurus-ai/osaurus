@@ -186,7 +186,7 @@ struct SchemaValidatorCoercionTests {
     }
 
     @Test func arrayAcceptsJSONEncodedString() {
-        // The screenshot bug: `sandbox_pip_install` got
+        // The screenshot bug: `sandbox_install` got
         // `"packages": "[\"matplotlib\", \"numpy\"]"`.
         let r = SchemaValidator.validate(
             arguments: ["xs": "[\"matplotlib\", \"numpy\"]"],

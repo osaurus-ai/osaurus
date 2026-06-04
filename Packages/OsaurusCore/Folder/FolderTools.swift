@@ -2585,7 +2585,7 @@ enum FolderToolFactory {
     /// "use `shell_run` for `mv`/`cp`/`rm`/`mkdir`" advice always
     /// matches the schema. Multi-step orchestration goes through
     /// `shell_run` chains or — when the chat is sandbox-mode —
-    /// `sandbox_execute_code`.
+    /// `sandbox_write_file` + `sandbox_exec`.
     static func buildCoreTools(rootPath: URL) -> [OsaurusTool] {
         // `file_tree` is intentionally absent: `file_read` now lists a
         // directory when the path is one (the path carries the decision),

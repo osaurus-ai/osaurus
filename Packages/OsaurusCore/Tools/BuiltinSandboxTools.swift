@@ -24,17 +24,20 @@ enum BuiltinSandboxTools {
     ///     in-place edit via `old_string`)
     ///   - exec: `sandbox_exec` (foreground OR background via flag),
     ///     `sandbox_process` (poll/wait/kill background jobs)
-    ///   - power tool: `sandbox_execute_code` (Python orchestration)
-    ///   - installs: `sandbox_install` / `sandbox_pip_install` /
-    ///     `sandbox_npm_install`
+    ///   - installs: `sandbox_install` (one tool; `manager` selects
+    ///     `apk` / `pip` / `npm`)
     ///
     /// Removed-by-design (use the consolidated alternative):
     ///   - `sandbox_list_directory` → `sandbox_search_files(target:"files")`
     ///   - `sandbox_find_files` → `sandbox_search_files(target:"files")`
     ///   - `sandbox_move` / `sandbox_delete` → `sandbox_exec("mv …" / "rm …")`
     ///   - `sandbox_exec_background` → `sandbox_exec(background:true)`
-    ///   - `sandbox_run_script` → `sandbox_execute_code` for Python, or
-    ///     `sandbox_exec` with a heredoc for short bash/node snippets.
+    ///   - `sandbox_pip_install` / `sandbox_npm_install` →
+    ///     `sandbox_install(manager:"pip" / "npm")`
+    ///   - `sandbox_run_script` / `sandbox_execute_code` →
+    ///     `sandbox_write_file` the script then `sandbox_exec` to run it
+    ///     (e.g. `python3 script.py`), or `sandbox_exec` with a heredoc
+    ///     for short bash/node snippets.
     ///   - `sandbox_edit_file` → `sandbox_write_file` with `old_string` +
     ///     `new_string` (presence of `old_string` selects the edit path).
     @MainActor
@@ -81,21 +84,7 @@ enum BuiltinSandboxTools {
             runtimeManaged: true
         )
         registry.registerSandboxTool(
-            SandboxExecuteCodeTool(
-                agentId: agentId,
-                agentName: agentName,
-                home: home,
-                maxCommandsPerTurn: maxCmdsPerTurn
-            ),
-            runtimeManaged: true
-        )
-        registry.registerSandboxTool(SandboxInstallTool(agentName: agentName), runtimeManaged: true)
-        registry.registerSandboxTool(
-            SandboxPipInstallTool(agentId: agentId, agentName: agentName, home: home),
-            runtimeManaged: true
-        )
-        registry.registerSandboxTool(
-            SandboxNpmInstallTool(agentId: agentId, agentName: agentName, home: home),
+            SandboxInstallTool(agentId: agentId, agentName: agentName, home: home),
             runtimeManaged: true
         )
 
@@ -147,33 +136,6 @@ extension BuiltinSandboxTools {
     /// provisions. Exposed so the prompt composer can suppress it from
     /// snapshots / schemas without duplicating the literal.
     public static let initPendingToolName = "sandbox_init_pending"
-
-    /// Tool names a `sandbox_execute_code` Python script is allowed to
-    /// dispatch via the host bridge. Hard-coded (not derived from the
-    /// live registry) so adding a new sandbox built-in can't silently
-    /// expose it to in-script callers — opt-in by adding a name here.
-    ///
-    /// Deliberately excluded:
-    ///   - `sandbox_execute_code` itself (no recursive launches).
-    ///   - `sandbox_init_pending` (placeholder only registered while the
-    ///     container is booting; calling it from a script is meaningless).
-    ///   - `share_artifact` and the chat-layer-intercepted tools (`todo`,
-    ///     `complete`, `clarify`, `speak`, `sandbox_secret_set`,
-    ///     `sandbox_plugin_register`). Their post-execute UI hooks only
-    ///     fire for top-level tool calls; calling them from inside a
-    ///     script would silently no-op the chat surfacing. The model
-    ///     should call them at the model layer instead.
-    public static let executeCodeBridgeAllowedTools: Set<String> = [
-        "sandbox_read_file",
-        "sandbox_write_file",
-        "sandbox_search_files",
-        "sandbox_exec",
-        "sandbox_process",
-        "sandbox_install",
-        "sandbox_pip_install",
-        "sandbox_npm_install",
-        "sandbox_secret_check",
-    ]
 }
 
 /// Placeholder tool registered when sandbox is enabled but the container
@@ -649,6 +611,12 @@ public func shellCommandFailureHint(
     guard exitCode != 0 else { return nil }
     let loweredStderr = stderr.lowercased()
 
+    // Checked first: a failed bare package-manager install is a strong,
+    // unambiguous signal regardless of the stderr shape, and the redirect
+    // (use `sandbox_install`) is more valuable than any generic parse hint.
+    if let hint = installRedirectHint(command: command) {
+        return hint
+    }
     if let hint = inlineCodeHint(command: command, stderr: loweredStderr) {
         return hint
     }
@@ -676,10 +644,9 @@ private func inlineCodeHint(command: String, stderr loweredStderr: String) -> St
     return
         "This looks like multi-line code embedded in a shell `-c` / `-e` "
         + "string whose escaping broke — the shell tried to parse your code "
-        + "as commands (hence the syntax error). Don't re-escape it. For "
-        + "Python, call `sandbox_execute_code` with the script in `code` (no "
-        + "shell escaping). Otherwise `sandbox_write_file` the script to a "
-        + "file, then `sandbox_exec` runs that file."
+        + "as commands (hence the syntax error). Don't re-escape it. "
+        + "`sandbox_write_file` the script to a file (no shell escaping), "
+        + "then `sandbox_exec` runs that file (e.g. `python3 script.py`)."
 }
 
 /// Unterminated heredoc: the `<<DELIM` body was never closed, so the
@@ -714,9 +681,56 @@ private func unbalancedQuoteHint(stderr loweredStderr: String) -> String? {
         + "stray or unclosed quote (a common slip is wrapping the WHOLE "
         + "command in quotes; pass it verbatim and quote only the arguments "
         + "that need it). For code or data with awkward quoting, "
-        + "`sandbox_execute_code` (Python) or `sandbox_write_file` avoid "
-        + "shell quoting entirely."
+        + "`sandbox_write_file` avoids shell quoting entirely."
 }
+
+/// A bare package-manager install run directly through `sandbox_exec`
+/// (e.g. `apk add curl`, `pip install numpy`, `npm install express`) that
+/// failed. These skip the dedicated `sandbox_install` tool's index
+/// refresh, venv/workspace bootstrap, retry harness, and per-agent
+/// serialization — `apk` always fails unprivileged, and bare pip/npm are
+/// exactly what produced the historical venv/`idealTree` breakages. Redirect
+/// the model to `sandbox_install` with the matching `manager`.
+///
+/// Matched at a statement boundary (start, or after `&&` / `||` / `;` / `|`)
+/// so an install string buried in an argument doesn't false-fire, and only
+/// on failure (`shellCommandFailureHint` already gates on a non-zero exit)
+/// so a working install is never nagged.
+private func installRedirectHint(command: String) -> String? {
+    func matches(_ pattern: String) -> Bool {
+        guard
+            let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        else { return false }
+        return regex.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil
+    }
+
+    let manager: String
+    if matches(apkInstallPattern) {
+        manager = "apk"
+    } else if matches(pipInstallPattern) {
+        manager = "pip"
+    } else if matches(npmInstallPattern) {
+        manager = "npm"
+    } else {
+        return nil
+    }
+
+    return
+        "This is a bare `\(manager)` install run through `sandbox_exec`, which skips the "
+        + "index refresh / venv / workspace bootstrap, retry harness, and per-agent "
+        + "serialization (and `apk` needs root). Use `sandbox_install` with "
+        + "`manager: \"\(manager)\"` and a `packages` array instead — e.g. "
+        + "`{\"manager\": \"\(manager)\", \"packages\": [\"…\"]}`."
+}
+
+/// Statement-boundary prefix shared by the install detectors: start of
+/// string or immediately after a shell separator, with optional `sudo`.
+private let installStatementBoundary = #"(?:^|&&|\|\||;|\|)\s*(?:sudo\s+)?"#
+private let apkInstallPattern = installStatementBoundary + #"apk\s+add\b"#
+private let pipInstallPattern =
+    installStatementBoundary + #"(?:pip3?|python3?\s+-m\s+pip)\s+install\b"#
+private let npmInstallPattern =
+    installStatementBoundary + #"(?:npm\s+(?:install|i|add)|yarn\s+add|pnpm\s+(?:add|install))\b"#
 
 private let sandboxDefaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -993,16 +1007,20 @@ private func installResultEnvelope(
     result: ContainerExecResult,
     retried: Bool = false
 ) -> String {
-    let combined = truncateForModel(result.stdout + result.stderr, maxChars: 20_000)
     if result.succeeded {
+        // Drop the verbose installer log on success — it's pure noise in
+        // the model's context (resolved-dependency trees, progress bars).
+        // The `installed` list + a one-line summary is all the model needs;
+        // failures below still carry full output for debugging.
         var payload: [String: Any] = [
             "installed": packages,
             "exit_code": Int(result.exitCode),
-            "output": combined,
+            "summary": "Installed \(packages.count) package(s): \(packages.joined(separator: ", ")).",
         ]
         if retried { payload["retried"] = true }
         return ToolEnvelope.success(tool: tool, result: payload)
     }
+    let combined = truncateForModel(result.stdout + result.stderr, maxChars: 20_000)
     let stage = retried ? "after retry" : ""
     let header =
         stage.isEmpty
@@ -1070,10 +1088,12 @@ private func runInstallWithRecovery(
     packages: [String],
     attempt: @Sendable () async throws -> ContainerExecResult,
     isRecoverable: @Sendable (ContainerExecResult) -> Bool,
-    cleanup: @Sendable () async throws -> Void
+    cleanup: @Sendable () async throws -> Void,
+    onSuccess: (@Sendable ([String]) -> Void)? = nil
 ) async throws -> String {
     let first = try await attempt()
     if first.succeeded || !isRecoverable(first) {
+        if first.succeeded { onSuccess?(packages) }
         return installResultEnvelope(tool: tool, packages: packages, result: first, retried: false)
     }
     do {
@@ -1087,6 +1107,7 @@ private func runInstallWithRecovery(
         )
     }
     let second = try await attempt()
+    if second.succeeded { onSuccess?(packages) }
     return installResultEnvelope(tool: tool, packages: packages, result: second, retried: true)
 }
 
@@ -1691,9 +1712,9 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         yourself with `&` / `nohup` / `disown` — pass `background:true` so \
         the runtime can track it.
 
-        This is for a shell command LINE. For a multi-line script use \
-        `sandbox_execute_code` (Python) or `sandbox_write_file` the script \
-        then run the file — NEVER inline multi-line code in `python3 -c` / \
+        This is for a shell command LINE. For a multi-line script, \
+        `sandbox_write_file` the script then run the file (e.g. \
+        `python3 script.py`) — NEVER inline multi-line code in `python3 -c` / \
         `node -e`: the JSON→shell→code escaping breaks and bash mis-parses \
         the body. Pass the command verbatim — do NOT wrap the whole command \
         in an extra quote; quote only the individual arguments that need it.
@@ -1730,7 +1751,9 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                 "cwd": .object([
                     "type": .string("string"),
                     "description": .string(
-                        "Working directory (default: agent home). Rejected if outside allowed roots."
+                        "Working directory. Defaults to your home (`\(home)`) — OMIT unless you "
+                            + "need a different directory. Use a path relative to home (e.g. `src`) "
+                            + "or absolute under your home; system paths like `/root` are rejected."
                     ),
                 ]),
                 "timeout": .object([
@@ -2390,28 +2413,48 @@ actor SandboxInstallLock {
 
 // MARK: - sandbox_install
 
+/// Single install entry point. One tool, one `manager` switch — replaces
+/// the former `sandbox_install` / `sandbox_pip_install` / `sandbox_npm_install`
+/// trio so the model has one obvious dependency tool instead of three
+/// near-identical ones to disambiguate. Each manager keeps its original
+/// command body, exec context (root for apk, agent for pip/npm), recovery
+/// signatures, and serialization key — the consolidation is purely at the
+/// dispatch layer.
 private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_install"
     let description =
-        "Install system packages via `apk` (runs as root) — available globally inside the container. "
-        + "**Use this instead of `sandbox_exec(\"apk add …\")`** so the auto-refresh + retry "
-        + "harness runs and concurrent installs don't collide on apk's lock. Example: "
-        + "`{\"packages\": [\"ffmpeg\"]}`. For Python or Node packages prefer "
-        + "`sandbox_pip_install` / `sandbox_npm_install`."
+        "Install packages into the sandbox. Pass `manager`: `apk` for system packages "
+        + "(runs as root, e.g. `ffmpeg`), `pip` for Python packages (into the agent venv at "
+        + "`~/.venv/`), or `npm` for Node packages (into a per-agent workspace). "
+        + "**Use this instead of `sandbox_exec(\"apk add …\" / \"pip install …\" / \"npm install …\")`** "
+        + "so the index refresh, venv/workspace bootstrap, retry harness, and per-agent "
+        + "serialization apply. Installed `python3`/CLI binaries land on your PATH — call them "
+        + "from any `sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
+    let agentId: String
     let agentName: String
+    let home: String
 
     var parameters: JSONValue? {
         .object([
             "type": .string("object"),
             "additionalProperties": .bool(false),
             "properties": .object([
+                "manager": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("apk"), .string("pip"), .string("npm")]),
+                    "description": .string(
+                        "Package manager: `apk` (system, root-wide), `pip` (Python venv), `npm` (Node workspace)."
+                    ),
+                ]),
                 "packages": .object([
                     "type": .string("array"),
                     "items": .object(["type": .string("string")]),
-                    "description": .string("Apk package names, e.g. `[\"ffmpeg\", \"imagemagick\"]`."),
-                ])
+                    "description": .string(
+                        "Package names, e.g. `[\"ffmpeg\"]` (apk), `[\"numpy\"]` (pip), `[\"express\"]` (npm)."
+                    ),
+                ]),
             ]),
-            "required": .array([.string("packages")]),
+            "required": .array([.string("manager"), .string("packages")]),
         ])
     }
 
@@ -2419,14 +2462,42 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
+        let managerReq = requireString(
+            args,
+            "manager",
+            expected: "one of `apk`, `pip`, `npm`",
+            tool: name
+        )
+        guard case .value(let managerRaw) = managerReq else { return managerReq.failureEnvelope ?? "" }
+
         let pkgsReq = requireStringArray(
             args,
             "packages",
-            expected: "non-empty array of apk package names",
+            expected: "non-empty array of package names",
             tool: name
         )
         guard case .value(let packages) = pkgsReq else { return pkgsReq.failureEnvelope ?? "" }
 
+        switch managerRaw.lowercased() {
+        case "apk":
+            return try await installApk(packages: packages)
+        case "pip":
+            return try await installPip(packages: packages)
+        case "npm":
+            return try await installNpm(packages: packages)
+        default:
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Unknown `manager` \"\(managerRaw)\". Use one of `apk`, `pip`, `npm`.",
+                tool: name,
+                retryable: false
+            )
+        }
+    }
+
+    // MARK: apk (system, root-wide)
+
+    private func installApk(packages: [String]) async throws -> String {
         let pkgList = packages.joined(separator: " ")
         // `apk update` first refreshes the package index — cheap when the
         // cache is fresh, and eliminates "no such package" errors caused
@@ -2436,6 +2507,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         let installCmd = "apk update --quiet || true; apk add --no-cache \(pkgList)"
 
         let toolName = self.name
+        let id = agentId
         // apk is global to the container — every agent's install hits
         // the same package database and apk's own lockfile. Serialize
         // through a single synthetic key so cross-agent calls don't
@@ -2465,54 +2537,21 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                     // Force-refresh the index — the most common apk recovery
                     // signal is a stale cache or transient lock.
                     _ = try await runAsRoot("apk update", timeout: 60)
+                },
+                onSuccess: { installed in
+                    SandboxPackageManifest.shared.record(
+                        agentId: id,
+                        manager: .apk,
+                        packages: installed
+                    )
                 }
             )
         }
     }
-}
 
-// MARK: - sandbox_pip_install
+    // MARK: pip (Python venv)
 
-private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_pip_install"
-    let description =
-        "Install Python packages via pip into the agent's venv at `~/.venv/`. **Use this instead "
-        + "of `sandbox_exec(\"pip install …\")`** so the venv bootstrap, retry harness, and "
-        + "per-agent serialization apply. Auto-creates the venv on first use. The venv's "
-        + "`python3` and installed scripts are on your PATH — call them from any `sandbox_exec` "
-        + "cwd. 240s timeout (covers cold-cache installs of large packages). Example: "
-        + "`{\"packages\": [\"numpy\", \"flask\"]}`."
-    let agentId: String
-    let agentName: String
-    let home: String
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "packages": .object([
-                    "type": .string("array"),
-                    "items": .object(["type": .string("string")]),
-                    "description": .string("Python package names, e.g. `[\"numpy\", \"flask\"]`."),
-                ])
-            ]),
-            "required": .array([.string("packages")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let pkgsReq = requireStringArray(
-            args,
-            "packages",
-            expected: "non-empty array of pip package names",
-            tool: name
-        )
-        guard case .value(let packages) = pkgsReq else { return pkgsReq.failureEnvelope ?? "" }
-
+    private func installPip(packages: [String]) async throws -> String {
         let venvPath = agentVenvPath(home: home)
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/python3",
@@ -2573,56 +2612,21 @@ private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
                         + " && '\(venvPath)/bin/pip' cache purge >/dev/null 2>&1"
                         + " || true"
                     _ = try await runAsAgent(cleanupCmd, timeout: 30)
+                },
+                onSuccess: { installed in
+                    SandboxPackageManifest.shared.record(
+                        agentId: id,
+                        manager: .pip,
+                        packages: installed
+                    )
                 }
             )
         }
     }
-}
 
-// MARK: - sandbox_npm_install
+    // MARK: npm (Node workspace)
 
-private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_npm_install"
-    let description =
-        "Install Node packages via `npm install` into a per-agent project workspace at "
-        + "`~/.osaurus/node_workspace/`. **Use this instead of `sandbox_exec(\"npm install …\")`** "
-        + "so the workdir bootstrap, recovery harness, and per-agent serialization apply — bare "
-        + "`npm install` in the agent home is what produced the original `Tracker idealTree "
-        + "already exists` failures. Bootstraps a `package.json` on first use; subsequent calls "
-        + "accumulate into the same workspace. Installed CLI binaries are on your PATH "
-        + "automatically — call them from any `sandbox_exec` cwd. 240s timeout. Example: "
-        + "`{\"packages\": [\"express\", \"lodash\"]}`."
-    let agentId: String
-    let agentName: String
-    let home: String
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "packages": .object([
-                    "type": .string("array"),
-                    "items": .object(["type": .string("string")]),
-                    "description": .string("npm package names, e.g. `[\"express\", \"lodash\"]`."),
-                ])
-            ]),
-            "required": .array([.string("packages")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let pkgsReq = requireStringArray(
-            args,
-            "packages",
-            expected: "non-empty array of npm package names",
-            tool: name
-        )
-        guard case .value(let packages) = pkgsReq else { return pkgsReq.failureEnvelope ?? "" }
-
+    private func installNpm(packages: [String]) async throws -> String {
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/node && test -x /usr/bin/npm",
             timeout: 10
@@ -2693,432 +2697,15 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
                         + " && rm -rf node_modules/.package-lock.json .package-lock.json"
                         + " && npm cache clean --force >/dev/null 2>&1 || true"
                     _ = try await runAsAgent(cleanupCmd, timeout: 60)
+                },
+                onSuccess: { installed in
+                    SandboxPackageManifest.shared.record(
+                        agentId: id,
+                        manager: .npm,
+                        packages: installed
+                    )
                 }
             )
         }
     }
-}
-
-// MARK: - sandbox_execute_code
-//
-// Python orchestration: write a Python script that imports the same
-// sandbox tools as Python helpers (`from osaurus_tools import …`) and
-// runs them in-process. Use when the model needs ≥3 tool calls with
-// logic between them, output filtering before it lands in context,
-// conditional branching, or looping. The helpers RPC back to the host
-// via the bridge socket so the tools run with the same authority and
-// accounting as direct calls.
-
-private struct SandboxExecuteCodeTool: OsaurusTool, @unchecked Sendable {
-    let name = "sandbox_execute_code"
-    let description = """
-        Run a Python script in the sandbox with the `osaurus_tools` helpers \
-        (read_file, write_file, search_files, terminal). The script runs \
-        directly — this is the home for any multi-line Python. Reach for it \
-        especially when:
-        - You need ≥3 tool calls with processing logic between them.
-        - You need to filter / reduce a large tool output before it enters \
-          your context (e.g. read 5 logs, return the top 10 errors).
-        - You need conditional branching or loops (fetch N pages, retry \
-          on failure, walk a directory tree).
-
-        Available helpers (no install needed):
-            from osaurus_tools import read_file, write_file, edit_file, \
-                search_files, terminal
-
-        Each helper mirrors the equivalent sandbox tool 1:1. They return \
-        Python dicts (the same JSON envelope you would see from a direct \
-        call). Print your final result to stdout.
-
-        Surfacing artifacts: `share_artifact` is NOT exposed to the script \
-        — call it AFTER `sandbox_execute_code` returns, as a separate \
-        top-level tool call against the file path your script wrote. \
-        Surfacing from inside the script would silently no-op the chat \
-        artifact card.
-
-        Installing packages: call `sandbox_pip_install` / `sandbox_install` \
-        BEFORE `sandbox_execute_code` (they live at the model layer), or \
-        run `terminal("pip install …")` from inside the script for a \
-        one-shot install.
-
-        WHEN NOT TO USE:
-        - You need to look at one tool result before deciding the next \
-          step — make a normal tool call instead.
-        - You only need ONE tool call — call it directly.
-
-        LIMITS:
-        - 5-minute hard timeout, 50KB stdout cap (40% head + 60% tail).
-        - At most 50 tool calls per script.
-        - Per-turn command count is shared with other `sandbox_exec` calls.
-        """
-    let agentId: String
-    let agentName: String
-    let home: String
-    let maxCommandsPerTurn: Int
-
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "additionalProperties": .bool(false),
-            "properties": .object([
-                "code": .object([
-                    "type": .string("string"),
-                    "description": .string(
-                        "Python source. Import helpers via `from osaurus_tools import "
-                            + "read_file, write_file, edit_file, search_files, terminal`. "
-                            + "Print the final result to stdout. (`share_artifact` is "
-                            + "intentionally not exposed — call it AFTER this tool returns.)"
-                    ),
-                ]),
-                "timeout": .object([
-                    "type": .string("integer"),
-                    "description": .string("Timeout in seconds (default 300, max 300)."),
-                    "default": .number(300),
-                ]),
-                "cwd": .object([
-                    "type": .string("string"),
-                    "description": .string(
-                        "Working directory (default: agent home). Rejected if outside allowed roots."
-                    ),
-                ]),
-            ]),
-            "required": .array([.string("code")]),
-        ])
-    }
-
-    func execute(argumentsJSON: String) async throws -> String {
-        guard
-            SandboxExecLimiter.shared.checkAndIncrement(
-                agentName: agentName,
-                limit: maxCommandsPerTurn
-            )
-        else {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message:
-                    "Per-turn command limit reached (\(maxCommandsPerTurn) commands). "
-                    + "Wait until the next turn or chain more steps inside one `sandbox_execute_code` call.",
-                tool: name,
-                retryable: false
-            )
-        }
-
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
-        let codeReq = requireString(
-            args,
-            "code",
-            expected: "non-empty Python source",
-            tool: name
-        )
-        guard case .value(let code) = codeReq else { return codeReq.failureEnvelope ?? "" }
-
-        let cwd: String
-        if let cwdArg = args["cwd"] as? String, !cwdArg.isEmpty {
-            let cwdReq = requirePath(cwdArg, home: home, field: "cwd", tool: name)
-            guard case .value(let resolvedCwd) = cwdReq else { return cwdReq.failureEnvelope ?? "" }
-            cwd = resolvedCwd
-        } else {
-            cwd = home
-        }
-
-        // 5min hard cap; the per-turn SandboxExecLimiter still applies
-        // on top so the model can't burn its turn budget on one script.
-        let timeout = min(max(coerceInt(args["timeout"]) ?? 300, 1), 300)
-
-        // Script id scopes the tool-call counter on the host bridge so
-        // one runaway script can't exceed its 50-call budget by reusing
-        // an old id. We snapshot the task-local chat context here so the
-        // bridge handler can re-establish it for each dispatched tool —
-        // without that, session-aware tools (`sandbox_secret_check`,
-        // anything plugin-namespaced if the allow-list is widened later)
-        // would resolve to "no active session" from inside the script.
-        let scriptId = UUID().uuidString
-        let context = SandboxExecuteCodeBudget.ScriptContext(
-            agentId: ChatExecutionContext.currentAgentId,
-            sessionId: ChatExecutionContext.currentSessionId,
-            assistantTurnId: ChatExecutionContext.currentAssistantTurnId,
-            batchId: ChatExecutionContext.currentBatchId
-        )
-        await SandboxExecuteCodeBudget.shared.start(scriptId: scriptId, context: context)
-        defer { Task { await SandboxExecuteCodeBudget.shared.finish(scriptId: scriptId) } }
-
-        let helpersDir = "\(home)/.osaurus"
-        let helpersPath = "\(helpersDir)/osaurus_tools.py"
-        let scriptPath = "\(home)/.tmp/exec_\(UUID().uuidString.prefix(8)).py"
-
-        // Stage the helper module + the user's code under the agent home,
-        // run it, then clean up. The helper module RPCs to the host via
-        // the Unix socket at `/tmp/osaurus-bridge.sock`, reading the
-        // per-user bearer token from `/run/osaurus/$USER.token` (mode
-        // 0600, owned by the agent user — set up by
-        // `SandboxManager.provisionBridgeToken`).
-        let escapedHelpers = shellEscapeSingleQuoted(SandboxExecuteCodeHelpers.pythonSource)
-        let escapedCode = shellEscapeSingleQuoted(code)
-        let writeHelpers =
-            "mkdir -p '\(helpersDir)' '\(home)/.tmp' && "
-            + "printf '%s' '\(escapedHelpers)' > '\(helpersPath)'"
-        let writeCode = "printf '%s' '\(escapedCode)' > '\(scriptPath)'"
-
-        var command = writeHelpers + " && " + writeCode
-        command += " && cd '\(cwd)' && OSAURUS_SCRIPT_ID='\(scriptId)' "
-        command += "PYTHONPATH='\(helpersDir)':$PYTHONPATH "
-        command += "python3 '\(scriptPath)'"
-        command += "; EXIT=$?; rm -f '\(scriptPath)'; exit $EXIT"
-
-        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
-            user: "agent-\(agentName)",
-            command: command,
-            env: agentShellEnvironment(agentId: agentId, home: home, cwd: cwd),
-            cwd: cwd,
-            timeout: TimeInterval(timeout),
-            streamToLogs: true,
-            logSource: agentName
-        )
-
-        let toolCalls = await SandboxExecuteCodeBudget.shared.callCount(scriptId: scriptId)
-        return sandboxSuccess(
-            tool: name,
-            result: [
-                "stdout": truncateForModel(result.stdout),
-                "stderr": truncateForModel(result.stderr, maxChars: 10_000),
-                "exit_code": Int(result.exitCode),
-                "tool_calls": toolCalls,
-                "cwd": cwd,
-            ]
-        )
-    }
-}
-
-/// Tracks the number of bridge tool calls each `sandbox_execute_code`
-/// script makes plus the chat execution context that should be re-applied
-/// to dispatched tools. The per-script cap (50) is
-/// enforced inside `HostAPIBridgeServer.handleSandboxToolCall` by
-/// reading this counter via the `OSAURUS_SCRIPT_ID` request header.
-public actor SandboxExecuteCodeBudget {
-    public static let shared = SandboxExecuteCodeBudget()
-
-    /// Capped at 50 so a runaway loop can't burn the whole turn's
-    /// compute. Configurable per-script from the host side if we ever
-    /// need to lift it.
-    public static let maxCallsPerScript = 50
-
-    /// Snapshot of the chat-engine task locals at the moment a script
-    /// started. The bridge dispatcher re-applies them with
-    /// `ChatExecutionContext.$… .withValue` so dispatched tools resolve
-    /// to the same session as a direct top-level call would have.
-    public struct ScriptContext: Sendable {
-        public let agentId: UUID?
-        public let sessionId: String?
-        public let assistantTurnId: UUID?
-        public let batchId: UUID?
-    }
-
-    private struct Entry {
-        var calls: Int
-        let context: ScriptContext
-    }
-
-    private var entries: [String: Entry] = [:]
-
-    /// Begin tracking a `sandbox_execute_code` script. `context` carries
-    /// the chat-engine task locals captured at script-start time so the
-    /// bridge handler can re-apply them around each dispatched tool.
-    func start(scriptId: String, context: ScriptContext) {
-        entries[scriptId] = Entry(calls: 0, context: context)
-    }
-
-    func finish(scriptId: String) {
-        entries.removeValue(forKey: scriptId)
-    }
-
-    /// Try to charge one tool-call against this script's budget.
-    /// Returns `true` when the script is tracked AND the cap hasn't been
-    /// reached, `false` otherwise — a `false` return is the host's
-    /// signal to reject the bridge call. The actual call count for the
-    /// result envelope comes from `callCount(scriptId:)`.
-    public func tryIncrement(scriptId: String) -> Bool {
-        guard var entry = entries[scriptId], entry.calls < Self.maxCallsPerScript
-        else { return false }
-        entry.calls += 1
-        entries[scriptId] = entry
-        return true
-    }
-
-    public func callCount(scriptId: String) -> Int {
-        entries[scriptId]?.calls ?? 0
-    }
-
-    /// Returns the chat-engine context snapshot for a tracked script id.
-    /// Returns nil if the id isn't known — the bridge handler treats that
-    /// as a rejected call.
-    public func context(scriptId: String) -> ScriptContext? {
-        entries[scriptId]?.context
-    }
-}
-
-/// Source of the Python helper module that gets staged under each agent's
-/// home on every `sandbox_execute_code` call. Talks to the host bridge via
-/// the Unix socket already used by `osaurus-host`. Each helper returns a
-/// dict (the parsed envelope) so callers can branch on `ok`/`kind` etc.
-enum SandboxExecuteCodeHelpers {
-    static let pythonSource: String = #"""
-        # osaurus_tools -- sandbox helpers for sandbox_execute_code scripts.
-        #
-        # Each helper mirrors the same-named built-in sandbox tool. They make a
-        # JSON POST to the host bridge at /api/sandbox-tool/{name} over the Unix
-        # socket mounted at /tmp/osaurus-bridge.sock. The bearer token is read
-        # from /run/osaurus/$USER.token (mode 0600, owned by the agent user).
-        # The decoded JSON response is returned as a dict.
-        #
-        # `share_artifact` is intentionally NOT exposed here -- calling it from
-        # inside a script would create the marker envelope but the chat-layer
-        # post-processor that turns it into a real artifact card only fires for
-        # top-level tool calls. Surface artifacts by calling `share_artifact`
-        # from the model layer, AFTER `sandbox_execute_code` returns.
-
-        import getpass
-        import json
-        import os
-        import socket
-
-        _BRIDGE_SOCKET_PATH = "/tmp/osaurus-bridge.sock"
-        _TOKEN_PATH_TEMPLATE = "/run/osaurus/{user}.token"
-        _SCRIPT_ID_HEADER = "X-Osaurus-Script-Id"
-
-
-        class SandboxToolError(RuntimeError):
-            """Raised when the bridge round-trip itself fails (transport-level)."""
-
-
-        def _read_token() -> str:
-            user = os.environ.get("USER") or getpass.getuser()
-            path = _TOKEN_PATH_TEMPLATE.format(user=user)
-            try:
-                with open(path, "r", encoding="utf-8") as fh:
-                    token = fh.read().strip()
-            except OSError as exc:
-                raise SandboxToolError(
-                    f"could not read bridge token at {path}: {exc}. "
-                    f"sandbox_execute_code helpers must run inside a provisioned sandbox agent."
-                ) from exc
-            if not token:
-                raise SandboxToolError(f"bridge token at {path} is empty")
-            return token
-
-
-        def _send_http(method: str, path: str, headers: dict, body: bytes, timeout: float = 300.0) -> tuple:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(timeout)
-            try:
-                sock.connect(_BRIDGE_SOCKET_PATH)
-            except OSError as exc:
-                sock.close()
-                raise SandboxToolError(
-                    f"could not connect to host bridge at {_BRIDGE_SOCKET_PATH}: {exc}"
-                ) from exc
-
-            request_line = f"{method} {path} HTTP/1.1\r\n"
-            full_headers = {"Host": "osaurus", "Connection": "close"}
-            full_headers.update(headers)
-            full_headers["Content-Length"] = str(len(body))
-            if body and "Content-Type" not in full_headers:
-                full_headers["Content-Type"] = "application/json"
-
-            try:
-                sock.sendall(request_line.encode("utf-8"))
-                for name, value in full_headers.items():
-                    sock.sendall(f"{name}: {value}\r\n".encode("utf-8"))
-                sock.sendall(b"\r\n")
-                if body:
-                    sock.sendall(body)
-
-                chunks = []
-                while True:
-                    data = sock.recv(65536)
-                    if not data:
-                        break
-                    chunks.append(data)
-            finally:
-                sock.close()
-
-            raw = b"".join(chunks)
-            head, _, response_body = raw.partition(b"\r\n\r\n")
-            status_line = head.split(b"\r\n", 1)[0].decode("latin-1") if head else ""
-            parts = status_line.split(" ", 2)
-            status = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 500
-            return status, response_body
-
-
-        def _call(tool_name: str, args: dict) -> dict:
-            body = json.dumps({"arguments": args}).encode("utf-8")
-            headers = {"Authorization": f"Bearer {_read_token()}"}
-            script_id = os.environ.get("OSAURUS_SCRIPT_ID", "")
-            if script_id:
-                headers[_SCRIPT_ID_HEADER] = script_id
-            status, raw = _send_http(
-                "POST",
-                f"/api/sandbox-tool/{tool_name}",
-                headers=headers,
-                body=body,
-            )
-            text = raw.decode("utf-8", errors="replace")
-            if not text:
-                return {"ok": False, "kind": "execution_error", "message": "empty bridge response"}
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError as exc:
-                raise SandboxToolError(f"bridge returned non-JSON ({status}): {text[:200]}") from exc
-            if status >= 400 and isinstance(parsed, dict) and "ok" not in parsed:
-                # Wrap raw {"error": "..."} responses in the standard envelope shape
-                # so user code can branch on `result["ok"]` uniformly.
-                return {
-                    "ok": False,
-                    "kind": "execution_error",
-                    "message": parsed.get("error", text),
-                    "tool": tool_name,
-                }
-            return parsed
-
-
-        def read_file(path: str, **kwargs) -> dict:
-            """Read a file from the sandbox. See `sandbox_read_file` for arg shapes."""
-            return _call("sandbox_read_file", {"path": path, **kwargs})
-
-
-        def write_file(path: str, content: str) -> dict:
-            """Write content to a file in the sandbox. See `sandbox_write_file`."""
-            return _call("sandbox_write_file", {"path": path, "content": content})
-
-
-        def edit_file(path: str, old_string: str, new_string: str) -> dict:
-            """Targeted exact-string replacement via `sandbox_write_file` (old_string selects the edit path)."""
-            return _call(
-                "sandbox_write_file",
-                {"path": path, "old_string": old_string, "new_string": new_string},
-            )
-
-
-        def search_files(pattern: str, target: str = "content", **kwargs) -> dict:
-            """Search file contents (rg) or names (find). See `sandbox_search_files`."""
-            payload = {"pattern": pattern, "target": target}
-            payload.update(kwargs)
-            return _call("sandbox_search_files", payload)
-
-
-        def terminal(command: str, **kwargs) -> dict:
-            """Run a shell command. Foreground or background via `background=True`. See `sandbox_exec`."""
-            return _call("sandbox_exec", {"command": command, **kwargs})
-
-
-        __all__ = [
-            "read_file",
-            "write_file",
-            "edit_file",
-            "search_files",
-            "terminal",
-            "SandboxToolError",
-        ]
-        """#
 }

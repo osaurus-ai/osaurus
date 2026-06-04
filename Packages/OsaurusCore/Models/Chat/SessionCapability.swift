@@ -74,7 +74,6 @@ extension SessionCapability {
 
     private static let codeToolNames: Set<String> = [
         "sandbox_exec",
-        "sandbox_execute_code",
         "sandbox_write_file",
     ]
 

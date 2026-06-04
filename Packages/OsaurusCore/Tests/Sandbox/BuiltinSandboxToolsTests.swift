@@ -29,8 +29,8 @@ struct BuiltinSandboxToolsTests {
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
-                name: "sandbox_pip_install",
-                argumentsJSON: #"{"packages":["flask","pytest"]}"#
+                name: "sandbox_install",
+                argumentsJSON: #"{"manager":"pip","packages":["flask","pytest"]}"#
             )
         }
 
@@ -41,6 +41,10 @@ struct BuiltinSandboxToolsTests {
         #expect(payload["exit_code"] as? Int == 0)
         // First-attempt success — no recovery retry happened.
         #expect(payload["retried"] == nil)
+        // Trim: the verbose installer log is dropped on success — the model
+        // gets the `installed` list + a one-line summary, not the raw output.
+        #expect(payload["output"] == nil)
+        #expect((payload["summary"] as? String)?.contains("flask") == true)
 
         let calls = await runner.calls
         #expect(calls.count == 2)
@@ -82,8 +86,8 @@ struct BuiltinSandboxToolsTests {
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
-                name: "sandbox_pip_install",
-                argumentsJSON: #"{"packages":["flask"]}"#
+                name: "sandbox_install",
+                argumentsJSON: #"{"manager":"pip","packages":["flask"]}"#
             )
         }
 
@@ -128,8 +132,8 @@ struct BuiltinSandboxToolsTests {
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
-                name: "sandbox_pip_install",
-                argumentsJSON: #"{"packages":["flask"]}"#
+                name: "sandbox_install",
+                argumentsJSON: #"{"manager":"pip","packages":["flask"]}"#
             )
         }
 
@@ -159,8 +163,8 @@ struct BuiltinSandboxToolsTests {
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
-                name: "sandbox_pip_install",
-                argumentsJSON: #"{"packages":["flask","pytest"]}"#
+                name: "sandbox_install",
+                argumentsJSON: #"{"manager":"pip","packages":["flask","pytest"]}"#
             )
         }
 
@@ -188,8 +192,8 @@ struct BuiltinSandboxToolsTests {
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
-                name: "sandbox_npm_install",
-                argumentsJSON: #"{"packages":["vite"]}"#
+                name: "sandbox_install",
+                argumentsJSON: #"{"manager":"npm","packages":["vite"]}"#
             )
         }
 
@@ -219,8 +223,8 @@ struct BuiltinSandboxToolsTests {
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
-                name: "sandbox_npm_install",
-                argumentsJSON: #"{"packages":["express"]}"#
+                name: "sandbox_install",
+                argumentsJSON: #"{"manager":"npm","packages":["express"]}"#
             )
         }
 
@@ -283,8 +287,8 @@ struct BuiltinSandboxToolsTests {
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
-                name: "sandbox_npm_install",
-                argumentsJSON: #"{"packages":["@stripe/link-cli"]}"#
+                name: "sandbox_install",
+                argumentsJSON: #"{"manager":"npm","packages":["@stripe/link-cli"]}"#
             )
         }
 
@@ -325,8 +329,8 @@ struct BuiltinSandboxToolsTests {
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
-                name: "sandbox_npm_install",
-                argumentsJSON: #"{"packages":["express"]}"#
+                name: "sandbox_install",
+                argumentsJSON: #"{"manager":"npm","packages":["express"]}"#
             )
         }
 
@@ -355,7 +359,7 @@ struct BuiltinSandboxToolsTests {
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
                 name: "sandbox_install",
-                argumentsJSON: #"{"packages":["ffmpeg"]}"#
+                argumentsJSON: #"{"manager":"apk","packages":["ffmpeg"]}"#
             )
         }
 
@@ -372,42 +376,6 @@ struct BuiltinSandboxToolsTests {
         #expect(command.contains("apk update --quiet"))
         #expect(command.contains("apk add --no-cache"))
         #expect(command.contains("ffmpeg"))
-    }
-
-    @Test @MainActor
-    func sandboxExecuteCode_writesHelpersAndRunsPython() async throws {
-        let runner = MockSandboxToolCommandRunner(
-            rootResults: [],
-            agentResults: [],
-            execResults: [.init(stdout: "{\"ok\": true}", stderr: "", exitCode: 0)]
-        )
-
-        let output = try await withRegisteredSandboxTools(runner: runner) {
-            try await ToolRegistry.shared.execute(
-                name: "sandbox_execute_code",
-                argumentsJSON: #"{"code":"from osaurus_tools import read_file\nprint(read_file('foo.txt'))"}"#
-            )
-        }
-
-        let payload = try successPayload(output)
-        #expect(payload["exit_code"] as? Int == 0)
-        #expect((payload["stdout"] as? String)?.contains("ok") == true)
-        #expect(payload["tool_calls"] != nil)
-
-        // The exec command should stage osaurus_tools.py + the script,
-        // then invoke python3 with the helpers dir on PYTHONPATH.
-        let calls = await runner.calls
-        guard case .exec(_, let command, let env) = try #require(calls.first) else {
-            Issue.record("Expected exec call")
-            return
-        }
-        #expect(command.contains(".osaurus/osaurus_tools.py"))
-        #expect(command.contains(".tmp/exec_"))
-        #expect(command.contains("OSAURUS_SCRIPT_ID="))
-        #expect(command.contains("PYTHONPATH="))
-        #expect(command.contains("python3"))
-        #expect(env["VIRTUAL_ENV"]?.contains(".venv") == true)
-        #expect(env["PATH"]?.contains(".venv/bin") == true)
     }
 
     @Test @MainActor
