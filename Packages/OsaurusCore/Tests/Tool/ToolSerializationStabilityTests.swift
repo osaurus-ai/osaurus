@@ -80,4 +80,77 @@ struct ToolSerializationStabilityTests {
         #expect(mode["type"] as? String == "string")
         #expect((mode["enum"] as? [String]) == ["fast", "full"])
     }
+
+    @Test
+    func toTokenizerToolSpec_normalizesGemmaSensitiveTypeFieldsOnlyInSchemaPositions() throws {
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "schema_probe",
+                description: "Exercises Gemma4 template-sensitive schema shapes.",
+                parameters: .object([
+                    "type": .array([.string("object"), .string("null")]),
+                    "properties": .object([
+                        "query": .object([
+                            "type": .null,
+                            "description": .string("Malformed external schema still renders."),
+                        ]),
+                        "value": .object([
+                            "type": .array([.string("string"), .string("integer")])
+                        ]),
+                        "payload": .object([
+                            "properties": .object([
+                                "type": .object(["type": .string("string")])
+                            ])
+                        ]),
+                    ]),
+                ])
+            )
+        )
+
+        let spec = tool.toTokenizerToolSpec()
+        let fn = try #require(spec["function"] as? [String: any Sendable])
+        let parameters = try #require(fn["parameters"] as? [String: any Sendable])
+        let properties = try #require(parameters["properties"] as? [String: any Sendable])
+        let query = try #require(properties["query"] as? [String: any Sendable])
+        let value = try #require(properties["value"] as? [String: any Sendable])
+        let payload = try #require(properties["payload"] as? [String: any Sendable])
+        let payloadProperties = try #require(payload["properties"] as? [String: any Sendable])
+        let propertyNamedType = try #require(payloadProperties["type"] as? [String: any Sendable])
+
+        #expect(parameters["type"] as? String == "object")
+        #expect(parameters["nullable"] as? Bool == true)
+        #expect(query["type"] as? String == "string")
+        #expect(value["type"] as? String == "string")
+        #expect(payload["type"] as? String == "object")
+        #expect(propertyNamedType["type"] as? String == "string")
+        try Self.assertSchemaTypesAreTemplateRenderable(parameters)
+    }
+
+    private static func assertSchemaTypesAreTemplateRenderable(
+        _ schema: [String: any Sendable]
+    ) throws {
+        if let typeValue = schema["type"] {
+            #expect(typeValue is String, "schema type must be String, got \(type(of: typeValue))")
+        }
+
+        if let properties = schema["properties"] as? [String: any Sendable] {
+            for value in properties.values {
+                let child = try #require(value as? [String: any Sendable])
+                try assertSchemaTypesAreTemplateRenderable(child)
+            }
+        }
+
+        if let items = schema["items"] as? [String: any Sendable] {
+            try assertSchemaTypesAreTemplateRenderable(items)
+        }
+
+        for key in ["oneOf", "anyOf", "allOf"] {
+            guard let branches = schema[key] as? [Any] else { continue }
+            for branch in branches {
+                guard let child = branch as? [String: any Sendable] else { continue }
+                try assertSchemaTypesAreTemplateRenderable(child)
+            }
+        }
+    }
 }

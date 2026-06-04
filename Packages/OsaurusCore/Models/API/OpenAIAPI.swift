@@ -1067,45 +1067,108 @@ extension JSONValue {
     /// Convert JSON Schema into the shape expected by local chat templates.
     ///
     /// Some local templates, notably Gemma-4's native tool template, treat
-    /// `type` as a scalar and run string filters over it. OpenAI/MCP schemas
-    /// commonly spell nullable fields as `type: ["string", "null"]`. That is
-    /// valid JSON Schema, but it is not renderable by those templates. The
-    /// transformation below is the lossless OpenAPI spelling of the same
-    /// schema: `type: "string", nullable: true`.
+    /// schema `type` fields as scalars and run string filters over them.
+    /// OpenAI/MCP schemas commonly spell nullable fields as
+    /// `type: ["string", "null"]`. That is valid JSON Schema, but it is not
+    /// renderable by those templates. The transformation below rewrites only
+    /// schema-position dictionaries into template-renderable shapes while
+    /// preserving property maps whose keys may legitimately include "type".
     var chatTemplateSchemaValue: JSONValue {
+        normalizedChatTemplateSchemaValue(inSchemaPosition: true)
+    }
+
+    private func normalizedChatTemplateSchemaValue(inSchemaPosition: Bool) -> JSONValue {
         switch self {
         case .object(let obj):
-            var normalized = obj.mapValues { $0.chatTemplateSchemaValue }
-            Self.normalizeNullableTypeUnion(&normalized)
+            var normalized: [String: JSONValue] = [:]
+            for (key, value) in obj {
+                switch key {
+                case "properties":
+                    if case .object(let properties) = value {
+                        normalized[key] = .object(
+                            properties.mapValues {
+                                $0.normalizedChatTemplateSchemaValue(inSchemaPosition: true)
+                            }
+                        )
+                    } else {
+                        normalized[key] = value.normalizedChatTemplateSchemaValue(
+                            inSchemaPosition: false
+                        )
+                    }
+                case "items", "additionalProperties", "response":
+                    normalized[key] = value.normalizedChatTemplateSchemaValue(
+                        inSchemaPosition: true
+                    )
+                case "oneOf", "anyOf", "allOf":
+                    if case .array(let branches) = value {
+                        normalized[key] = .array(
+                            branches.map {
+                                $0.normalizedChatTemplateSchemaValue(inSchemaPosition: true)
+                            }
+                        )
+                    } else {
+                        normalized[key] = value.normalizedChatTemplateSchemaValue(
+                            inSchemaPosition: false
+                        )
+                    }
+                default:
+                    normalized[key] = value.normalizedChatTemplateSchemaValue(
+                        inSchemaPosition: false
+                    )
+                }
+            }
+            if inSchemaPosition {
+                Self.normalizeTemplateRenderableSchemaType(&normalized)
+            }
             return .object(normalized)
         case .array(let arr):
-            return .array(arr.map { $0.chatTemplateSchemaValue })
+            return .array(
+                arr.map { $0.normalizedChatTemplateSchemaValue(inSchemaPosition: inSchemaPosition) }
+            )
         case .null, .bool, .number, .string:
             return self
         }
     }
 
-    private static func normalizeNullableTypeUnion(_ object: inout [String: JSONValue]) {
-        guard case .array(let entries) = object["type"] else { return }
+    private static func normalizeTemplateRenderableSchemaType(_ object: inout [String: JSONValue]) {
+        switch object["type"] {
+        case .some(.string):
+            return
+        case .some(.array(let entries)):
+            normalizeTypeUnion(entries, in: &object)
+        case .some(.null), .some(.bool), .some(.number), .some(.object):
+            object["type"] = inferredFallbackType(for: object)
+        case nil:
+            object["type"] = inferredFallbackType(for: object)
+        }
+    }
 
+    private static func normalizeTypeUnion(_ entries: [JSONValue], in object: inout [String: JSONValue]) {
+        var typeNames: [String] = []
         var hasNull = false
-        var scalar: String?
+
         for entry in entries {
-            guard case .string(let typeName) = entry else { return }
+            guard case .string(let typeName) = entry else {
+                object["type"] = inferredFallbackType(for: object)
+                return
+            }
             if typeName == "null" {
                 hasNull = true
-            } else if scalar == nil {
-                scalar = typeName
-            } else {
-                return
+            } else if !typeNames.contains(typeName) {
+                typeNames.append(typeName)
             }
         }
 
-        guard let scalar else { return }
-        object["type"] = .string(scalar)
+        object["type"] = .string(typeNames.first ?? "string")
         if hasNull {
             object["nullable"] = .bool(true)
         }
+    }
+
+    private static func inferredFallbackType(for object: [String: JSONValue]) -> JSONValue {
+        if object["properties"] != nil { return .string("object") }
+        if object["items"] != nil { return .string("array") }
+        return .string("string")
     }
 
     /// Convert JSONValue to Sendable-compatible value for Jinja chat templates.
