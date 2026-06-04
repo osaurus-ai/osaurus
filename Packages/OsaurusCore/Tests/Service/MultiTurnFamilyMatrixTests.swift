@@ -85,6 +85,7 @@ struct CapabilityFromModelIdTests {
         "thu-ml/glm_ocr-9b",
         "LiquidAI/LFM2-VL-1.6B",
         "google/gemma-3-12b-it",
+        "google/gemma-4-it-mxfp4",
         "Zyphra/ZAYA1-VL-8B-MXFP4",
         "zaya1-vl-8b-mxfp4",  // flat-layout picker form
     ])
@@ -117,9 +118,6 @@ struct CapabilityFromModelIdTests {
         "JANGQ-AI/Kimi-K2.6-Small-JANGTQ",
         "JANGQ-AI/Qwen3.5-35B-A3B-JANG_4K",  // text-only Qwen3.5 (no `vl`)
         "JANGQ-AI/Qwen3.6-35B-A3B-JANGTQ4",  // text-only Qwen3.6
-        "gemma-4-12b-it-jang_4m",
-        "gemma-4-12b-it-mxfp4",
-        "gemma-4-12b-it-mxfp8",
         // NOTE: Mistral 3 / 3.5 LLM-only bundles can't be disambiguated
         // from VLM bundles by id alone (both ship with `mistral-medium-3.5`
         // in the name); the `from(directory:modelId:)` post-load path
