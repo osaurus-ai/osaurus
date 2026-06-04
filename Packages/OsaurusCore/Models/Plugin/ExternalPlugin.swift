@@ -797,8 +797,15 @@ final class ExternalPlugin: @unchecked Sendable {
         let freeString = api.free_string
         let ctx = self.ctx
         let pluginId = self.id
-        let resPtr = PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
-            call(ctx)
+        // This synchronous C call runs on the main actor by design — native accessibility/
+        // automation plugins hold main-thread-bound objects (see ExternalTool.invocationIsolation)
+        // — and can legitimately block for seconds while it drives another app. Pause app-hang
+        // tracking so that expected block isn't reported as a false-positive hang; the per-tool
+        // timeout in ToolRegistry still bounds a genuinely stuck handler.
+        let resPtr = CrashReportingService.shared.withAppHangTrackingPaused {
+            PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
+                call(ctx)
+            }
         }
         guard let resPtr else {
             throw NSError(
@@ -828,6 +835,13 @@ final class ExternalPlugin: @unchecked Sendable {
                 userInfo: [NSLocalizedDescriptionKey: "Invoke not implemented"]
             )
         }
+
+        // Identify the call on the Sentry scope so an app hang during a plugin invoke (which
+        // otherwise symbolicates with no plugin frame) points at the responsible plugin/tool.
+        CrashReportingService.recordBreadcrumb(
+            category: "plugin.invoke",
+            message: "plugin=\(self.id) type=\(type) id=\(id) isolation=\(isolation)"
+        )
 
         return try await dispatchPluginCall(
             agentId: agentId,
