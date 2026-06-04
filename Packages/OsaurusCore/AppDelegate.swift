@@ -1930,7 +1930,20 @@ extension AppDelegate {
 
             // Reuse existing window if it exists
             if let existingWindow = windowManager.window(for: .management) {
-                existingWindow.contentViewController = NSHostingController(rootView: root)
+                let hasDeeplink =
+                    deeplinkModelId != nil || deeplinkFile != nil || deeplinkAgentId != nil
+                if hasDeeplink {
+                    // Deeplink targets are baked into the view at creation, so the
+                    // hosting controller has to be rebuilt to deliver them.
+                    existingWindow.contentViewController = NSHostingController(rootView: root)
+                } else if let initialTab {
+                    // No deeplink: drive navigation through the shared state the
+                    // existing view already observes. Recreating the hosting
+                    // controller here tears down and rebuilds the whole SwiftUI
+                    // graph synchronously on the main thread, which has been seen
+                    // to hang for seconds under memory pressure.
+                    ManagementStateManager.shared.selectedTab = initialTab
+                }
                 existingWindow.appearance = themeAppearance
                 windowManager.show(.management, center: false)  // Don't re-center if user moved it
                 NSLog("[Management] Reused existing window and brought to front")
