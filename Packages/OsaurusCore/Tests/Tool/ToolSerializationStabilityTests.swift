@@ -127,6 +127,80 @@ struct ToolSerializationStabilityTests {
         try Self.assertSchemaTypesAreTemplateRenderable(parameters)
     }
 
+    @Test
+    func toTokenizerToolSpec_dropsBooleanAdditionalPropertiesForChatTemplates() throws {
+        // Mirrors the Osaurus default `db_*` tools (db_insert/db_update/db_upsert/
+        // db_delete/db_restore), whose free-form object args are spelled
+        // `{"type": "object", "additionalProperties": true}`. Gemma4's template
+        // pipes a property's `additionalProperties` through `| upper`, which
+        // throws "upper filter requires string" on the boolean form. The schema
+        // object form must still survive so nested constraints keep rendering.
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "db_update",
+                description: "Update rows matched by `where`.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(false),
+                    "properties": .object([
+                        "set": .object([
+                            "type": .string("object"),
+                            "additionalProperties": .bool(true),
+                        ]),
+                        "where": .object([
+                            "type": .string("object"),
+                            "additionalProperties": .bool(true),
+                        ]),
+                        "shaped": .object([
+                            "type": .string("object"),
+                            "additionalProperties": .object(["type": .string("string")]),
+                        ]),
+                    ]),
+                    "required": .array([.string("set"), .string("where")]),
+                ])
+            )
+        )
+
+        let spec = tool.toTokenizerToolSpec()
+        let fn = try #require(spec["function"] as? [String: any Sendable])
+        let parameters = try #require(fn["parameters"] as? [String: any Sendable])
+        let properties = try #require(parameters["properties"] as? [String: any Sendable])
+        let set = try #require(properties["set"] as? [String: any Sendable])
+        let whereClause = try #require(properties["where"] as? [String: any Sendable])
+        let shaped = try #require(properties["shaped"] as? [String: any Sendable])
+
+        // Boolean additionalProperties (both at the root and nested) is dropped.
+        #expect(parameters["additionalProperties"] == nil)
+        #expect(set["additionalProperties"] == nil)
+        #expect(whereClause["additionalProperties"] == nil)
+        // Object-form additionalProperties is preserved and still renderable.
+        let shapedAdditional = try #require(shaped["additionalProperties"] as? [String: any Sendable])
+        #expect(shapedAdditional["type"] as? String == "string")
+        // Surrounding shape is untouched.
+        #expect(set["type"] as? String == "object")
+        #expect(whereClause["type"] as? String == "object")
+        try Self.assertNoBooleanAdditionalProperties(parameters)
+    }
+
+    private static func assertNoBooleanAdditionalProperties(
+        _ value: any Sendable
+    ) throws {
+        if let dict = value as? [String: any Sendable] {
+            #expect(
+                !(dict["additionalProperties"] is Bool),
+                "boolean additionalProperties must be dropped from the template-facing schema"
+            )
+            for child in dict.values {
+                try assertNoBooleanAdditionalProperties(child)
+            }
+        } else if let array = value as? [any Sendable] {
+            for child in array {
+                try assertNoBooleanAdditionalProperties(child)
+            }
+        }
+    }
+
     private static func assertSchemaTypesAreTemplateRenderable(
         _ schema: [String: any Sendable]
     ) throws {

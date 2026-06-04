@@ -1096,6 +1096,12 @@ extension JSONValue {
                         )
                     }
                 case "items", "additionalProperties", "response":
+                    // Gemma-4's native template pipes a schema's boolean
+                    // `additionalProperties` through `| upper`, throwing "upper
+                    // filter requires string". Drop only that boolean form; the
+                    // schema-object form renders fine, and the original schema
+                    // still drives argument validation, so this is lossless.
+                    if key == "additionalProperties", case .bool = value { continue }
                     normalized[key] = value.normalizedChatTemplateSchemaValue(
                         inSchemaPosition: true
                     )
