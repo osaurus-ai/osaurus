@@ -784,8 +784,9 @@ struct RuntimePolicySourceTests {
             runtime.contains("ModelFamilyNames.isDSV4Family(modelName)")
                 && runtime.contains("ModelFamilyNames.isZayaFamily(modelName)")
                 && runtime.contains("ModelFamilyNames.isZayaVLFamily(modelName)")
+                && runtime.contains("ModelFamilyNames.isGemmaFamily(modelName)")
                 && runtime.contains("Self.isKnownHybridModel(name: modelName)"),
-            "Engine-selected TurboQuant must stay off by default for DSV4, ZAYA/ZAYA-VL, and hybrid topologies until exact rows prove it"
+            "Engine-selected TurboQuant must stay off by default for DSV4, ZAYA/ZAYA-VL, Gemma, and hybrid topologies until exact rows prove it"
         )
         #expect(
             runtime.contains("ModelFamilyNames.isStepFamily(modelName)")
