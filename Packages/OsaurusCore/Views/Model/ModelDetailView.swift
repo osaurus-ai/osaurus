@@ -238,7 +238,11 @@ struct ModelDetailView: View, Identifiable {
     /// Open HuggingFace page in browser
     private func openHuggingFace() {
         if let url = URL(string: model.downloadURL) {
-            NSWorkspace.shared.open(url)
+            // The plain `open(_:)` is synchronous: it blocks the main thread on a
+            // LaunchServices XPC round-trip until the browser is up, which can
+            // stall the UI for seconds on a cold launch. The configuration-based
+            // form dispatches the open asynchronously and returns immediately.
+            NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration())
         }
     }
 

@@ -24,9 +24,18 @@ final class DirectoryPickerService: ObservableObject {
     private static nonisolated(unsafe) var cachedBookmarkURL: URL?
     private static nonisolated(unsafe) var cacheInitialized = false
 
+    /// Memoized result of `defaultModelsDirectory()`. Resolving the default
+    /// location scans `~/MLXModels` and the legacy `~/Documents/MLXModels` for
+    /// visible contents, so without this cache every SwiftUI body that touched
+    /// a model's `isVLM`/`isDownloaded` (which resolve through here when no
+    /// bookmark is set) paid for a fresh directory enumeration per row, on the
+    /// main thread, during layout. Cleared alongside the bookmark cache.
+    private static nonisolated(unsafe) var cachedDefaultDirectory: URL?
+
     nonisolated private static func invalidateCache() {
         cacheLock.lock()
         cachedBookmarkURL = nil
+        cachedDefaultDirectory = nil
         cacheInitialized = false
         cacheLock.unlock()
     }
@@ -246,8 +255,32 @@ final class DirectoryPickerService: ObservableObject {
         return !entries.isEmpty
     }
 
-    /// Get the default models directory (without user bookmark)
+    /// Get the default models directory (without user bookmark).
+    ///
+    /// Memoized: the underlying resolution enumerates two candidate folders to
+    /// prefer a populated location, which is too expensive to repeat on every
+    /// access (model-list rendering can ask hundreds of times per frame). The
+    /// answer only changes when the directory is reset, which clears the cache.
     nonisolated static func defaultModelsDirectory() -> URL {
+        cacheLock.lock()
+        if let cached = cachedDefaultDirectory {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let resolved = resolveDefaultModelsDirectory()
+
+        cacheLock.lock()
+        cachedDefaultDirectory = resolved
+        cacheLock.unlock()
+        return resolved
+    }
+
+    /// Compute the default models directory by scanning the candidate folders.
+    /// Callers should go through `defaultModelsDirectory()` so the result is
+    /// cached; this performs the filesystem work on every invocation.
+    nonisolated private static func resolveDefaultModelsDirectory() -> URL {
         let fileManager = FileManager.default
         if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
             let expanded = (override as NSString).expandingTildeInPath
