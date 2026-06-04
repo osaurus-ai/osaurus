@@ -240,6 +240,11 @@ private extension ManagementView {
     }
 
     func handleTabChange(to newTab: ManagementTab) {
+        // Leave a trail of which screen was on-screen so a layout-engine app
+        // hang (no first-party frame in the stack) can be localized to a tab.
+        CrashReportingService.recordBreadcrumb(
+            category: "navigation", message: "management.tab \(newTab.rawValue)")
+
         // Clear search when navigating away from settings
         if newTab != .settings && !searchText.isEmpty {
             searchText = ""

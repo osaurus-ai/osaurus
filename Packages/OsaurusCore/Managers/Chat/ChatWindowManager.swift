@@ -569,6 +569,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     // Called by delegate when window becomes key
     fileprivate func windowDidBecomeKey(id: UUID) {
         lastFocusedWindowId = id
+        // Distinguishes "user was in a chat window" from a management tab when
+        // localizing a layout-engine app hang (no first-party frame in stack).
+        CrashReportingService.recordBreadcrumb(category: "navigation", message: "chat.window focused")
         print("[ChatWindowManager] Window \(id) became key")
     }
 
