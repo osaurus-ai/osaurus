@@ -62,9 +62,9 @@ class SystemMonitorService: ObservableObject {
         totalMemoryGB = memInfo.totalGB
         usedMemoryGB = memInfo.usedGB
         appMemoryMB = getAppMemoryMB()
-        let storageInfo = getStorageUsage()
-        availableStorageGB = storageInfo.availableGB
-        totalStorageGB = storageInfo.totalGB
+        // Storage capacity is queried off the main actor (see refreshStorageUsage):
+        // the volume-capacity API can block the caller for seconds.
+        refreshStorageUsage()
     }
 
     /// Update the path used for storage monitoring (when user selects a custom models directory)
@@ -183,20 +183,34 @@ class SystemMonitorService: ObservableObject {
         return Double(info.phys_footprint) / (1024 * 1024)
     }
 
-    private func getStorageUsage() -> (availableGB: Double, totalGB: Double) {
-        // Bug #964: previously used `attributesOfFileSystem(.systemFreeSize)`
-        // which returns 0 for sandboxed-container paths on modern macOS —
-        // the dashboard reported `Available: 0 GB` even when Finder showed
-        // tens of GB free. `OsaurusPaths.volumeFreeBytes` uses the modern
-        // URL-keyed `.volumeAvailableCapacityForImportantUsageKey` first
-        // (the value Finder shows) and falls back to the legacy API when
-        // the modern query is unavailable or returns 0. Same helper as
-        // `ModelDownloadService.freeBytesOnVolume` so the two read-outs
-        // can never silently drift.
-        let gb = 1024.0 * 1024.0 * 1024.0
-        let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: storagePath) ?? 0
-        let totalBytes = OsaurusPaths.volumeTotalBytes(forPath: storagePath) ?? 0
-        return (Double(freeBytes) / gb, Double(totalBytes) / gb)
+    /// Guards against overlapping storage queries if one outlives the 2s tick
+    /// (the volume-capacity query can itself take seconds).
+    private var isRefreshingStorage = false
+
+    /// Query storage capacity off the main actor and publish the result back.
+    ///
+    /// `OsaurusPaths.volumeFreeBytes` uses the modern URL-keyed
+    /// `.volumeAvailableCapacityForImportantUsageKey` (the value Finder shows; the
+    /// legacy `attributesOfFileSystem(.systemFreeSize)` returns 0 for sandboxed
+    /// container paths). It's the same helper as `ModelDownloadService.freeBytesOnVolume`
+    /// so the two read-outs can't silently drift. That key routes through macOS's
+    /// CacheDelete/purgeable-space machinery and can block the caller for seconds,
+    /// so it must not run on the main thread.
+    private func refreshStorageUsage() {
+        guard !isRefreshingStorage else { return }
+        isRefreshingStorage = true
+        let path = storagePath
+        Task.detached(priority: .utility) {
+            let gb = 1024.0 * 1024.0 * 1024.0
+            let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: path) ?? 0
+            let totalBytes = OsaurusPaths.volumeTotalBytes(forPath: path) ?? 0
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.availableStorageGB = Double(freeBytes) / gb
+                self.totalStorageGB = Double(totalBytes) / gb
+                self.isRefreshingStorage = false
+            }
+        }
     }
 
 }
