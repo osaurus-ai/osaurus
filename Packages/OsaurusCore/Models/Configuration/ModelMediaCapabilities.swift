@@ -147,8 +147,6 @@ public enum ModelMediaCapabilities {
             "lfm2-vl", "lfm2_vl",
             "gemma-3", "gemma3",
             "gemma-4-it",  // VLM Gemma 4 (the dense LLM gemma-4 also exists)
-            "gemma-4-12b-it",
-            "gemma4-12b-it",
         ]
         if imageOnlyPatterns.contains(where: lower.contains) {
             return .imageOnly
@@ -218,6 +216,17 @@ public enum ModelMediaCapabilities {
 
         let modelType = (json["model_type"] as? String)?.lowercased() ?? ""
         let hasVisionConfig = json["vision_config"] != nil
+
+        // Gemma4 unified bundles can carry vision/audio config blocks even
+        // when Osaurus is serving them through the text LLM runtime. Until
+        // the Gemma4 VLM request path is wired and live-proven, do not let
+        // image/audio/video payloads reach the text generation path.
+        if modelType == "gemma4_unified"
+            || ((json["text_config"] as? [String: Any])?["model_type"] as? String)?
+                .lowercased() == "gemma4_unified_text"
+        {
+            return .textOnly
+        }
 
         // No vision config → not even image-capable. (Audio without
         // vision is only the omni path, already handled above.)
