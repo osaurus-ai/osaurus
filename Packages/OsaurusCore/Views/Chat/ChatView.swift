@@ -1474,7 +1474,7 @@ final class ChatSession: ObservableObject {
     private func processShareArtifactResult(
         toolResult: String,
         executionMode: ExecutionMode
-    ) -> String {
+    ) async -> String {
         guard let sessionId else { return toolResult }
         let agentName = SandboxAgentProvisioner.linuxName(
             for: (agentId ?? Agent.defaultId).uuidString
@@ -1492,13 +1492,19 @@ final class ChatSession: ObservableObject {
             markerText = toolResult
         }
 
-        let outcome = SharedArtifact.processToolResultDetailed(
-            markerText,
-            contextId: sessionId.uuidString,
-            contextType: .chat,
-            executionMode: executionMode,
-            sandboxAgentName: agentName
-        )
+        // `processToolResultDetailed` performs a `FileManager.copyItem` that can
+        // recurse a large artifact directory tree and block for seconds, so resolve
+        // and copy off the main actor; only the cheap envelope build runs on main.
+        let contextId = sessionId.uuidString
+        let outcome = await Task.detached(priority: .userInitiated) {
+            SharedArtifact.processToolResultDetailed(
+                markerText,
+                contextId: contextId,
+                contextType: .chat,
+                executionMode: executionMode,
+                sandboxAgentName: agentName
+            )
+        }.value
         switch outcome {
         case .success(let processed):
             return ToolEnvelope.success(tool: "share_artifact", text: processed.enrichedToolResult)
@@ -2915,7 +2921,7 @@ final class ChatSession: ObservableObject {
                                 }
 
                                 if inv.toolName == "share_artifact" {
-                                    resultText = processShareArtifactResult(
+                                    resultText = await processShareArtifactResult(
                                         toolResult: resultText,
                                         executionMode: executionMode
                                     )

@@ -167,7 +167,7 @@ extension SharedArtifact {
     }
 
     /// Result of fully processing a share_artifact tool result.
-    struct ProcessingResult {
+    struct ProcessingResult: Sendable {
         let artifact: SharedArtifact
         let enrichedToolResult: String
     }
