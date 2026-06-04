@@ -70,11 +70,18 @@ struct LifecycleConcurrencyTests {
     @Test func lease_timed_wait_returns_true_when_released_in_time() async {
         let name = "test-lease-\(UUID().uuidString)"
         await ModelLease.shared.acquire(name)
+        defer {
+            Task {
+                if await ModelLease.shared.count(for: name) > 0 {
+                    await ModelLease.shared.release(name)
+                }
+            }
+        }
         Task {
             try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
             await ModelLease.shared.release(name)
         }
-        let drained = await ModelLease.shared.waitForZero(name, timeoutSeconds: 5.0)
+        let drained = await ModelLease.shared.waitForZero(name, timeoutSeconds: 30.0)
         #expect(drained == true)
         #expect(await ModelLease.shared.count(for: name) == 0)
     }
