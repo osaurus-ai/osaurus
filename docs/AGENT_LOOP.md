@@ -107,7 +107,7 @@ Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift)
 | Tool            | Description                                                  |
 | --------------- | ------------------------------------------------------------ |
 | `file_read`     | Read a file (line ranges, `tail_lines`/`max_chars`, bounded XLSX sheet previews) **or** list a directory (with `max_depth`, project-aware ignore patterns) — the path decides. Use this instead of `cat`/`head`/`tail`/`ls`/`tree`. |
-| `file_write`    | Create or overwrite files. Use this instead of `echo`/`cat` heredoc. |
+| `file_write`    | Create or overwrite UTF-8 text files. Use this instead of `echo`/`cat` heredoc. Refuses `.xlsx`-family workbook targets; write CSV/TSV text or use a spreadsheet/XLSX tool for workbook output. |
 | `file_edit`     | Surgical exact-string replacement. Use this instead of `sed`/`awk`. |
 | `file_search`   | ripgrep-style content search, or `target="files"` filename-glob find. Use this instead of `grep`/`rg`/`find`. |
 | `shell_run`     | Execute a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, tests, git, installs, and any work that can't be expressed via the dedicated `file_*` tools. |
