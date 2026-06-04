@@ -1903,20 +1903,22 @@ struct ScheduleEditorSheet: View {
         panel.title = L("Select Working Directory")
         panel.prompt = L("Select")
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
 
-        do {
-            let bookmark = try url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            withAnimation(.easeOut(duration: 0.2)) {
-                selectedFolderPath = url.path
-                selectedFolderBookmark = bookmark
+            do {
+                let bookmark = try url.bookmarkData(
+                    options: .withSecurityScope,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                withAnimation(.easeOut(duration: 0.2)) {
+                    selectedFolderPath = url.path
+                    selectedFolderBookmark = bookmark
+                }
+            } catch {
+                print("[ScheduleEditor] Failed to create bookmark: \(error)")
             }
-        } catch {
-            print("[ScheduleEditor] Failed to create bookmark: \(error)")
         }
     }
 

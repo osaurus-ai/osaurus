@@ -2362,16 +2362,18 @@ struct AgentDetailView: View {
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .gif, .image]
         panel.prompt = L("Choose")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
 
-        guard let original = NSImage(contentsOf: url) else { return }
-        let downscaled = downscaleAvatar(original, maxDimension: 256)
-        guard let pngData = pngData(from: downscaled) else { return }
-        agentManager.setCustomAvatar(pngData, ext: "png", for: agent.id)
-        // Bust the cache for this agent's avatar URL so the new bytes show
-        // up immediately in inline chat + sidebar without an mtime race.
-        if let updated = agentManager.agent(for: agent.id), let newURL = updated.customAvatarURL {
-            AvatarImageCache.shared.invalidate(url: newURL)
+            guard let original = NSImage(contentsOf: url) else { return }
+            let downscaled = downscaleAvatar(original, maxDimension: 256)
+            guard let pngData = pngData(from: downscaled) else { return }
+            agentManager.setCustomAvatar(pngData, ext: "png", for: agent.id)
+            // Bust the cache for this agent's avatar URL so the new bytes show
+            // up immediately in inline chat + sidebar without an mtime race.
+            if let updated = agentManager.agent(for: agent.id), let newURL = updated.customAvatarURL {
+                AvatarImageCache.shared.invalidate(url: newURL)
+            }
         }
     }
 
@@ -3120,10 +3122,12 @@ struct AgentDetailView: View {
             localized: "Pick a folder for the .osaurus-agent bundle.",
             bundle: .module
         )
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        bundleExportDestination = url.deletingLastPathComponent()
-        bundlePassphraseInput = ""
-        bundleConfirmPassphraseInput = ""
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            bundleExportDestination = url.deletingLastPathComponent()
+            bundlePassphraseInput = ""
+            bundleConfirmPassphraseInput = ""
+        }
     }
 
     private func beginBundleImport() {
@@ -3133,9 +3137,11 @@ struct AgentDetailView: View {
         panel.canChooseFiles = true
         panel.allowedContentTypes = []
         panel.title = L("Import Bundle")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        bundleImportSource = url
-        bundlePassphraseInput = ""
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            bundleImportSource = url
+            bundlePassphraseInput = ""
+        }
     }
 
     private func performBundleExport() {

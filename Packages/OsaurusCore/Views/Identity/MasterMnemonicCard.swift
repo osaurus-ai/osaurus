@@ -157,9 +157,11 @@ struct MasterMnemonicCard: View {
         panel.allowedContentTypes = [.plainText]
         panel.canCreateDirectories = true
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let content = renderPlainText()
-        try? content.data(using: .utf8)?.write(to: url, options: .atomic)
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            let content = renderPlainText()
+            try? content.data(using: .utf8)?.write(to: url, options: .atomic)
+        }
     }
 
     private func printPhrase() {
