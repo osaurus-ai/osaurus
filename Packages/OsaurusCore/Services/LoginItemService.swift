@@ -16,16 +16,17 @@ final class LoginItemService {
 
     /// Returns whether the app is currently registered to start at login
     var isEnabled: Bool {
-        if #available(macOS 13.0, *) {
-            return SMAppService.mainApp.status == .enabled
-        } else {
-            return false
-        }
+        SMAppService.mainApp.status == .enabled
     }
 
-    /// Apply desired start-at-login state
+    /// Apply desired start-at-login state.
+    ///
+    /// `SMAppService.status`/`register`/`unregister` each make a synchronous XPC
+    /// round trip to the service-management daemon, which can block for seconds
+    /// (it's invoked from launch and reported as an app hang). Both call sites
+    /// are fire-and-forget, so the work runs off the main thread.
     func applyStartAtLogin(_ enabled: Bool) {
-        if #available(macOS 13.0, *) {
+        Task.detached(priority: .utility) {
             let service = SMAppService.mainApp
             do {
                 if enabled {
@@ -40,8 +41,6 @@ final class LoginItemService {
             } catch {
                 print("[Osaurus] Failed to update Start at Login state: \(error)")
             }
-        } else {
-            print("[Osaurus] Start at Login requires macOS 13.0 or later")
         }
     }
 }
