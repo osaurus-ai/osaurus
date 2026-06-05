@@ -16,17 +16,18 @@ extension Notification.Name {
 }
 
 enum ModelListTab: String, CaseIterable, AnimatedTabItem {
-    /// All available models rendered as two sections (Recommended + Others)
-    case all = "All"
+    /// Models the user owns locally (includes active downloads). Listed
+    /// first so returning users land on their own models.
+    case downloaded = "On Device"
 
-    /// Only models downloaded locally (includes active downloads)
-    case downloaded = "Downloads"
+    /// Full catalog rendered as a Recommended carousel + a newest-first grid.
+    case all = "Catalog"
 
     /// Display name for the tab (required by AnimatedTabItem)
     var title: String {
         switch self {
-        case .all: return L("All")
-        case .downloaded: return L("Downloads")
+        case .downloaded: return L("On Device")
+        case .all: return L("Catalog")
         }
     }
 }

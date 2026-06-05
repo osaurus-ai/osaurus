@@ -140,6 +140,26 @@ struct MLXModel: Identifiable, Codable {
         return formatter.string(fromByteCount: bytes)
     }
 
+    /// Abbreviated HF Hub download (popularity) count for the card footer
+    /// (e.g. 1_234_567 -> "1.2M", 12_345 -> "12.3K", 842 -> "842"). Nil when
+    /// the count is unknown or zero so the footer can omit it.
+    var formattedDownloads: String? {
+        guard let downloads, downloads > 0 else { return nil }
+        func abbreviate(_ value: Double, _ suffix: String) -> String {
+            let rendered = String(format: "%.1f", value)
+            let trimmed = rendered.hasSuffix(".0") ? String(rendered.dropLast(2)) : rendered
+            return trimmed + suffix
+        }
+        switch downloads {
+        case 1_000_000...:
+            return abbreviate(Double(downloads) / 1_000_000, "M")
+        case 1_000...:
+            return abbreviate(Double(downloads) / 1_000, "K")
+        default:
+            return "\(downloads)"
+        }
+    }
+
     /// Best estimate of the total model size in bytes.
     /// Uses explicit downloadSizeBytes if available, otherwise estimates based on parameters/quantization.
     var totalSizeEstimateBytes: Int64? {
