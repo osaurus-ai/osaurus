@@ -318,21 +318,42 @@ struct PluginDispatchToolStorePopulationTests {
         PluginOnceLogger._resetForTesting(forKeyPrefix: "\(pluginId)|")
     }
 
-    /// Spin up a throwaway custom agent for a single dispatch. Caller
-    /// awaits `cleanup()` once they're done with the dispatched task —
-    /// `AgentManager.delete` is async because of sandbox cleanup, so we
-    /// can't deliver it through a sync `defer`.
-    private func makeScopedAgent() -> (id: UUID, cleanup: () async -> Void) {
+    /// Run `body` against a throwaway storage root so any agent created via
+    /// `makeScopedAgent` lands in a temp dir (never the live
+    /// `~/.osaurus/agents` store) and is removed with it. Serialized through
+    /// `SandboxTestLock.runWithStoragePaths` because it mutates
+    /// `OsaurusPaths.overrideRoot` and `AgentManager.shared` — globals other
+    /// suites also touch.
+    private func withIsolatedRoot(_ body: @MainActor @Sendable () async throws -> Void) async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-plugin-dispatch-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                AgentManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
+            }
+            try await body()
+        }
+    }
+
+    /// Spin up a throwaway custom agent for a single dispatch. Tests run
+    /// inside `withIsolatedRoot`, so the agent persists into a temp storage
+    /// root and is torn down with the directory — no explicit delete needed.
+    private func makeScopedAgent() -> UUID {
         let agent = Agent(
             name: "PluginDispatchToolStoreAgent-\(UUID().uuidString.prefix(6))",
             systemPrompt: "Test identity",
             agentAddress: "test-plugin-dispatch-\(UUID().uuidString)"
         )
         AgentManager.shared.add(agent)
-        return (
-            agent.id,
-            { _ = await AgentManager.shared.delete(id: agent.id) }
-        )
+        return agent.id
     }
 
     /// Dispatch a request and return the resolved task id. Caller is
@@ -356,49 +377,51 @@ struct PluginDispatchToolStorePopulationTests {
 
     @Test
     func nonEmptyRequestedToolsLandInSessionStore() async throws {
-        await reset()
-        let mgr = BackgroundTaskManager.shared
-        let scoped = makeScopedAgent()
+        try await withIsolatedRoot {
+            await self.reset()
+            let mgr = BackgroundTaskManager.shared
+            let agentId = self.makeScopedAgent()
 
-        let taskId = try #require(
-            await dispatch(
-                agentId: scoped.id,
-                prompt: "hello",
-                requestedToolNames: ["share_artifact"]
+            let taskId = try #require(
+                await self.dispatch(
+                    agentId: agentId,
+                    prompt: "hello",
+                    requestedToolNames: ["share_artifact"]
+                )
             )
-        )
 
-        let names = await SessionToolStateStore.shared.get(taskId.uuidString)?.loadedToolNames ?? []
-        #expect(
-            names.contains("share_artifact"),
-            "appendLoadedTools must use the dispatch task id as the store key"
-        )
+            let names = await SessionToolStateStore.shared.get(taskId.uuidString)?.loadedToolNames ?? []
+            #expect(
+                names.contains("share_artifact"),
+                "appendLoadedTools must use the dispatch task id as the store key"
+            )
 
-        mgr.finalizeTask(taskId)
-        await scoped.cleanup()
+            mgr.finalizeTask(taskId)
+        }
     }
 
     @Test
     func emptyRequestedToolsLeavesStoreUntouched() async throws {
         // Whatever `composeChatContext` may have created via `setInitial`,
         // an empty `requestedToolNames` must not seed `loadedToolNames`.
-        await reset()
-        let mgr = BackgroundTaskManager.shared
-        let scoped = makeScopedAgent()
+        try await withIsolatedRoot {
+            await self.reset()
+            let mgr = BackgroundTaskManager.shared
+            let agentId = self.makeScopedAgent()
 
-        let taskId = try #require(
-            await dispatch(
-                agentId: scoped.id,
-                prompt: "hello",
-                requestedToolNames: []
+            let taskId = try #require(
+                await self.dispatch(
+                    agentId: agentId,
+                    prompt: "hello",
+                    requestedToolNames: []
+                )
             )
-        )
 
-        let names = await SessionToolStateStore.shared.get(taskId.uuidString)?.loadedToolNames ?? []
-        #expect(names.isEmpty, "Empty requestedToolNames must not seed loadedToolNames")
+            let names = await SessionToolStateStore.shared.get(taskId.uuidString)?.loadedToolNames ?? []
+            #expect(names.isEmpty, "Empty requestedToolNames must not seed loadedToolNames")
 
-        mgr.finalizeTask(taskId)
-        await scoped.cleanup()
+            mgr.finalizeTask(taskId)
+        }
     }
 
     @Test
