@@ -389,7 +389,7 @@ struct BuiltinSandboxToolsTests {
             execResults: [.init(stdout: "12345\n", stderr: "", exitCode: 0)]
         )
 
-        let output = try await withRegisteredSandboxTools(runner: runner) {
+        let output = try await withRegisteredSandboxTools(runner: runner, backgroundEnabled: true) {
             try await ToolRegistry.shared.execute(
                 name: "sandbox_exec",
                 argumentsJSON: #"{"command":"python3 server.py","background":true}"#
@@ -423,7 +423,7 @@ struct BuiltinSandboxToolsTests {
             ]
         )
 
-        let output = try await withRegisteredSandboxTools(runner: runner) {
+        let output = try await withRegisteredSandboxTools(runner: runner, backgroundEnabled: true) {
             try await ToolRegistry.shared.execute(
                 name: "sandbox_process",
                 argumentsJSON: #"{"action":"poll","pid":"42","tail_lines":0}"#
@@ -456,7 +456,7 @@ struct BuiltinSandboxToolsTests {
             ]
         )
 
-        let output = try await withRegisteredSandboxTools(runner: runner) {
+        let output = try await withRegisteredSandboxTools(runner: runner, backgroundEnabled: true) {
             try await ToolRegistry.shared.execute(
                 name: "sandbox_process",
                 argumentsJSON: #"{"action":"wait","pid":"42","timeout":1,"tail_lines":0}"#
@@ -486,7 +486,7 @@ struct BuiltinSandboxToolsTests {
             ]
         )
 
-        let output = try await withRegisteredSandboxTools(runner: runner) {
+        let output = try await withRegisteredSandboxTools(runner: runner, backgroundEnabled: true) {
             try await ToolRegistry.shared.execute(
                 name: "sandbox_process",
                 argumentsJSON: #"{"action":"kill","pid":"42","force":true}"#
@@ -512,7 +512,7 @@ struct BuiltinSandboxToolsTests {
         // the model fixes the call instead of running `kill server`.
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
 
-        let output = try await withRegisteredSandboxTools(runner: runner) {
+        let output = try await withRegisteredSandboxTools(runner: runner, backgroundEnabled: true) {
             try await ToolRegistry.shared.execute(
                 name: "sandbox_process",
                 argumentsJSON: #"{"action":"poll","pid":"server"}"#
@@ -526,6 +526,52 @@ struct BuiltinSandboxToolsTests {
 
         let calls = await runner.calls
         #expect(calls.isEmpty, "rejected calls must not exec")
+    }
+
+    @Test @MainActor
+    func backgroundDisabled_stripsProcessToolAndRejectsBackgroundExec() async throws {
+        // With `backgroundProcessEnabled` off (the default), `sandbox_process`
+        // is never registered and `sandbox_exec` no longer advertises the
+        // `background` flag — so a `background:true` call is refused (schema
+        // validation rejects the unknown property; the tool's own runtime
+        // guard is the defense-in-depth backstop) and nothing is spawned.
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [], execResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            // sandbox_process must not be registered when background is off.
+            #expect(ToolRegistry.shared.specs(forTools: ["sandbox_process"]).isEmpty)
+            return try await ToolRegistry.shared.execute(
+                name: "sandbox_exec",
+                argumentsJSON: #"{"command":"python3 server.py","background":true}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "background-disabled exec must not spawn anything")
+    }
+
+    @Test @MainActor
+    func backgroundDisabled_foregroundExecStillWorks() async throws {
+        // Sanity: with background off, an ordinary foreground command runs
+        // normally (the gate only removes the background affordance).
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [],
+            execResults: [.init(stdout: "hello\n", stderr: "", exitCode: 0)]
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_exec",
+                argumentsJSON: #"{"command":"echo hello"}"#
+            )
+        }
+
+        #expect(!ToolEnvelope.isError(output))
+        let calls = await runner.calls
+        #expect(!calls.isEmpty, "foreground exec should run")
     }
 
     @Test @MainActor
@@ -1197,11 +1243,17 @@ private enum MockSandboxRunnerError: Error, LocalizedError {
 @MainActor
 private func withRegisteredSandboxTools<T: Sendable>(
     runner: some SandboxToolCommandRunning,
+    backgroundEnabled: Bool = false,
     _ body: () async throws -> T
 ) async throws -> T {
     try await SandboxTestLock.shared.run {
         let agentId = "test-agent"
-        let config = AutonomousExecConfig(enabled: true, maxCommandsPerTurn: 10, commandTimeout: 30, pluginCreate: true)
+        let config = AutonomousExecConfig(
+            enabled: true,
+            maxCommandsPerTurn: 10,
+            pluginCreate: true,
+            backgroundProcessEnabled: backgroundEnabled
+        )
         await SandboxToolCommandRunnerRegistry.shared.setRunner(runner)
         ToolRegistry.shared.unregisterAllSandboxTools()
         BuiltinSandboxTools.register(agentId: agentId, agentName: agentId, config: config)

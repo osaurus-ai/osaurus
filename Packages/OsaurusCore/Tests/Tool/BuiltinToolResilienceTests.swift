@@ -135,7 +135,6 @@ struct BuiltinToolResilienceTests {
             config: AutonomousExecConfig(
                 enabled: true,
                 maxCommandsPerTurn: 100,
-                commandTimeout: 30,
                 pluginCreate: true
             )
         )

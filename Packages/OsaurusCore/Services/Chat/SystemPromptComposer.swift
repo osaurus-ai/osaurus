@@ -835,7 +835,8 @@ public struct SystemPromptComposer: Sendable {
                         secretNames: secretNames,
                         installedPackages: installedPackages,
                         home: sandboxHome,
-                        hostReadCombined: executionMode.hostReadContext != nil
+                        hostReadCombined: executionMode.hostReadContext != nil,
+                        backgroundEnabled: snapshot.autonomousConfig?.backgroundProcessEnabled ?? false
                     )
                 )
             )
@@ -1609,34 +1610,21 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Agent DB feature (spec §6) is opt-in per agent. The `db_*` tools
-        // are registered as built-ins so they always live in the always-
-        // loaded surface; stripping them here keeps the schema clean for
-        // every agent that hasn't enabled the feature. The system prompt
-        // composer also skips the onboarding block when `dbEnabled` is
-        // false — both gates read from `AgentConfigSnapshot.dbEnabled`,
-        // captured once at the start of compose.
-        if !snapshot.dbEnabled {
-            for name in agentDBToolNames {
-                byName.removeValue(forKey: name)
-            }
-        }
-
         // Per-agent built-in tool gates. These tools are registered as
         // built-ins (so direct execution + ChatView interception still
         // work) but stripped from the auto-mode schema unless the agent
         // opts in — keeping the always-loaded surface lean by default.
         // `search_memory` is gated independently of the memory disable
         // switch (that switch governs injection + recording, this one
-        // governs mid-session recall via the tool).
+        // governs mid-session recall via the tool). The Agent DB feature
+        // (spec §6) `db_*` tools are gated the same way; the system prompt
+        // composer also skips the DB onboarding block when `dbEnabled` is
+        // false (both read `AgentConfigSnapshot.dbEnabled`).
         //
-        // Two carve-outs keep explicit intent intact:
+        // All gates honor the same two carve-outs uniformly:
         //   - Manual tool-selection mode is left untouched: there the user
-        //     curates the list, so the baseline built-ins they see stay.
-        //     This is why these gates sit behind `!isManual` while the
-        //     `db_*` strip above is unconditional — those tools are
-        //     non-functional without a backing DB, so they're stripped even
-        //     in manual mode, whereas these are token-trimming gates.
+        //     curates the list, so the baseline built-ins they see stay
+        //     (db_* included — consistency with the other gated built-ins).
         //   - In auto mode, a tool pulled in via `additionalToolNames`
         //     (a `capabilities_load`) or selected by preflight for this
         //     task survives — both are deliberate "I want this" signals.
@@ -1644,6 +1632,11 @@ public struct SystemPromptComposer: Sendable {
         if !isManual {
             var keep = additionalToolNames
             keep.formUnion(preflight.toolSpecs.map { $0.function.name })
+            if !snapshot.dbEnabled {
+                for name in agentDBToolNames where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
             if !snapshot.renderChartEnabled, !keep.contains("render_chart") {
                 byName.removeValue(forKey: "render_chart")
             }

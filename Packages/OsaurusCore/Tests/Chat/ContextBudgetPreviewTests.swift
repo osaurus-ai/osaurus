@@ -85,8 +85,8 @@ struct ContextBudgetPreviewTests {
                 autonomousExec: autonomous ? AutonomousExecConfig(enabled: true) : nil,
                 toolSelectionMode: toolSelectionMode,
                 manualToolNames: manualToolNames,
-                disableTools: toolsDisabled ? true : nil,
-                disableMemory: memoryDisabled ? true : nil
+                toolsEnabled: !toolsDisabled,
+                memoryEnabled: !memoryDisabled
             )
             AgentManager.shared.add(agent)
             await body(agent.id)

@@ -196,7 +196,8 @@ public enum SystemPromptTemplates {
         secretNames: [String] = [],
         installedPackages: SandboxPackageManifest.Installed = .init(),
         home: String = "",
-        hostReadCombined: Bool = false
+        hostReadCombined: Bool = false,
+        backgroundEnabled: Bool = false
     ) -> String {
         var section = """
 
@@ -204,7 +205,7 @@ public enum SystemPromptTemplates {
 
             \(sandboxEnvironmentBlock(home: home))
 
-            \(hostReadCombined ? sandboxToolGuideCombined : sandboxToolGuide)
+            \(hostReadCombined ? sandboxToolGuideCombined(backgroundEnabled: backgroundEnabled) : sandboxToolGuide(backgroundEnabled: backgroundEnabled))
 
             \(sandboxRuntimeHints(hostReadCombined: hostReadCombined))
 
@@ -261,27 +262,43 @@ public enum SystemPromptTemplates {
             """
     }
 
-    private static let sandboxToolGuide = """
-        Tool dispatch:
-        - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`content` whole-file, or `old_string`+`new_string` to edit).
-        - Search: `sandbox_search_files` with `target="content"` or `target="files"`.
-        - Shell: `sandbox_exec` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them.
-        - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
-        - Run independent calls in parallel; chain dependent shell steps with `&&`.
-        """
+    /// The Shell-dispatch bullet, shared by both guides. Names
+    /// `background:true` + `sandbox_process` only when the agent has opted
+    /// into background jobs; otherwise it stays a plain single-line-shell
+    /// line so the model isn't pointed at tools it doesn't have.
+    private static func sandboxShellBullet(backgroundEnabled: Bool) -> String {
+        backgroundEnabled
+            ? "- Shell: `sandbox_exec` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them."
+            : "- Shell: `sandbox_exec` for single-line shell."
+    }
+
+    private static func sandboxToolGuide(backgroundEnabled: Bool) -> String {
+        let shellBullet = sandboxShellBullet(backgroundEnabled: backgroundEnabled)
+        return """
+            Tool dispatch:
+            - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`content` whole-file, or `old_string`+`new_string` to edit).
+            - Search: `sandbox_search_files` with `target="content"` or `target="files"`.
+            \(shellBullet)
+            - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
+            - Run independent calls in parallel; chain dependent shell steps with `&&`.
+            """
+    }
 
     /// Combined-mode (`.sandbox(hostRead:)`) variant: the host `file_*`
     /// tools are the single, path-routed read family, so reads/lists/searches
     /// are NOT done with `sandbox_read_file` / `sandbox_search_files` (hidden
     /// in this mode). The `## Files` block spells out the path routing.
-    private static let sandboxToolGuideCombined = """
-        Tool dispatch:
-        - Read files / list dirs / search: `file_read` (reads a file or lists a directory — the path decides), `file_search` (they reach both your workspace and `/workspace/...` sandbox paths — see `## Files`).
-        - Sandbox writes: `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — your workspace is read-only).
-        - Shell: `sandbox_exec` for single-line shell; use `background:true` for servers and `sandbox_process` to inspect them.
-        - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
-        - Run independent calls in parallel; chain dependent shell steps with `&&`.
-        """
+    private static func sandboxToolGuideCombined(backgroundEnabled: Bool) -> String {
+        let shellBullet = sandboxShellBullet(backgroundEnabled: backgroundEnabled)
+        return """
+            Tool dispatch:
+            - Read files / list dirs / search: `file_read` (reads a file or lists a directory — the path decides), `file_search` (they reach both your workspace and `/workspace/...` sandbox paths — see `## Files`).
+            - Sandbox writes: `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — your workspace is read-only).
+            \(shellBullet)
+            - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
+            - Run independent calls in parallel; chain dependent shell steps with `&&`.
+            """
+    }
 
     /// Runtime hints block. In combined mode the log-read hint points at
     /// `file_read` (the unified read tool) rather than the hidden

@@ -27,8 +27,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     public let agentId: UUID
 
     /// OR of the request-scoped `toolsDisabled` flag and the agent's
-    /// `effectiveToolsDisabled`. Already factors in the global
-    /// `ChatConfiguration.disableTools` switch.
+    /// `effectiveToolsDisabled`. NOTE: the global
+    /// `ChatConfiguration.disableTools` switch is NOT read by
+    /// `effectiveToolsDisabled`; callers fold it in by passing it as
+    /// `requestToolsDisabled` to `capture(...)` (e.g. `ChatView`).
     public let toolsDisabled: Bool
 
     /// Mirrors `AgentManager.effectiveMemoryDisabled` (folds in the
@@ -121,9 +123,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// Read every `effective*` field in one MainActor batch.
     ///
     /// `requestToolsDisabled` is the per-request override the caller
-    /// passes through (`ChatConfiguration.disableTools` already lives on
-    /// the agent flag, so callers should only pass `true` when the
-    /// caller itself wants to force tools off for a single compose).
+    /// passes through. This is where the global
+    /// `ChatConfiguration.disableTools` switch is folded in — it is NOT
+    /// read by `effectiveToolsDisabled`, so any caller that wants the
+    /// global switch honored (app chat AND the HTTP path) must pass it.
     /// `modelOverride` lets the caller pin a specific model id (e.g. an
     /// HTTP request that named a model the agent doesn't default to);
     /// when nil, the agent's effective model is used.
@@ -134,20 +137,23 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         modelOverride: String? = nil
     ) -> AgentConfigSnapshot {
         let mgr = AgentManager.shared
+        // One resolve services every capability gate (positive polarity),
+        // closing the mid-fan-out race the old per-field calls risked.
+        let caps = mgr.effectiveCapabilities(for: agentId)
         return AgentConfigSnapshot(
             agentId: agentId,
-            toolsDisabled: requestToolsDisabled || mgr.effectiveToolsDisabled(for: agentId),
-            memoryDisabled: mgr.effectiveMemoryDisabled(for: agentId),
+            toolsDisabled: requestToolsDisabled || !caps.toolsEnabled,
+            memoryDisabled: !caps.memoryEnabled,
             autonomousConfig: mgr.effectiveAutonomousExec(for: agentId),
             toolMode: mgr.effectiveToolSelectionMode(for: agentId),
             model: modelOverride ?? mgr.effectiveModel(for: agentId),
             manualToolNames: mgr.effectiveManualToolNames(for: agentId),
             systemPrompt: mgr.effectiveSystemPrompt(for: agentId),
-            dbEnabled: mgr.effectiveDBEnabled(for: agentId),
-            renderChartEnabled: mgr.effectiveRenderChartEnabled(for: agentId),
-            speakEnabled: mgr.effectiveSpeakEnabled(for: agentId),
-            searchMemoryEnabled: mgr.effectiveSearchMemoryEnabled(for: agentId),
-            selfSchedulingEnabled: mgr.effectiveSelfSchedulingEnabled(for: agentId)
+            dbEnabled: caps.dbEnabled,
+            renderChartEnabled: caps.renderChartEnabled,
+            speakEnabled: caps.speakEnabled,
+            searchMemoryEnabled: caps.searchMemoryEnabled,
+            selfSchedulingEnabled: caps.selfSchedulingEnabled
         )
     }
 }

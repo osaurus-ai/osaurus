@@ -901,8 +901,11 @@ struct AgentDetailView: View {
     @State private var chatQuickActions: [AgentQuickAction]?
     @State private var editingQuickActionId: UUID?
     @State private var pluginInstructionsMap: [String: String] = [:]
-    @State private var disableTools: Bool = false
-    @State private var disableMemory: Bool = false
+    /// Positive-polarity local mirrors of `Agent.toolsEnabled` /
+    /// `Agent.memoryEnabled` (default true). The Features toggles bind
+    /// directly; `saveAgent` folds them back into the persisted agent.
+    @State private var toolsEnabled: Bool = true
+    @State private var memoryEnabled: Bool = true
     /// Local mirror of `Agent.settings.dbEnabled` (spec §5.5). The
     /// Features section binds a toggle to this; `debouncedSave`
     /// folds it back into the persisted `AgentSettings` block.
@@ -2773,19 +2776,6 @@ struct AgentDetailView: View {
 
     // MARK: - Features
 
-    /// Positive-polarity view of the stored `disableTools` flag so the
-    /// toggle reads the same direction as every other opt-in (ON = the
-    /// agent can use tools). `featureToggleRow` owns the debounced save.
-    private var toolsEnabledBinding: Binding<Bool> {
-        Binding(get: { !disableTools }, set: { disableTools = !$0 })
-    }
-
-    /// Positive-polarity view of the stored `disableMemory` flag (ON =
-    /// memory is injected and recorded).
-    private var memoryEnabledBinding: Binding<Bool> {
-        Binding(get: { !disableMemory }, set: { disableMemory = !$0 })
-    }
-
     private var featuresSection: some View {
         let isCustomAgent = agent.id != Agent.defaultId
         return AgentDetailSection(
@@ -2802,13 +2792,22 @@ struct AgentDetailView: View {
                         title: "Tools",
                         subtitle:
                             "Let the agent use tools to take actions and look things up. Turn off for a chat-only agent.",
-                        isOn: toolsEnabledBinding
+                        isOn: $toolsEnabled
                     )
-                    featureToggleRow(
-                        title: "Memory",
-                        subtitle: "Pull relevant memories into prompts and save new ones as you chat.",
-                        isOn: memoryEnabledBinding
-                    )
+                    // The default agent has no per-agent memory flag: its
+                    // memory is governed globally (Settings > Enable memory),
+                    // so a per-agent toggle here would be a dead control.
+                    if isCustomAgent {
+                        featureToggleRow(
+                            title: "Memory",
+                            subtitle: "Pull relevant memories into prompts and save new ones as you chat.",
+                            isOn: $memoryEnabled
+                        )
+                    } else {
+                        Text("Memory for the default agent is controlled globally in Settings > Enable memory.")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
                 }
 
                 // Custom-agent-only groups. The default agent is locked to
@@ -2825,8 +2824,9 @@ struct AgentDetailView: View {
                             isOn: $renderChartEnabled
                         )
                         featureToggleRow(
-                            title: "Voice",
-                            subtitle: "Speak responses aloud when you ask.",
+                            title: "Speak Tool",
+                            subtitle:
+                                "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section.",
                             isOn: $speakEnabled
                         )
                     }
@@ -2850,9 +2850,14 @@ struct AgentDetailView: View {
                         featureToggleRow(
                             title: "Self-scheduling",
                             subtitle:
-                                "Let the agent schedule its own follow-up runs and send you notifications. Turn on to choose how often it can run.",
+                                "Let the agent schedule its own follow-up runs and send you notifications.",
                             isOn: $selfSchedulingEnabled
                         )
+                        if selfSchedulingEnabled {
+                            Text("Run frequency and limits are configured in the Scheduling section below.")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                        }
                     }
 
                     featureGroup(
@@ -2868,6 +2873,10 @@ struct AgentDetailView: View {
                     ) {
                         sandboxExecSubsection
                     }
+
+                    Text("Voice output lives in the Voice section; chat greetings are in Customization > Empty State.")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
                 }
             }
         }
@@ -3991,6 +4000,16 @@ struct AgentDetailView: View {
             }
 
             featureCard(
+                title: "Background Processes",
+                subtitle:
+                    "Let the agent run long-lived processes (servers, watchers) detached and manage them. Off by default to keep the tool surface lean.",
+                isOn: execConfig?.backgroundProcessEnabled ?? false,
+                interactive: interactive
+            ) { backgroundOn in
+                updateAutonomousExec(from: execConfig) { $0.backgroundProcessEnabled = backgroundOn }
+            }
+
+            featureCard(
                 title: "Read Secret Files",
                 subtitle:
                     "With a working folder, allow reading .env / keys / credentials. Off by default to keep secrets out of the sandbox.",
@@ -4891,8 +4910,8 @@ struct AgentDetailView: View {
         chatQuickActions = agent.chatQuickActions
         chatGreetingDraft = agent.chatGreeting ?? ""
         chatSubtitleDraft = agent.chatSubtitle ?? ""
-        disableTools = agent.disableTools ?? false
-        disableMemory = agent.disableMemory ?? false
+        toolsEnabled = agent.toolsEnabled
+        memoryEnabled = agent.memoryEnabled
         dbEnabled = agent.settings.dbEnabled
         renderChartEnabled = agent.settings.renderChartEnabled
         speakEnabled = agent.settings.speakEnabled
@@ -5023,7 +5042,7 @@ struct AgentDetailView: View {
             cfg.defaultModel = selectedModel
             cfg.temperature = Float(temperature)
             cfg.maxTokens = Int(maxTokens)
-            cfg.disableTools = disableTools
+            cfg.disableTools = !toolsEnabled
             DefaultAgentConfigurationStore.save(cfg)
             NotificationCenter.default.post(name: .agentUpdated, object: agent.id)
             showSaveIndicator()
@@ -5074,8 +5093,8 @@ struct AgentDetailView: View {
             toolSelectionMode: current.toolSelectionMode,
             manualToolNames: current.manualToolNames,
             manualSkillNames: current.manualSkillNames,
-            disableTools: disableTools ? true : nil,
-            disableMemory: disableMemory ? true : nil,
+            toolsEnabled: toolsEnabled,
+            memoryEnabled: memoryEnabled,
             avatar: avatar,
             customAvatarFilename: current.customAvatarFilename,
             autoSpeak: autoSpeak ? true : nil,
@@ -5147,7 +5166,7 @@ private struct AgentDetailVoiceSection: View {
                             .foregroundColor(theme.primaryText)
                         Text(
                             ttsService.isModelReady
-                                ? "Read replies aloud after streaming completes."
+                                ? "Read every reply aloud automatically after streaming completes. For on-request only, use the Speak Tool feature instead."
                                 : "Download the PocketTTS model in Voice settings to enable.",
                             bundle: .module
                         )

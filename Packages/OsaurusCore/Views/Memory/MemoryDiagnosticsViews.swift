@@ -390,7 +390,7 @@ extension MemoryView {
 
     private func perAgentMemoryRow(_ agent: Agent) -> some View {
         let globalDisabled = !config.enabled
-        let perAgentDisabled = (agent.disableMemory ?? false)
+        let perAgentDisabled = !agent.memoryEnabled
         let isOff = globalDisabled || perAgentDisabled
         let stateText: String
         let stateColor: Color
@@ -441,7 +441,7 @@ extension MemoryView {
     func enableMemory(for agent: Agent) {
         guard !agent.isBuiltIn else { return }
         var updated = agent
-        updated.disableMemory = false
+        updated.memoryEnabled = true
         agentManager.update(updated)
         showToast(L("Memory enabled for \(agent.displayName)"))
     }

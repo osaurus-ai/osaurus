@@ -388,12 +388,17 @@ struct ConfigurationView: View {
 
                                     SettingsSubsection(label: "Tools") {
                                         VStack(alignment: .leading, spacing: 8) {
-                                            Toggle(isOn: $tempDisableTools) {
-                                                Text("Disable tools", bundle: .module)
+                                            Toggle(
+                                                isOn: Binding(
+                                                    get: { !tempDisableTools },
+                                                    set: { tempDisableTools = !$0 }
+                                                )
+                                            ) {
+                                                Text("Enable tools", bundle: .module)
                                                     .font(.system(size: 12))
                                             }
                                             Text(
-                                                "Send messages directly to the model with no tool specs or capability injection. Tools are off by default — enable them here or via the chat bar to let agents use built-in and plugin tools.",
+                                                "Let agents use built-in and plugin tools. Turn off to send messages directly to the model with no tool specs or capability injection (chat-only).",
                                                 bundle: .module
                                             )
                                             .font(.system(size: 11))

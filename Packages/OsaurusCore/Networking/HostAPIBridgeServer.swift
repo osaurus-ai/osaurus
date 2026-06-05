@@ -610,8 +610,12 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         let agentUUID = identity.agentId
         let agentId = agentUUID.uuidString
 
+        // Require BOTH autonomous execution enabled AND plugin-create on —
+        // same gate the in-app tool uses (`AgentConfigSnapshot.canCreatePlugins`).
+        // `pluginCreate` defaults true, so checking it alone would let an
+        // autonomous-disabled agent create plugins through the bridge.
         let execConfig = await MainActor.run { AgentManager.shared.effectiveAutonomousExec(for: agentUUID) }
-        guard execConfig?.pluginCreate == true else {
+        guard execConfig?.enabled == true, execConfig?.pluginCreate == true else {
             return .error(403, "Plugin creation is disabled for this agent")
         }
 

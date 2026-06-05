@@ -128,10 +128,13 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var manualToolNames: [String]?
     /// Skill names explicitly selected by the user when toolSelectionMode is .manual
     public var manualSkillNames: [String]?
-    /// When true, no tools or preflight context are sent for this agent
-    public var disableTools: Bool?
-    /// When true, memory is neither injected into prompts nor recorded for this agent
-    public var disableMemory: Bool?
+    /// Whether this agent may use tools / preflight context. Default true.
+    /// Positive polarity (matches `AgentSettings.*Enabled`); the legacy
+    /// negative `disableTools` key is read on decode for back-compat.
+    public var toolsEnabled: Bool
+    /// Whether memory is injected into prompts and recorded for this agent.
+    /// Default true. Legacy negative `disableMemory` key read on decode.
+    public var memoryEnabled: Bool
     /// Optional mascot avatar identifier. nil falls back
     /// to the agent name's first letter monogram in the UI
     public var avatar: String?
@@ -172,8 +175,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil,
         manualSkillNames: [String]? = nil,
-        disableTools: Bool? = nil,
-        disableMemory: Bool? = nil,
+        toolsEnabled: Bool = true,
+        memoryEnabled: Bool = true,
         avatar: String? = nil,
         customAvatarFilename: String? = nil,
         autoSpeak: Bool? = nil,
@@ -203,8 +206,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
         self.manualSkillNames = manualSkillNames
-        self.disableTools = disableTools
-        self.disableMemory = disableMemory
+        self.toolsEnabled = toolsEnabled
+        self.memoryEnabled = memoryEnabled
         self.avatar = avatar
         self.customAvatarFilename = customAvatarFilename
         self.autoSpeak = autoSpeak
@@ -286,6 +289,13 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
 // MARK: - Decodable Migration
 
 extension Agent {
+    /// Legacy negative-polarity keys read for back-compat when the new
+    /// positive `toolsEnabled` / `memoryEnabled` keys are absent.
+    private enum LegacyCodingKeys: String, CodingKey {
+        case disableTools
+        case disableMemory
+    }
+
     /// Custom decoder that provides default values for fields added after the initial release,
     /// ensuring older persisted JSON files remain loadable.
     public init(from decoder: Decoder) throws {
@@ -312,8 +322,22 @@ extension Agent {
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
         manualSkillNames = try c.decodeIfPresent([String].self, forKey: .manualSkillNames)
-        disableTools = try c.decodeIfPresent(Bool.self, forKey: .disableTools)
-        disableMemory = try c.decodeIfPresent(Bool.self, forKey: .disableMemory)
+        // Positive polarity (`toolsEnabled` / `memoryEnabled`, default true).
+        // Older agent JSON only has the negative `disableTools` /
+        // `disableMemory` keys; read those from a legacy container and
+        // invert when the new keys are absent so existing agents migrate
+        // losslessly.
+        let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
+        if let toolsEnabledValue = try c.decodeIfPresent(Bool.self, forKey: .toolsEnabled) {
+            toolsEnabled = toolsEnabledValue
+        } else {
+            toolsEnabled = !(try legacy.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false)
+        }
+        if let memoryEnabledValue = try c.decodeIfPresent(Bool.self, forKey: .memoryEnabled) {
+            memoryEnabled = memoryEnabledValue
+        } else {
+            memoryEnabled = !(try legacy.decodeIfPresent(Bool.self, forKey: .disableMemory) ?? false)
+        }
         avatar = try c.decodeIfPresent(String.self, forKey: .avatar)
         customAvatarFilename = try c.decodeIfPresent(String.self, forKey: .customAvatarFilename)
         autoSpeak = try c.decodeIfPresent(Bool.self, forKey: .autoSpeak)
@@ -328,7 +352,6 @@ extension Agent {
 public struct AutonomousExecConfig: Codable, Sendable, Equatable {
     public var enabled: Bool
     public var maxCommandsPerTurn: Int
-    public var commandTimeout: Int
     public var pluginCreate: Bool
     /// Combined sandbox + host-read mode: allow the host read tools to
     /// read secret files (`.env`, keys, credentials) inside the read-only
@@ -336,52 +359,107 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
     /// trading the exfiltration protection for convenience.
     public var allowHostSecretReads: Bool
     /// Whether the sandbox VM gets outbound network. Defaults `true`
-    /// (egress on, current behavior). Set `false` to cut the network leg
-    /// of the agent-as-bridge exfiltration path — pairs naturally with
+    /// (egress on) so a first-time user's sandbox can fetch packages and
+    /// live data without an extra opt-in. Set `false` to cut the network
+    /// leg of the agent-as-bridge exfiltration path — pairs naturally with
     /// combined mode (read-only host + no egress). Honored at VM boot.
     public var sandboxNetworkEnabled: Bool
+    /// Whether the agent may run detached background jobs. Gates both
+    /// `sandbox_exec(background:true)` and the `sandbox_process` tool
+    /// (poll/wait/kill). Defaults `false` to keep the sandbox tool surface
+    /// lean — the model isn't shown background affordances it can't reliably
+    /// manage. Opt in for dev-server / watcher iteration loops.
+    public var backgroundProcessEnabled: Bool
 
     public static let `default` = AutonomousExecConfig(
         enabled: false,
         maxCommandsPerTurn: 10,
-        commandTimeout: 30,
         pluginCreate: true,
         allowHostSecretReads: false,
-        sandboxNetworkEnabled: true
+        sandboxNetworkEnabled: true,
+        backgroundProcessEnabled: false
     )
 
     public init(
         enabled: Bool = false,
         maxCommandsPerTurn: Int = 10,
-        commandTimeout: Int = 30,
         pluginCreate: Bool = true,
         allowHostSecretReads: Bool = false,
-        sandboxNetworkEnabled: Bool = true
+        sandboxNetworkEnabled: Bool = true,
+        backgroundProcessEnabled: Bool = false
     ) {
         self.enabled = enabled
         self.maxCommandsPerTurn = maxCommandsPerTurn
-        self.commandTimeout = commandTimeout
         self.pluginCreate = pluginCreate
         self.allowHostSecretReads = allowHostSecretReads
         self.sandboxNetworkEnabled = sandboxNetworkEnabled
+        self.backgroundProcessEnabled = backgroundProcessEnabled
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, maxCommandsPerTurn, commandTimeout, pluginCreate
+        case enabled, maxCommandsPerTurn, pluginCreate
         case allowHostSecretReads, sandboxNetworkEnabled
+        case backgroundProcessEnabled
     }
 
     // Custom decode so agents persisted before these fields existed keep
     // loading: missing keys fall back to the safe defaults (secrets
     // refused, egress on) rather than failing the whole agent decode.
+    // A legacy `commandTimeout` key may still be present in older agent
+    // JSON; keyed decoding ignores it harmlessly (the field was unused).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         maxCommandsPerTurn = try c.decodeIfPresent(Int.self, forKey: .maxCommandsPerTurn) ?? 10
-        commandTimeout = try c.decodeIfPresent(Int.self, forKey: .commandTimeout) ?? 30
         pluginCreate = try c.decodeIfPresent(Bool.self, forKey: .pluginCreate) ?? true
         allowHostSecretReads = try c.decodeIfPresent(Bool.self, forKey: .allowHostSecretReads) ?? false
         sandboxNetworkEnabled = try c.decodeIfPresent(Bool.self, forKey: .sandboxNetworkEnabled) ?? true
+        backgroundProcessEnabled =
+            try c.decodeIfPresent(Bool.self, forKey: .backgroundProcessEnabled) ?? false
+    }
+}
+
+// MARK: - Resolved Agent Capabilities
+
+/// The fully-resolved, positive-polarity view of an agent's capability
+/// flags after default-agent overrides and the global memory switch are
+/// applied. Produced by `AgentManager.effectiveCapabilities(for:)` and
+/// consumed by `AgentConfigSnapshot` so every gate reads one struct
+/// instead of calling a handful of `effective*` accessors.
+public struct AgentCapabilities: Sendable, Equatable {
+    /// Tools / preflight context are available to the model.
+    public var toolsEnabled: Bool
+    /// Memory is injected into prompts and recorded (per-agent AND global).
+    public var memoryEnabled: Bool
+    /// Agent DB feature (spec §5.5).
+    public var dbEnabled: Bool
+    /// `render_chart` tool exposed to the model.
+    public var renderChartEnabled: Bool
+    /// `speak` (voice output) tool exposed to the model.
+    public var speakEnabled: Bool
+    /// `search_memory` recall tool exposed to the model. Independent of
+    /// `memoryEnabled`, which gates injection + recording.
+    public var searchMemoryEnabled: Bool
+    /// Self-scheduling tools (`schedule_next_run` / `cancel_next_run` /
+    /// `notify`) exposed to the model.
+    public var selfSchedulingEnabled: Bool
+
+    public init(
+        toolsEnabled: Bool,
+        memoryEnabled: Bool,
+        dbEnabled: Bool,
+        renderChartEnabled: Bool,
+        speakEnabled: Bool,
+        searchMemoryEnabled: Bool,
+        selfSchedulingEnabled: Bool
+    ) {
+        self.toolsEnabled = toolsEnabled
+        self.memoryEnabled = memoryEnabled
+        self.dbEnabled = dbEnabled
+        self.renderChartEnabled = renderChartEnabled
+        self.speakEnabled = speakEnabled
+        self.searchMemoryEnabled = searchMemoryEnabled
+        self.selfSchedulingEnabled = selfSchedulingEnabled
     }
 }
 

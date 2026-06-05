@@ -154,6 +154,53 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    // MARK: - db_* capability gate (manual keep-set consistency)
+
+    @Test
+    func autoMode_stripsDbToolsWhenDbDisabled() async {
+        // dbEnabled defaults false; auto mode trims the always-loaded db_*
+        // baseline so the schema stays lean.
+        await withSandboxAgent(autonomous: false) { agentId in
+            let tools = SystemPromptComposer.resolveTools(
+                agentId: agentId,
+                executionMode: .none
+            )
+            let names = Set(tools.map { $0.function.name })
+            #expect(!names.contains("db_schema"))
+            #expect(!names.contains("db_query"))
+        }
+    }
+
+    @Test
+    func autoMode_keepsManuallyLoadedDbTool() async {
+        // A db tool pulled in via additionalToolNames is a deliberate
+        // "I want this" signal and survives the gate even with db off.
+        await withSandboxAgent(autonomous: false) { agentId in
+            let tools = SystemPromptComposer.resolveTools(
+                agentId: agentId,
+                executionMode: .none,
+                additionalToolNames: ["db_query"]
+            )
+            let names = Set(tools.map { $0.function.name })
+            #expect(names.contains("db_query"))
+        }
+    }
+
+    @Test
+    func manualMode_keepsDbToolsEvenWhenDbDisabled() async {
+        // Manual mode curates the list, so the always-loaded db_* baseline
+        // stays — uniform with the other gated built-ins (render_chart,
+        // speak, search_memory).
+        await withSandboxAgent(autonomous: false, manualToolNames: ["render_chart"]) { agentId in
+            let tools = SystemPromptComposer.resolveTools(
+                agentId: agentId,
+                executionMode: .none
+            )
+            let names = Set(tools.map { $0.function.name })
+            #expect(names.contains("db_schema"))
+        }
+    }
+
     @Test
     func hostFolderMode_includesFolderMutationAndArtifactTools() async {
         await withSandboxAgent(autonomous: false) { agentId in

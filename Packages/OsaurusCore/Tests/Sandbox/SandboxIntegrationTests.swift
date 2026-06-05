@@ -126,7 +126,6 @@ struct SandboxIntegrationTests {
                 config: AutonomousExecConfig(
                     enabled: true,
                     maxCommandsPerTurn: 10,
-                    commandTimeout: 30,
                     pluginCreate: true
                 )
             )
@@ -272,7 +271,7 @@ private func withProvisionedSandboxTools<T: Sendable>(
         BuiltinSandboxTools.register(
             agentId: agentId.uuidString,
             agentName: agentName,
-            config: AutonomousExecConfig(enabled: true, maxCommandsPerTurn: 50, commandTimeout: 120, pluginCreate: true)
+            config: AutonomousExecConfig(enabled: true, maxCommandsPerTurn: 50, pluginCreate: true)
         )
 
         return try await body()

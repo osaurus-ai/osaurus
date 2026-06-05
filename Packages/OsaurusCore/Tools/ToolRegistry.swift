@@ -207,10 +207,11 @@ final class ToolRegistry: ObservableObject {
             DBRunViewTool(),
             DBListViewsTool(),
             DBDropViewTool(),
-            // Self-scheduling + notification (spec §9, §10). These are
-            // always available — they're the primary way an agent acts
-            // outside a single turn — and are explicitly *not* gated by
-            // `dbEnabled` (see SystemPromptComposer's "alwaysLoaded" set).
+            // Self-scheduling + notification (spec §9, §10). Registered as
+            // built-ins so the runtime can execute them, but the system
+            // prompt composer strips them from the model-visible schema
+            // unless the agent opts in via `selfSchedulingEnabled` (they
+            // are not gated by `dbEnabled`).
             ScheduleNextRunTool(),
             CancelNextRunTool(),
             NotifyTool(),

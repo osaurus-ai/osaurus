@@ -650,71 +650,63 @@ extension AgentManager {
         return agent.maxTokens
     }
 
-    /// Whether tools are disabled for an agent.
-    /// Default agent reads its own `DefaultAgentConfiguration.disableTools`.
-    /// Custom agents use their per-agent flag (defaulting to false).
+    /// Resolve every per-agent capability flag in one place, applying the
+    /// default-agent overrides and global memory switch centrally. This is
+    /// the single source of truth; the narrower `effective*` accessors and
+    /// `AgentConfigSnapshot.capture` all read from here.
+    ///
+    /// Default agent: tools come from `DefaultAgentConfiguration`, memory
+    /// from the global switch only, and the editable per-agent capabilities
+    /// (DB, charts, speak, recall, self-scheduling) are hard-off — the
+    /// default agent is locked to its fixed baseline.
+    public func effectiveCapabilities(for agentId: UUID) -> AgentCapabilities {
+        let globalMemoryEnabled = MemoryConfigurationStore.load().enabled
+
+        // Unknown agent or the default agent: baseline capabilities (tools
+        // from DefaultAgentConfiguration, memory from the global switch,
+        // editable per-agent capabilities hard-off).
+        guard let agent = agent(for: agentId), agent.id != Agent.defaultId else {
+            let cfg = DefaultAgentConfigurationStore.load()
+            return AgentCapabilities(
+                toolsEnabled: !cfg.disableTools,
+                memoryEnabled: globalMemoryEnabled,
+                dbEnabled: false,
+                renderChartEnabled: false,
+                speakEnabled: false,
+                searchMemoryEnabled: false,
+                selfSchedulingEnabled: false
+            )
+        }
+
+        return AgentCapabilities(
+            toolsEnabled: agent.toolsEnabled,
+            // Per-agent memory AND the global switch must both be on.
+            memoryEnabled: agent.memoryEnabled && globalMemoryEnabled,
+            dbEnabled: agent.settings.dbEnabled,
+            renderChartEnabled: agent.settings.renderChartEnabled,
+            speakEnabled: agent.settings.speakEnabled,
+            searchMemoryEnabled: agent.settings.searchMemoryEnabled,
+            selfSchedulingEnabled: agent.settings.selfSchedulingEnabled
+        )
+    }
+
+    /// Whether tools are disabled for an agent. Thin negative-polarity
+    /// wrapper over `effectiveCapabilities` for callers that still speak
+    /// the disable vocabulary.
     public func effectiveToolsDisabled(for agentId: UUID) -> Bool {
-        guard let agent = agent(for: agentId) else {
-            return DefaultAgentConfigurationStore.load().disableTools
-        }
-        if agent.id == Agent.defaultId {
-            return DefaultAgentConfigurationStore.load().disableTools
-        }
-        return agent.disableTools ?? false
+        !effectiveCapabilities(for: agentId).toolsEnabled
     }
 
     /// Whether the Agent DB feature is enabled for an agent (spec §5.5).
-    /// The default agent (`Agent.default`) is built-in and not editable, so
-    /// its `Agent.settings.dbEnabled` is hard-wired off — the DB is per-agent
-    /// data and only makes sense for user-created agents.
+    /// Hard-off for the default agent (DB is per-agent user data).
     public func effectiveDBEnabled(for agentId: UUID) -> Bool {
-        guard let agent = agent(for: agentId) else { return false }
-        if agent.id == Agent.defaultId { return false }
-        return agent.settings.dbEnabled
+        effectiveCapabilities(for: agentId).dbEnabled
     }
 
-    /// Whether the `render_chart` built-in tool is exposed to the model
-    /// for an agent. Default off and hard-wired off for the default agent
-    /// (which is restricted to its fixed 8-tool baseline).
-    public func effectiveRenderChartEnabled(for agentId: UUID) -> Bool {
-        guard let agent = agent(for: agentId) else { return false }
-        if agent.id == Agent.defaultId { return false }
-        return agent.settings.renderChartEnabled
-    }
-
-    /// Whether the `speak` (voice output) tool is exposed to the model.
-    public func effectiveSpeakEnabled(for agentId: UUID) -> Bool {
-        guard let agent = agent(for: agentId) else { return false }
-        if agent.id == Agent.defaultId { return false }
-        return agent.settings.speakEnabled
-    }
-
-    /// Whether the `search_memory` recall tool is exposed to the model.
-    /// Independent of memory disable, which gates injection + recording.
-    public func effectiveSearchMemoryEnabled(for agentId: UUID) -> Bool {
-        guard let agent = agent(for: agentId) else { return false }
-        if agent.id == Agent.defaultId { return false }
-        return agent.settings.searchMemoryEnabled
-    }
-
-    /// Whether the self-scheduling tools (`schedule_next_run` /
-    /// `cancel_next_run` / `notify`) are exposed to the model. Default off and
-    /// decoupled from the schedule-mode picker (which only sets host-enforced
-    /// bounds). The default agent never self-schedules.
-    public func effectiveSelfSchedulingEnabled(for agentId: UUID) -> Bool {
-        guard let agent = agent(for: agentId) else { return false }
-        if agent.id == Agent.defaultId { return false }
-        return agent.settings.selfSchedulingEnabled
-    }
-
-    /// Whether memory is disabled for an agent.
-    /// Default agent defers to global `MemoryConfiguration.enabled` (inverted).
-    /// Custom agents use their own flag (defaulting to false), OR-ed with global disabled.
+    /// Whether memory is disabled for an agent. Negative-polarity wrapper
+    /// over `effectiveCapabilities` (folds in the global memory switch).
     public func effectiveMemoryDisabled(for agentId: UUID) -> Bool {
-        let globalDisabled = !MemoryConfigurationStore.load().enabled
-        guard let agent = agent(for: agentId) else { return globalDisabled }
-        if agent.id == Agent.defaultId { return globalDisabled }
-        return (agent.disableMemory ?? false) || globalDisabled
+        !effectiveCapabilities(for: agentId).memoryEnabled
     }
 
     /// Get the effective tool selection mode for an agent.

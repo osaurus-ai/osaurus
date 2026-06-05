@@ -22,8 +22,9 @@ enum BuiltinSandboxTools {
     ///   - reads/searches: `sandbox_read_file`, `sandbox_search_files`
     ///   - writes/edits: `sandbox_write_file` (whole-file write OR
     ///     in-place edit via `old_string`)
-    ///   - exec: `sandbox_exec` (foreground OR background via flag),
-    ///     `sandbox_process` (poll/wait/kill background jobs)
+    ///   - exec: `sandbox_exec` (foreground; background via flag only when
+    ///     the agent opts into `backgroundProcessEnabled`),
+    ///     `sandbox_process` (poll/wait/kill background jobs; opt-in)
     ///   - installs: `sandbox_install` (one tool; `manager` selects
     ///     `apk` / `pip` / `npm`)
     ///
@@ -74,15 +75,21 @@ enum BuiltinSandboxTools {
                 agentId: agentId,
                 agentName: agentName,
                 home: home,
-                maxTimeout: config.commandTimeout,
-                maxCommandsPerTurn: maxCmdsPerTurn
+                maxCommandsPerTurn: maxCmdsPerTurn,
+                backgroundEnabled: config.backgroundProcessEnabled
             ),
             runtimeManaged: true
         )
-        registry.registerSandboxTool(
-            SandboxProcessTool(agentId: agentId, agentName: agentName, home: home),
-            runtimeManaged: true
-        )
+        // Background-job management is opt-in (`backgroundProcessEnabled`).
+        // When off, `sandbox_exec` hides its `background` flag and this
+        // poll/wait/kill tool is never registered — there are no detached
+        // jobs to manage, so it would only bloat the schema.
+        if config.backgroundProcessEnabled {
+            registry.registerSandboxTool(
+                SandboxProcessTool(agentId: agentId, agentName: agentName, home: home),
+                runtimeManaged: true
+            )
+        }
         registry.registerSandboxTool(
             SandboxInstallTool(agentId: agentId, agentName: agentName, home: home),
             runtimeManaged: true
@@ -1691,48 +1698,63 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 
 private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_exec"
-    let description = """
-        Run a shell command (bash) in the agent's sandbox. **Reserve this for \
-        builds, installs, git, processes, network calls, package managers, \
-        and anything else that needs a shell.** For file IO, search, edit, \
-        write, and dependency installs, prefer the dedicated `sandbox_*` \
-        tools — each tool's description states which shell pattern it replaces.
-
-        Foreground (default): runs to completion. Long-running commands \
-        (builds, installs, large fetches) stream their output live to the \
-        chat — the user sees it as it happens and can press [Terminate] at \
-        any time, which signals SIGTERM and surfaces `killed_by: "user"` in \
-        your result. Prefer ONE rich invocation (chained with `&&` / `;` / \
-        pipes) over many round-trips.
-
-        Background (`background:true`): returns a `pid` + `log_file` \
-        immediately; the user can also tail and terminate via the chat card. \
-        Use for servers, watchers, daemons that should outlive your call. \
-        Then call `sandbox_process` to poll/wait/kill. Do NOT shell-background \
-        yourself with `&` / `nohup` / `disown` — pass `background:true` so \
-        the runtime can track it.
-
-        This is for a shell command LINE. For a multi-line script, \
-        `sandbox_write_file` the script then run the file (e.g. \
-        `python3 script.py`) — NEVER inline multi-line code in `python3 -c` / \
-        `node -e`: the JSON→shell→code escaping breaks and bash mis-parses \
-        the body. Pass the command verbatim — do NOT wrap the whole command \
-        in an extra quote; quote only the individual arguments that need it.
-
-        LIMITS: no built-in foreground timeout — the user terminates if they \
-        care. Pass `timeout: <seconds>` ONLY if you want a hard idle ceiling \
-        (kill the process if it produces no output for N seconds). Final \
-        stdout truncated at ~50KB (40% head + 60% tail). Per-turn command \
-        count is capped — chain inside one call instead of burning the cap. \
-        Avoid `2>/dev/null` in pipelines — it hides errors from the result \
-        envelope (pipefail is on, so a real upstream failure DOES surface as \
-        a non-zero exit; suppressed stderr will trigger an empty-output warning).
-        """
     let agentId: String
     let agentName: String
     let home: String
-    let maxTimeout: Int
     let maxCommandsPerTurn: Int
+    /// When false, the `background` flag is hidden from the schema, the
+    /// background paragraph is dropped from the description, and a
+    /// `background:true` call is rejected at runtime.
+    let backgroundEnabled: Bool
+
+    /// Built conditionally: the "Background (`background:true`)" paragraph
+    /// only appears when the agent has opted into background jobs, so a
+    /// background-off agent never sees an affordance it can't use.
+    var description: String {
+        let backgroundParagraph =
+            backgroundEnabled
+            ? """
+
+
+                Background (`background:true`): returns a `pid` + `log_file` \
+                immediately; the user can also tail and terminate via the chat card. \
+                Use for servers, watchers, daemons that should outlive your call. \
+                Then call `sandbox_process` to poll/wait/kill. Do NOT shell-background \
+                yourself with `&` / `nohup` / `disown` — pass `background:true` so \
+                the runtime can track it.
+                """
+            : ""
+        return """
+            Run a shell command (bash) in the agent's sandbox. **Reserve this for \
+            builds, installs, git, processes, network calls, package managers, \
+            and anything else that needs a shell.** For file IO, search, edit, \
+            write, and dependency installs, prefer the dedicated `sandbox_*` \
+            tools — each tool's description states which shell pattern it replaces.
+
+            Foreground (default): runs to completion. Long-running commands \
+            (builds, installs, large fetches) stream their output live to the \
+            chat — the user sees it as it happens and can press [Terminate] at \
+            any time, which signals SIGTERM and surfaces `killed_by: "user"` in \
+            your result. Prefer ONE rich invocation (chained with `&&` / `;` / \
+            pipes) over many round-trips.\(backgroundParagraph)
+
+            This is for a shell command LINE. For a multi-line script, \
+            `sandbox_write_file` the script then run the file (e.g. \
+            `python3 script.py`) — NEVER inline multi-line code in `python3 -c` / \
+            `node -e`: the JSON→shell→code escaping breaks and bash mis-parses \
+            the body. Pass the command verbatim — do NOT wrap the whole command \
+            in an extra quote; quote only the individual arguments that need it.
+
+            LIMITS: no built-in foreground timeout — the user terminates if they \
+            care. Pass `timeout: <seconds>` ONLY if you want a hard idle ceiling \
+            (kill the process if it produces no output for N seconds). Final \
+            stdout truncated at ~50KB (40% head + 60% tail). Per-turn command \
+            count is capped — chain inside one call instead of burning the cap. \
+            Avoid `2>/dev/null` in pipelines — it hides errors from the result \
+            envelope (pipefail is on, so a real upstream failure DOES surface as \
+            a non-zero exit; suppressed stderr will trigger an empty-output warning).
+            """
+    }
 
     /// Streaming exec opts out of the registry's wall-clock cap. Long
     /// commands rely on the user's [Terminate] button + the optional
@@ -1740,42 +1762,50 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     var bypassRegistryTimeout: Bool { true }
 
     var parameters: JSONValue? {
-        .object([
+        // The "Ignored when `background:true`" caveat only makes sense when
+        // the background flag is actually advertised.
+        let timeoutDescription =
+            "Optional idle-timeout in seconds. When set, the command is killed if it "
+            + "produces no stdout/stderr output for this many seconds (resets on every "
+            + "byte). When omitted, the command runs to completion — the user terminates "
+            + "from the chat card if needed."
+            + (backgroundEnabled ? " Ignored when `background:true`." : "")
+        var properties: [String: JSONValue] = [
+            "command": .object([
+                "type": .string("string"),
+                "description": .string("Shell command to run (single string, e.g. `wc -l src/*.swift`)."),
+            ]),
+            "cwd": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Working directory. Defaults to your home (`\(home)`) — OMIT unless you "
+                        + "need a different directory. Use a path relative to home (e.g. `src`) "
+                        + "or absolute under your home; system paths like `/root` are rejected."
+                ),
+            ]),
+            "timeout": .object([
+                "type": .string("integer"),
+                "description": .string(timeoutDescription),
+            ]),
+        ]
+        // Background is opt-in: only advertise the flag when the agent has
+        // `backgroundProcessEnabled`. Otherwise it never enters the schema.
+        if backgroundEnabled {
+            properties["background"] = .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "When true, the command runs detached with stdout+stderr redirected to "
+                        + "a per-job log under the agent home; the tool returns the pid + log "
+                        + "path immediately. Use for long-lived processes (servers, watchers). "
+                        + "Pair with `sandbox_process`."
+                ),
+                "default": .bool(false),
+            ])
+        }
+        return .object([
             "type": .string("object"),
             "additionalProperties": .bool(false),
-            "properties": .object([
-                "command": .object([
-                    "type": .string("string"),
-                    "description": .string("Shell command to run (single string, e.g. `wc -l src/*.swift`)."),
-                ]),
-                "cwd": .object([
-                    "type": .string("string"),
-                    "description": .string(
-                        "Working directory. Defaults to your home (`\(home)`) — OMIT unless you "
-                            + "need a different directory. Use a path relative to home (e.g. `src`) "
-                            + "or absolute under your home; system paths like `/root` are rejected."
-                    ),
-                ]),
-                "timeout": .object([
-                    "type": .string("integer"),
-                    "description": .string(
-                        "Optional idle-timeout in seconds. When set, the command is killed if it "
-                            + "produces no stdout/stderr output for this many seconds (resets on every "
-                            + "byte). When omitted, the command runs to completion — the user terminates "
-                            + "from the chat card if needed. Ignored when `background:true`."
-                    ),
-                ]),
-                "background": .object([
-                    "type": .string("boolean"),
-                    "description": .string(
-                        "When true, the command runs detached with stdout+stderr redirected to "
-                            + "a per-job log under the agent home; the tool returns the pid + log "
-                            + "path immediately. Use for long-lived processes (servers, watchers). "
-                            + "Pair with `sandbox_process`."
-                    ),
-                    "default": .bool(false),
-                ]),
-            ]),
+            "properties": .object(properties),
             "required": .array([.string("command")]),
         ])
     }
@@ -1822,6 +1852,21 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         }
 
         let background = coerceBool(args["background"]) ?? false
+
+        // Defense in depth: the schema strip is advisory, so a model that
+        // passes `background:true` anyway when the agent hasn't opted in
+        // gets a clear refusal instead of a silently-detached job.
+        if background, !backgroundEnabled {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "Background execution is disabled for this agent. Run the command in the "
+                    + "foreground (omit `background`), or enable Background Processes in the "
+                    + "agent's sandbox settings.",
+                tool: name,
+                retryable: false
+            )
+        }
 
         if background {
             // Detached job: start it, return pid + log path right away. The
