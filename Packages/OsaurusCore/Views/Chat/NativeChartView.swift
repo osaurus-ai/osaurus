@@ -283,7 +283,17 @@ final class NativeChartView: NSView {
 
         let completion: (NSApplication.ModalResponse) -> Void = { response in
             guard response == .OK, let url = panel.url else { return }
-            try? png.write(to: url)
+            do {
+                try png.write(to: url)
+                ToastManager.shared.action(
+                    L("Chart saved"),
+                    message: url.lastPathComponent,
+                    action: .revealInFinder(url),
+                    buttonTitle: L("Reveal in Finder")
+                )
+            } catch {
+                NSSound.beep()
+            }
         }
         if let window = self.window {
             panel.beginSheetModal(for: window, completionHandler: completion)
