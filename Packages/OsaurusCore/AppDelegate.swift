@@ -530,6 +530,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     // into a single main-thread stall during the launch settle.
                     try? await Task.sleep(for: .seconds(1.0))
                     ChatWindowManager.shared.prewarmChatView()
+                    // And the menu-bar popover content, so the first click on
+                    // the status item doesn't pay the panel's first realization.
+                    try? await Task.sleep(for: .seconds(1.0))
+                    self?.prewarmStatusPanel()
                 }
             }
         }
@@ -1369,6 +1373,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     // MARK: - Actions
+
+    /// Warm the SwiftUI metadata for the menu-bar popover's content view.
+    /// `showPopover` builds a fresh hosting controller per open, and the first
+    /// realization of the panel's view graph can stall the main thread for
+    /// seconds on slower machines — right under the user's click on the status
+    /// item. A throwaway controller realizes it once during the launch settle;
+    /// it's never attached to a window, so `onAppear`/`task` don't fire.
+    @MainActor func prewarmStatusPanel() {
+        guard popover == nil else { return }
+        let root = StatusPanelView()
+            .environmentObject(serverController)
+            .environment(\.theme, ThemeManager.shared.currentTheme)
+            .environmentObject(updater)
+        let host = NSHostingController(rootView: root)
+        host.view.layoutSubtreeIfNeeded()
+        print("[AppDelegate] Prewarmed status panel")
+    }
 
     @objc private func togglePopover(_ sender: Any?) {
         if let popover, popover.isShown {
