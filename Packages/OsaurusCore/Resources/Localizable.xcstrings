@@ -12331,7 +12331,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 %.0f GB 的 Mac 上预估为 %@ —— 关闭其他应用以获得最佳效果"
+            "value" : "在 %2$.0f GB 的 Mac 上预估为 %1$@ —— 关闭其他应用以获得最佳效果"
           }
         }
       }
