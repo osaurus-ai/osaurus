@@ -452,6 +452,14 @@ final class ModelDownloadService: ObservableObject {
                             modelId: model.id,
                             modelName: model.name
                         )
+                        // KPI: a curated-catalog model finished downloading.
+                        // The id is from the catalog, so it is safe to send.
+                        FeatureTelemetry.modelDownloaded(
+                            model: model.id,
+                            parameterCount: model.parameterCount,
+                            quantization: model.quantization,
+                            isVLM: model.isVLM
+                        )
                         ModelManager.invalidateLocalModelsCache()
                         NotificationCenter.default.post(name: .localModelsChanged, object: nil)
                     }

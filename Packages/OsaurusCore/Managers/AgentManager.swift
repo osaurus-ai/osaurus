@@ -256,6 +256,11 @@ public final class AgentManager: ObservableObject {
     public func add(_ agent: Agent) {
         AgentStore.save(agent)
         refresh()
+        // KPI: a user-created agent. Count only — no name or configuration.
+        // Built-in agents are seeded by the app, not created by the user.
+        if !agent.isBuiltIn {
+            FeatureTelemetry.agentCreated()
+        }
         try? assignAddress(to: agent)
         // Notify subscribers (e.g. PluginManager) so plugins get an
         // initial config / tunnel-URL push for the new agent without

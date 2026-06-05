@@ -3259,6 +3259,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             cancelModelBox.value = model
 
+            // KPI: one agent run initiated via the HTTP endpoint. The
+            // per-turn `message_sent` is emitted separately by ChatEngine on
+            // the first (user) turn only.
+            Task { @MainActor in FeatureTelemetry.agentRun(source: "http_api") }
+
             // Enrich with agent context (system prompt + memory)
             var messages = await Self.enrichWithAgentContext(req, agentId: agentId.uuidString).messages
 
@@ -3349,6 +3354,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     iterationReq.enable_thinking = enable
                 }
                 iterationReq.reasoning_effort = req.reasoning_effort
+                // Label the turn agent-driven for `message_sent` telemetry.
+                // Only the first iteration (trailing `user` message) actually
+                // emits; later tool-result iterations are skipped by the
+                // engine's de-dup rule.
+                iterationReq.isAgentRequest = true
 
                 var responseContent = ""
                 var contentCoalescer = Self.StreamDeltaCoalescer(

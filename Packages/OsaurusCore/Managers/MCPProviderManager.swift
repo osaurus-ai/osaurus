@@ -57,6 +57,9 @@ public final class MCPProviderManager: ObservableObject {
     public func addProvider(_ provider: MCPProvider, token: String?) {
         configuration.add(provider)
         MCPProviderConfigurationStore.save(configuration)
+        // KPI: a user-configured MCP tool provider. Only the transport kind
+        // is captured — never the command, URL, or args.
+        FeatureTelemetry.mcpProviderAdded(transport: provider.transport.rawValue)
 
         // Save token to Keychain if provided
         if let token = token, !token.isEmpty {

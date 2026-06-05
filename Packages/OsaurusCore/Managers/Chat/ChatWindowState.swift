@@ -176,6 +176,8 @@ final class ChatWindowState: ObservableObject {
         flushCurrentSession()
         session.reset(for: agentId)
         refreshSessions()
+        // KPI: user started a new chat conversation. Count only.
+        FeatureTelemetry.chatSessionStarted()
     }
 
     func loadSession(_ sessionData: ChatSessionData) {

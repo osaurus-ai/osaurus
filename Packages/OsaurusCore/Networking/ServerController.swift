@@ -123,6 +123,7 @@ final class ServerController: ObservableObject {
             isRunning = true
             serverHealth = .running
             lastErrorMessage = nil
+            FeatureTelemetry.serverStarted()
             print("[Osaurus] NIO server started successfully on port \(configuration.port)")
 
             if configuration.exposeToNetwork {

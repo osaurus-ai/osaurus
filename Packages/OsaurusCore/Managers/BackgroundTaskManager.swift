@@ -316,6 +316,10 @@ public final class BackgroundTaskManager: ObservableObject {
 
         guard canDispatchNewTask(source: request.source, agentId: request.agentId) else { return nil }
 
+        // KPI: an agent run accepted via background dispatch (HTTP dispatch
+        // endpoint, plugin, or schedule).
+        FeatureTelemetry.agentRun(source: "dispatch")
+
         // Opt-in conversation grouping: when `external_session_key` is set
         // and a non-active matching session exists, reattach to it so the
         // new prompt becomes the next turn instead of starting a fresh row.

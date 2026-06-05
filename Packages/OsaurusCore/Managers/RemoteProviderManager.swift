@@ -86,6 +86,10 @@ public final class RemoteProviderManager: ObservableObject {
             ephemeralProviderIds.insert(provider.id)
         } else {
             RemoteProviderConfigurationStore.save(configuration)
+            // KPI: a user-configured remote provider. Only the closed-enum
+            // type is captured. Ephemeral Bonjour-discovered providers are
+            // excluded — they aren't a deliberate configuration action.
+            FeatureTelemetry.remoteProviderAdded(providerType: provider.providerType.rawValue)
         }
 
         // Save API key to Keychain if provided

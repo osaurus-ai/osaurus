@@ -1,0 +1,209 @@
+//
+//  FeatureTelemetry.swift
+//  osaurus
+//
+//  Maps product KPI moments (the primary `message_sent` metric plus a small
+//  set of engagement / feature-adoption signals) onto `TelemetryService`
+//  events. Kept separate from the generic service — exactly like
+//  `OnboardingTelemetry` — so the event names and property shapes the
+//  dashboards query live in one auditable place and stay unit-testable.
+//
+//  Privacy posture (see docs/TELEMETRY.md): every event here is a count or a
+//  low-cardinality enum. No prompts, completions, message text, tool
+//  arguments, agent names, file paths, keys, or token counts are ever
+//  attached. Built-in catalog identifiers (Foundation + local MLX model ids,
+//  the `RemoteProviderType` enum) are safe to send verbatim; user-typed
+//  remote model ids are reduced to `provider_type` + a salted hash and are
+//  never sent in plaintext. All sends still flow through the opt-in,
+//  consent-gated `TelemetryService.track`.
+//
+
+import Aptabase
+import Foundation
+
+/// Stable, privacy-reviewed dimensions for a single `message_sent` event.
+///
+/// Derived synchronously inside `ChatEngine` (a nonisolated step, no main-actor
+/// hop) and `Sendable`, so it can be handed to the `@MainActor` emitter via a
+/// fire-and-forget `Task` without blocking dispatch.
+struct MessageTelemetryInfo: Sendable {
+    /// Originating surface: `chat_ui` | `http_api` | `plugin`.
+    let source: String
+    /// Inference backend category: `foundation` | `local` | `remote`.
+    let modelSource: String
+    /// Exact model id — ONLY populated for built-in `foundation`/`local`
+    /// routes (curated catalog, non-identifying). `nil` for remote.
+    let model: String?
+    /// `foundation` | `mlx` | the `RemoteProviderType` raw value
+    /// (`openai`/`anthropic`/`gemini`/...).
+    let providerType: String
+    /// Salted, truncated hash of the remote model id — remote routes only,
+    /// `nil` otherwise. Lets distinct custom models be counted without the
+    /// raw string.
+    let modelHash: String?
+    /// Whether this turn came from an autonomous agent run (the
+    /// `/agents/{id}/run` endpoint). Plain completions and interactive Chat
+    /// are `false`; agent runs are also counted in full by `agent_run`.
+    let isAgent: Bool
+    /// Whether the caller requested a streaming response.
+    let stream: Bool
+}
+
+@MainActor
+enum FeatureTelemetry {
+    // The `service` parameter defaults to the shared instance for app use;
+    // tests inject a recording service to assert the exact event name and
+    // properties each KPI moment produces.
+
+    // MARK: - Engagement (primary)
+
+    /// The headline metric: one top-level user/client-initiated chat request.
+    /// Tool-loop continuations are intentionally excluded by the caller (see
+    /// `ChatEngine`) so an agent's internal turns don't inflate the count.
+    static func messageSent(_ info: MessageTelemetryInfo, service: TelemetryService = .shared) {
+        var props: [String: Value] = [
+            "source": info.source,
+            "model_source": info.modelSource,
+            "provider_type": info.providerType,
+            "is_agent": info.isAgent,
+            "stream": info.stream,
+        ]
+        if let model = info.model { props["model"] = model }
+        if let modelHash = info.modelHash { props["model_hash"] = modelHash }
+        service.track("message_sent", props)
+    }
+
+    /// A new chat conversation was started from the UI. Engagement breadth
+    /// signal; carries no titles or ids.
+    static func chatSessionStarted(service: TelemetryService = .shared) {
+        service.track("chat_session_started")
+    }
+
+    /// An agent run was initiated. `source` is `http_api` (the
+    /// `/agents/{id}/run` endpoint) or `dispatch` (background / scheduled /
+    /// plugin dispatch). No agent id or name is attached.
+    static func agentRun(source: String, service: TelemetryService = .shared) {
+        service.track("agent_run", ["source": source])
+    }
+
+    // MARK: - Lifecycle / retention
+
+    /// The local server transitioned to running — an activation/retention
+    /// signal. No port or address is attached.
+    static func serverStarted(service: TelemetryService = .shared) {
+        service.track("server_started")
+    }
+
+    // MARK: - Feature adoption / scope
+
+    /// A model finished downloading. The model id comes from the curated
+    /// catalog so it is safe to send; the rest are coarse, non-identifying
+    /// descriptors.
+    static func modelDownloaded(
+        model: String,
+        parameterCount: String?,
+        quantization: String?,
+        isVLM: Bool,
+        service: TelemetryService = .shared
+    ) {
+        var props: [String: Value] = [
+            "model": model,
+            "is_vlm": isVLM,
+        ]
+        if let parameterCount { props["param_count"] = parameterCount }
+        if let quantization { props["quantization"] = quantization }
+        service.track("model_downloaded", props)
+    }
+
+    /// A remote inference provider was configured. Only the provider TYPE (a
+    /// closed enum) is sent — never the user-chosen provider name, URL, or
+    /// key.
+    static func remoteProviderAdded(providerType: String, service: TelemetryService = .shared) {
+        service.track("remote_provider_added", ["provider_type": providerType])
+    }
+
+    /// An MCP (tool) provider was configured. Only the transport kind
+    /// (`http` | `stdio`) is sent — never the command, URL, or args.
+    static func mcpProviderAdded(transport: String, service: TelemetryService = .shared) {
+        service.track("mcp_provider_added", ["transport": transport])
+    }
+
+    /// A user-created agent was added. Count only — no name, prompt, or
+    /// configuration.
+    static func agentCreated(service: TelemetryService = .shared) {
+        service.track("agent_created")
+    }
+
+    // MARK: - Derivation helpers
+
+    /// Whether a chat request counts as a new top-level message for the
+    /// `message_sent` KPI. True only when the request's last message is a
+    /// `user` turn. Tool-loop continuations (agent-run server loop, Chat UI
+    /// tool loop, plugin loops) re-enter with a trailing `tool`/`assistant`
+    /// message and so return `false`, which is what keeps a multi-step answer
+    /// from counting as multiple messages. Inspects only the role enum —
+    /// never message content.
+    nonisolated static func isPrimaryUserTurn(_ messages: [ChatMessage]) -> Bool {
+        messages.last?.role == "user"
+    }
+
+    /// Stable, snake_case token for the inference surface. Decoupled from
+    /// `RequestSource.rawValue` (which is display copy like `"Chat UI"`) so
+    /// the analytics value never shifts if that display string is localized
+    /// or reworded.
+    nonisolated static func sourceToken(_ source: InferenceSource) -> String {
+        switch source {
+        case .chatUI: return "chat_ui"
+        case .httpAPI: return "http_api"
+        case .plugin: return "plugin"
+        }
+    }
+
+    /// Derive the privacy-reviewed `message_sent` dimensions from a resolved
+    /// route. `nonisolated` so the `ChatEngine` actor can call it directly;
+    /// it only reads `Sendable`, nonisolated state (`RemoteProviderService`'s
+    /// immutable `provider`).
+    nonisolated static func messageInfo(
+        service: ModelService,
+        effectiveModel: String,
+        source: InferenceSource,
+        isAgent: Bool,
+        stream: Bool
+    ) -> MessageTelemetryInfo {
+        let modelSource: String
+        let model: String?
+        let providerType: String
+        let modelHash: String?
+
+        if let remote = service as? RemoteProviderService {
+            // User-configured remote: omit the (possibly identifying) model
+            // id, keep the closed-enum provider type, and hash the id so
+            // distinct custom models stay countable.
+            modelSource = "remote"
+            model = nil
+            providerType = remote.provider.providerType.rawValue
+            modelHash = TelemetryService.anonymizedRemoteId(effectiveModel)
+        } else if service.id == FoundationModelService.serviceId {
+            modelSource = "foundation"
+            model = effectiveModel
+            providerType = "foundation"
+            modelHash = nil
+        } else {
+            // Local MLX catalog model — id is curated and safe to send.
+            modelSource = "local"
+            model = effectiveModel
+            providerType = "mlx"
+            modelHash = nil
+        }
+
+        return MessageTelemetryInfo(
+            source: sourceToken(source),
+            modelSource: modelSource,
+            model: model,
+            providerType: providerType,
+            modelHash: modelHash,
+            isAgent: isAgent,
+            stream: stream
+        )
+    }
+}

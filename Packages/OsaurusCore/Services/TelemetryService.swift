@@ -8,6 +8,7 @@
 //
 
 import Aptabase
+import CryptoKit
 import Foundation
 
 @MainActor
@@ -176,6 +177,42 @@ public final class TelemetryService {
         case .declined:
             break
         }
+    }
+
+    // MARK: - Anonymization
+
+    /// Fixed app constant mixed into remote-identifier hashes. It is the
+    /// same for every install (NOT a per-device random) on purpose: that's
+    /// what lets two users who both configured "my-proxy/gpt-4o" produce the
+    /// same hash, so the dashboard can count distinct custom models without
+    /// ever receiving the raw string.
+    ///
+    /// IMPORTANT privacy caveat (documented in `docs/TELEMETRY.md`): a shared
+    /// salt plus a low-entropy input is not cryptographically irreversible —
+    /// someone holding this salt could brute-force a guessed string back to
+    /// its hash. That's an accepted trade-off precisely because we (a) only
+    /// hash user-typed *remote* ids, never built-in catalog ids, and (b)
+    /// treat `provider_type` (a closed enum) as the primary remote dimension;
+    /// `model_hash` is only a secondary distinct-count signal. The 12-char
+    /// truncation further limits what leaves the device.
+    nonisolated private static let remoteIdSalt = "osaurus.telemetry.remote-id.v1"
+
+    /// Number of leading hex characters kept from the digest. 12 hex = 48
+    /// bits, ample to keep distinct custom models distinct in aggregate while
+    /// shipping far less than the full digest.
+    nonisolated private static let remoteIdHashLength = 12
+
+    /// Salted, truncated SHA-256 of a user-typed remote identifier (a remote
+    /// model id like `"my-proxy/gpt-4o"`). Used so distinct custom models can
+    /// be counted in aggregate without the raw, potentially identifying
+    /// string ever leaving the device. Never call this on built-in catalog
+    /// ids — those are safe to send verbatim. See the salt note above for the
+    /// reversibility caveat.
+    nonisolated public static func anonymizedRemoteId(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let digest = SHA256.hash(data: Data("\(remoteIdSalt):\(trimmed)".utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return String(hex.prefix(remoteIdHashLength))
     }
 
     // MARK: - Key resolution

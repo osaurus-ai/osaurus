@@ -183,6 +183,34 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return Dispatch(route: route, params: params, remoteServices: remoteServices)
     }
 
+    /// Emit the opt-in `message_sent` KPI event for a top-level chat turn.
+    ///
+    /// De-dup rule (no protocol/flag plumbing): a "message" is a fresh
+    /// user/client turn, identified by the request's last message being a
+    /// `user` message. Tool-loop continuations — the agent-run server loop,
+    /// the Chat UI tool loop, and plugin loops — re-enter the engine with a
+    /// trailing `tool`/`assistant` message appended, so they are naturally
+    /// skipped and never inflate the count. Only the role enum is inspected;
+    /// no message content is read. Fired fire-and-forget on the main actor
+    /// (where `TelemetryService` lives) so it never blocks dispatch, and the
+    /// service itself no-ops unless the user opted in.
+    private func emitMessageSentIfPrimaryTurn(
+        request: ChatCompletionRequest,
+        service: ModelService,
+        effectiveModel: String,
+        stream: Bool
+    ) {
+        guard FeatureTelemetry.isPrimaryUserTurn(request.messages) else { return }
+        let info = FeatureTelemetry.messageInfo(
+            service: service,
+            effectiveModel: effectiveModel,
+            source: inferenceSource,
+            isAgent: request.isAgentRequest,
+            stream: stream
+        )
+        Task { @MainActor in FeatureTelemetry.messageSent(info) }
+    }
+
     private static func normalizedModelOptions(
         for model: String,
         requestOptions: [String: ModelOptionValue]?
@@ -490,6 +518,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         switch route {
         case .service(let service, let effectiveModel):
+            emitMessageSentIfPrimaryTurn(
+                request: request,
+                service: service,
+                effectiveModel: effectiveModel,
+                stream: true
+            )
+
             let innerStream: AsyncThrowingStream<String, Error>
 
             // If tools were provided and supported, use message-based tool streaming
@@ -851,6 +886,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         switch route {
         case .service(let service, let effectiveModel):
+            emitMessageSentIfPrimaryTurn(
+                request: request,
+                service: service,
+                effectiveModel: effectiveModel,
+                stream: false
+            )
+
             // Match the streaming path — register the chat generation
             // for the lifetime of the LLM dispatch so distillation can
             // defer. Detached fire-and-forget for the end-decrement

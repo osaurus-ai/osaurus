@@ -692,6 +692,11 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// profile defaults. Not decoded from OpenAI JSON and not forwarded to
     /// remote providers.
     var samplingParametersAreImplicit: Bool = false
+    /// Local-only marker set by agent-driven surfaces (the `/agents/{id}/run`
+    /// endpoint, dispatch, and agent-bound Chat sessions) so `message_sent`
+    /// telemetry can label the turn `is_agent`. Not decoded from OpenAI JSON
+    /// and not forwarded to remote providers.
+    var isAgentRequest: Bool = false
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -730,6 +735,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
         copy.samplingParametersAreImplicit = samplingParametersAreImplicit
+        copy.isAgentRequest = isAgentRequest
         return copy
     }
 
@@ -763,6 +769,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
         copy.samplingParametersAreImplicit = samplingParametersAreImplicit
+        copy.isAgentRequest = isAgentRequest
         return copy
     }
 }

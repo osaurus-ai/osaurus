@@ -35,7 +35,12 @@ enum FoundationModelServiceError: Error, LocalizedError {
 }
 
 actor FoundationModelService: ToolCapableService {
-    let id: String = "foundation"
+    /// Stable service identifier. Also the model id the router resolves the
+    /// system default to (`"default"`/empty → `"foundation"`), so other code
+    /// (e.g. telemetry derivation) can match against this one constant
+    /// instead of a bare string literal.
+    static let serviceId = "foundation"
+    let id: String = serviceId
 
     /// Returns true if the system default language model is available on this device/OS.
     static func isDefaultModelAvailable() -> Bool {
