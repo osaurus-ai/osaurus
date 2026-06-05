@@ -151,6 +151,43 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return windowId
     }
 
+    /// Warm the Swift generic-metadata and protocol-conformance caches for
+    /// `ChatView`'s very deep view tree, once, off the user's first interactive
+    /// open.
+    ///
+    /// The first time a `ChatView`-hosting `NSHostingController` is mounted, the
+    /// runtime has to demangle and instantiate metadata for the entire body type
+    /// and recursively resolve its conformances — multi-second main-thread CPU on
+    /// slower machines (the dominant cost behind the chat-window open hangs). That
+    /// realization is process-global, so paying it here against a throwaway
+    /// controller means the first real window the user opens reuses warmed caches
+    /// instead of stalling on screen. No window is registered or shown, so this
+    /// stays out of the `windowCount`-based launch/cascade logic.
+    private var didPrewarmChatView = false
+    func prewarmChatView() {
+        guard !didPrewarmChatView else { return }
+        didPrewarmChatView = true
+        // A live chat window already paid (and warmed) this cost.
+        guard windowCount == 0 else { return }
+
+        let windowState = ChatWindowState(
+            windowId: UUID(),
+            agentId: AgentManager.shared.activeAgentId
+        )
+        let chatView = ChatView(windowState: windowState)
+            .environment(\.theme, windowState.theme)
+        let hostingController = NSHostingController(rootView: chatView)
+        // Forcing layout evaluates the SwiftUI body once, which realizes the
+        // metadata. The controller is never attached to a visible window, so
+        // `onAppear` / `task` side effects don't fire.
+        hostingController.view.layoutSubtreeIfNeeded()
+
+        // Tear the throwaway state down so its session/observers don't linger;
+        // `deinit` removes the notification observers as it deallocates.
+        windowState.cleanup()
+        print("[ChatWindowManager] Prewarmed ChatView metadata")
+    }
+
     /// Stop all active sessions (chat and work) across all windows.
     /// Called during app termination to prevent crashes from in-flight inference.
     public func stopAllSessions() {
