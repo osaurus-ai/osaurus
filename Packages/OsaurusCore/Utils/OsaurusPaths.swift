@@ -429,6 +429,18 @@ public enum OsaurusPaths {
     public static func greetingPoolCacheFile() -> URL {
         cache().appendingPathComponent("greeting-pool.json")
     }
+    /// On-disk cache for model download sizes (see `ModelSizeCache`).
+    /// Keyed by repo id, persisted so sizes survive relaunch and only
+    /// re-fetch when a repo's HF revision changes.
+    public static func modelSizeCacheFile() -> URL {
+        cache().appendingPathComponent("model-sizes.json")
+    }
+    /// On-disk manifest of externally-discovered models (HF cache, LM
+    /// Studio) so the catalog can surface them on launch before the
+    /// background rescan finishes. See `ExternalModelLocator`.
+    public static func externalModelsManifestFile() -> URL {
+        cache().appendingPathComponent("external-models.json")
+    }
     public static func workDatabaseFile() -> URL { workData().appendingPathComponent("work.db") }
     public static func memoryDatabaseFile() -> URL { memory().appendingPathComponent("memory.sqlite") }
     public static func chatHistoryDatabaseFile() -> URL {

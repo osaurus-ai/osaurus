@@ -329,14 +329,13 @@ actor MLXService: ToolCapableService {
         let base = DirectoryPickerService.effectiveModelsDirectory()
         let url = parts.reduce(base) { $0.appendingPathComponent($1, isDirectory: true) }
         let resolved = url.resolvingSymlinksInPath()
-        guard
-            FileManager.default.fileExists(
-                atPath: resolved.appendingPathComponent("config.json").path
-            )
-        else {
-            return nil
+        if FileManager.default.fileExists(
+            atPath: resolved.appendingPathComponent("config.json").path
+        ) {
+            return resolved
         }
-        return resolved
+        // Fall back to externally-discovered bundles (HF cache, LM Studio).
+        return ExternalModelLocator.path(forId: modelId)
     }
 
     private nonisolated static func resolvedToolCallFormat(in directory: URL) -> ToolCallFormat?? {

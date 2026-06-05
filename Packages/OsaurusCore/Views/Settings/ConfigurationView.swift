@@ -212,6 +212,13 @@ struct ConfigurationView: View {
 
                                     SettingsDivider()
 
+                                    // External models (HF cache, LM Studio)
+                                    SettingsSubsection(label: "External models") {
+                                        ExternalModelsSettingsView()
+                                    }
+
+                                    SettingsDivider()
+
                                     // Maintenance
                                     SettingsSubsection(label: "Maintenance") {
                                         VStack(alignment: .leading, spacing: 12) {

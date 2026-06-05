@@ -593,6 +593,17 @@ final class ModelDownloadService: ObservableObject {
         pausedDownloads[model.id] = nil
         clearDownloadTracking(for: model.id)
 
+        // Externally-discovered bundles (HF cache, LM Studio) are read-only
+        // references — Osaurus never owns those files. "Deleting" one only
+        // forgets it from the catalog; the source on disk is left untouched.
+        if model.bundleDirectory != nil || model.externalSource != nil {
+            ExternalModelLocator.forget(id: model.id)
+            downloadStates[model.id] = .notStarted
+            ModelManager.invalidateLocalModelsCache()
+            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            return
+        }
+
         let fm = FileManager.default
         let localPath = model.localDirectory.path
         if fm.fileExists(atPath: localPath) {
@@ -620,11 +631,22 @@ final class ModelDownloadService: ObservableObject {
     }
 
     func estimateSize(for model: MLXModel) async -> Int64? {
-        await HuggingFaceService.shared.estimateTotalSize(
+        // Read-through the on-disk size cache first (honoring its TTL for
+        // revision-less entries) so re-opening the detail modal doesn't
+        // re-hit the network. On a miss, fetch the tree-sum and write it
+        // back so the value persists across launches.
+        if let cached = ModelSizeCache.bytes(forId: model.id) {
+            return cached
+        }
+        let fetched = await HuggingFaceService.shared.estimateTotalSize(
             repoId: model.id,
             patterns: Self.downloadFilePatterns,
             excludedFiles: Self.downloadExcludedFiles
         )
+        if let fetched {
+            ModelSizeCache.record(id: model.id, bytes: fetched, revision: nil)
+        }
+        return fetched
     }
 
     // MARK: - Query Methods

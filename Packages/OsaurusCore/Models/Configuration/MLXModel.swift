@@ -43,6 +43,19 @@ struct MLXModel: Identifiable, Codable {
     // storage path changes are always respected.
     private let rootDirectory: URL?
 
+    /// Absolute path to an externally-discovered model bundle (Hugging Face
+    /// cache snapshot, LM Studio, etc.). When set, `localDirectory` returns
+    /// it directly instead of reducing the id under the models directory —
+    /// external layouts (e.g. `models--org--repo/snapshots/<rev>/`) don't
+    /// match the `<root>/<org>/<repo>` shape. The runtime path resolvers
+    /// also consult `ExternalModelLocator` for these ids.
+    let bundleDirectory: URL?
+
+    /// Human-readable provenance for externally-discovered models
+    /// (e.g. "Hugging Face cache", "LM Studio"). `nil` for normal catalog
+    /// and Osaurus-downloaded entries.
+    let externalSource: String?
+
     init(
         id: String,
         name: String,
@@ -54,7 +67,9 @@ struct MLXModel: Identifiable, Codable {
         releasedAt: Date? = nil,
         downloads: Int? = nil,
         useCase: ModelUseCase? = nil,
-        rootDirectory: URL? = nil
+        rootDirectory: URL? = nil,
+        bundleDirectory: URL? = nil,
+        externalSource: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -67,6 +82,8 @@ struct MLXModel: Identifiable, Codable {
         self.downloads = downloads
         self.useCase = useCase
         self.rootDirectory = rootDirectory
+        self.bundleDirectory = bundleDirectory
+        self.externalSource = externalSource
     }
 
     /// Returns a copy with `downloadSizeBytes` overridden. Used to fold in
@@ -86,7 +103,9 @@ struct MLXModel: Identifiable, Codable {
             releasedAt: releasedAt,
             downloads: downloads,
             useCase: useCase,
-            rootDirectory: rootDirectory
+            rootDirectory: rootDirectory,
+            bundleDirectory: bundleDirectory,
+            externalSource: externalSource
         )
     }
 
@@ -105,7 +124,9 @@ struct MLXModel: Identifiable, Codable {
             releasedAt: releasedAt,
             downloads: count,
             useCase: useCase,
-            rootDirectory: rootDirectory
+            rootDirectory: rootDirectory,
+            bundleDirectory: bundleDirectory,
+            externalSource: externalSource
         )
     }
 
@@ -136,6 +157,10 @@ struct MLXModel: Identifiable, Codable {
     /// Resolves against the current effective models directory unless an
     /// explicit `rootDirectory` was provided at init (e.g. in tests).
     var localDirectory: URL {
+        // Externally-discovered bundles live at an arbitrary absolute path
+        // that doesn't follow the `<root>/<org>/<repo>` layout, so return it
+        // verbatim.
+        if let bundleDirectory { return bundleDirectory }
         let baseDir = rootDirectory ?? DirectoryPickerService.effectiveModelsDirectory()
         let components = id.split(separator: "/").map(String.init)
         return components.reduce(baseDir) { partial, component in
@@ -162,11 +187,15 @@ struct MLXModel: Identifiable, Codable {
     /// `FileManager.fileExists` calls plus an enumerator open per model
     /// — the dominant cost of the Models tab badge and grid recomputes.
     var isDownloaded: Bool {
-        if rootDirectory == nil, let cached = MLXModelDownloadCache.value(for: id) {
+        // Bypass the id-keyed cache for pinned (`rootDirectory`) and
+        // external (`bundleDirectory`) bundles so a same-id Osaurus entry
+        // can't shadow their on-disk state.
+        let usesSharedCache = rootDirectory == nil && bundleDirectory == nil
+        if usesSharedCache, let cached = MLXModelDownloadCache.value(for: id) {
             return cached
         }
         let value = computeIsDownloadedFromDisk()
-        if rootDirectory == nil {
+        if usesSharedCache {
             MLXModelDownloadCache.set(value, for: id)
         }
         return value

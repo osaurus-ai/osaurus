@@ -55,6 +55,18 @@ struct ModelDetailView: View, Identifiable {
     /// Whether the Advanced section is expanded
     @State private var isAdvancedExpanded = false
 
+    /// Rendered model card markdown (README with front-matter stripped).
+    @State private var readme: String? = nil
+
+    /// Whether the README is currently loading
+    @State private var isLoadingReadme = false
+
+    /// Full repo file listing (all files, with per-file size + download flag)
+    @State private var allFiles: [HuggingFaceService.MatchedFile]? = nil
+
+    /// Whether the file listing is currently loading
+    @State private var isLoadingFiles = false
+
     /// Repair status: nil = idle, true = succeeded, false = failed
     @State private var isRepairing = false
     @State private var repairResult: Bool?
@@ -72,25 +84,25 @@ struct ModelDetailView: View, Identifiable {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Hero Header
-            heroHeader
+            // Minimal title bar
+            headerBar
 
-            // Metadata pills + Hugging Face link sit just under the hero
-            metaStrip
-
-            // Scrollable Content
+            // Scrollable Content — README model card leads; everything else
+            // is condensed beneath it.
             ScrollView {
-                VStack(spacing: 16) {
-                    compatibilityCallout
+                VStack(spacing: 14) {
+                    compatibilityLine
 
-                    modelDetailsCard
+                    modelCardSection
 
-                    statsGrid
+                    detailsCard
+
+                    filesSection
 
                     advancedSection
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, 20)
+                .padding(.top, 18)
                 .padding(.bottom, 24)
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -98,7 +110,7 @@ struct ModelDetailView: View, Identifiable {
             // Action Footer
             actionFooter
         }
-        .frame(width: 560, height: 580)
+        .frame(width: 720, height: 720)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
@@ -109,7 +121,35 @@ struct ModelDetailView: View, Identifiable {
             Task {
                 await estimateIfNeeded()
                 await loadHFDetails()
+                await loadReadmeIfNeeded()
             }
+        }
+    }
+
+    /// Load the README model card lazily (only when the section is first
+    /// expanded) so opening the modal doesn't always pay the extra request.
+    private func loadReadmeIfNeeded() async {
+        guard readme == nil, !isLoadingReadme else { return }
+        isLoadingReadme = true
+        let text = await HuggingFaceService.shared.fetchReadme(repoId: model.id)
+        await MainActor.run {
+            self.readme = text
+            self.isLoadingReadme = false
+        }
+    }
+
+    /// Load the full repo file listing (all files + sizes + download flag).
+    private func loadAllFiles() async {
+        guard allFiles == nil, !isLoadingFiles else { return }
+        isLoadingFiles = true
+        let files = await HuggingFaceService.shared.fetchAllFiles(
+            repoId: model.id,
+            downloadPatterns: ModelDownloadService.downloadFilePatterns,
+            excludedFiles: ModelDownloadService.downloadExcludedFiles
+        )
+        await MainActor.run {
+            self.allFiles = files
+            self.isLoadingFiles = false
         }
     }
 
@@ -124,109 +164,65 @@ struct ModelDetailView: View, Identifiable {
         }
     }
 
-    // MARK: - Hero Header
+    // MARK: - Header Bar
 
-    private var heroHeader: some View {
-        ZStack {
+    /// Minimal title bar: a thin brand-colored accent on top, then the model
+    /// name + verified/type badges on the left and the Hugging Face link +
+    /// close button on the right. Replaces the oversized gradient hero so the
+    /// content (model card) leads.
+    private var headerBar: some View {
+        VStack(spacing: 0) {
+            // 3px brand accent keeps the model's identity without the banner.
             LinearGradient(
                 colors: ModelCardGradient.colors(for: model),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                startPoint: .leading,
+                endPoint: .trailing
             )
+            .frame(height: 3)
 
-            RadialGradient(
-                colors: [.white.opacity(0.32), .white.opacity(0)],
-                center: UnitPoint(x: 0.18, y: 0.18),
-                startRadius: 4,
-                endRadius: 320
-            )
+            HStack(spacing: 10) {
+                Text(model.name)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
-            RadialGradient(
-                colors: [.black.opacity(0.30), .black.opacity(0)],
-                center: UnitPoint(x: 0.92, y: 0.95),
-                startRadius: 4,
-                endRadius: 360
-            )
+                if model.isDownloaded {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.accentColor)
+                }
 
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    Text(model.name)
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundColor(.white)
-                        .shadow(color: .black.opacity(0.22), radius: 2, x: 0, y: 1)
-                        .lineLimit(1)
-                        .multilineTextAlignment(.center)
+                modelTypeBadge
 
-                    if model.isDownloaded {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 15))
-                            .foregroundColor(.white)
+                Spacer(minLength: 12)
+
+                Button(action: openHuggingFace) {
+                    HStack(spacing: 5) {
+                        Text("🤗")
+                            .font(.system(size: 12))
+                        Text("View on Hugging Face", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .semibold))
                     }
+                    .foregroundColor(theme.accentColor)
                 }
+                .buttonStyle(PlainButtonStyle())
 
-                if !model.description.isEmpty {
-                    Text(model.description)
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.88))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(theme.tertiaryBackground))
                 }
+                .buttonStyle(PlainButtonStyle())
             }
-            .padding(.horizontal, 56)
-
-            VStack {
-                HStack {
-                    Spacer()
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(width: 24, height: 24)
-                            .background(Circle().fill(.black.opacity(0.32)))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                Spacer()
-            }
-            .padding(16)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
-    }
-
-    private var metaStrip: some View {
-        HStack(spacing: 8) {
-            if let size = sizeChipText {
-                MetadataPill(text: size, icon: nil, color: theme.secondaryText)
-            }
-
-            modelTypeBadge
-
-            if let params = model.parameterCount {
-                MetadataPill(text: params, icon: nil, color: theme.secondaryText)
-            }
-
-            if let quant = model.quantization {
-                MetadataPill(text: quant, icon: nil, color: theme.secondaryText)
-            }
-
-            Spacer()
-
-            Button(action: openHuggingFace) {
-                HStack(spacing: 5) {
-                    Text("🤗")
-                        .font(.system(size: 12))
-                    Text("View on Hugging Face", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9, weight: .semibold))
-                }
-                .foregroundColor(theme.accentColor)
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(theme.secondaryBackground)
+        .background(theme.primaryBackground)
         .overlay(
             Rectangle()
                 .fill(theme.cardBorder)
@@ -272,180 +268,318 @@ struct ModelDetailView: View, Identifiable {
         return model.isVLM
     }
 
-    // MARK: - Stats Grid
+    // MARK: - Details Card
 
-    private var statsGrid: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                StatCardView(
-                    icon: "arrow.down.circle",
-                    value: hfDetails?.downloads.map { formatNumber($0) } ?? "—",
-                    label: "Downloads",
-                    color: .blue,
-                    isLoading: isLoadingHFDetails && hfDetails == nil
-                )
-
-                StatCardView(
-                    icon: "heart",
-                    value: hfDetails?.likes.map { formatNumber($0) } ?? "—",
-                    label: "Likes",
-                    color: .pink,
-                    isLoading: isLoadingHFDetails && hfDetails == nil
-                )
-            }
-
-            HStack(spacing: 10) {
-                StatCardView(
-                    icon: "doc.text",
-                    value: hfDetails?.license?.uppercased() ?? "—",
-                    label: "License",
-                    color: .orange,
-                    isLoading: isLoadingHFDetails && hfDetails == nil
-                )
-
-                StatCardView(
-                    icon: "clock",
-                    value: hfDetails?.lastModified.map { formatRelativeDate($0) } ?? "—",
-                    label: "Updated",
-                    color: .green,
-                    isLoading: isLoadingHFDetails && hfDetails == nil
-                )
-            }
-        }
-    }
-
-    // MARK: - Model Details Card
-
-    private var modelDetailsCard: some View {
+    /// Every fact about the model, condensed into a single card: a 2-column
+    /// grid of compact label/value pairs (only the ones we actually have)
+    /// plus the tag chips. Replaces the old "About" rows + 2x2 stat tiles.
+    private var detailsCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Card Header
-            Text("About this model", bundle: .module)
+            Text("Details", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            // Info Rows — only the rows a non-technical user cares about.
-            // Architecture / repo id / required files live in `advancedSection`.
-            VStack(spacing: 10) {
-                if let author = hfDetails?.author {
-                    DetailInfoRow(label: "Author", value: author)
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 16, alignment: .topLeading),
+                    GridItem(.flexible(), spacing: 16, alignment: .topLeading),
+                ],
+                alignment: .leading,
+                spacing: 12
+            ) {
+                MetaItem(label: L("Download size"), value: estimatedSizeString)
+
+                MetaItem(
+                    label: L("Type"),
+                    value: detectIsVLM() ? L("Vision + Language") : L("Language")
+                )
+
+                if let params = model.parameterCount {
+                    MetaItem(label: L("Parameters"), value: params)
+                }
+
+                if let quant = model.quantization {
+                    MetaItem(label: L("Quantization"), value: quant)
+                }
+
+                if let license = hfDetails?.license {
+                    MetaItem(label: L("License"), value: license.uppercased())
+                }
+
+                if let downloads = hfDetails?.downloads {
+                    MetaItem(label: L("Downloads"), value: formatNumber(downloads))
+                }
+
+                if let likes = hfDetails?.likes {
+                    MetaItem(label: L("Likes"), value: formatNumber(likes))
+                }
+
+                if let updated = hfDetails?.lastModified {
+                    MetaItem(label: L("Updated"), value: formatRelativeDate(updated))
                 }
 
                 if let pipelineTag = hfDetails?.pipelineTag {
-                    DetailInfoRow(
-                        label: "Task",
+                    MetaItem(
+                        label: L("Task"),
                         value: pipelineTag.replacingOccurrences(of: "-", with: " ").capitalized
                     )
                 }
 
-                DetailInfoRow(
-                    label: "Type",
-                    value: detectIsVLM()
-                        ? L("Vision + Language")
-                        : L("Language")
-                )
+                if let author = hfDetails?.author {
+                    MetaItem(label: L("Author"), value: author)
+                }
 
-                DetailInfoRow(label: "Download size", value: estimatedSizeString)
+                if let baseModels = hfDetails?.baseModels, !baseModels.isEmpty {
+                    MetaItem(label: L("Based on"), value: baseModels.joined(separator: ", "))
+                }
+
+                if let source = model.externalSource {
+                    MetaItem(label: L("Source"), value: source)
+                }
 
                 if model.isDownloaded, let downloadedAt = model.downloadedAt {
-                    DetailInfoRow(
-                        label: "Downloaded",
-                        value: RelativeDateTimeFormatter().localizedString(for: downloadedAt, relativeTo: Date())
+                    MetaItem(
+                        label: L("Downloaded"),
+                        value: RelativeDateTimeFormatter().localizedString(
+                            for: downloadedAt,
+                            relativeTo: Date()
+                        )
                     )
+                }
+            }
+
+            if !displayTags.isEmpty {
+                Divider()
+                    .background(theme.cardBorder)
+
+                TagFlowLayout(spacing: 6, runSpacing: 6) {
+                    ForEach(displayTags, id: \.self) { tag in
+                        MetadataPill(text: tag, icon: nil, color: theme.secondaryText)
+                    }
                 }
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .detailCardSurface()
     }
 
-    // MARK: - Compatibility Callout
+    /// Curated subset of HF tags worth showing as chips. Drops the
+    /// machine-oriented `key:value` tags (license:, base_model:, region:,
+    /// arxiv:, doi:, etc.) and the bare `mlx`/format noise we already
+    /// surface elsewhere, then caps the count so the card stays compact.
+    private var displayTags: [String] {
+        guard let tags = hfDetails?.tags else { return [] }
+        let dropPrefixes = ["license:", "base_model", "region:", "arxiv:", "doi:", "dataset:"]
+        let dropExact: Set<String> = ["mlx", "safetensors", "transformers", "text-generation"]
+        var seen = Set<String>()
+        var result: [String] = []
+        for tag in tags {
+            let lower = tag.lowercased()
+            if dropPrefixes.contains(where: { lower.hasPrefix($0) }) { continue }
+            if dropExact.contains(lower) { continue }
+            if lower.contains(":") { continue }
+            guard seen.insert(lower).inserted else { continue }
+            result.append(tag)
+            if result.count >= 8 { break }
+        }
+        return result
+    }
 
-    /// Headline "will it run on this Mac?" treatment so the verdict
-    /// dominates the modal instead of being buried in a stats pill.
-    private var compatibilityCallout: some View {
+    // MARK: - Compatibility Line
+
+    /// Slim, single-row "will it run on this Mac?" verdict. Kept compact so
+    /// the README leads, but still the first thing visible for a pre-download
+    /// decision.
+    private var compatibilityLine: some View {
         let verdict = model.compatibility(totalMemoryGB: systemMonitor.totalMemoryGB)
         let totalMem = systemMonitor.totalMemoryGB
 
-        let (icon, title, subtitle, tint): (String, String, String, Color) = {
+        // The memory estimate reads the same for every verdict except
+        // `.unknown` (where we have nothing to show), so compute it once.
+        let memoryDetail = String(
+            format: L("~%@ of %.0f GB"),
+            model.formattedEstimatedMemory ?? "—",
+            totalMem
+        )
+
+        let (icon, title, detail, tint): (String, String, String, Color) = {
             switch verdict {
             case .compatible:
                 return (
                     "checkmark.shield.fill",
                     L("Should run smoothly on this Mac"),
-                    String(
-                        format: L("Estimated %@ used of %.0f GB unified memory"),
-                        model.formattedEstimatedMemory ?? "—",
-                        totalMem
-                    ),
+                    memoryDetail,
                     theme.successColor
                 )
             case .tight:
                 return (
                     "exclamationmark.triangle.fill",
                     L("Will be a tight fit"),
-                    String(
-                        format: L("Estimated %@ on a %.0f GB Mac — close other apps for best results"),
-                        model.formattedEstimatedMemory ?? "—",
-                        totalMem
-                    ),
+                    memoryDetail,
                     theme.warningColor
                 )
             case .tooLarge:
                 return (
                     "xmark.octagon.fill",
                     L("Too large for this Mac"),
-                    String(
-                        format: L("Estimated %@ exceeds the %.0f GB available — try a smaller variant"),
-                        model.formattedEstimatedMemory ?? "—",
-                        totalMem
-                    ),
+                    memoryDetail,
                     theme.errorColor
                 )
             case .unknown:
                 return (
                     "questionmark.circle.fill",
                     L("Compatibility unknown"),
-                    L("We couldn't estimate memory needs for this model."),
+                    "",
                     theme.tertiaryText
                 )
             }
         }()
 
-        return HStack(alignment: .top, spacing: 12) {
+        return HStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 22))
+                .font(.system(size: 14))
                 .foregroundColor(tint)
-                .frame(width: 28)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(subtitle)
-                    .font(.system(size: 12))
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            Spacer(minLength: 0)
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(tint.opacity(0.08))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(tint.opacity(0.25), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(tint.opacity(0.22), lineWidth: 1)
                 )
         )
+    }
+
+    // MARK: - Model Card (README)
+
+    /// The model's README, rendered with the full-fidelity chat markdown
+    /// engine. This is the primary content of the modal — always visible and
+    /// loaded eagerly on appear.
+    private var modelCardSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("Model Card", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Spacer()
+
+                if isLoadingReadme {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                        .scaleEffect(0.5)
+                        .frame(width: 12, height: 12)
+                }
+            }
+
+            if let readme {
+                MarkdownDocument(text: readme)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if isLoadingReadme {
+                Text("Loading model card…", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("No model card available.", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .detailCardSurface()
+    }
+
+    // MARK: - Files Section
+
+    /// Lists every file in the repo with its size, marking the ones
+    /// Osaurus actually downloads. Falls back to a loading state while the
+    /// tree request is in flight.
+    private var filesSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isFilesExpanded.toggle()
+                }
+                if isFilesExpanded {
+                    Task { await loadAllFiles() }
+                }
+            }) {
+                HStack {
+                    Text("Files", bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    if let files = allFiles {
+                        Text("\(files.count)")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+
+                    Spacer()
+
+                    if isLoadingFiles {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle())
+                            .scaleEffect(0.5)
+                            .frame(width: 12, height: 12)
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(isFilesExpanded ? 90 : 0))
+                }
+                .padding(14)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            if isFilesExpanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let files = allFiles, !files.isEmpty {
+                        ForEach(files, id: \.path) { file in
+                            FileRow(file: file)
+                        }
+                    } else if isLoadingFiles {
+                        Text("Loading files…", bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+                    } else {
+                        // Network listing unavailable — fall back to the
+                        // static download-pattern hint so the section is
+                        // never empty.
+                        ForEach(ModelDownloadService.downloadFilePatterns, id: \.self) { pattern in
+                            Text(pattern)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+            }
+        }
+        .detailCardSurface()
     }
 
     // MARK: - Advanced Section
@@ -493,21 +627,12 @@ struct ModelDetailView: View, Identifiable {
                     }
 
                     RepositoryLinkRow(url: model.downloadURL)
-
-                    RequiredFilesSection(isExpanded: $isFilesExpanded)
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 14)
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .detailCardSurface()
     }
 
     // MARK: - Action Footer
@@ -719,16 +844,6 @@ struct ModelDetailView: View, Identifiable {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
-    /// Compact size string for the meta-strip pill. Uses the
-    /// network resolved size when available, otherwise the params×quant
-    /// estimate. Returns nil only when neither is known.
-    private var sizeChipText: String? {
-        if let s = estimatedSize, s > 0 {
-            return ByteCountFormatter.string(fromByteCount: s, countStyle: .file)
-        }
-        return model.formattedDownloadSize
-    }
-
     /// Formatted string for the estimated download size.
     /// Prefers the network-resolved size; falls back to the
     /// params×quantization estimate so the modal isn't blank while loading.
@@ -763,53 +878,27 @@ struct ModelDetailView: View, Identifiable {
 
 // MARK: - Helper Components
 
-/// Stat card with value and label
-private struct StatCardView: View {
+/// Compact label-over-value pair for the Details grid.
+private struct MetaItem: View {
     @Environment(\.theme) private var theme
 
-    let icon: String
-    let value: String
     let label: String
-    let color: Color
-    var isLoading: Bool = false
+    let value: String
 
     var body: some View {
-        HStack(spacing: 10) {
-            // Value and Label
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
 
-                if isLoading {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(theme.tertiaryBackground)
-                        .frame(width: 50, height: 18)
-                        .shimmer()
-                } else {
-                    Text(value)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer()
-
-            Image(systemName: icon)
-                .font(.system(size: 14))
-                .foregroundColor(color.opacity(0.6))
+            Text(value)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -982,70 +1071,114 @@ private struct RepositoryLinkRow: View {
     }
 }
 
-/// Required files expandable section
-private struct RequiredFilesSection: View {
+/// One row in the repo file listing: relative path, byte size, and a
+/// subtle marker when the file is part of what Osaurus downloads.
+private struct FileRow: View {
     @Environment(\.theme) private var theme
-    @Binding var isExpanded: Bool
+    let file: HuggingFaceService.MatchedFile
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isExpanded.toggle()
-                }
-            }) {
-                HStack {
-                    Text("Required Files", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+        HStack(spacing: 8) {
+            Image(systemName: file.isDownloaded ? "arrow.down.circle.fill" : "doc")
+                .font(.system(size: 10))
+                .foregroundColor(file.isDownloaded ? theme.accentColor : theme.tertiaryText)
 
-                    Spacer()
+            Text(file.path)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(file.isDownloaded ? theme.secondaryText : theme.tertiaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
 
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                }
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
+            Spacer(minLength: 8)
 
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(ModelDownloadService.downloadFilePatterns, id: \.self) { pattern in
-                        Text(pattern)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                }
-                .padding(.leading, 12)
-                .padding(.top, 2)
-            }
+            Text(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .padding(.vertical, 1)
+    }
+}
+
+/// Simple wrapping flow layout for the tag chips. Mirrors the existing
+/// chip layouts used elsewhere (e.g. `ChipFlowLayout`).
+private struct TagFlowLayout: Layout {
+    var spacing: CGFloat = 6
+    var runSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        arrange(in: proposal.width ?? .infinity, subviews: subviews).size
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Void
+    ) {
+        for placement in arrange(in: bounds.width, subviews: subviews).placements {
+            placement.subview.place(
+                at: CGPoint(x: bounds.minX + placement.origin.x, y: bounds.minY + placement.origin.y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: placement.size.width, height: placement.size.height)
+            )
         }
     }
-}
 
-// MARK: - Shimmer Effect
+    private struct Placement {
+        var subview: LayoutSubview
+        var origin: CGPoint
+        var size: CGSize
+    }
 
-private struct ShimmerModifier: ViewModifier {
-    @State private var isAnimating = false
+    private struct Arrangement {
+        var placements: [Placement]
+        var size: CGSize
+    }
 
-    func body(content: Content) -> some View {
-        content
-            .opacity(isAnimating ? 0.5 : 1.0)
-            .animation(
-                .easeInOut(duration: 1.0).repeatForever(autoreverses: true),
-                value: isAnimating
-            )
-            .onAppear {
-                isAnimating = true
+    private func arrange(in maxWidth: CGFloat, subviews: Subviews) -> Arrangement {
+        var placements: [Placement] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += lineHeight + runSpacing
+                lineHeight = 0
             }
+            placements.append(Placement(subview: subview, origin: CGPoint(x: x, y: y), size: size))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+            totalWidth = max(totalWidth, x - spacing)
+        }
+        return Arrangement(placements: placements, size: CGSize(width: totalWidth, height: y + lineHeight))
     }
 }
 
-private extension View {
-    func shimmer() -> some View {
-        modifier(ShimmerModifier())
+// MARK: - Card Surface
+
+/// Standard rounded card chrome (fill + 1px border) shared by the detail
+/// modal's sections so the styling stays consistent in one place.
+private struct DetailCardSurface: ViewModifier {
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content.background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+}
+
+extension View {
+    fileprivate func detailCardSurface() -> some View {
+        modifier(DetailCardSurface())
     }
 }

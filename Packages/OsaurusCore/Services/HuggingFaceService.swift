@@ -36,6 +36,9 @@ actor HuggingFaceService {
         let pipelineTag: String?
         let modelType: String?
         let tags: [String]
+        /// Base model(s) this repo was derived from, when the card declares
+        /// them (e.g. a quantized repo pointing at the upstream weights).
+        let baseModels: [String]
         let isVLM: Bool
     }
 
@@ -58,37 +61,69 @@ actor HuggingFaceService {
         struct CardData: Decodable {
             let license: String?
             let model_type: String?
+            /// `base_model` may be a single string or an array in HF cards.
+            let base_model: StringOrArray?
+        }
+    }
+
+    /// Decodes a JSON field that HF sometimes serializes as a single
+    /// string and sometimes as an array of strings (e.g. `base_model`).
+    enum StringOrArray: Decodable {
+        case single(String)
+        case many([String])
+
+        var values: [String] {
+            switch self {
+            case .single(let s): return s.isEmpty ? [] : [s]
+            case .many(let a): return a.filter { !$0.isEmpty }
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let s = try? container.decode(String.self) {
+                self = .single(s)
+            } else if let a = try? container.decode([String].self) {
+                self = .many(a)
+            } else {
+                self = .many([])
+            }
         }
     }
 
     struct MatchedFile {
         let path: String
         let size: Int64
+        /// True when this file matches Osaurus's download patterns — i.e.
+        /// it's part of what actually gets written to disk on download.
+        /// `false` for repo extras (READMEs, alternate formats, etc.).
+        var isDownloaded: Bool = true
     }
 
     private init() {}
 
-    /// Fetch files from a Hugging Face repo that match the given glob patterns.
-    /// Files whose last path component appears in `excludedFiles` are skipped.
-    func fetchMatchingFiles(
-        repoId: String,
-        patterns: [String],
-        excludedFiles: Set<String> = []
-    ) async -> [MatchedFile]? {
+    /// A single file node from the HF repo tree.
+    private struct TreeNode: Decodable {
+        let path: String
+        let type: String?
+        let size: Int64?
+        let lfs: LFS?
+        struct LFS: Decodable { let size: Int64? }
+
+        /// Best-known byte size (`lfs.size` for large weights).
+        var bestSize: Int64 { size ?? lfs?.size ?? 0 }
+    }
+
+    /// Fetch the full recursive file tree for a repo. Returns `nil` on any
+    /// failure (network, decode, empty tree). Shared by the download-set
+    /// and full-listing helpers below.
+    private func fetchTree(repoId: String) async -> [TreeNode]? {
         var comps = URLComponents()
         comps.scheme = "https"
         comps.host = "huggingface.co"
         comps.path = "/api/models/\(repoId)/tree/main"
         comps.queryItems = [URLQueryItem(name: "recursive", value: "1")]
         guard let url = comps.url else { return nil }
-
-        struct TreeNode: Decodable {
-            let path: String
-            let type: String?
-            let size: Int64?
-            let lfs: LFS?
-            struct LFS: Decodable { let size: Int64? }
-        }
 
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -98,23 +133,99 @@ actor HuggingFaceService {
                 return nil
             }
             let nodes = try JSONDecoder().decode([TreeNode].self, from: data)
-            if nodes.isEmpty { return nil }
-            let matchers = patterns.compactMap { Glob($0) }
-            let files = nodes.compactMap { node -> MatchedFile? in
-                if node.type == "directory" { return nil }
-                guard let safePath = Self.normalizedRemoteFilePath(node.path) else { return nil }
-                let filename = (safePath as NSString).lastPathComponent
-                if excludedFiles.contains(filename) { return nil }
-                let matched = matchers.contains { $0.matches(filename) }
-                guard matched else { return nil }
-                let sz = node.size ?? node.lfs?.size ?? 0
-                guard sz > 0 else { return nil }
-                return MatchedFile(path: safePath, size: sz)
-            }
-            return files.isEmpty ? nil : files
+            return nodes.isEmpty ? nil : nodes
         } catch {
             return nil
         }
+    }
+
+    /// Fetch files from a Hugging Face repo that match the given glob patterns.
+    /// Files whose last path component appears in `excludedFiles` are skipped.
+    func fetchMatchingFiles(
+        repoId: String,
+        patterns: [String],
+        excludedFiles: Set<String> = []
+    ) async -> [MatchedFile]? {
+        guard let nodes = await fetchTree(repoId: repoId) else { return nil }
+        let matchers = patterns.compactMap { Glob($0) }
+        let files = nodes.compactMap { node -> MatchedFile? in
+            if node.type == "directory" { return nil }
+            guard let safePath = Self.normalizedRemoteFilePath(node.path) else { return nil }
+            let filename = (safePath as NSString).lastPathComponent
+            if excludedFiles.contains(filename) { return nil }
+            let matched = matchers.contains { $0.matches(filename) }
+            guard matched else { return nil }
+            let sz = node.bestSize
+            guard sz > 0 else { return nil }
+            return MatchedFile(path: safePath, size: sz)
+        }
+        return files.isEmpty ? nil : files
+    }
+
+    /// Fetch every file in a repo (not just the download set), each marked
+    /// with whether Osaurus would download it. Used by the detail modal's
+    /// "Files" section. Sorted largest-first so weights lead.
+    func fetchAllFiles(
+        repoId: String,
+        downloadPatterns: [String],
+        excludedFiles: Set<String> = []
+    ) async -> [MatchedFile]? {
+        guard let nodes = await fetchTree(repoId: repoId) else { return nil }
+        let matchers = downloadPatterns.compactMap { Glob($0) }
+        let files = nodes.compactMap { node -> MatchedFile? in
+            if node.type == "directory" { return nil }
+            guard let safePath = Self.normalizedRemoteFilePath(node.path) else { return nil }
+            let filename = (safePath as NSString).lastPathComponent
+            let matched =
+                !excludedFiles.contains(filename) && matchers.contains { $0.matches(filename) }
+            return MatchedFile(path: safePath, size: node.bestSize, isDownloaded: matched)
+        }
+        let sorted = files.sorted { $0.size > $1.size }
+        return sorted.isEmpty ? nil : sorted
+    }
+
+    /// Fetch a repo's README (model card) markdown from
+    /// `https://huggingface.co/<repoId>/raw/main/README.md`, with the
+    /// leading YAML front-matter block stripped so only the human-readable
+    /// card body renders. Returns `nil` when the repo has no README or the
+    /// request fails.
+    func fetchReadme(repoId: String) async -> String? {
+        var comps = URLComponents()
+        comps.scheme = "https"
+        comps.host = "huggingface.co"
+        comps.path = "/\(repoId)/raw/main/README.md"
+        guard let url = comps.url else { return nil }
+
+        var req = URLRequest(url: url)
+        req.setValue("text/plain", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
+            guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
+                let raw = String(data: data, encoding: .utf8)
+            else { return nil }
+            let stripped = Self.strippingFrontMatter(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            return stripped.isEmpty ? nil : stripped
+        } catch {
+            return nil
+        }
+    }
+
+    /// Removes a leading YAML front-matter block (`---` ... `---`) from a
+    /// model card. HF cards open with metadata (license, tags, base_model)
+    /// that we already surface as structured fields, so it's noise in the
+    /// rendered body. Leaves the text untouched when there's no front-matter.
+    static func strippingFrontMatter(_ markdown: String) -> String {
+        let lines = markdown.components(separatedBy: "\n")
+        guard let first = lines.first,
+            first.trimmingCharacters(in: .whitespaces) == "---"
+        else { return markdown }
+        // Find the closing delimiter after the opening one.
+        for index in 1 ..< lines.count
+        where lines[index].trimmingCharacters(in: .whitespaces) == "---" {
+            return lines[(index + 1)...].joined(separator: "\n")
+        }
+        // Unterminated front-matter: return as-is rather than eating the file.
+        return markdown
     }
 
     /// Estimate the total size for files matching provided patterns.
@@ -227,6 +338,7 @@ actor HuggingFaceService {
                 pipelineTag: raw.pipeline_tag,
                 modelType: modelType,
                 tags: tags,
+                baseModels: raw.cardData?.base_model?.values ?? [],
                 isVLM: isVLM
             )
         } catch {
