@@ -336,6 +336,63 @@ struct ChatViewSandboxTests {
         }
     }
 
+    /// Editing the agent's autonomous-exec config after a send must update
+    /// the Context Budget popover. Before the fix, the authoritative
+    /// last-send context (`cachedContext`) stayed pinned and the
+    /// `.agentUpdated`-driven resync only refreshed the (unused) preview, so
+    /// toggling e.g. background processes never moved the number until the
+    /// next send.
+    @Test
+    func estimatedContextBreakdown_updatesWhenAutonomousConfigEditedAfterSend() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let manager = AgentManager.shared
+            let originalActiveAgentId = manager.activeAgentId
+            var agent = Agent(
+                name: "Budget Edit",
+                agentAddress: "test-budget-edit-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: true)
+            )
+            manager.add(agent)
+            manager.setActiveAgent(agent.id)
+
+            let session = ChatSession()
+            session.agentId = agent.id
+
+            // Prime the preview cache (background OFF) and stand in for a
+            // completed send by seeding a composed context as authoritative.
+            session.resyncBudgetEstimateForTests()
+            let sentContext = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .sandbox(hostRead: nil),
+                query: "do some work"
+            )
+            session.seedSendContextForTests(sentContext)
+            let beforeEdit = session.estimatedContextBreakdown.total
+            #expect(beforeEdit > 0)
+
+            // A benign resync (no config change) must NOT drop the
+            // authoritative send context.
+            #expect(session.resyncBudgetEstimateForTests() == false)
+            #expect(session.estimatedContextBreakdown.total == beforeEdit)
+
+            // Edit the agent: enable background processes. The cached send
+            // context is now stale for the next send.
+            agent.autonomousExec = AutonomousExecConfig(
+                enabled: true,
+                backgroundProcessEnabled: true
+            )
+            manager.update(agent)
+
+            // The resync the running app drives on `.agentUpdated` must now
+            // drop the stale send context and re-price from the edited config.
+            #expect(session.resyncBudgetEstimateForTests() == true)
+            #expect(session.estimatedContextBreakdown.total != beforeEdit)
+
+            manager.setActiveAgent(originalActiveAgentId)
+            _ = await manager.delete(id: agent.id)
+        }
+    }
+
     // Chat session budget estimation is covered indirectly via
     // SystemPromptComposer + ContextBudgetManager tests.
 }

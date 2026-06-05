@@ -1247,6 +1247,26 @@ final class ChatSession: ObservableObject {
         objectWillChange.send()
     }
 
+    #if DEBUG
+        /// Test seam: seed the authoritative send-time budget context,
+        /// standing in for a completed send. Pairs with
+        /// `resyncBudgetEstimateForTests()` to exercise the post-send
+        /// invalidation path (`.agentUpdated` etc.) without running a real
+        /// generation.
+        func seedSendContextForTests(_ ctx: ComposedContext) {
+            cachedContext = ctx
+        }
+
+        /// Test seam: stand in for the debounced budget-input signal handler
+        /// (`.agentUpdated` / `.toolsListChanged` / model / folder) the running
+        /// app drives via Combine. Recomposes the preview and returns whether
+        /// the displayed budget shape changed.
+        @discardableResult
+        func resyncBudgetEstimateForTests() -> Bool {
+            recomputePreviewContext()
+        }
+    #endif
+
     // MARK: - Persistence Methods
 
     /// Convert current state to persistable data
@@ -1363,30 +1383,45 @@ final class ChatSession: ObservableObject {
         return true
     }
 
-    /// Recompute the welcome/pre-send preview `ComposedContext` from the
-    /// current agent / sandbox / tool / folder / model state and store it
-    /// in `cachedPreviewContext`. Returns `true` when the budget-relevant
-    /// shape changed — compared via `cacheHint` (the static-prefix hash
-    /// that already folds prompt sections + tool schemas) plus
-    /// `toolTokens`. Identical recomputes return `false` so a burst of
-    /// redundant signals (e.g. a sandbox toggle firing both .agentUpdated
-    /// and .toolsListChanged) collapses to no re-render.
+    /// Recompose the welcome/pre-send preview from the current agent /
+    /// sandbox / tool / folder / model state, store it in
+    /// `cachedPreviewContext`, and report whether the displayed budget shape
+    /// changed. The shape is compared via `cacheHint` (the static-prefix hash
+    /// that folds prompt sections + tool schemas) plus `toolTokens`, so a
+    /// burst of redundant signals (e.g. a sandbox toggle firing both
+    /// `.agentUpdated` and `.toolsListChanged`) collapses to no re-render.
     ///
-    /// No-op when a real send context is cached (`cachedContext != nil`):
-    /// that path owns the authoritative breakdown, so we drop any stale
-    /// preview and let the send context drive the popover.
+    /// The preview is recomposed even while a real send context is cached so
+    /// consecutive previews stay a reliable config-change detector. That send
+    /// context normally stays authoritative for the popover (see
+    /// `estimatedContextBreakdown`), but once a budget input is edited — agent
+    /// config / feature toggle (incl. autonomous-exec) / model / folder — it
+    /// is stale for the *next* send, so we drop it and let the fresh preview
+    /// drive the budget instead of pinning to the last send.
+    ///
+    /// No-op while streaming: `estimatedContextBreakdown` short-circuits to
+    /// the live budget tracker, so leave both caches untouched (and skip the
+    /// recompose) until the turn settles.
     @discardableResult
     private func recomputePreviewContext() -> Bool {
-        guard cachedContext == nil else {
-            guard cachedPreviewContext != nil else { return false }
-            cachedPreviewContext = nil
-            return true
-        }
-        let preview = composePreview()
+        guard !isStreaming else { return false }
+
         let previous = cachedPreviewContext
+        let preview = composePreview()
         cachedPreviewContext = preview
-        return previous?.cacheHint != preview.cacheHint
+        let shapeChanged =
+            previous?.cacheHint != preview.cacheHint
             || previous?.toolTokens != preview.toolTokens
+
+        // No send context yet → the preview drives the popover directly.
+        guard cachedContext != nil else { return shapeChanged }
+
+        // A real send context is authoritative until a budget input is edited.
+        // Only a change between consecutive previews proves that; a nil
+        // `previous` can't, so keep the send context.
+        guard previous != nil, shapeChanged else { return false }
+        cachedContext = nil
+        return true
     }
 
     /// Cheap, synchronous preview-only resync: recompute the composed

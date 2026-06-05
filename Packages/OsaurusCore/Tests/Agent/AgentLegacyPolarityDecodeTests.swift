@@ -65,7 +65,7 @@ struct AgentLegacyPolarityDecodeTests {
         )
         var dict = try encodeToDictionary(agent)
         // Inject contradictory legacy keys; the explicit new keys win.
-        dict["disableTools"] = true   // would imply toolsEnabled == false
+        dict["disableTools"] = true  // would imply toolsEnabled == false
         dict["disableMemory"] = false  // would imply memoryEnabled == true
 
         let decoded = try decodeAgent(from: dict)

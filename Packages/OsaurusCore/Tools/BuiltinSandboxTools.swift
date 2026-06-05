@@ -1716,13 +1716,13 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
             ? """
 
 
-                Background (`background:true`): returns a `pid` + `log_file` \
-                immediately; the user can also tail and terminate via the chat card. \
-                Use for servers, watchers, daemons that should outlive your call. \
-                Then call `sandbox_process` to poll/wait/kill. Do NOT shell-background \
-                yourself with `&` / `nohup` / `disown` — pass `background:true` so \
-                the runtime can track it.
-                """
+            Background (`background:true`): returns a `pid` + `log_file` \
+            immediately; the user can also tail and terminate via the chat card. \
+            Use for servers, watchers, daemons that should outlive your call. \
+            Then call `sandbox_process` to poll/wait/kill. Do NOT shell-background \
+            yourself with `&` / `nohup` / `disown` — pass `background:true` so \
+            the runtime can track it.
+            """
             : ""
         return """
             Run a shell command (bash) in the agent's sandbox. **Reserve this for \
