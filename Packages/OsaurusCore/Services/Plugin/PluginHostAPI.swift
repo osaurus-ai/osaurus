@@ -670,7 +670,11 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: - Inference Callbacks
 
     private static let toolExecutionTimeout: UInt64 = 120
-    private static let defaultMaxIterations = 1
+    // Plugin-host completions are used by agent/tool surfaces. A one-shot
+    // default turns any omitted `max_iterations` into "stop before executing
+    // the first model-emitted tool call", which is especially visible on
+    // Qwen-family local models that rely on multi-turn tool/result loops.
+    private static let defaultMaxIterations = 8
     private static let maxIterationsCap = 30
 
     // MARK: Inference Types

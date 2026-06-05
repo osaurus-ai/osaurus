@@ -254,6 +254,20 @@ struct RuntimePolicySourceTests {
         #expect(source.contains("SystemPromptComposer.injectMemoryPrefix(ctx.memorySection, into: &messages)"))
     }
 
+    @Test("plugin host inference defaults to a real tool loop")
+    func pluginHostInferenceDefaultsToMultiIterationTools() throws {
+        let source = try Self.source("Services/Plugin/PluginHostAPI.swift")
+
+        #expect(
+            source.contains("private static let defaultMaxIterations = 8"),
+            "Plugin complete/complete_stream callers that omit max_iterations must still be able to execute a model-emitted tool call, feed back the tool result, and continue. A default of 1 makes Qwen-style multi-turn tool use stop before the first tool/result loop."
+        )
+        #expect(
+            !source.contains("private static let defaultMaxIterations = 1"),
+            "One-shot plugin inference is the Qwen 35B tool-call stop regression."
+        )
+    }
+
     @Test("HTTP chat persistence runs after response path")
     func httpChatPersistenceRunsAfterResponsePath() throws {
         let source = try Self.source("Networking/HTTPHandler.swift")
