@@ -1318,7 +1318,7 @@ extension FloatingInputCard {
     private var inlinePendingAttachmentsPreview: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(Array(pendingAttachments.enumerated()), id: \.element.id) { index, attachment in
+                ForEach(pendingAttachments) { attachment in
                     switch attachment.kind {
                     case .image(let data):
                         CachedImageThumbnail(
@@ -1326,7 +1326,7 @@ extension FloatingInputCard {
                             size: 40,
                             onRemove: {
                                 withAnimation(theme.springAnimation()) {
-                                    _ = pendingAttachments.remove(at: index)
+                                    pendingAttachments.removeAll { $0.id == attachment.id }
                                 }
                             }
                         )
@@ -1341,7 +1341,7 @@ extension FloatingInputCard {
                                 size: 40,
                                 onRemove: {
                                     withAnimation(theme.springAnimation()) {
-                                        _ = pendingAttachments.remove(at: index)
+                                        pendingAttachments.removeAll { $0.id == attachment.id }
                                     }
                                 }
                             )
@@ -1351,7 +1351,7 @@ extension FloatingInputCard {
                             attachment: attachment,
                             onRemove: {
                                 withAnimation(theme.springAnimation()) {
-                                    _ = pendingAttachments.remove(at: index)
+                                    pendingAttachments.removeAll { $0.id == attachment.id }
                                 }
                             },
                             onTap: attachment.isPastedContent
@@ -1375,7 +1375,7 @@ extension FloatingInputCard {
                         // semantics as image/document chips.
                         DocumentChip(attachment: attachment) {
                             withAnimation(theme.springAnimation()) {
-                                _ = pendingAttachments.remove(at: index)
+                                pendingAttachments.removeAll { $0.id == attachment.id }
                             }
                         }
                     }
