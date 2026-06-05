@@ -269,12 +269,6 @@ final class NativeChartView: NSView {
     }
 
     private func presentSavePanel(for image: NSImage) {
-        guard
-            let tiff = image.tiffRepresentation,
-            let bitmap = NSBitmapImageRep(data: tiff),
-            let png = bitmap.representation(using: .png, properties: [:])
-        else { return }
-
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
         panel.canCreateDirectories = true
@@ -283,23 +277,46 @@ final class NativeChartView: NSView {
 
         let completion: (NSApplication.ModalResponse) -> Void = { response in
             guard response == .OK, let url = panel.url else { return }
-            do {
-                try png.write(to: url)
+            // Pull the (cheap) bitmap off the image on the main actor, then hand
+            // the Sendable TIFF Data to a detached task for the expensive PNG
+            // encode + disk write so the main thread never blocks.
+            Task { @MainActor in
+                guard let tiff = image.tiffRepresentation else {
+                    NSSound.beep()
+                    return
+                }
+                let saved = await Self.encodeAndWritePNG(tiff: tiff, to: url)
+                guard saved else {
+                    NSSound.beep()
+                    return
+                }
                 ToastManager.shared.action(
                     L("Chart saved"),
                     message: url.lastPathComponent,
                     action: .revealInFinder(url),
                     buttonTitle: L("Reveal in Finder")
                 )
-            } catch {
-                NSSound.beep()
             }
         }
+        // beginSheetModal is async (non-blocking); runModal is a blocking
+        // fallback only when the view isn't yet in a window.
         if let window = self.window {
             panel.beginSheetModal(for: window, completionHandler: completion)
         } else {
             completion(panel.runModal())
         }
+    }
+
+    /// PNG-encodes `tiff` and writes it to `url` off the main thread.
+    private nonisolated static func encodeAndWritePNG(tiff: Data, to url: URL) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            guard
+                let bitmap = NSBitmapImageRep(data: tiff),
+                let png = bitmap.representation(using: .png, properties: [:]),
+                (try? png.write(to: url)) != nil
+            else { return false }
+            return true
+        }.value
     }
 
     // MARK: - Draw / Refresh
