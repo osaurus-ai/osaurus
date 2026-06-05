@@ -2650,6 +2650,10 @@ final class ChatSession: ObservableObject {
                         req.samplingParametersAreImplicit = true
                         req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                         req.ttftTrace = ttftTrace
+                        // Correlate the Insights log this send produces back to the
+                        // assistant turn, so the per-message "Insights" button can
+                        // open this exact response.
+                        req.turnId = assistantTurn.id
                         debugLog(
                             "send: attempt=\(attempts) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
                         )
@@ -3074,6 +3078,7 @@ final class ChatSession: ObservableObject {
                             )
                             finalReq.samplingParametersAreImplicit = true
                             finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+                            finalReq.turnId = assistantTurn.id
 
                             let processor = StreamingDeltaProcessor(
                                 turn: assistantTurn

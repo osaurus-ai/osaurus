@@ -484,6 +484,8 @@ final class NativeAssistantActionsView: NSView {
     private let copyButton: HeaderCircleActionControl
     private let regenerateButton: HeaderCircleActionControl
     let speakButton: HeaderCircleActionControl
+    /// Opens the Insights tab focused on this turn's request/response log.
+    let insightsButton: HeaderCircleActionControl
 
     private var turnId: UUID = UUID()
     private var onCopy: ((UUID) -> Void)?
@@ -500,18 +502,22 @@ final class NativeAssistantActionsView: NSView {
         let copyControl = HeaderCircleActionControl(action: {})
         let regenControl = HeaderCircleActionControl(action: {})
         let speakControl = HeaderCircleActionControl(action: {})
+        let insightsControl = HeaderCircleActionControl(action: {})
         self.copyButton = copyControl
         self.regenerateButton = regenControl
         self.speakButton = speakControl
+        self.insightsButton = insightsControl
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         regenerateButton.translatesAutoresizingMaskIntoConstraints = false
         speakButton.translatesAutoresizingMaskIntoConstraints = false
+        insightsButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(copyButton)
         addSubview(regenerateButton)
         addSubview(speakButton)
+        addSubview(insightsButton)
 
         copyButton.setAction { [weak self] in
             guard let self else { return }
@@ -524,6 +530,10 @@ final class NativeAssistantActionsView: NSView {
         speakButton.setAction { [weak self] in
             guard let self else { return }
             self.onSpeak?(self.turnId)
+        }
+        insightsButton.setAction { [weak self] in
+            guard let self else { return }
+            self.openInsights()
         }
 
         let size: CGFloat = 28
@@ -550,7 +560,15 @@ final class NativeAssistantActionsView: NSView {
             speakButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             speakWidth,
             speakButton.heightAnchor.constraint(equalToConstant: size),
-            speakButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+
+            // Insights follows the speaker button. When the speaker is hidden
+            // its width/leading collapse to 0, so insights sits flush after
+            // Regenerate instead. Insights carries the trailing pin.
+            insightsButton.leadingAnchor.constraint(equalTo: speakButton.trailingAnchor, constant: 4),
+            insightsButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            insightsButton.widthAnchor.constraint(equalToConstant: size),
+            insightsButton.heightAnchor.constraint(equalToConstant: size),
+            insightsButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
         ])
 
         ttsObservation = NotificationCenter.default.addObserver(
@@ -614,8 +632,26 @@ final class NativeAssistantActionsView: NSView {
             theme: theme,
             iconTint: nil
         )
+        insightsButton.setSymbol(
+            NSImage(systemSymbolName: "chart.bar.doc.horizontal", accessibilityDescription: L("Insights"))?
+                .withSymbolConfiguration(cfg),
+            toolTip: L("View in Insights"),
+            theme: theme,
+            iconTint: nil
+        )
         applyTTSVisibility()
         refreshSpeakIcon()
+    }
+
+    /// Opens the Settings → Insights tab, focused on the request/response log
+    /// this assistant turn produced. Falls back to the full Insights list when
+    /// no matching log survives in the ring buffer (e.g. it was evicted or the
+    /// logs were cleared).
+    private func openInsights() {
+        MainActor.assumeIsolated {
+            InsightsService.shared.focus(turnId: turnId)
+            AppDelegate.shared?.showManagementWindow(initialTab: .insights)
+        }
     }
 
     private func refreshSpeakIcon() {
