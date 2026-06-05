@@ -464,7 +464,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "58a4eee17da66f041a6fdd69fc3ab5ca3c24c4c7"
+        let expectedRuntimeHardenedRevision = "27f5806eaacba051b12b06c1f6c9bb6de9f1ebaa"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
