@@ -47,6 +47,13 @@ final class NativeMarkdownView: NSView {
     private var segmentViews: [(view: NSView, key: String)] = []
     /// only used in mixed segment layout — needed for correct height (spacingBefore between segments).
     private var lastMixedSegments: [ContentSegment] = []
+    /// Layout signature (segment ids + spacing, in order) of the constraint
+    /// chain currently installed by `applyMixedSegments`. When the next pass
+    /// produces the same signature — the common case while content streams
+    /// into existing segments — the vertical chain is already correct and the
+    /// teardown/re-pin is skipped, so steady-state streaming performs no
+    /// constraint mutations at all.
+    private var installedSegmentLayoutSignature: [String] = []
     private var heightConstraint: NSLayoutConstraint?
 
     // MARK: State
@@ -636,19 +643,33 @@ final class NativeMarkdownView: NSView {
             return false
         }
 
-        // this prevents conflicts as segments move or get pinned/unpinned from bottom.
-        let subviewPointers = Set(subviews.map { Unmanaged.passUnretained($0).toOpaque() })
-        let verticalConstraints = constraints.filter { c in
-            if c.firstAttribute == .top || c.firstAttribute == .bottom {
-                if let first = c.firstItem as? NSView,
-                    subviewPointers.contains(Unmanaged.passUnretained(first).toOpaque())
-                {
-                    return true
+        // When the segment structure (ids, order, spacing) matches what's already
+        // installed and every segment view survived the stale sweep, the vertical
+        // chain is correct as-is — only segment *content* changed. Skipping the
+        // teardown/re-pin keeps streaming ticks from churning the window's layout
+        // engine (the AutoLayout solve is the dominant main-thread cost while a
+        // long code-heavy reply streams).
+        let layoutSignature = segments.map { "\($0.id)|\($0.spacingBefore)" }
+        let structureUnchanged =
+            layoutSignature == installedSegmentLayoutSignature
+            && segmentViews.map { $0.key } == requiredKeys
+
+        if !structureUnchanged {
+            // this prevents conflicts as segments move or get pinned/unpinned from bottom.
+            let subviewPointers = Set(subviews.map { Unmanaged.passUnretained($0).toOpaque() })
+            let verticalConstraints = constraints.filter { c in
+                if c.firstAttribute == .top || c.firstAttribute == .bottom {
+                    if let first = c.firstItem as? NSView,
+                        subviewPointers.contains(Unmanaged.passUnretained(first).toOpaque())
+                    {
+                        return true
+                    }
                 }
+                return false
             }
-            return false
+            removeConstraints(verticalConstraints)
         }
-        removeConstraints(verticalConstraints)
+        installedSegmentLayoutSignature = layoutSignature
 
         var prevAnchor: NSLayoutYAxisAnchor = topAnchor
         var prevOffset: CGFloat = 4
@@ -756,11 +777,22 @@ final class NativeMarkdownView: NSView {
                 segView = tv
             }
 
-            NSLayoutConstraint.activate([
-                segView.leadingAnchor.constraint(equalTo: leadingAnchor),
-                segView.trailingAnchor.constraint(equalTo: trailingAnchor),
-                segView.topAnchor.constraint(equalTo: prevAnchor, constant: prevOffset + seg.spacingBefore),
-            ])
+            // Horizontal pins are created once, when the segment view first joins
+            // the hierarchy. The teardown above only strips the vertical chain, so
+            // re-activating leading/trailing here on every pass would pile duplicate
+            // constraints into the window's layout engine on each streaming tick,
+            // progressively slowing every subsequent layout solve to a crawl.
+            if existingEntry == nil {
+                NSLayoutConstraint.activate([
+                    segView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                    segView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                ])
+            }
+            if !structureUnchanged {
+                NSLayoutConstraint.activate([
+                    segView.topAnchor.constraint(equalTo: prevAnchor, constant: prevOffset + seg.spacingBefore)
+                ])
+            }
 
             if existingEntry == nil {
                 segmentViews.append((view: segView, key: seg.id))
@@ -866,6 +898,7 @@ final class NativeMarkdownView: NSView {
         for entry in segmentViews { entry.view.removeFromSuperview() }
         segmentViews = []
         lastMixedSegments = []
+        installedSegmentLayoutSignature = []
     }
 
     private func cancelAllImageLoadTasks() {
