@@ -35,6 +35,9 @@ struct MarkdownDocument: View {
             )
         }
         .frame(height: max(height, 1))
+        // Keep content (e.g. a tall banner that hasn't settled its height yet)
+        // from drawing outside the measured frame and over sibling views.
+        .clipped()
     }
 }
 

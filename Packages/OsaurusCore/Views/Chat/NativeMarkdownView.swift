@@ -113,6 +113,15 @@ final class NativeMarkdownView: NSView {
     private var hoverController: RedactionHoverController?
     /// cancels stale loads when segment id is reused with a new URL or view is removed
     private var imageLoadTasks: [String: (UUID, Task<Void, Never>)] = [:]
+    /// Per-image height constraint, updated to match the loaded image's
+    /// aspect ratio at the current layout width so wide banners render
+    /// short/full-width instead of being letterboxed in a fixed-height box.
+    private var imageHeightConstraints: [String: NSLayoutConstraint] = [:]
+    /// width / height of each loaded image, keyed by segment id.
+    private var imageAspectRatios: [String: CGFloat] = [:]
+    /// Height used before an image loads, and the ceiling once it has.
+    private static let imagePlaceholderHeight: CGFloat = 160
+    private static let imageMaxHeight: CGFloat = 360
     /// invalid until first layout pass with positive width — drives remeasure in `layout()`
     private var lastLayoutWidthForHeight: CGFloat = -1
     /// avoids re-entrant `measuredHeight` when `layoutSubtreeIfNeeded` runs during tool-row expand (same instance)
@@ -469,7 +478,7 @@ final class NativeMarkdownView: NSView {
         for seg in lastMixedSegments {
             guard let entry = segmentViews.first(where: { $0.key == seg.id }) else { continue }
             totalH += seg.spacingBefore
-            totalH += measureMixedSegmentHeight(entry.view, width: width)
+            totalH += measureMixedSegmentHeight(entry.view, key: entry.key, width: width)
         }
         totalH += 4
         totalH = max(totalH, 20)
@@ -479,7 +488,7 @@ final class NativeMarkdownView: NSView {
         return totalH
     }
 
-    private func measureMixedSegmentHeight(_ view: NSView, width: CGFloat) -> CGFloat {
+    private func measureMixedSegmentHeight(_ view: NSView, key: String, width: CGFloat) -> CGFloat {
         if let nmv = view as? NativeMarkdownView {
             return nmv.measuredHeight(for: width)
         }
@@ -489,8 +498,8 @@ final class NativeMarkdownView: NSView {
         if let tb = view as? NativeMarkdownTableView {
             return tb.measuredHeight()
         }
-        if let iv = view as? NSImageView {
-            return iv.bounds.height > 0 ? iv.bounds.height : 160
+        if view is NSImageView {
+            return imageHeight(forSegmentId: key, width: width)
         }
         if let field = view as? NSTextField {
             if width > 0.5 {
@@ -632,6 +641,8 @@ final class NativeMarkdownView: NSView {
         segmentViews = segmentViews.filter { entry in
             if requiredKeys.contains(entry.key) { return true }
             cancelImageLoadTask(forSegmentId: entry.key)
+            imageHeightConstraints.removeValue(forKey: entry.key)
+            imageAspectRatios.removeValue(forKey: entry.key)
             entry.view.removeFromSuperview()
             return false
         }
@@ -715,12 +726,25 @@ final class NativeMarkdownView: NSView {
                     iv = NSImageView()
                     iv.translatesAutoresizingMaskIntoConstraints = false
                     iv.imageScaling = .scaleProportionallyUpOrDown
+                    iv.imageAlignment = .alignLeft
                     iv.wantsLayer = true
                     iv.layer?.cornerRadius = 6
                     iv.layer?.masksToBounds = true
-                    iv.heightAnchor.constraint(equalToConstant: 160).isActive = true
+                    // Don't let the image's intrinsic size fight the pinned
+                    // width/height constraints (a 1500px banner must not blow
+                    // out the layout).
+                    iv.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                    iv.setContentHuggingPriority(.defaultLow, for: .vertical)
+                    iv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                    iv.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+                    let hc = iv.heightAnchor.constraint(
+                        equalToConstant: Self.imagePlaceholderHeight
+                    )
+                    hc.isActive = true
+                    imageHeightConstraints[seg.id] = hc
                     addSubview(iv)
                 }
+                applyImageHeight(segmentId: seg.id, width: width)
                 scheduleImageLoad(segmentId: seg.id, urlString: urlString, imageView: iv)
                 segView = iv
 
@@ -866,6 +890,8 @@ final class NativeMarkdownView: NSView {
         for entry in segmentViews { entry.view.removeFromSuperview() }
         segmentViews = []
         lastMixedSegments = []
+        imageHeightConstraints.removeAll()
+        imageAspectRatios.removeAll()
     }
 
     private func cancelAllImageLoadTasks() {
@@ -923,10 +949,33 @@ final class NativeMarkdownView: NSView {
                 }
                 imageView.image = img
                 self.imageLoadTasks.removeValue(forKey: segmentId)
+                let size = img.size
+                if size.width > 0, size.height > 0 {
+                    self.imageAspectRatios[segmentId] = size.width / size.height
+                }
+                self.applyImageHeight(segmentId: segmentId, width: self.lastWidth)
                 self.onHeightChanged?()
             }
         }
         imageLoadTasks[segmentId] = (token, task)
+    }
+
+    /// Height an image segment should occupy at `width`: the aspect-correct
+    /// height once the image has loaded (capped), otherwise a placeholder.
+    private func imageHeight(forSegmentId id: String, width: CGFloat) -> CGFloat {
+        guard let aspect = imageAspectRatios[id], aspect > 0, width > 0.5 else {
+            return Self.imagePlaceholderHeight
+        }
+        return min(Self.imageMaxHeight, max(1, width / aspect))
+    }
+
+    /// Sync an image segment's height constraint to `imageHeight(...)`.
+    private func applyImageHeight(segmentId: String, width: CGFloat) {
+        guard let constraint = imageHeightConstraints[segmentId] else { return }
+        let target = imageHeight(forSegmentId: segmentId, width: width)
+        if abs(constraint.constant - target) > 0.5 {
+            constraint.constant = target
+        }
     }
 
     // MARK: - Theme Fingerprint

@@ -204,10 +204,188 @@ actor HuggingFaceService {
                 let raw = String(data: data, encoding: .utf8)
             else { return nil }
             let stripped = Self.strippingFrontMatter(raw).trimmingCharacters(in: .whitespacesAndNewlines)
-            return stripped.isEmpty ? nil : stripped
+            guard !stripped.isEmpty else { return nil }
+            // Normalize HTML to markdown first (turning `<img>` into `![](…)`),
+            // then resolve every relative image path in one pass.
+            let normalized = Self.normalizingModelCardHTML(stripped)
+            return Self.resolvingRelativeImageURLs(in: normalized, repoId: repoId)
         } catch {
             return nil
         }
+    }
+
+    /// Converts the common HTML constructs HF model cards use into markdown
+    /// so they render instead of showing as raw tags. The chat markdown
+    /// engine has no HTML renderer, so cards that wrap their banner in
+    /// `<p align="center"><img .../></p>` (or use `<a>`, `<br>`, `<picture>`)
+    /// otherwise leak literal HTML into the rendered body.
+    ///
+    /// Only transforms text *outside* fenced code blocks so HTML shown as a
+    /// code sample is left intact.
+    static func normalizingModelCardHTML(_ markdown: String) -> String {
+        // Split on ``` fences: even indices are prose, odd indices are inside
+        // a fenced block. Rejoin with the same delimiter afterwards.
+        let segments = markdown.components(separatedBy: "```")
+        let transformed = segments.enumerated().map { index, segment -> String in
+            index.isMultiple(of: 2) ? normalizeHTMLProse(segment) : segment
+        }
+        return transformed.joined(separator: "```")
+    }
+
+    private static func normalizeHTMLProse(_ input: String) -> String {
+        var s = input
+
+        // `<img ... src="X" ... alt="Y">` -> standalone markdown image.
+        s = replacingMatches(in: s, pattern: #"<img\b[^>]*>"#) { tag in
+            let raw = htmlAttribute("src", in: tag) ?? htmlAttribute("data-src", in: tag)
+            guard let raw, !raw.isEmpty else { return "" }
+            // Markdown image URLs can't contain raw spaces, so encode them.
+            let url = raw.replacingOccurrences(of: " ", with: "%20")
+            let alt = htmlAttribute("alt", in: tag) ?? ""
+            return "\n\n![\(alt)](\(url))\n\n"
+        }
+
+        // `<a href="url">text</a>` -> `[text](url)`.
+        s = replacingMatches(
+            in: s,
+            pattern: #"<a\b[^>]*?\bhref\s*=\s*["'][^"']*["'][^>]*>[\s\S]*?</a>"#
+        ) { anchor in
+            let href = htmlAttribute("href", in: anchor) ?? ""
+            // Inner text = the anchor with every tag (open/close/nested)
+            // stripped, so we never re-emit HTML.
+            let inner =
+                anchor
+                .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if href.isEmpty { return inner }
+            return inner.isEmpty ? href : "[\(inner)](\(href))"
+        }
+
+        // Line breaks.
+        s = s.replacingOccurrences(
+            of: #"<br\s*/?>"#,
+            with: "\n",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        // Strip layout/inline wrapper tags that otherwise render as text.
+        s = s.replacingOccurrences(
+            of:
+                #"</?(?:p|div|center|span|picture|source|figure|figcaption|small|font|sub|sup|u|a)\b[^>]*>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        // Collapse the blank-line runs the substitutions can introduce.
+        s = s.replacingOccurrences(
+            of: #"\n{3,}"#,
+            with: "\n\n",
+            options: .regularExpression
+        )
+        return s
+    }
+
+    /// Extracts an HTML attribute value (`name="value"` / `name='value'`)
+    /// from a single tag string. Case-insensitive on the attribute name.
+    private static func htmlAttribute(_ name: String, in tag: String) -> String? {
+        let pattern = "\\b\(name)\\s*=\\s*[\"']([^\"']*)[\"']"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+            let match = regex.firstMatch(
+                in: tag,
+                range: NSRange(tag.startIndex..., in: tag)
+            ),
+            match.numberOfRanges > 1,
+            let range = Range(match.range(at: 1), in: tag)
+        else { return nil }
+        return String(tag[range])
+    }
+
+    /// Replaces every whole-match of `pattern` using `transform`, which
+    /// receives the matched substring. Matches run in reverse so earlier
+    /// ranges stay valid as later ones are rewritten.
+    private static func replacingMatches(
+        in input: String,
+        pattern: String,
+        transform: (String) -> String
+    ) -> String {
+        guard
+            let regex = try? NSRegularExpression(
+                pattern: pattern,
+                options: [.caseInsensitive]
+            )
+        else { return input }
+        var output = input
+        let matches = regex.matches(
+            in: input,
+            range: NSRange(input.startIndex..., in: input)
+        )
+        for match in matches.reversed() {
+            guard let range = Range(match.range, in: output) else { continue }
+            output.replaceSubrange(range, with: transform(String(output[range])))
+        }
+        return output
+    }
+
+    /// Rewrites repo-relative markdown image references (`![alt](path)`) in a
+    /// model card to absolute Hugging Face `resolve/main/` URLs so they
+    /// actually load. HF READMEs routinely use relative paths (e.g.
+    /// `assets/banner.png`, `./fig.png`) that carry no scheme/host and can't
+    /// be fetched directly. Absolute or protocol-relative/data URLs are left
+    /// untouched. (HTML `<img>` is converted to markdown first by
+    /// `normalizingModelCardHTML`, so this only handles markdown.)
+    static func resolvingRelativeImageURLs(in markdown: String, repoId: String) -> String {
+        let base = "https://huggingface.co/\(repoId)/resolve/main/"
+
+        func absolutize(_ raw: String) -> String {
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return raw }
+            let lower = trimmed.lowercased()
+            if lower.hasPrefix("http://") || lower.hasPrefix("https://")
+                || lower.hasPrefix("data:") || lower.hasPrefix("mailto:")
+                || trimmed.hasPrefix("//")
+            {
+                return trimmed
+            }
+            // Drop a leading `./` or `/` so we don't double the base path.
+            var path = trimmed
+            while path.hasPrefix("./") { path.removeFirst(2) }
+            while path.hasPrefix("/") { path.removeFirst() }
+            return base + path
+        }
+
+        // Markdown images: `![alt](url "optional title")`.
+        return rewriteCaptureGroup(
+            in: markdown,
+            pattern: #"(!\[[^\]]*\]\()([^)\s]+)"#,
+            group: 2,
+            transform: absolutize
+        )
+    }
+
+    /// Replaces capture `group` of every `pattern` match in `input` using
+    /// `transform`. Matches are applied in reverse so earlier ranges stay
+    /// valid as later ones are rewritten.
+    private static func rewriteCaptureGroup(
+        in input: String,
+        pattern: String,
+        group: Int,
+        transform: (String) -> String
+    ) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        else { return input }
+        var output = input
+        let matches = regex.matches(
+            in: input,
+            options: [],
+            range: NSRange(input.startIndex..., in: input)
+        )
+        for match in matches.reversed() {
+            guard match.numberOfRanges > group,
+                let range = Range(match.range(at: group), in: output)
+            else { continue }
+            output.replaceSubrange(range, with: transform(String(output[range])))
+        }
+        return output
     }
 
     /// Removes a leading YAML front-matter block (`---` ... `---`) from a
