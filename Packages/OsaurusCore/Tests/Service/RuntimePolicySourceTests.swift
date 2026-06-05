@@ -131,6 +131,8 @@ struct RuntimePolicySourceTests {
         let store = try Self.source("Models/Chat/ChatSessionStore.swift")
         #expect(store.contains("StorageKeyManager.shared.hasCachedKey"))
         #expect(store.contains("Chat history unavailable: storage key is not already unlocked"))
+        #expect(!store.contains("prewarmCurrentKey()"))
+        #expect(store.contains("Sentry APPLE-MACOS-40/41/42"))
     }
 
     @Test("chat history writer skips persistence unless storage key is already unlocked")
