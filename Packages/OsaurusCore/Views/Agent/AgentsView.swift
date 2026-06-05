@@ -2804,9 +2804,12 @@ struct AgentDetailView: View {
                             isOn: $memoryEnabled
                         )
                     } else {
-                        Text("Memory for the default agent is controlled globally in Settings > Enable memory.")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                        Text(
+                            "Memory for the default agent is controlled globally in Settings > Enable memory.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
                     }
                 }
 
@@ -2854,9 +2857,12 @@ struct AgentDetailView: View {
                             isOn: $selfSchedulingEnabled
                         )
                         if selfSchedulingEnabled {
-                            Text("Run frequency and limits are configured in the Scheduling section below.")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
+                            Text(
+                                "Run frequency and limits are configured in the Scheduling section below.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
                         }
                     }
 
@@ -2874,9 +2880,12 @@ struct AgentDetailView: View {
                         sandboxExecSubsection
                     }
 
-                    Text("Voice output lives in the Voice section; chat greetings are in Customization > Empty State.")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                    Text(
+                        "Voice output lives in the Voice section; chat greetings are in Customization > Empty State.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
                 }
             }
         }
