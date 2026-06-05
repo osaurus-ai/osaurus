@@ -830,7 +830,9 @@ final class ToolRegistry: ObservableObject {
         let systemPermissions = requirements.compactMap { SystemPermission(rawValue: $0) }
         var systemPermissionStates: [SystemPermission: Bool] = [:]
         for perm in systemPermissions {
-            systemPermissionStates[perm] = SystemPermissionService.shared.isGranted(perm)
+            // Read the cached state: this runs during view updates, and the live
+            // check can synchronously block on EventKit XPC and hang the UI.
+            systemPermissionStates[perm] = SystemPermissionService.shared.cachedIsGranted(perm)
         }
 
         return ToolPolicyInfo(

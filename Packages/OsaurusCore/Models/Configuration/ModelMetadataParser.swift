@@ -9,9 +9,18 @@
 import Foundation
 
 enum ModelMetadataParser {
-    /// Extracts parameter count from a repo ID (e.g., "1.7B", "7B", "270M")
-    static func parameterCount(from repoId: String) -> String? {
-        let text = repoId.lowercased()
+    // MARK: - Memoization
+
+    // `parameterCount` / `quantization` are read from `ModelRowView.metadataBadges`
+    // on every SwiftUI body evaluation, for every row. Both are pure functions of an
+    // immutable repo ID, so the regex work is cached the first time an ID is seen and
+    // returned for free thereafter. Lock-guarded because the parser is nonisolated and
+    // can be reached from background discovery tasks as well as the main actor.
+    private static let cacheLock = NSLock()
+    private nonisolated(unsafe) static var parameterCountCache: [String: String?] = [:]
+    private nonisolated(unsafe) static var quantizationCache: [String: String?] = [:]
+
+    private static let parameterCountRegexes: [NSRegularExpression] = {
         let patterns = [
             #"(\d+\.?\d*)[bm](?:-|$|\s|[^a-z])"#,
             #"(\d+\.?\d*)b-"#,
@@ -20,17 +29,36 @@ enum ModelMetadataParser {
             #"e(\d+)[bm]"#,
             #"a(\d+)[bm]"#,
         ]
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: .caseInsensitive) }
+    }()
 
-        for pattern in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let range = NSRange(text.startIndex..., in: text)
-                if let match = regex.firstMatch(in: text, options: [], range: range),
-                    let numRange = Range(match.range(at: 1), in: text)
-                {
-                    let number = String(text[numRange])
-                    let fullMatch = String(text[Range(match.range, in: text)!]).uppercased()
-                    return "\(number)\(fullMatch.contains("M") ? "M" : "B")"
-                }
+    /// Extracts parameter count from a repo ID (e.g., "1.7B", "7B", "270M")
+    static func parameterCount(from repoId: String) -> String? {
+        cacheLock.lock()
+        if let cached = parameterCountCache[repoId] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let result = computeParameterCount(from: repoId)
+
+        cacheLock.lock()
+        parameterCountCache[repoId] = result
+        cacheLock.unlock()
+        return result
+    }
+
+    private static func computeParameterCount(from repoId: String) -> String? {
+        let text = repoId.lowercased()
+        for regex in parameterCountRegexes {
+            let range = NSRange(text.startIndex..., in: text)
+            if let match = regex.firstMatch(in: text, options: [], range: range),
+                let numRange = Range(match.range(at: 1), in: text)
+            {
+                let number = String(text[numRange])
+                let fullMatch = String(text[Range(match.range, in: text)!]).uppercased()
+                return "\(number)\(fullMatch.contains("M") ? "M" : "B")"
             }
         }
         return nil
@@ -38,8 +66,24 @@ enum ModelMetadataParser {
 
     /// Extracts quantization level from a repo ID (e.g., "4-bit", "8-bit", "FP16")
     static func quantization(from repoId: String) -> String? {
-        if let bits = extractBitWidth(from: repoId) { return "\(bits)-bit" }
-        return precisionFormat(from: repoId)
+        cacheLock.lock()
+        if let cached = quantizationCache[repoId] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let result: String?
+        if let bits = extractBitWidth(from: repoId) {
+            result = "\(bits)-bit"
+        } else {
+            result = precisionFormat(from: repoId)
+        }
+
+        cacheLock.lock()
+        quantizationCache[repoId] = result
+        cacheLock.unlock()
+        return result
     }
 
     /// Extracts quantization in Ollama-compatible format (e.g., "Q4_0", "FP16")

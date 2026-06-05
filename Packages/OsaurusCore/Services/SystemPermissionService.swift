@@ -116,6 +116,17 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
 
     // MARK: - Permission Checking
 
+    /// Non-blocking granted lookup that returns the last-published cached state.
+    ///
+    /// Use this from view-update / layout paths. The live `isGranted(_:)` runs the
+    /// authorization-status APIs synchronously, and EventKit's
+    /// `EKEventStore.authorizationStatus(for:)` performs a synchronous XPC round-trip to
+    /// the EventKit daemon that can hang the UI for seconds. The cache is kept fresh by
+    /// `refreshAllPermissions()` / the periodic refresh, both of which probe off the main actor.
+    func cachedIsGranted(_ permission: SystemPermission) -> Bool {
+        permissionStates[permission] ?? false
+    }
+
     /// Check if a system permission is currently granted
     func isGranted(_ permission: SystemPermission) -> Bool {
         switch permission {

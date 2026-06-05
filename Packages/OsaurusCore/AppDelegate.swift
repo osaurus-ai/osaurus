@@ -525,6 +525,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .seconds(1.5))
                     self?.prewarmManagementWindow()
+                    // Warm ChatView's (deep, slow-to-realize) generic metadata too,
+                    // spaced out so the two heavy SwiftUI realizations don't stack
+                    // into a single main-thread stall during the launch settle.
+                    try? await Task.sleep(for: .seconds(1.0))
+                    ChatWindowManager.shared.prewarmChatView()
                 }
             }
         }
