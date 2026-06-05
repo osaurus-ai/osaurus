@@ -52,6 +52,12 @@ final class InsightsService: ObservableObject {
     /// Summary statistics. Recomputed alongside `filteredLogs`.
     @Published public private(set) var stats: InsightsStats = .empty
 
+    /// Log entry that another part of the app asked the Insights tab to
+    /// reveal (e.g. the per-message "Insights" button in chat). `InsightsView`
+    /// observes this, pushes the matching log into its detail pane, then
+    /// clears it back to nil. Nil means no pending request.
+    @Published var pendingFocusLogId: UUID?
+
     private var pipelineCancellable: AnyCancellable?
 
     // MARK: - Initialization
@@ -185,6 +191,23 @@ final class InsightsService: ObservableObject {
     func clear() {
         logs.removeAll()
         totalRequestCount = 0
+        pendingFocusLogId = nil
+    }
+
+    /// Ask the Insights tab to reveal the most recent log produced by the
+    /// given chat assistant turn. Returns false when no matching log exists
+    /// (e.g. it was evicted from the ring buffer or cleared), in which case
+    /// the caller may still open the tab to show the full list.
+    @discardableResult
+    func focus(turnId: UUID) -> Bool {
+        guard let match = logs.first(where: { $0.turnId == turnId }) else {
+            return false
+        }
+        // Reassign even if it already equals the target id so a second tap
+        // re-pushes the detail pane after the user backed out of it.
+        pendingFocusLogId = nil
+        pendingFocusLogId = match.id
+        return true
     }
 
     /// Clear filters
@@ -343,6 +366,7 @@ extension InsightsService {
     /// Thread-safe logging from non-main-actor contexts
     nonisolated static func logRequest(
         source: RequestSource,
+        turnId: UUID? = nil,
         method: String,
         path: String,
         statusCode: Int,
@@ -379,6 +403,7 @@ extension InsightsService {
         Task { @MainActor in
             let log = RequestLog(
                 source: source,
+                turnId: turnId,
                 method: method,
                 path: path,
                 statusCode: statusCode,
@@ -409,6 +434,7 @@ extension InsightsService {
     /// text). Defaults are nil to preserve existing call-site ergonomics.
     nonisolated static func logInference(
         source: RequestSource,
+        turnId: UUID? = nil,
         model: String,
         inputTokens: Int,
         outputTokens: Int,
@@ -425,6 +451,7 @@ extension InsightsService {
     ) {
         logRequest(
             source: source,
+            turnId: turnId,
             method: "POST",
             path: "/chat/completions",
             statusCode: errorMessage != nil ? 500 : 200,

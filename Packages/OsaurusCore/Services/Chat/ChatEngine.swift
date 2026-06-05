@@ -535,10 +535,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // Capture the request body up-front so the producer task does not
             // need to retain `request` (a non-Sendable in Swift 6 strict mode).
             let requestBodyJSON = source == .chatUI ? Self.serializeRequestForLog(request) : nil
+            // `turnId` is a Sendable UUID, so capturing it (unlike `request`)
+            // is safe for the detached producer — correlates the log back to
+            // the chat assistant turn for the per-message Insights button.
+            let turnId = request.turnId
 
             return wrapStreamWithLogging(
                 innerStream,
                 source: source,
+                turnId: turnId,
                 model: model,
                 inputTokens: inputTokens,
                 temperature: temp,
@@ -557,6 +562,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     private func wrapStreamWithLogging(
         _ inner: AsyncThrowingStream<String, Error>,
         source: InferenceSource,
+        turnId: UUID? = nil,
         model: String,
         inputTokens: Int,
         temperature: Float?,
@@ -785,6 +791,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
                 InsightsService.logInference(
                     source: source,
+                    turnId: turnId,
                     model: model,
                     inputTokens: inputTokens,
                     outputTokens: outputTokenCount,
@@ -929,6 +936,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         let durationMs = Date().timeIntervalSince(startTime) * 1000
                         InsightsService.logInference(
                             source: inferenceSource,
+                            turnId: request.turnId,
                             model: effectiveModel,
                             inputTokens: inputTokens,
                             outputTokens: outputTokens,
@@ -1041,6 +1049,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 InsightsService.logInference(
                     source: inferenceSource,
+                    turnId: request.turnId,
                     model: effectiveModel,
                     inputTokens: inputTokens,
                     outputTokens: outputTokens,

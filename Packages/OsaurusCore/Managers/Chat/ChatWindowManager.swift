@@ -306,6 +306,14 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         nsWindows[id]
     }
 
+    /// Reverse lookup: the window id that owns a given NSWindow, if it's a
+    /// chat window. Lets AppKit views deep inside the chat hierarchy resolve
+    /// their own window id (e.g. to scope a ThemedAlert to this chat window)
+    /// without threading it down through the view tree.
+    public func windowId(for window: NSWindow) -> UUID? {
+        nsWindows.first(where: { $0.value === window })?.key
+    }
+
     /// Get window info by ID
     public func windowInfo(id: UUID) -> ChatWindowInfo? {
         windows[id]

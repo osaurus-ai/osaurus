@@ -519,6 +519,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // first chat session of the launch.
             if !keychainDisabledTestMode {
                 prewarmGreetingPoolIfEnabled()
+                // Build the Settings/management window graph while idle so the
+                // first open is instant
+                // instead of stalling on a synchronous SwiftUI construct+layout.
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(1.5))
+                    self?.prewarmManagementWindow()
+                }
             }
         }
     }
@@ -1973,5 +1980,36 @@ extension AppDelegate {
             windowManager.show(.management, center: false)
             NSLog("[Management] Created new window and presented")
         }
+    }
+
+    /// Builds the management window's SwiftUI graph + `NSHostingController`
+    /// once, while idle, WITHOUT showing it. The construction + initial layout
+    /// of `ManagementView` (sidebar, badge stores, tab shell) is the dominant
+    /// cost of opening Settings; doing it here means the first user-initiated
+    /// open (e.g. the chat "Insights" button) hits the cheap reuse path in
+    /// `showManagementWindow` instead of stalling the click. No-op if the
+    /// window already exists.
+    @MainActor public func prewarmManagementWindow() {
+        let windowManager = WindowManager.shared
+        guard windowManager.window(for: .management) == nil else { return }
+
+        let themeManager = ThemeManager.shared
+        let root = ManagementView()
+            .environmentObject(self.serverController)
+            .environmentObject(self.updater)
+            .environment(\.theme, themeManager.currentTheme)
+
+        let window = windowManager.createWindow(config: .management) { root }
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: themeManager.currentTheme.isDark ? .darkAqua : .aqua)
+        themeManager.$currentTheme
+            .receive(on: DispatchQueue.main)
+            .sink { [weak window] theme in
+                window?.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
+            }
+            .store(in: &self.cancellables)
+        // Intentionally not shown — it stays registered and hidden until the
+        // user opens Settings, at which point `showManagementWindow` reuses it.
+        NSLog("[Management] Prewarmed hidden window")
     }
 }
