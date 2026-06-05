@@ -8,12 +8,15 @@
 
 import AppKit
 import AAInfographics
+import UniformTypeIdentifiers
+import WebKit
 
 final class NativeChartView: NSView {
 
     private let card = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let typePicker = NSPopUpButton()
+    private let downloadButton = NSButton()
     private let noteLabel = NSTextField(labelWithString: "")
     private let chartView = AAChartView()
 
@@ -102,6 +105,21 @@ final class NativeChartView: NSView {
         typePicker.action = #selector(chartTypeChanged)
         card.addSubview(typePicker)
 
+        // Download button — snapshots the rendered chart to a PNG file
+        downloadButton.image = NSImage(
+            systemSymbolName: "square.and.arrow.down",
+            accessibilityDescription: "Save chart as image"
+        )
+        downloadButton.imagePosition = .imageOnly
+        downloadButton.bezelStyle = .roundRect
+        downloadButton.controlSize = .small
+        downloadButton.isBordered = true
+        downloadButton.toolTip = "Save chart as image"
+        downloadButton.translatesAutoresizingMaskIntoConstraints = false
+        downloadButton.target = self
+        downloadButton.action = #selector(downloadChart)
+        card.addSubview(downloadButton)
+
         // Suppress WKWebView's white background before JS renders
         chartView.setValue(false, forKey: "drawsBackground")
         chartView.underPageBackgroundColor = .clear
@@ -142,7 +160,10 @@ final class NativeChartView: NSView {
             titleLabel.centerYAnchor.constraint(equalTo: typePicker.centerYAnchor),
 
             typePicker.topAnchor.constraint(equalTo: card.topAnchor, constant: p - 2),
-            typePicker.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -p),
+            typePicker.trailingAnchor.constraint(equalTo: downloadButton.leadingAnchor, constant: -6),
+
+            downloadButton.centerYAnchor.constraint(equalTo: typePicker.centerYAnchor),
+            downloadButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -p),
 
             chartView.topAnchor.constraint(equalTo: typePicker.bottomAnchor, constant: 4),
             chartView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
@@ -232,6 +253,43 @@ final class NativeChartView: NSView {
         let bgHex = NSColor(theme.cardBackground).hexString
         let textHex = NSColor(theme.primaryText).hexString
         redraw(spec: updated, bgHex: bgHex, textHex: textHex, theme: theme, forceFullRedraw: true)
+    }
+
+    // MARK: - Download action
+
+    /// Snapshots the rendered chart (AAChartView is a WKWebView) into a PNG and
+    /// prompts the user for a save location.
+    @objc private func downloadChart() {
+        let config = WKSnapshotConfiguration()
+        config.afterScreenUpdates = true
+        chartView.takeSnapshot(with: config) { [weak self] image, error in
+            guard let self, let image, error == nil else { return }
+            self.presentSavePanel(for: image)
+        }
+    }
+
+    private func presentSavePanel(for image: NSImage) {
+        guard
+            let tiff = image.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiff),
+            let png = bitmap.representation(using: .png, properties: [:])
+        else { return }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        let baseName = (lastSpec?.title?.isEmpty == false ? lastSpec?.title : nil) ?? "chart"
+        panel.nameFieldStringValue = "\(baseName).png"
+
+        let completion: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url else { return }
+            try? png.write(to: url)
+        }
+        if let window = self.window {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            completion(panel.runModal())
+        }
     }
 
     // MARK: - Draw / Refresh
