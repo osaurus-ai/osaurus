@@ -116,6 +116,40 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(resolved == nil)
     }
 
+    @Test("Hybrid JANGTQ RAM headroom is derived from attention topology, not disk bytes")
+    func hybridJANGTQHeadroomUsesConfigTopology() throws {
+        let dir = try makeIsolatedDir()
+        let config = """
+            {
+              "model_type": "nemotron_h",
+              "num_hidden_layers": 8,
+              "layers_block_type": ["mamba", "moe", "mamba", "attention", "moe", "mamba", "moe", "attention"],
+              "num_attention_heads": 64,
+              "num_key_value_heads": 2,
+              "head_dim": 128,
+              "max_position_embeddings": 262144,
+              "mamba_num_heads": 128,
+              "mamba_head_dim": 128,
+              "ssm_state_size": 128,
+              "conv_kernel": 4,
+              "mamba_ssm_cache_dtype": "float32",
+              "weight_format": "mxtq"
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let weights: Int64 = 100 * 1024 * 1024 * 1024
+        let fallback = ModelRuntime.estimatedKVHeadroomBytes(forWeights: weights)
+        let topology = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir
+        )
+
+        #expect(fallback == 20 * 1024 * 1024 * 1024)
+        #expect(topology < 2 * 1024 * 1024 * 1024)
+        #expect(topology >= 512 * 1024 * 1024)
+    }
+
     // MARK: - JANGTQ sidecar preflight
     //
     // vmlx's LLMModelFactory dispatches to the JANGTQ class purely on

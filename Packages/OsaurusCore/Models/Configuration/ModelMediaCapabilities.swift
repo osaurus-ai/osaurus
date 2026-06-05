@@ -216,6 +216,10 @@ public enum ModelMediaCapabilities {
             return .omni
         }
 
+        if ModelFamilyNames.isNemotronThinkingFamily(modelId) {
+            return .textOnly
+        }
+
         // Read config.json for vision_config presence.
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),

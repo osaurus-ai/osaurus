@@ -240,12 +240,25 @@ struct MLXModel: Identifiable, Codable {
         let hasTokenizerAssets = hasTokenizerJSON || hasBPE || hasSentencePiece
         guard hasTokenizerAssets else { return false }
 
-        if let items = try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil
-        ) {
-            let hasWeights = items.contains { $0.pathExtension == "safetensors" }
-            return hasWeights
+        let directWeightSentinels = [
+            "model.safetensors",
+            "weights.safetensors",
+            "model-00001-of-00001.safetensors",
+            "weights-00001-of-00001.safetensors",
+        ]
+        if directWeightSentinels.contains(where: exists) {
+            return true
+        }
+        if exists("model.safetensors.index.json")
+            || exists("pytorch_model.safetensors.index.json")
+        {
+            return true
+        }
+        for shardCount in 2 ... 256 {
+            let candidate = String(format: "model-00001-of-%05d.safetensors", shardCount)
+            if exists(candidate) {
+                return true
+            }
         }
         return false
     }
@@ -275,6 +288,13 @@ struct MLXModel: Identifiable, Codable {
             // capability detection text-only until Step VLM is wired and
             // proven, and avoid blocking picker rebuilds on large external
             // bundle metadata reads.
+            return false
+        }
+        if (ModelFamilyNames.isNemotronThinkingFamily(id)
+            || ModelFamilyNames.isNemotronThinkingFamily(name))
+            && !(ModelFamilyNames.isNemotronOmniFamily(id)
+                || ModelFamilyNames.isNemotronOmniFamily(name))
+        {
             return false
         }
         if isDownloaded { return VLMDetection.isVLM(at: localDirectory) }

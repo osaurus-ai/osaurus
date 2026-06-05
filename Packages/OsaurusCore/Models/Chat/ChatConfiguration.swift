@@ -162,7 +162,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             maxTokens: nil,
             contextLength: 128000,
             topPOverride: nil,
-            maxToolAttempts: 15,
+            maxToolAttempts: 30,
             // Out-of-box core model: Apple Foundation when this Mac can
             // actually run it (macOS 26+ with Apple Intelligence). On
             // older systems / Intel, leave the core model unset and let

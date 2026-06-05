@@ -122,4 +122,14 @@ struct ModelDownloadServiceStorageTests {
         }
         #expect(bytes == expected)
     }
+
+    @Test func positiveLegacyFreeSpaceAvoidsImportantCapacityOverride() {
+        let legacy: Int64 = 512 * 1024 * 1024 * 1024
+        let important: Int64 = 700 * 1024 * 1024 * 1024
+        let bytes = OsaurusPaths.resolvedVolumeFreeBytes(
+            importantCapacity: important,
+            legacyFree: legacy
+        )
+        #expect(bytes == legacy)
+    }
 }

@@ -64,6 +64,23 @@ struct ModelMediaCapabilitiesMCDCTests {
         )
     }
 
+    @Test("D1 boundary: Nemotron 3 Ultra is text-only unless it is Omni")
+    func d1_nemotronUltraTextOnly() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try #"{"model_type":"nemotron_h","vision_config":{"hidden_size":1280}}"#
+            .write(to: tmp.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
+
+        let cap = ModelMediaCapabilities.from(
+            directory: tmp,
+            modelId: "nvidia-nemotron-3-ultra-550b-a55b-jangtq_1l"
+        )
+
+        #expect(cap == .textOnly)
+    }
+
     @Test("Step 3.7 text runtime does not advertise media")
     func step37TextRuntimeDoesNotAdvertiseMedia() {
         #expect(ModelMediaCapabilities.from(modelId: "JANGQ-AI/Step-3.7-Flash-JANG_2L") == .textOnly)

@@ -259,13 +259,23 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("Services/Plugin/PluginHostAPI.swift")
 
         #expect(
-            source.contains("private static let defaultMaxIterations = 8"),
-            "Plugin complete/complete_stream callers that omit max_iterations must still be able to execute a model-emitted tool call, feed back the tool result, and continue. A default of 1 makes Qwen-style multi-turn tool use stop before the first tool/result loop."
+            source.contains("private static let defaultMaxIterations = 30"),
+            "Plugin complete/complete_stream callers that omit max_iterations must get the same real multi-step budget as HTTP chat; Qwen-style tool/result loops can exceed a tiny default."
         )
         #expect(
-            !source.contains("private static let defaultMaxIterations = 1"),
-            "One-shot plugin inference is the Qwen 35B tool-call stop regression."
+            source.contains("private static let maxIterationsCap = 120"),
+            "Plugin callers that explicitly request a deeper tool loop need headroom above the default without making the loop unbounded."
         )
+        #expect(!source.contains("private static let defaultMaxIterations = 1"))
+        #expect(!source.contains("private static let defaultMaxIterations = 8"))
+
+        let chatConfig = try Self.source("Models/Chat/ChatConfiguration.swift")
+        #expect(chatConfig.contains("maxToolAttempts: 30"))
+
+        let http = try Self.source("Networking/HTTPHandler.swift")
+        #expect(http.contains("await MainActor.run"))
+        #expect(http.contains("ChatConfigurationStore.load().maxToolAttempts ?? 30"))
+        #expect(http.contains("let maxIterations = max(1, min(configuredMaxToolAttempts, 120))"))
     }
 
     @Test("HTTP chat persistence runs after response path")
@@ -1676,6 +1686,11 @@ struct RuntimePolicySourceTests {
             !body.contains("enumerator("),
             "Weight-size preflight must not recursively walk huge model bundles or symlinked cache folders on the request path."
         )
+        #expect(
+            body.contains("model-%05d-of-%05d.safetensors")
+                && body.contains("fileURL.pathExtension.lowercased() == \"safetensors\""),
+            "Weight-size preflight must count known numbered shards and fall back to a shallow safetensors sum so unknown layouts cannot report 0 bytes."
+        )
 
         let loadStart = try #require(runtime.range(of: "func loadContainer(id: String, name: String)"))
         let loadEnd = try #require(
@@ -1699,6 +1714,17 @@ struct RuntimePolicySourceTests {
             loadPreflight.contains("checkRAMFeasibility("),
             "All policies must pass the pre-load RAM feasibility gate before vmlx starts loading."
         )
+        #expect(
+            runtime.contains("availableMemoryBytes()")
+                && runtime.contains("requiredAvailable > available")
+                && runtime.contains("availableBytes=")
+                && runtime.contains("Clear memory, unload other models, or choose a smaller/more-quantized model."),
+            "The load gate must stop low-available-memory launches before Metal OOMs and expose a user-actionable resource message, not a fatal C++ exception."
+        )
+
+        let health = try Self.source("Networking/HTTPHandler.swift")
+        #expect(health.contains("\"available_memory_bytes\": f.availableMemoryBytes"))
+        #expect(health.contains("\"required_available_bytes\": f.requiredAvailableBytes"))
     }
 
     @Test("MTP bundles auto-resolve vmlx tuning into load and generation")

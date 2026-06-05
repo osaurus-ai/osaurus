@@ -10,6 +10,7 @@
 
 import CoreImage
 import CryptoKit
+import Darwin
 import Foundation
 import MLX
 import MLXLLM
@@ -627,6 +628,8 @@ public actor ModelRuntime {
         public let kvHeadroomBytes: Int64
         public let projectedBytes: Int64
         public let physicalMemoryBytes: Int64
+        public let availableMemoryBytes: Int64
+        public let requiredAvailableBytes: Int64
         public let softLimitBytes: Int64
         public let hardLimitBytes: Int64
         public let timestamp: Date
@@ -638,14 +641,134 @@ public actor ModelRuntime {
     private static let ramHardThreshold = 0.90
 
     /// Estimated KV-cache + activation headroom an incoming load needs beyond
-    /// its static weights. We don't know the exact context length up front, so
-    /// scale modestly with weight size and floor it so even a small model
-    /// reserves something. Intentionally conservative — the goal is to catch
-    /// "this clearly won't fit" before the OS jetsams us, not to be exact.
-    private static func estimatedKVHeadroomBytes(forWeights weights: Int64) -> Int64 {
+    /// its static weights.
+    ///
+    /// Prefer config-derived KV sizing when the bundle exposes enough
+    /// architecture metadata. Hybrid JANGTQ rows such as NemotronH carry a
+    /// small number of attention layers but very large routed-expert weight
+    /// shards, so a flat percentage of safetensors bytes can overestimate KV
+    /// by tens of GB and refuse a load before vMLX's mmap-backed loader can
+    /// prove the real footprint. If the config is missing or unfamiliar,
+    /// fall back to the existing conservative percentage estimate.
+    static func estimatedKVHeadroomBytes(
+        forWeights weights: Int64,
+        modelDirectory: URL? = nil,
+        modelName: String? = nil
+    ) -> Int64 {
+        if let modelDirectory,
+            let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(at: modelDirectory)
+        {
+            return architectureHeadroom
+        }
+        if let modelName, ModelFamilyNames.isNemotronThinkingFamily(modelName) {
+            // Nemotron 3 Ultra JANGTQ is a hybrid model with only a small
+            // attention KV footprint relative to routed-expert weights. Keep
+            // the fallback architecture-scoped so a slow external volume
+            // cannot force the generic 20% disk-size estimate and reject load.
+            return 4 * 1024 * 1024 * 1024
+        }
         let scaled = Int64(Double(weights) * 0.20)
         let floor: Int64 = 512 * 1024 * 1024
         return max(scaled, floor)
+    }
+
+    private static func estimatedArchitectureKVHeadroomBytes(at directory: URL) -> Int64? {
+        let configURL = directory.appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+            let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        let attentionLayers = attentionLayerCount(in: config)
+        let hiddenLayers = intValue(config["num_hidden_layers"]) ?? 0
+        guard attentionLayers > 0, hiddenLayers > 0 else { return nil }
+
+        let kvHeads = intValue(config["num_key_value_heads"])
+            ?? intValue(config["num_kv_heads"])
+            ?? intValue(config["n_kv_heads"])
+            ?? intValue(config["num_attention_heads"])
+            ?? intValue(config["n_heads"])
+        let headDim = intValue(config["head_dim"])
+            ?? intValue(config["kv_channels"])
+            ?? {
+                guard let hidden = intValue(config["hidden_size"]),
+                    let heads = intValue(config["num_attention_heads"]) ?? intValue(config["n_heads"]),
+                    heads > 0
+                else { return nil }
+                return hidden / heads
+            }()
+        let maxPositions = intValue(config["max_position_embeddings"])
+            ?? intValue(config["max_sequence_length"])
+            ?? intValue(config["seq_length"])
+            ?? intValue(config["sliding_window"])
+            ?? 32768
+        guard let kvHeads, let headDim, kvHeads > 0, headDim > 0, maxPositions > 0 else {
+            return nil
+        }
+
+        let dtypeBytes = cacheElementByteWidth(config: config)
+        let kvBytes = Int64(attentionLayers)
+            * 2
+            * Int64(kvHeads)
+            * Int64(headDim)
+            * Int64(maxPositions)
+            * Int64(dtypeBytes)
+
+        // SSM companion state is much smaller than full KV but still real.
+        // Count it from the same config so hybrid families have an explicit
+        // budget instead of hiding under the percentage fallback.
+        let mambaLayers = mambaLayerCount(in: config)
+        let mambaHeads = intValue(config["mamba_num_heads"]) ?? 0
+        let ssmState = intValue(config["ssm_state_size"]) ?? intValue(config["mamba_d_state"]) ?? 0
+        let convKernel = intValue(config["conv_kernel"]) ?? intValue(config["mamba_d_conv"]) ?? 0
+        let mambaHeadDim = intValue(config["mamba_head_dim"]) ?? 0
+        let ssmBytes = Int64(max(0, mambaLayers))
+            * Int64(max(0, mambaHeads))
+            * Int64(max(0, ssmState + convKernel * max(1, mambaHeadDim)))
+            * Int64(dtypeBytes)
+
+        // Leave room for masks, logits, transient activation slices, and
+        // allocator slack without scaling by total routed-expert disk size.
+        let floor: Int64 = 512 * 1024 * 1024
+        let slack = Int64(Double(kvBytes + ssmBytes) * 0.25)
+        return max(floor, kvBytes + ssmBytes + slack)
+    }
+
+    private static func attentionLayerCount(in config: [String: Any]) -> Int {
+        if let blocks = config["layers_block_type"] as? [Any] {
+            return blocks.compactMap { stringValue($0)?.lowercased() }
+                .filter { $0 == "attention" || $0 == "attn" || $0 == "*" }
+                .count
+        }
+        if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
+            return pattern.filter { $0 == "*" || $0 == "A" || $0 == "a" }.count
+        }
+        return intValue(config["num_hidden_layers"]) ?? 0
+    }
+
+    private static func mambaLayerCount(in config: [String: Any]) -> Int {
+        if let blocks = config["layers_block_type"] as? [Any] {
+            return blocks.compactMap { stringValue($0)?.lowercased() }
+                .filter { $0 == "mamba" || $0 == "linear_attention" || $0 == "ssm" }
+                .count
+        }
+        if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
+            return pattern.filter { $0 == "M" || $0 == "m" }.count
+        }
+        return 0
+    }
+
+    private static func cacheElementByteWidth(config: [String: Any]) -> Int {
+        let raw =
+            stringValue(config["kv_cache_dtype"])
+            ?? stringValue(config["mamba_ssm_cache_dtype"])
+            ?? stringValue(config["torch_dtype"])
+            ?? stringValue(config["dtype"])
+            ?? "bfloat16"
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "float32", "fp32", "f32": return 4
+        case "float8", "fp8", "e4m3", "e5m2": return 1
+        default: return 2
+        }
     }
 
     /// Public read of the last feasibility assessment for `/health` + UI.
@@ -659,7 +782,8 @@ public actor ModelRuntime {
     private func checkRAMFeasibility(
         modelName: String,
         incomingWeightsBytes: Int64,
-        excludingResident excludedName: String?
+        excludingResident excludedName: String?,
+        modelDirectory: URL? = nil
     ) throws {
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
         guard physical > 0, incomingWeightsBytes > 0 else { return }
@@ -669,13 +793,19 @@ public actor ModelRuntime {
         // this, two concurrent loads of different models each see only the
         // (empty) cache and both pass, doubling the real footprint.
         let inflightOther = inflightLoadWeightBytes(excluding: excludedName)
-        let kvHeadroom = Self.estimatedKVHeadroomBytes(forWeights: incomingWeightsBytes)
+        let kvHeadroom = Self.estimatedKVHeadroomBytes(
+            forWeights: incomingWeightsBytes,
+            modelDirectory: modelDirectory,
+            modelName: modelName
+        )
+        let available = Self.availableMemoryBytes()
+        let requiredAvailable = incomingWeightsBytes + kvHeadroom
         let projected = resident + inflightOther + incomingWeightsBytes + kvHeadroom
         let softLimit = Int64(Double(physical) * Self.ramSoftThreshold)
         let hardLimit = Int64(Double(physical) * Self.ramHardThreshold)
 
         let verdict: RAMFeasibility.Verdict
-        if projected > hardLimit {
+        if projected > hardLimit || (available > 0 && requiredAvailable > available) {
             verdict = .refused
         } else if projected > softLimit {
             verdict = .tight
@@ -691,6 +821,8 @@ public actor ModelRuntime {
             kvHeadroomBytes: kvHeadroom,
             projectedBytes: projected,
             physicalMemoryBytes: physical,
+            availableMemoryBytes: available,
+            requiredAvailableBytes: requiredAvailable,
             softLimitBytes: softLimit,
             hardLimitBytes: hardLimit,
             timestamp: Date()
@@ -705,19 +837,50 @@ public actor ModelRuntime {
             )
         case .refused:
             genLog.error(
-                "loadContainer: refusing \(modelName, privacy: .public) — projected footprint \(projected, privacy: .public)B exceeds hard limit \(hardLimit, privacy: .public)B (physical \(physical, privacy: .public)B)"
+                "loadContainer: refusing \(modelName, privacy: .public) — projected footprint \(projected, privacy: .public)B hard limit \(hardLimit, privacy: .public)B available \(available, privacy: .public)B requiredAvailable \(requiredAvailable, privacy: .public)B physical \(physical, privacy: .public)B"
+            )
+            CrashReportingService.recordBreadcrumb(
+                category: "model.load",
+                message:
+                    "refused model=\(modelName) weightsBytes=\(incomingWeightsBytes) kvHeadroomBytes=\(kvHeadroom) availableBytes=\(available) requiredAvailableBytes=\(requiredAvailable) physicalBytes=\(physical)"
             )
             let projGB = String(format: "%.1f", Double(projected) / 1_073_741_824)
             let physGB = String(format: "%.1f", Double(physical) / 1_073_741_824)
+            let availGB = String(format: "%.1f", Double(max(available, 0)) / 1_073_741_824)
+            let requiredGB = String(format: "%.1f", Double(requiredAvailable) / 1_073_741_824)
             throw NSError(
                 domain: "ModelRuntime",
                 code: 2,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "Not enough memory to load \(modelName): needs ~\(projGB) GB (weights + KV headroom) but this Mac has \(physGB) GB. Free up RAM, choose a smaller/more-quantized model, or close other models."
+                        "Not enough memory to load \(modelName): needs ~\(requiredGB) GB available now (~\(projGB) GB projected with resident models), but this Mac has \(availGB) GB currently available out of \(physGB) GB. Clear memory, unload other models, or choose a smaller/more-quantized model."
                 ]
             )
         }
+    }
+
+    private static func availableMemoryBytes() -> Int64 {
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size
+        )
+        let host = mach_host_self()
+        defer { mach_port_deallocate(mach_task_self_, host) }
+        let result = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(host, HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return 0 }
+        var rawPageSize: vm_size_t = 0
+        host_page_size(host, &rawPageSize)
+        let pageSize = Int64(rawPageSize)
+        let pages =
+            Int64(stats.free_count)
+            + Int64(stats.inactive_count)
+            + Int64(stats.speculative_count)
+            + Int64(stats.purgeable_count)
+        return max(0, pages * pageSize)
     }
 
     private func residentWeightBytes(excluding excludedName: String? = nil) -> Int64 {
@@ -930,7 +1093,8 @@ public actor ModelRuntime {
         try checkRAMFeasibility(
             modelName: name,
             incomingWeightsBytes: weightsBytes,
-            excludingResident: name
+            excludingResident: name,
+            modelDirectory: localURL
         )
 
         // Tool-call format + reasoning parser are stamped automatically by
@@ -2498,19 +2662,54 @@ public actor ModelRuntime {
 
     private static func computeWeightsSizeBytes(at url: URL) -> Int64 {
         let fm = FileManager.default
-        let fileURLs: [URL]
-        if let entries = try? fm.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ) {
-            fileURLs = entries
-        } else {
-            return 0
+
+        let directWeightNames = [
+            "model.safetensors",
+            "weights.safetensors",
+            "model-00001-of-00001.safetensors",
+            "weights-00001-of-00001.safetensors",
+        ]
+        for name in directWeightNames {
+            let path = url.appendingPathComponent(name).path
+            guard fm.fileExists(atPath: path) else { continue }
+            if let attrs = try? fm.attributesOfItem(atPath: path),
+                let size = attrs[.size] as? NSNumber
+            {
+                return size.int64Value
+            }
         }
+
         var total: Int64 = 0
-        for fileURL in fileURLs {
-            if fileURL.pathExtension.lowercased() == "safetensors" {
+        for shardCount in 2 ... 256 {
+            var foundAny = false
+            var candidateTotal: Int64 = 0
+            for index in 1 ... shardCount {
+                let name = String(format: "model-%05d-of-%05d.safetensors", index, shardCount)
+                let path = url.appendingPathComponent(name).path
+                guard fm.fileExists(atPath: path) else {
+                    candidateTotal = 0
+                    break
+                }
+                foundAny = true
+                if let attrs = try? fm.attributesOfItem(atPath: path),
+                    let size = attrs[.size] as? NSNumber
+                {
+                    candidateTotal += size.int64Value
+                }
+            }
+            if foundAny, candidateTotal > 0 {
+                total = candidateTotal
+                break
+            }
+        }
+        if total == 0,
+            let entries = try? fm.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+                options: [.skipsHiddenFiles]
+            )
+        {
+            for fileURL in entries where fileURL.pathExtension.lowercased() == "safetensors" {
                 if let attrs = try? fm.attributesOfItem(atPath: fileURL.path),
                     let size = attrs[.size] as? NSNumber
                 {
@@ -2529,19 +2728,25 @@ public actor ModelRuntime {
     /// `isDownloaded` check already covers them.
     static func verifyShardManifest(at directory: URL, name: String) throws {
         let fm = FileManager.default
-        guard
-            let entries = try? fm.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            )
-        else { return }
-
-        let indexFiles = entries.filter {
-            $0.lastPathComponent.hasSuffix(".safetensors.index.json")
+        let commonIndexNames = [
+            "model.safetensors.index.json",
+            "pytorch_model.safetensors.index.json",
+        ]
+        let knownIndexURL = commonIndexNames
+            .map { directory.appendingPathComponent($0) }
+            .first { fm.fileExists(atPath: $0.path) }
+        if knownIndexURL != nil {
+            // Do not read or enumerate the manifest in the launch preflight:
+            // large external APFS model volumes can block reads here before
+            // vMLX gets a chance to memory-map the real weights.
+            return
         }
+        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
+        let scannedIndexURL = names.first {
+            !$0.hasPrefix(".") && $0.hasSuffix(".safetensors.index.json")
+        }.map { directory.appendingPathComponent($0) }
         // No manifest → not a sharded bundle; nothing to cross-check.
-        guard let indexURL = indexFiles.first else { return }
+        guard let indexURL = scannedIndexURL else { return }
 
         guard
             let data = try? Data(contentsOf: indexURL),

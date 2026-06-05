@@ -148,26 +148,28 @@ public enum OsaurusPaths {
 
     // MARK: - Volume free-space query
     //
-    // ⚠️ Use the URL-keyed `.volumeAvailableCapacityForImportantUsageKey`
-    //    rather than the legacy `attributesOfFileSystem(.systemFreeSize)`.
-    //    On modern macOS (≥ 11) inside a sandboxed container the legacy
-    //    API can return 0 because it reports raw bytes excluding the
-    //    OS's "purgeable" allowance — which is exactly what users see
-    //    in Finder. `.systemFreeSize` was the historical default and
-    //    `SystemMonitorService` shipped with it for a long time, surfacing
-    //    bug #964 (the dashboard reports `Available: 0 GB` even when the
-    //    user clearly has free space). The URL-keyed query is what
-    //    `ModelDownloadService.freeBytesOnVolume` already used; this
-    //    helper consolidates both call-sites onto the same logic so the
-    //    answer can never silently drift again.
+    // Prefer the cheap POSIX filesystem query. On some external/APFS volumes
+    // `.volumeAvailableCapacityForImportantUsageKey` enters CacheDelete and can
+    // block model load for minutes before any weights are mapped. The URL-keyed
+    // query remains a fallback for volumes where legacy `.systemFreeSize` is
+    // missing or reports zero under sandbox/container pressure.
 
-    /// Returns the free-for-important-usage byte count on the volume that
-    /// hosts `path`. Falls back to the legacy
-    /// `attributesOfFileSystem(.systemFreeSize)` when the modern
-    /// query is unavailable or reports zero. Returns `nil` if both queries fail —
-    /// callers should treat `nil` as "unknown, render 'unknown'" rather
-    /// than coercing to zero.
+    /// Returns the free byte count on the volume that hosts `path`. Uses the
+    /// legacy filesystem attribute first to avoid CacheDelete stalls, then falls
+    /// back to `.volumeAvailableCapacityForImportantUsageKey` when needed.
+    /// Returns `nil` if both queries fail — callers should treat `nil` as
+    /// "unknown, render 'unknown'" rather than coercing to zero.
     public static func volumeFreeBytes(forPath path: String) -> Int64? {
+        var legacyFree: Int64?
+        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
+            let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value
+        {
+            legacyFree = free
+        }
+        if let legacyFree, legacyFree > 0 {
+            return legacyFree
+        }
+
         let url = URL(fileURLWithPath: path)
         var importantCapacity: Int64?
         let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
@@ -175,12 +177,6 @@ public enum OsaurusPaths {
             let capacity = values.volumeAvailableCapacityForImportantUsage
         {
             importantCapacity = capacity
-        }
-        var legacyFree: Int64?
-        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
-            let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value
-        {
-            legacyFree = free
         }
         return resolvedVolumeFreeBytes(
             importantCapacity: importantCapacity,
@@ -192,11 +188,11 @@ public enum OsaurusPaths {
         importantCapacity: Int64?,
         legacyFree: Int64?
     ) -> Int64? {
-        if let importantCapacity, importantCapacity > 0 {
-            return importantCapacity
-        }
         if let legacyFree, legacyFree > 0 {
             return legacyFree
+        }
+        if let importantCapacity, importantCapacity > 0 {
+            return importantCapacity
         }
         return importantCapacity ?? legacyFree
     }
