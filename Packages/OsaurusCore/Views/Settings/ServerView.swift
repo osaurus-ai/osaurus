@@ -1209,7 +1209,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "GET",
                 path: "/",
-                description: "Root endpoint - server status message",
+                description: L("Root endpoint - server status message"),
                 compatibility: nil,
                 category: .core,
                 examplePayload: nil
@@ -1217,7 +1217,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "GET",
                 path: "/health",
-                description: "Health check endpoint",
+                description: L("Health check endpoint"),
                 compatibility: nil,
                 category: .core,
                 examplePayload: nil
@@ -1225,7 +1225,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "GET",
                 path: "/models",
-                description: "List available models",
+                description: L("List available models"),
                 compatibility: "OpenAI",
                 category: .core,
                 examplePayload: nil
@@ -1233,7 +1233,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "GET",
                 path: "/tags",
-                description: "List available models",
+                description: L("List available models"),
                 compatibility: "Ollama",
                 category: .core,
                 examplePayload: nil
@@ -1241,7 +1241,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/show",
-                description: "Show model metadata",
+                description: L("Show model metadata"),
                 compatibility: "Ollama",
                 category: .core,
                 examplePayload: "{\n  \"name\": \"\(model)\"\n}"
@@ -1249,7 +1249,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/chat/completions",
-                description: "Chat completions with streaming support",
+                description: L("Chat completions with streaming support"),
                 compatibility: "OpenAI",
                 category: .chat,
                 examplePayload: """
@@ -1265,7 +1265,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/chat",
-                description: "Chat endpoint (NDJSON streaming)",
+                description: L("Chat endpoint (NDJSON streaming)"),
                 compatibility: "Ollama",
                 category: .chat,
                 examplePayload: """
@@ -1280,7 +1280,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/messages",
-                description: "Messages endpoint with streaming support",
+                description: L("Messages endpoint with streaming support"),
                 compatibility: "Anthropic",
                 category: .chat,
                 examplePayload: """
@@ -1297,7 +1297,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/v1/responses",
-                description: "Responses endpoint with streaming support",
+                description: L("Responses endpoint with streaming support"),
                 compatibility: "Open Responses",
                 category: .chat,
                 examplePayload: """
@@ -1311,7 +1311,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/embeddings",
-                description: "Generate text embeddings",
+                description: L("Generate text embeddings"),
                 compatibility: "OpenAI",
                 category: .embeddings,
                 examplePayload: "{\n  \"model\": \"potion-base-4M\",\n  \"input\": \"Hello world\"\n}"
@@ -1319,7 +1319,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/embed",
-                description: "Generate text embeddings",
+                description: L("Generate text embeddings"),
                 compatibility: "Ollama",
                 category: .embeddings,
                 examplePayload: "{\n  \"model\": \"potion-base-4M\",\n  \"input\": \"Hello world\"\n}"
@@ -1327,7 +1327,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/audio/transcriptions",
-                description: "Transcribe audio to text",
+                description: L("Transcribe audio to text"),
                 compatibility: "OpenAI",
                 category: .audio,
                 examplePayload: nil,
@@ -1336,7 +1336,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "GET",
                 path: "/agents",
-                description: "List all agents with memory counts",
+                description: L("List all agents with memory counts"),
                 compatibility: "Osaurus",
                 category: .memory,
                 examplePayload: nil
@@ -1344,7 +1344,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "GET",
                 path: "/agents/{id}",
-                description: "Return info for a single agent",
+                description: L("Return info for a single agent"),
                 compatibility: "Osaurus",
                 category: .agents,
                 examplePayload: nil
@@ -1352,7 +1352,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/memory/ingest",
-                description: "Bulk-ingest conversation turns into memory",
+                description: L("Bulk-ingest conversation turns into memory"),
                 compatibility: "Osaurus",
                 category: .memory,
                 examplePayload: """
@@ -1368,7 +1368,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "GET",
                 path: "/mcp/health",
-                description: "MCP server health check",
+                description: L("MCP server health check"),
                 compatibility: "MCP",
                 category: .mcp,
                 examplePayload: nil
@@ -1376,7 +1376,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "GET",
                 path: "/mcp/tools",
-                description: "List available tools",
+                description: L("List available tools"),
                 compatibility: "MCP",
                 category: .mcp,
                 examplePayload: nil
@@ -1384,7 +1384,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/mcp/call",
-                description: "Execute a tool by name",
+                description: L("Execute a tool by name"),
                 compatibility: "MCP",
                 category: .mcp,
                 examplePayload: "{\n  \"name\": \"example_tool\",\n  \"arguments\": {}\n}"
@@ -1392,7 +1392,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/agents/{id}/run",
-                description: "Run the full agent chat loop server-side, streaming SSE text deltas",
+                description: L("Run the full agent chat loop server-side, streaming SSE text deltas"),
                 compatibility: "Osaurus",
                 category: .agents,
                 examplePayload: """
@@ -1408,7 +1408,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/agents/{identifier}/dispatch",
-                description: "Dispatch a work or chat task to an agent",
+                description: L("Dispatch a work or chat task to an agent"),
                 compatibility: "Osaurus",
                 category: .agents,
                 examplePayload: """
@@ -1422,7 +1422,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "GET",
                 path: "/tasks/{task_id}",
-                description: "Poll task status and activity",
+                description: L("Poll task status and activity"),
                 compatibility: "Osaurus",
                 category: .agents,
                 examplePayload: nil
@@ -1430,7 +1430,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "DELETE",
                 path: "/tasks/{task_id}",
-                description: "Cancel a running task",
+                description: L("Cancel a running task"),
                 compatibility: "Osaurus",
                 category: .agents,
                 examplePayload: nil
@@ -1438,7 +1438,7 @@ struct APIEndpoint {
             APIEndpoint(
                 method: "POST",
                 path: "/tasks/{task_id}/clarify",
-                description: "Submit a clarification response to a waiting task",
+                description: L("Submit a clarification response to a waiting task"),
                 compatibility: "Osaurus",
                 category: .agents,
                 examplePayload: "{\n  \"response\": \"Yes, proceed with the changes\"\n}"
@@ -1788,8 +1788,8 @@ private struct EndpointRow: View {
                             isLoading: isLoading,
                             response: response,
                             emptyMessage: endpoint.hasPathParameters
-                                ? "Test with curl or your HTTP client"
-                                : "Click 'Send Request' to test",
+                                ? L("Test with curl or your HTTP client")
+                                : L("Click 'Send Request' to test"),
                             onClearResponse: onClearResponse
                         )
                     }

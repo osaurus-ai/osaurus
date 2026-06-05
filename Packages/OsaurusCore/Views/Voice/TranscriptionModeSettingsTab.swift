@@ -186,8 +186,8 @@ struct TranscriptionModeSettingsTab: View {
 
                     Text(
                         transcriptionEnabled
-                            ? "Type with your voice into any text field"
-                            : "Voice-to-text input for any application"
+                            ? L("Type with your voice into any text field")
+                            : L("Voice-to-text input for any application")
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
@@ -504,8 +504,8 @@ struct TranscriptionModeSettingsTab: View {
 
                     Text(
                         voiceInputEnabled
-                            ? "Microphone button enabled in chat input"
-                            : "Enable microphone button in the chat input area"
+                            ? L("Microphone button enabled in chat input")
+                            : L("Enable microphone button in the chat input area")
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)

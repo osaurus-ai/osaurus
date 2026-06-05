@@ -40,20 +40,20 @@ struct WatchersView: View {
                             .init(
                                 icon: "arrow.down.circle",
                                 title: L("Downloads Organizer"),
-                                description: "Auto-sort files into folders by type"
+                                description: L("Auto-sort files into folders by type")
                             ),
                             .init(
                                 icon: "camera",
                                 title: L("Screenshot Manager"),
-                                description: "Rename and organize screenshots"
+                                description: L("Rename and organize screenshots")
                             ),
                             .init(
                                 icon: "externaldrive.connected.to.line.below",
                                 title: L("Dropbox Automation"),
-                                description: "Process shared files on change"
+                                description: L("Process shared files on change")
                             ),
                         ],
-                        primaryAction: .init(title: "Create Watcher", icon: "plus", handler: { isCreating = true }),
+                        primaryAction: .init(title: L("Create Watcher"), icon: "plus", handler: { isCreating = true }),
                         hasAppeared: hasAppeared
                     )
                 } else {

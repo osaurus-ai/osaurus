@@ -154,7 +154,7 @@ struct VADModeSettingsTab: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text(vadEnabled ? "Always listening for wake words" : "Voice-activated agent switching")
+                    Text(vadEnabled ? L("Always listening for wake words") : L("Voice-activated agent switching"))
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }

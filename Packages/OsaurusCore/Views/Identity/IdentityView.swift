@@ -510,7 +510,7 @@ private struct DangerZoneSection: View {
     let onReset: () -> Void
 
     var body: some View {
-        IdentitySection(title: "DANGER ZONE", icon: "exclamationmark.triangle.fill") {
+        IdentitySection(title: L("DANGER ZONE"), icon: "exclamationmark.triangle.fill") {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Reset Identity", bundle: .module)
@@ -762,7 +762,7 @@ private struct MasterAddressSection: View {
     @State private var copied = false
 
     var body: some View {
-        IdentitySection(title: "MASTER ADDRESS", icon: "person.badge.key.fill") {
+        IdentitySection(title: L("MASTER ADDRESS"), icon: "person.badge.key.fill") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -805,7 +805,7 @@ private struct MasterAddressSection: View {
                         HStack(spacing: 4) {
                             Image(systemName: copied ? "checkmark" : "doc.on.doc")
                                 .font(.system(size: 11, weight: .medium))
-                            Text(copied ? "Copied" : "Copy")
+                            Text(copied ? L("Copied") : L("Copy"))
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .foregroundColor(copied ? theme.successColor : theme.secondaryText)
@@ -823,12 +823,12 @@ private struct MasterAddressSection: View {
 
                 HStack(spacing: 24) {
                     statusField(
-                        label: "Recovery",
-                        value: "Backed up in iCloud Keychain",
+                        label: L("Recovery"),
+                        value: L("Backed up in iCloud Keychain"),
                         icon: "checkmark.shield.fill",
                         color: theme.successColor
                     )
-                    statusField(label: "Status", value: "Active", icon: "circle.fill", color: theme.successColor)
+                    statusField(label: L("Status"), value: L("Active"), icon: "circle.fill", color: theme.successColor)
                 }
             }
         }
@@ -888,7 +888,7 @@ private struct AgentAddressesSection: View {
     }
 
     var body: some View {
-        IdentitySection(title: "AGENT ADDRESSES", icon: "person.2.badge.key.fill") {
+        IdentitySection(title: L("AGENT ADDRESSES"), icon: "person.2.badge.key.fill") {
             VStack(alignment: .leading, spacing: 10) {
                 if customAgents.isEmpty {
                     Text("No agents yet — create one in the Agents tab", bundle: .module)
@@ -1192,7 +1192,7 @@ private struct DeviceSection: View {
     let deviceId: String
 
     var body: some View {
-        IdentitySection(title: "DEVICES", icon: "desktopcomputer") {
+        IdentitySection(title: L("DEVICES"), icon: "desktopcomputer") {
             HStack(spacing: 12) {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: 20))

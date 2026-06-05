@@ -158,7 +158,7 @@ struct ToolsManagerView: View {
                     }
 
                     if !runtimeTools.isEmpty {
-                        InstalledSectionHeader(title: "Runtime Tools", icon: "terminal")
+                        InstalledSectionHeader(title: L("Runtime Tools"), icon: "terminal")
 
                         LazyVStack(spacing: 8) {
                             ForEach(runtimeTools) { entry in
@@ -173,7 +173,7 @@ struct ToolsManagerView: View {
                     }
 
                     if !plugins.isEmpty {
-                        InstalledSectionHeader(title: "Plugin Tools", icon: "puzzlepiece.extension")
+                        InstalledSectionHeader(title: L("Plugin Tools"), icon: "puzzlepiece.extension")
 
                         ForEach(plugins, id: \.plugin.id) { item in
                             ToolPluginCard(

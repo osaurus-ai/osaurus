@@ -664,7 +664,7 @@ private extension SandboxView {
                                 Image(systemName: "stethoscope")
                                     .font(.system(size: 12))
                             }
-                            Text(isRunningDiag ? "Running..." : "Run Diagnostics")
+                            Text(isRunningDiag ? L("Running...") : L("Run Diagnostics"))
                                 .font(.system(size: 12, weight: .medium))
                         }
                         .foregroundColor(.white)
@@ -762,7 +762,7 @@ private extension SandboxView {
 
                 toggleRow(
                     title: L("Network Access"),
-                    description: "Allow outbound network from container",
+                    description: L("Allow outbound network from container"),
                     isOn: Binding(
                         get: { pendingConfig.network == "outbound" },
                         set: { pendingConfig.network = $0 ? "outbound" : "none" }
@@ -771,7 +771,7 @@ private extension SandboxView {
 
                 toggleRow(
                     title: L("Auto-Start"),
-                    description: "Start container when Osaurus launches",
+                    description: L("Start container when Osaurus launches"),
                     isOn: $pendingConfig.autoStart
                 )
                 .onChange(of: pendingConfig.autoStart) { _, _ in
@@ -794,7 +794,7 @@ private extension SandboxView {
 private extension SandboxView {
 
     var dangerZoneCard: some View {
-        sectionCard(title: "Danger Zone", icon: "exclamationmark.triangle") {
+        sectionCard(title: "DANGER ZONE", icon: "exclamationmark.triangle") {
             VStack(alignment: .leading, spacing: 12) {
                 Text(
                     "Resetting destroys all installed sandbox packages. Agent workspace files on the host persist.",

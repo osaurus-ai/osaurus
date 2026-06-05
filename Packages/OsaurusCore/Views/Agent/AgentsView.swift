@@ -2010,7 +2010,7 @@ struct AgentDetailView: View {
     /// the top of the Configure tab now that the title bar's avatar/dropdown is
     /// dedicated to switching between agents.
     private var identitySection: some View {
-        AgentDetailSection(title: "Identity", icon: "person.crop.circle") {
+        AgentDetailSection(title: L("Identity"), icon: "person.crop.circle") {
             VStack(alignment: .leading, spacing: 10) {
                 StyledTextField(
                     placeholder: "e.g., Code Assistant",
@@ -2146,7 +2146,7 @@ struct AgentDetailView: View {
     /// We render only the active side so the surface stays calm; the
     /// segmented picker flips between them.
     private var emptyStateSection: some View {
-        AgentDetailSection(title: "Empty State", icon: "sparkles") {
+        AgentDetailSection(title: L("Empty State"), icon: "sparkles") {
             VStack(alignment: .leading, spacing: 14) {
                 Picker("", selection: emptyStateModeBinding) {
                     Label(localized: "AI", systemImage: "sparkles").tag(EmptyStateMode.ai)
@@ -2283,7 +2283,7 @@ struct AgentDetailView: View {
     }
 
     private var avatarSection: some View {
-        AgentDetailSection(title: "Avatar", icon: "person.crop.circle") {
+        AgentDetailSection(title: L("Avatar"), icon: "person.crop.circle") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     if currentAgent.customAvatarURL != nil {
@@ -2467,7 +2467,7 @@ struct AgentDetailView: View {
     // MARK: - Configure Tab Sections
 
     private var systemPromptSection: some View {
-        AgentDetailSection(title: "System Prompt", icon: "brain") {
+        AgentDetailSection(title: L("System Prompt"), icon: "brain") {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topLeading) {
                     if systemPrompt.isEmpty {
@@ -2511,7 +2511,7 @@ struct AgentDetailView: View {
     /// reach for most. Temperature / Max Tokens overrides moved into the Advanced
     /// disclosure below.
     private var defaultModelSection: some View {
-        AgentDetailSection(title: "Model", icon: "cube.fill") {
+        AgentDetailSection(title: L("Model"), icon: "cube.fill") {
             VStack(alignment: .leading, spacing: 10) {
                 Button {
                     showModelPicker.toggle()
@@ -2779,9 +2779,9 @@ struct AgentDetailView: View {
     private var featuresSection: some View {
         let isCustomAgent = agent.id != Agent.defaultId
         return AgentDetailSection(
-            title: "Features",
+            title: L("Features"),
             icon: "switch.2",
-            subtitle: "Control what this agent can do. Extra capabilities are off by default to keep it lean."
+            subtitle: L("Control what this agent can do. Extra capabilities are off by default to keep it lean.")
         ) {
             VStack(alignment: .leading, spacing: 18) {
                 featureGroup(
@@ -4528,7 +4528,7 @@ struct AgentDetailView: View {
     }
 
     private var themeSection: some View {
-        AgentDetailSection(title: "Visual Theme", icon: "paintpalette.fill") {
+        AgentDetailSection(title: L("Visual Theme"), icon: "paintpalette.fill") {
             VStack(alignment: .leading, spacing: 12) {
                 themePickerGrid
 
@@ -5166,7 +5166,7 @@ private struct AgentDetailVoiceSection: View {
     let onSave: () -> Void
 
     var body: some View {
-        AgentDetailSection(title: "Voice", icon: "speaker.wave.2") {
+        AgentDetailSection(title: L("Voice"), icon: "speaker.wave.2") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {

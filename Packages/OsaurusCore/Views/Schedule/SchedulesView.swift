@@ -41,20 +41,20 @@ struct SchedulesView: View {
                             .init(
                                 icon: "sun.max",
                                 title: L("Morning Briefing"),
-                                description: "Get a daily summary every morning"
+                                description: L("Get a daily summary every morning")
                             ),
                             .init(
                                 icon: "chart.bar",
                                 title: L("Weekly Report"),
-                                description: "Generate insights on a schedule"
+                                description: L("Generate insights on a schedule")
                             ),
                             .init(
                                 icon: "bell",
                                 title: L("Reminders"),
-                                description: "Automated notifications at set times"
+                                description: L("Automated notifications at set times")
                             ),
                         ],
-                        primaryAction: .init(title: "Create Schedule", icon: "plus", handler: { isCreating = true }),
+                        primaryAction: .init(title: L("Create Schedule"), icon: "plus", handler: { isCreating = true }),
                         hasAppeared: hasAppeared
                     )
                 } else {

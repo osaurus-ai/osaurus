@@ -1573,10 +1573,10 @@ private struct ToolPermissionsSection: View {
     // existing user preferences keep working.
     private static let folderTools:
         [(name: String, display: String, desc: String, destructive: Bool, defaultPolicy: ToolPermissionPolicy)] = [
-            ("file_write", "Write Files", "Create and modify files", false, .auto),
-            ("file_edit", "Edit Files", "Edit file content with search/replace", false, .auto),
-            ("shell_run", "Run Shell Commands", "Execute shell commands in the folder", true, .ask),
-            ("git_commit", "Git Commit", "Commit changes to git repository", true, .ask),
+            ("file_write", L("Write Files"), L("Create and modify files"), false, .auto),
+            ("file_edit", L("Edit Files"), L("Edit file content with search/replace"), false, .auto),
+            ("shell_run", L("Run Shell Commands"), L("Execute shell commands in the folder"), true, .ask),
+            ("git_commit", L("Git Commit"), L("Commit changes to git repository"), true, .ask),
         ]
 
     var body: some View {

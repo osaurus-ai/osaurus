@@ -627,8 +627,8 @@ private struct SessionRow: View {
                 message: "\"\(session.title)\" will be removed permanently. This can't be undone.",
                 accessory: accessory,
                 buttons: [
-                    .cancel("Cancel"),
-                    .destructive("Delete") { onDelete() },
+                    .cancel(L("Cancel")),
+                    .destructive(L("Delete")) { onDelete() },
                 ],
                 onDismiss: {
                     ThemedAlertCenter.shared.dismiss(scope: alertScope, id: requestId)

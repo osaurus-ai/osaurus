@@ -163,7 +163,7 @@ private struct SystemPermissionRow: View {
                             .foregroundColor(themeManager.currentTheme.primaryText)
 
                         // Status badge
-                        Text(isGranted ? "Granted" : "Not Granted")
+                        Text(isGranted ? L("Granted") : L("Not Granted"))
                             .font(.system(size: 9, weight: .bold))
                             .foregroundColor(
                                 isGranted
