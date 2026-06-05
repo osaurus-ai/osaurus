@@ -181,6 +181,10 @@ public actor CoreModelService {
             else { throw coreErr }
             logger.info("Core model '\(primary)' unavailable; falling back to chat model '\(fb)'")
             return try await runWithRetries(model: fb, messages: messages, params: params, timeout: timeout)
+        } catch is CancellationError {
+            // Caller walked away mid-flight — don't spend the fallback
+            // model on a generation no one is waiting for.
+            throw CancellationError()
         } catch {
             // Runtime failure that isn't a CoreModelError. The primary
             // backend is wedged below the routing layer — Foundation
@@ -331,6 +335,9 @@ public actor CoreModelService {
                 return result
             } catch {
                 lastError = error
+                // Cancellation is cooperative — retrying a torn-down call
+                // just burns inference. Propagate instead of retrying.
+                if error is CancellationError || Task.isCancelled { throw error }
                 if !Self.isRetryable(error) || attempt == Self.maxRetries - 1 { break }
                 let delay = Self.baseRetryDelayNanoseconds * UInt64(1 << attempt)
                 logger.warning(
@@ -355,6 +362,11 @@ public actor CoreModelService {
     /// out of the preflight path permanently with a misleading
     /// "circuitBreakerOpen" symptom that hides the real fix.
     private func recordFailureAndThrow(_ error: Error) throws -> Never {
+        // Cancellation isn't a backend fault — don't let it trip the
+        // breaker and lock out real calls.
+        if error is CancellationError {
+            throw error
+        }
         if let coreErr = error as? CoreModelError, case .modelUnavailable = coreErr {
             throw coreErr
         }
@@ -391,8 +403,10 @@ public actor CoreModelService {
     /// service-specific transient errors) are retryable; the only
     /// `CoreModelError` worth retrying is `.timedOut`, since
     /// `.modelUnavailable` and `.circuitBreakerOpen` won't change
-    /// shape across consecutive sub-second attempts.
+    /// shape across consecutive sub-second attempts. Cancellation is
+    /// never retryable.
     private static func isRetryable(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
         guard let coreErr = error as? CoreModelError else { return true }
         return coreErr == .timedOut
     }

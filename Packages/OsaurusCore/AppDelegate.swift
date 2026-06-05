@@ -539,15 +539,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
     }
 
-    /// Fire-and-forget launch prewarm. Skipped when the global AI
-    /// greetings toggle is off, when no last-active context was ever
-    /// recorded (fresh install), or when that agent is no longer in
-    /// the store (it was deleted between launches).
+    /// Fire-and-forget launch prewarm. Skipped when the last-active
+    /// agent has generative greetings off, when no last-active context
+    /// was ever recorded (fresh install), or when that agent is no
+    /// longer in the store (it was deleted between launches).
     @MainActor
     private func prewarmGreetingPoolIfEnabled() {
-        guard AppConfiguration.shared.chatConfig.generativeGreetingsEnabled,
-            let last = GenerativeGreetingPool.lastActiveContext(),
-            let agent = AgentManager.shared.agents.first(where: { $0.id == last.agentId })
+        guard let last = GenerativeGreetingPool.lastActiveContext(),
+            let agent = AgentManager.shared.agents.first(where: { $0.id == last.agentId }),
+            agent.shouldUseGenerativeGreetings
         else { return }
         Task.detached(priority: .utility) { [agent, model = last.model] in
             await GenerativeGreetingPool.shared.warmUp(for: agent, model: model)

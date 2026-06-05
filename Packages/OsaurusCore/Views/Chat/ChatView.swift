@@ -67,16 +67,9 @@ private struct GenerativeGreetingTrigger: ViewModifier {
     }
 
     private func trigger() {
-        // AI greetings are an opt-in master switch on Settings → Chat;
-        // per-agent values can still flip the resolved state on/off
-        // independently. We read the global flag synchronously here so
-        // the trigger stays cheap.
-        let globallyEnabled =
-            AppConfiguration.shared.chatConfig.generativeGreetingsEnabled
-        session.loadGenerativeGreetingIfNeeded(
-            agent: windowState.activeAgent,
-            globallyEnabled: globallyEnabled
-        )
+        // AI greetings are a per-agent opt-in; the agent's own flag is
+        // the sole control.
+        session.loadGenerativeGreetingIfNeeded(agent: windowState.activeAgent)
     }
 }
 
@@ -1119,8 +1112,8 @@ final class ChatSession: ObservableObject {
     /// flight) → `ready(payload)` on success, `failed` on any throw or
     /// cancellation. The UI uses `loading` to render a skeleton, and both
     /// `idle` and `failed` to render the static fallback.
-    func loadGenerativeGreetingIfNeeded(agent: Agent, globallyEnabled: Bool) {
-        guard agent.shouldUseGenerativeGreetings(globallyEnabled: globallyEnabled) else {
+    func loadGenerativeGreetingIfNeeded(agent: Agent) {
+        guard agent.shouldUseGenerativeGreetings else {
             generativeGreetingState = .idle
             generativeGreetingKey = nil
             generativeGreetingTask?.cancel()
