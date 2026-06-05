@@ -134,10 +134,21 @@ public final class ClipboardService: ObservableObject {
     }
 
     nonisolated private static func detectContent(in pb: NSPasteboard) -> ClipboardContent? {
-        // 1. try file URLs (copied files in Finder)
-        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], let url = urls.first {
-            // check if it's a supported document or image
-            if DocumentParser.canParse(url: url) || DocumentParser.isImageFile(url: url) {
+        // 1. try file URLs (copied files in Finder). Avoid
+        // `readObjects(forClasses:)`: Sentry APPLE-MACOS-2N showed AppKit
+        // mutating its internal type-conversion array while enumerating there.
+        // Reading explicit pasteboard types avoids that conversion path.
+        let fileURLTypes: [NSPasteboard.PasteboardType] = [
+            .fileURL,
+            NSPasteboard.PasteboardType("public.file-url"),
+        ]
+        for type in fileURLTypes {
+            guard let raw = pb.string(forType: type), let url = URL(string: raw) else {
+                continue
+            }
+            if url.isFileURL,
+                DocumentParser.canParse(url: url) || DocumentParser.isImageFile(url: url)
+            {
                 return .file(url)
             }
         }

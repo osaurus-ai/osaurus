@@ -31,4 +31,19 @@ struct ClipboardContentDiagnosticsTests {
         #expect(summary.contains("/Users/example") == false)
         #expect(summary.contains("Acquisition") == false)
     }
+
+    @Test func clipboardDetectionAvoidsPasteboardObjectConversionEnumeration() throws {
+        let here = URL(fileURLWithPath: #filePath)
+        let packageRoot = here.deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = packageRoot.appendingPathComponent(
+            "Services/Context/ClipboardService.swift"
+        )
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        #expect(source.contains("pb.readObjects(forClasses:") == false)
+        #expect(source.contains("string(forType: type)"))
+        #expect(source.contains("Sentry APPLE-MACOS-2N"))
+    }
 }
