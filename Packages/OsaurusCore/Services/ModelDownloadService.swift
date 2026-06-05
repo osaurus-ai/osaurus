@@ -683,9 +683,29 @@ final class ModelDownloadService: ObservableObject {
     // MARK: - State Management
 
     /// Sync download states for models, skipping any with active downloads.
+    ///
+    /// `isDownloaded` walks each model's directory on disk (`fileExists` plus a
+    /// `contentsOfDirectory` enumeration). For a large list — notably the ~100
+    /// OsaurusAI repos folded in by `applyOsaurusOrgFetch` — running that on the
+    /// main actor blocks the UI, so the probe is done off-main and the resulting
+    /// states are published back. This also warms `MLXModelDownloadCache`.
     func syncStates(for models: [MLXModel]) {
-        for model in models where activeDownloadTasks[model.id] == nil {
-            downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
+        let pending = models.filter { activeDownloadTasks[$0.id] == nil }
+        guard !pending.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            let states: [String: DownloadState] = await Task.detached(priority: .utility) {
+                var result: [String: DownloadState] = [:]
+                for model in pending {
+                    result[model.id] = model.isDownloaded ? .completed : .notStarted
+                }
+                return result
+            }.value
+            guard let self else { return }
+            // Re-check active downloads on apply: one may have started while the
+            // off-main probe was in flight, and that live state must win.
+            for (id, state) in states where self.activeDownloadTasks[id] == nil {
+                self.downloadStates[id] = state
+            }
         }
     }
 
