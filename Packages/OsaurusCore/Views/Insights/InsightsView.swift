@@ -62,6 +62,12 @@ struct InsightsView: View {
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
+            // Honor a focus request that landed before this view existed
+            // (e.g. the chat "Insights" button opened the window on this tab).
+            applyPendingFocus(insightsService.pendingFocusLogId)
+        }
+        .onChange(of: insightsService.pendingFocusLogId) { _, newValue in
+            applyPendingFocus(newValue)
         }
         .themedAlert(
             "Clear All Logs",
@@ -103,6 +109,17 @@ struct InsightsView: View {
         withAnimation(.easeInOut(duration: 0.25)) {
             selectedLog = log
         }
+    }
+
+    /// Resolves a pending focus request (a log id set by another part of the
+    /// app) to the matching log and pushes it into the detail pane, then clears
+    /// the request so it isn't re-applied. No-op when the id is nil or the log
+    /// has already been evicted from the ring buffer.
+    private func applyPendingFocus(_ logId: UUID?) {
+        guard let logId else { return }
+        defer { insightsService.pendingFocusLogId = nil }
+        guard let log = insightsService.logs.first(where: { $0.id == logId }) else { return }
+        push(log)
     }
 
     // MARK: - Header View
