@@ -20,6 +20,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     case deepseek
     case minimax
     case venice
+    case evolink
     case openrouter
     case ollama
     case custom
@@ -38,6 +39,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return "DeepSeek"
         case .minimax: return "MiniMax"
         case .venice: return "Venice AI"
+        case .evolink: return "EvoLink"
         case .openrouter: return "OpenRouter"
         case .ollama: return "Ollama"
         case .custom: return "Custom"
@@ -56,6 +58,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return "deepseek-v4-pro / v4-flash"
         case .minimax: return L("MiniMax M-series models")
         case .venice: return L("Privacy-first AI")
+        case .evolink: return "GPT, Gemini, DeepSeek, Doubao & more"
         case .openrouter: return L("Multi-provider")
         case .ollama: return L("Run models locally via Ollama")
         case .custom: return L("Custom endpoint")
@@ -74,6 +77,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return "cpu"
         case .minimax: return "m.square.fill"
         case .venice: return "lock.shield.fill"
+        case .evolink: return "link"
         case .openrouter: return "arrow.triangle.branch"
         case .ollama: return "shippingbox.fill"
         case .custom: return "slider.horizontal.3"
@@ -92,6 +96,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return [Color(red: 0.18, green: 0.36, blue: 0.95), Color(red: 0.34, green: 0.52, blue: 0.98)]
         case .minimax: return [Color(red: 0.93, green: 0.27, blue: 0.23), Color(red: 0.83, green: 0.15, blue: 0.18)]
         case .venice: return [Color(red: 0.83, green: 0.66, blue: 0.33), Color(red: 0.72, green: 0.53, blue: 0.17)]
+        case .evolink: return [Color(red: 0.45, green: 0.35, blue: 0.95), Color(red: 0.30, green: 0.50, blue: 0.98)]
         case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
         case .ollama: return [Color(red: 0.36, green: 0.36, blue: 0.4), Color(red: 0.22, green: 0.22, blue: 0.26)]
         case .custom: return [Color(red: 0.55, green: 0.55, blue: 0.6), Color(red: 0.4, green: 0.4, blue: 0.45)]
@@ -110,6 +115,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return "https://platform.deepseek.com/api_keys"
         case .minimax: return "https://platform.minimax.io/user-center/basic-information/interface-key"
         case .venice: return "https://venice.ai/settings/api"
+        case .evolink: return "https://evolink.ai/dashboard/keys"
         case .openrouter: return "https://openrouter.ai/keys"
         case .ollama: return "https://ollama.com/download"
         case .custom: return ""
@@ -134,6 +140,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .deepseek: return "https://api-docs.deepseek.com/"
         case .minimax: return "https://platform.minimax.io/docs/api-reference/api-overview"
         case .venice: return "https://docs.venice.ai"
+        case .evolink: return "https://docs.evolink.ai"
         case .ollama: return "https://github.com/ollama/ollama"
         default: return nil
         }
@@ -378,6 +385,24 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
                 basePath: "/api/v1",
                 authType: .apiKey,
                 providerType: .openaiLegacy
+            )
+        case .evolink:
+            return ProviderPresetConfiguration(
+                name: "EvoLink",
+                host: "direct.evolink.ai",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1",
+                authType: .apiKey,
+                providerType: .openaiLegacy,
+                defaultManualModelIds: [
+                    "gpt-5.2",
+                    "gpt-5.1",
+                    "gemini-2.5-flash",
+                    "deepseek-v4-pro",
+                    "deepseek-v4-flash",
+                    "doubao-seed-2.0-pro",
+                ]
             )
         case .openrouter:
             return ProviderPresetConfiguration(

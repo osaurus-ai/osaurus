@@ -209,4 +209,56 @@ struct ProviderPresetsTests {
         let expected = Set(ProviderPreset.knownPresets).union([.custom])
         #expect(covered == expected)
     }
+
+    @Test func evolinkPreset_configurationMatchesOfficialAPI() throws {
+        let config = ProviderPreset.evolink.configuration
+
+        #expect(config.name == "EvoLink")
+        #expect(config.host == "direct.evolink.ai")
+        #expect(config.providerProtocol == .https)
+        #expect(config.port == nil)
+        #expect(config.basePath == "/v1")
+        #expect(config.authType == .apiKey)
+        #expect(config.providerType == .openaiLegacy)
+    }
+
+    @Test func evolinkPreset_includesSeedManualModels() throws {
+        let config = ProviderPreset.evolink.configuration
+
+        #expect(config.defaultManualModelIds.contains("gpt-5.2"))
+        #expect(config.defaultManualModelIds.contains("gemini-2.5-flash"))
+        #expect(config.defaultManualModelIds.contains("deepseek-v4-pro"))
+        #expect(config.defaultManualModelIds.contains("doubao-seed-2.0-pro"))
+    }
+
+    @Test func evolinkPreset_isListedAsKnownPreset() throws {
+        #expect(ProviderPreset.knownPresets.contains(.evolink))
+    }
+
+    @Test func matching_providerWithEvolinkHost_resolvesToEvolinkPreset() throws {
+        let provider = RemoteProvider(
+            name: "My EvoLink",
+            host: "direct.evolink.ai",
+            basePath: "/v1",
+            authType: .apiKey,
+            providerType: .openaiLegacy
+        )
+
+        #expect(ProviderPreset.matching(provider: provider) == .evolink)
+    }
+
+    @Test func evolinkPreset_chatEndpointResolvesToChatCompletions() throws {
+        let provider = RemoteProvider(
+            name: "EvoLink",
+            host: ProviderPreset.evolink.configuration.host,
+            basePath: ProviderPreset.evolink.configuration.basePath,
+            authType: .apiKey,
+            providerType: ProviderPreset.evolink.configuration.providerType
+        )
+
+        #expect(
+            provider.url(for: provider.providerType.chatEndpoint)?.absoluteString
+                == "https://direct.evolink.ai/v1/chat/completions"
+        )
+    }
 }
