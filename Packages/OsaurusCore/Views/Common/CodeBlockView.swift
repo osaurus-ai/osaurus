@@ -401,6 +401,13 @@ final class CodeNSTextView: NSTextView {
         let charWidth = codeFontSize * 0.62
         let leftPad: CGFloat = 12
         let gutterPointWidth = CGFloat(digits + 2) * codeFontSize * 0.62
+        // Monospaced font: every padded line number has the same width (digits x
+        // the fixed advance), so compute it arithmetically once instead of
+        // measuring each line through CoreText inside draw. The measurement
+        // crashed in production while CoreText copied its attribute dictionary,
+        // and skipping it also drops a per-visible-line layout round-trip.
+        let numWidth = CGFloat(digits) * font.maximumAdvancement.width
+        let x = leftPad + gutterPointWidth - numWidth - charWidth * 1.2
         let nsString = textStorage.string as NSString
         var charIndex = 0
 
@@ -418,9 +425,6 @@ final class CodeNSTextView: NSTextView {
             }
 
             let numStr = String(lineNum).padding(toLength: digits, withPad: " ", startingAt: 0) as NSString
-            let numSize = numStr.size(withAttributes: attrs)
-            let x = leftPad + gutterPointWidth - numSize.width - charWidth * 1.2
-
             numStr.draw(at: NSPoint(x: x, y: fragRect.origin.y), withAttributes: attrs)
 
             let lineRange = nsString.lineRange(for: NSRange(location: charIndex, length: 0))
