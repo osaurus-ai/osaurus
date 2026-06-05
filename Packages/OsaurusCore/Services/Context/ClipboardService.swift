@@ -95,26 +95,23 @@ public final class ClipboardService: ObservableObject {
         await performPasteboardRefresh()
     }
 
-    /// Read the pasteboard off the main thread and, if its content changed, publish it.
+    /// Poll the pasteboard and, if its content changed, publish it.
     private func performPasteboardRefresh() async {
         let knownChangeCount = lastChangeCount
 
-        // `changeCount`, `readObjects`, `data(forType:)` and `string(forType:)` all make
-        // synchronous XPC calls; keep them off the main actor so a slow pasteboard server or
-        // content provider can't hang the UI.
-        let snapshot = await Task.detached(priority: .utility) {
-            () -> (changeCount: Int, content: ClipboardContent?)? in
-            let pb = NSPasteboard.general
-            let changeCount = pb.changeCount
-            guard changeCount != knownChangeCount else { return nil }
-            return (changeCount, Self.detectContent(in: pb))
+        // Only the per-tick `changeCount` poll runs off-main. Content reads must stay
+        // on the main actor: `NSPasteboard.general` is shared and unlocked, and reading
+        // items from a pool thread races main-thread copy/paste traffic. They only
+        // happen on an actual clipboard change, so the main actor pays the XPC cost rarely.
+        let changeCount = await Task.detached(priority: .utility) {
+            NSPasteboard.general.changeCount
         }.value
+        guard changeCount != knownChangeCount else { return }
 
-        guard let snapshot else { return }
-        print("[ClipboardService] Pasteboard change detected. Count: \(snapshot.changeCount) (was \(knownChangeCount))")
-        lastChangeCount = snapshot.changeCount
+        print("[ClipboardService] Pasteboard change detected. Count: \(changeCount) (was \(knownChangeCount))")
+        lastChangeCount = changeCount
 
-        guard let content = snapshot.content else {
+        guard let content = Self.detectContent(in: NSPasteboard.general) else {
             print("[ClipboardService] Change detected but no meaningful content found on pasteboard.")
             return
         }
