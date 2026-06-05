@@ -193,15 +193,34 @@ public final class AudioInputManager: ObservableObject {
             return
         }
 
+        // Enumerating audio devices (`AVCaptureDevice.DiscoverySession` plus the
+        // CoreAudio default-device lookup) makes synchronous XPC calls to the
+        // audio HAL that can hang for seconds. Run that off the main actor and
+        // publish the Sendable result back.
+        Task { @MainActor [weak self] in
+            let devices = await Task.detached(priority: .userInitiated) {
+                AudioInputManager.discoverInputDevices()
+            }.value
+            guard let self else { return }
+            self.availableDevices = devices
+            if let selectedId = self.selectedDeviceId,
+                !devices.contains(where: { $0.id == selectedId })
+            {
+                self.selectedDeviceId = nil
+            }
+        }
+    }
+
+    private nonisolated static func discoverInputDevices() -> [AudioInputDevice] {
         let discoverySession = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.microphone, .external],
             mediaType: .audio,
             position: .unspecified
         )
 
-        let defaultDeviceId = getDefaultInputDeviceId()
+        let defaultDeviceId = defaultInputDeviceUID()
 
-        availableDevices = discoverySession.devices.compactMap { device in
+        return discoverySession.devices.compactMap { device in
             let name = device.localizedName
             if name.hasPrefix("CADefaultDevice") || name.contains("Aggregate") && name.contains("-") || name.isEmpty {
                 return nil
@@ -212,12 +231,6 @@ public final class AudioInputManager: ObservableObject {
                 name: name,
                 isDefault: device.uniqueID == defaultDeviceId
             )
-        }
-
-        if let selectedId = selectedDeviceId,
-            !availableDevices.contains(where: { $0.id == selectedId })
-        {
-            selectedDeviceId = nil
         }
     }
 
@@ -266,7 +279,7 @@ public final class AudioInputManager: ObservableObject {
 
     // MARK: - CoreAudio Helpers
 
-    private func getDefaultInputDeviceId() -> String? {
+    private nonisolated static func defaultInputDeviceUID() -> String? {
         var defaultDeviceId = AudioDeviceID()
         var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
 
@@ -287,10 +300,10 @@ public final class AudioInputManager: ObservableObject {
 
         guard status == noErr else { return nil }
 
-        return getDeviceUID(for: defaultDeviceId)
+        return deviceUID(for: defaultDeviceId)
     }
 
-    private func getDeviceUID(for deviceId: AudioDeviceID) -> String? {
+    private nonisolated static func deviceUID(for deviceId: AudioDeviceID) -> String? {
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceUID,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -347,7 +360,7 @@ public final class AudioInputManager: ObservableObject {
         guard status == noErr else { return nil }
 
         for deviceId in deviceIds {
-            if let deviceUID = getDeviceUID(for: deviceId), deviceUID == uid {
+            if let deviceUID = Self.deviceUID(for: deviceId), deviceUID == uid {
                 return deviceId
             }
         }
