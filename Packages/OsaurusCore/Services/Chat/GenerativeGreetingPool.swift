@@ -337,6 +337,11 @@ public actor GenerativeGreetingPool {
         // opened another session). Re-checking each iteration keeps us
         // converging on `target` rather than overshooting.
         while !Task.isCancelled {
+            // Every background path (ticker, wake-resume, launch prewarm)
+            // funnels through here, so this is the one gate that stops
+            // generation once the feature is toggled off mid-refill.
+            guard await isGreetingEnabled(for: agent.id) else { break }
+
             let preRevision = Self.revision(for: agent)
             prune(agentId: agent.id, model: model, revision: preRevision)
             let count = pools[agent.id]?.count ?? 0
@@ -389,6 +394,16 @@ public actor GenerativeGreetingPool {
                 poolLogger.warning("greeting pool: refill failed: \(desc)")
                 break
             }
+        }
+    }
+
+    /// Resolved on/off state for `agentId` (per-agent override > global
+    /// flag). Hops to the main actor since `AgentManager` and
+    /// `AppConfiguration` are `@MainActor`-isolated, and returns `false`
+    /// when the agent was deleted between launches.
+    private func isGreetingEnabled(for agentId: UUID) async -> Bool {
+        await MainActor.run {
+            AgentManager.shared.agent(for: agentId)?.shouldUseGenerativeGreetings ?? false
         }
     }
 
@@ -587,6 +602,13 @@ public actor GenerativeGreetingPool {
             logTickSummary()
             if paused { continue }
             guard let agent = activeAgent, let model = activeModel else { continue }
+            // Drop the stale active context when the feature was toggled
+            // off so the loop goes fully idle next tick instead of
+            // re-arming a refill that `runRefill` would just bail out of.
+            guard await isGreetingEnabled(for: agent.id) else {
+                clearActive(agentId: agent.id)
+                continue
+            }
             let busy = await MainActor.run {
                 ChatWindowManager.shared.isAnySessionStreaming
             }

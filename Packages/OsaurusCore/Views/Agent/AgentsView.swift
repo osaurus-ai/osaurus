@@ -919,10 +919,12 @@ struct AgentDetailView: View {
     @State private var searchMemoryEnabled: Bool = false
     @State private var selfSchedulingEnabled: Bool = false
     /// Per-agent on/off for the chat empty-state generative greeting.
-    /// `nil` resolves to "auto" — the feature runs whenever a Core Model
-    /// is configured. Values flow through `loadAgent` / `saveAgent`
-    /// like the other `AgentSettings` fields.
-    @State private var generativeGreetingsEnabled: Bool? = nil
+    /// Default off, like the other capability flags; the agent opts in
+    /// from the Features tab. Drives whether the Empty State section
+    /// shows the AI personality editor or the manual greeting editor.
+    /// Flows through `loadAgent` / `saveAgent` like the other
+    /// `AgentSettings` fields.
+    @State private var generativeGreetingsEnabled: Bool = false
     /// Per-agent override for the empty-state greeting voice. Empty-after-
     /// trim falls through to the global persona on
     /// `ChatConfiguration.greetingPersona`; both empty falls back to the
@@ -930,8 +932,8 @@ struct AgentDetailView: View {
     @State private var greetingPersona: String = ""
     /// Manual override for `Agent.chatGreeting`. Empty-after-trim becomes
     /// `nil` on save so the chat empty state falls through to the
-    /// time-of-day default. Only rendered when the generative toggle
-    /// resolves to OFF for this agent (gated by `isGenerativeOn`).
+    /// time-of-day default. Only rendered when `generativeGreetingsEnabled`
+    /// is OFF for this agent.
     @State private var chatGreetingDraft: String = ""
     /// Manual override for `Agent.chatSubtitle`. Same gating and
     /// trim-empty-to-nil semantics as `chatGreetingDraft`.
@@ -2110,55 +2112,24 @@ struct AgentDetailView: View {
         themeSection
     }
 
-    /// Two-way choice the user makes for an agent's chat empty state.
-    /// `Bool?` on disk; `EmptyStateMode` in the picker. `auto` resolves
-    /// against the global master switch on `ChatConfiguration` so the
-    /// picker reflects what the runtime would actually do.
-    private enum EmptyStateMode: Hashable {
-        case ai
-        case manual
-    }
-
-    /// Resolved on/off state for this agent's generative greeting.
-    /// `nil` defers to the global master switch on Settings → Chat.
-    private var isGenerativeOn: Bool {
-        let globallyEnabled =
-            AppConfiguration.shared.chatConfig.generativeGreetingsEnabled
-        return generativeGreetingsEnabled ?? globallyEnabled
-    }
-
-    /// Picker binding. Reads the resolved state, writes an explicit
-    /// `Bool` so the user's choice is durable. We don't roundtrip back
-    /// to `nil`/auto — once the user expresses an opinion, we honor it.
-    private var emptyStateModeBinding: Binding<EmptyStateMode> {
-        Binding(
-            get: { isGenerativeOn ? .ai : .manual },
-            set: { newMode in
-                generativeGreetingsEnabled = (newMode == .ai)
-                debouncedSave()
-            }
-        )
-    }
-
-    /// Customization → Empty State. Two mutually-exclusive paths:
-    /// - **AI** → free-text Personality drives generated greeting + actions.
-    /// - **Custom** → user-authored Greeting / Message / Action Bar.
-    /// We render only the active side so the surface stays calm; the
-    /// segmented picker flips between them.
+    /// Customization → Empty State. The Generative Greetings toggle in
+    /// the Features tab decides which editor shows here:
+    /// - **on** → free-text Personality drives the generated greeting + actions.
+    /// - **off** → user-authored Greeting / Message / Action Bar.
+    /// We render only the active side so the surface stays calm.
     private var emptyStateSection: some View {
         AgentDetailSection(title: L("Empty State"), icon: "sparkles") {
             VStack(alignment: .leading, spacing: 14) {
-                Picker("", selection: emptyStateModeBinding) {
-                    Label(localized: "AI", systemImage: "sparkles").tag(EmptyStateMode.ai)
-                    Label(localized: "Custom", systemImage: "pencil.and.scribble").tag(EmptyStateMode.manual)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-
-                if isGenerativeOn {
+                if generativeGreetingsEnabled {
                     aiEmptyStateBody
                 } else {
                     manualEmptyStateBody
+                    Text(
+                        "Turn on Generative Greetings in the Features tab to use an AI-written greeting instead.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
                 }
             }
             .onChange(of: chatGreetingDraft) { debouncedSave() }
@@ -2813,6 +2784,22 @@ struct AgentDetailView: View {
                     }
                 }
 
+                // Always shown (default + custom agents): the empty-state
+                // greeting flavor. The on/off lives here; the matching
+                // editor (AI personality vs. custom greeting) is in
+                // Customization > Empty State.
+                featureGroup(
+                    "Empty State",
+                    description: "How the chat looks before your first message."
+                ) {
+                    featureToggleRow(
+                        title: "Generative Greetings",
+                        subtitle:
+                            "Generate a fresh AI greeting and quick actions on your Core Model each time you open an empty chat. Off uses your custom greeting. The first generation can feel slow on small models like Foundation.",
+                        isOn: $generativeGreetingsEnabled
+                    )
+                }
+
                 // Custom-agent-only groups. The default agent is locked to
                 // its fixed baseline (DB hard-off, no sandbox), so these
                 // would be dead UI for it.
@@ -2881,7 +2868,7 @@ struct AgentDetailView: View {
                     }
 
                     Text(
-                        "Voice output lives in the Voice section; chat greetings are in Customization > Empty State.",
+                        "Voice output lives in the Voice section; the greeting text and personality are in Customization > Empty State.",
                         bundle: .module
                     )
                     .font(.system(size: 11))

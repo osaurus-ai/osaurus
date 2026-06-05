@@ -46,13 +46,11 @@ struct ConfigurationView: View {
     /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
     /// `StreamingDeltaProcessor` reads per delta.
     @AppStorage("chatSmoothStreamingEnabled") private var smoothStreamingEnabled: Bool = true
-    /// Master switch for AI-generated empty-state greetings. Defaults to
-    /// OFF; users opt in here. Per-agent overrides on
-    /// `AgentSettings.generativeGreetingsEnabled` still win when set.
-    @State private var tempGenerativeGreetingsEnabled: Bool = false
     /// Free-text "voice" instruction for AI-generated empty-state
-    /// greetings. Empty = use the built-in playful default. Per-agent
-    /// overrides live on `AgentSettings.greetingPersona`.
+    /// greetings — the global default voice. The on/off is per-agent
+    /// (`AgentSettings.generativeGreetingsEnabled`). Empty = use the
+    /// built-in playful default. Per-agent overrides live on
+    /// `AgentSettings.greetingPersona`.
     @State private var tempGreetingPersona: String = ""
 
     // Server / Local Inference settings now live in the Server →
@@ -451,22 +449,14 @@ struct ConfigurationView: View {
 
                                     SettingsSubsection(label: "Generative Greetings") {
                                         VStack(alignment: .leading, spacing: 12) {
-                                            VStack(alignment: .leading, spacing: 8) {
-                                                Toggle(isOn: $tempGenerativeGreetingsEnabled) {
-                                                    Text("AI-generated greetings", bundle: .module)
-                                                        .font(.system(size: 12))
-                                                }
-                                                Text(
-                                                    "Off by default. When on, each empty state generates a fresh greeting + quick actions on the configured Core Model. The first generation can feel slow on small models like Foundation; the static greeting still paints instantly. Per-agent overrides in the Customization tab still win.",
-                                                    bundle: .module
-                                                )
-                                                .font(.system(size: 11))
-                                                .foregroundColor(theme.tertiaryText)
-                                            }
+                                            Text(
+                                                "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
+                                                bundle: .module
+                                            )
+                                            .font(.system(size: 11))
+                                            .foregroundColor(theme.tertiaryText)
 
                                             personalityEditorBlock
-                                                .disabled(!tempGenerativeGreetingsEnabled)
-                                                .opacity(tempGenerativeGreetingsEnabled ? 1 : 0.5)
                                         }
                                     }
 
@@ -852,7 +842,6 @@ struct ConfigurationView: View {
         tempCoreModelProvider = chat.coreModelProvider ?? ""
         tempCoreModelName = chat.coreModelName ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
-        tempGenerativeGreetingsEnabled = chat.generativeGreetingsEnabled
         // Storage convention: empty string = "use the built-in default."
         // The editor never displays an empty state — we hydrate it with
         // the built-in default so the text is selectable, copyable, and
@@ -901,7 +890,6 @@ struct ConfigurationView: View {
         tempCoreModelProvider = chatDefaults.coreModelProvider ?? ""
         tempCoreModelName = chatDefaults.coreModelName ?? ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
-        tempGenerativeGreetingsEnabled = chatDefaults.generativeGreetingsEnabled
         // Match `loadConfiguration`: hydrate the editor with the
         // built-in default rather than leaving it blank. Saving with
         // this exact text collapses back to "" so future default
@@ -1002,7 +990,6 @@ struct ConfigurationView: View {
             preflightSearchMode: tempPreflightSearchMode,
             disableTools: false,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
-            generativeGreetingsEnabled: tempGenerativeGreetingsEnabled,
             greetingPersona: {
                 // Collapse an unedited built-in default back to "" so
                 // the storage stays in "inherit the default" mode.
