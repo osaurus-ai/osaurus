@@ -59,14 +59,56 @@ struct ModelInfo: Codable, Sendable {
 // MARK: - Model Info Extraction
 
 extension ModelInfo {
+    // Process-wide memo for `load(modelId:)`. This is read from view bodies
+    // (e.g. `FloatingInputCard.maxContextTokens`), and each miss walks the model
+    // directory and reads + parses `config.json` and `generation_config.json` from
+    // disk — synchronous I/O that hangs the UI when it runs on every body eval.
+    // Only successful loads are cached (so a not-yet-downloaded model is re-probed),
+    // and the cache is dropped on `.localModelsChanged` to stay in sync with disk.
+    private static let cacheLock = NSLock()
+    private nonisolated(unsafe) static var cache: [String: ModelInfo] = [:]
+    private nonisolated(unsafe) static var didInstallObserver = false
+
     /// Load model info from a model identifier (e.g., "mlx-community/Qwen3-1.7B-4bit" or "qwen3-1.7b-4bit")
     static func load(modelId: String) -> ModelInfo? {
+        ensureCacheObserverInstalled()
+        cacheLock.lock()
+        if let cached = cache[modelId] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
         // Try to find the model directory
         guard let directory = findModelDirectory(for: modelId) else {
             return nil
         }
 
-        return load(from: directory, modelId: modelId)
+        let info = load(from: directory, modelId: modelId)
+        if let info {
+            cacheLock.lock()
+            cache[modelId] = info
+            cacheLock.unlock()
+        }
+        return info
+    }
+
+    private static func ensureCacheObserverInstalled() {
+        cacheLock.lock()
+        let already = didInstallObserver
+        didInstallObserver = true
+        cacheLock.unlock()
+        if already { return }
+
+        NotificationCenter.default.addObserver(
+            forName: .localModelsChanged,
+            object: nil,
+            queue: nil
+        ) { _ in
+            ModelInfo.cacheLock.lock()
+            ModelInfo.cache.removeAll(keepingCapacity: true)
+            ModelInfo.cacheLock.unlock()
+        }
     }
 
     /// Load model info from a local directory
