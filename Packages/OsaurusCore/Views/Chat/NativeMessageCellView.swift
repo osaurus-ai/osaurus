@@ -484,6 +484,8 @@ final class NativeAssistantActionsView: NSView {
     private let copyButton: HeaderCircleActionControl
     private let regenerateButton: HeaderCircleActionControl
     let speakButton: HeaderCircleActionControl
+    /// Opens the Insights tab focused on this turn's request/response log.
+    let insightsButton: HeaderCircleActionControl
 
     private var turnId: UUID = UUID()
     private var onCopy: ((UUID) -> Void)?
@@ -500,18 +502,22 @@ final class NativeAssistantActionsView: NSView {
         let copyControl = HeaderCircleActionControl(action: {})
         let regenControl = HeaderCircleActionControl(action: {})
         let speakControl = HeaderCircleActionControl(action: {})
+        let insightsControl = HeaderCircleActionControl(action: {})
         self.copyButton = copyControl
         self.regenerateButton = regenControl
         self.speakButton = speakControl
+        self.insightsButton = insightsControl
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         regenerateButton.translatesAutoresizingMaskIntoConstraints = false
         speakButton.translatesAutoresizingMaskIntoConstraints = false
+        insightsButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(copyButton)
         addSubview(regenerateButton)
         addSubview(speakButton)
+        addSubview(insightsButton)
 
         copyButton.setAction { [weak self] in
             guard let self else { return }
@@ -525,10 +531,16 @@ final class NativeAssistantActionsView: NSView {
             guard let self else { return }
             self.onSpeak?(self.turnId)
         }
+        insightsButton.setAction { [weak self] in
+            guard let self else { return }
+            self.openInsights()
+        }
 
         let size: CGFloat = 28
+        // Speaker is last; its leading hangs off Insights and collapses to 0
+        // (along with its width) when TTS is disabled so the row tightens up.
         let speakLeading = speakButton.leadingAnchor.constraint(
-            equalTo: regenerateButton.trailingAnchor,
+            equalTo: insightsButton.trailingAnchor,
             constant: 4
         )
         let speakWidth = speakButton.widthAnchor.constraint(equalToConstant: size)
@@ -546,6 +558,14 @@ final class NativeAssistantActionsView: NSView {
             regenerateButton.widthAnchor.constraint(equalToConstant: size),
             regenerateButton.heightAnchor.constraint(equalToConstant: size),
 
+            insightsButton.leadingAnchor.constraint(equalTo: regenerateButton.trailingAnchor, constant: 4),
+            insightsButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            insightsButton.widthAnchor.constraint(equalToConstant: size),
+            insightsButton.heightAnchor.constraint(equalToConstant: size),
+
+            // Speaker follows Insights and carries the trailing pin. When it's
+            // hidden its width/leading collapse to 0, so Insights becomes the
+            // effective last button.
             speakLeading,
             speakButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             speakWidth,
@@ -614,8 +634,55 @@ final class NativeAssistantActionsView: NSView {
             theme: theme,
             iconTint: nil
         )
+        insightsButton.setSymbol(
+            NSImage(systemSymbolName: "waveform.path.ecg.magnifyingglass", accessibilityDescription: L("Insights"))?
+                .withSymbolConfiguration(cfg),
+            toolTip: L("View in Insights"),
+            theme: theme,
+            iconTint: nil
+        )
         applyTTSVisibility()
         refreshSpeakIcon()
+    }
+
+    /// Opens the Settings → Insights tab, focused on the request/response log
+    /// this assistant turn produced. Request logs live only in memory for the
+    /// current app session (and are capped at a ring-buffer limit), so turns
+    /// from a previous launch or evicted entries have nothing to show — in
+    /// that case we surface a themed alert instead of opening an unrelated
+    /// (or empty) Insights list.
+    private func openInsights() {
+        MainActor.assumeIsolated {
+            if InsightsService.shared.focus(turnId: turnId) {
+                AppDelegate.shared?.showManagementWindow(initialTab: .insights)
+            } else {
+                presentLogUnavailableAlert()
+            }
+        }
+    }
+
+    @MainActor
+    private func presentLogUnavailableAlert() {
+        // Scope the alert to this chat window when we can resolve it, so it
+        // dims and centers over the chat rather than another surface.
+        let scope: ThemedAlertScope =
+            window.flatMap { ChatWindowManager.shared.windowId(for: $0) }
+            .map { .chat($0) } ?? .content
+        let requestId = UUID()
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: L("Insights Unavailable"),
+                message: L(
+                    "Detailed request logs are kept only for a short duration to save storage, so there's nothing to show for this response."
+                ),
+                buttons: [.primary(L("OK")) {}],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
     }
 
     private func refreshSpeakIcon() {

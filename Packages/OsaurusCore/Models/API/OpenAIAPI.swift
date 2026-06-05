@@ -676,6 +676,11 @@ struct ChatCompletionRequest: Codable, Sendable {
     var modelOptions: [String: ModelOptionValue]? = nil
     /// Optional TTFT trace for diagnostic timing (not serialized to JSON).
     var ttftTrace: TTFTTrace? = nil
+    /// Local-only correlation id tying this request to the chat assistant
+    /// turn that produced it, so the Insights tab can be opened focused on a
+    /// specific response. Not decoded from OpenAI JSON, not forwarded to
+    /// remote providers.
+    var turnId: UUID? = nil
     /// Per-request thinking toggle. Translated to `modelOptions["disableThinking"]`
     /// at request entry; absent preserves server defaults.
     var enable_thinking: Bool? = nil
@@ -721,6 +726,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.max_completion_tokens = max_completion_tokens
         copy.modelOptions = modelOptions
         copy.ttftTrace = ttftTrace
+        copy.turnId = turnId
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
         copy.samplingParametersAreImplicit = samplingParametersAreImplicit
@@ -753,6 +759,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.max_completion_tokens = max_completion_tokens
         copy.modelOptions = modelOptions
         copy.ttftTrace = ttftTrace
+        copy.turnId = turnId
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
         copy.samplingParametersAreImplicit = samplingParametersAreImplicit

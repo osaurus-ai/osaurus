@@ -54,6 +54,11 @@ struct RequestLog: Identifiable, Sendable {
     let timestamp: Date
     let source: RequestSource
 
+    /// Local-only correlation back to the chat assistant turn that produced
+    /// this log (chatUI source only). Lets the per-message "Insights" button
+    /// open this exact entry. Nil for HTTP/plugin requests.
+    let turnId: UUID?
+
     // HTTP request/response fields
     let method: String
     let path: String
@@ -97,6 +102,7 @@ struct RequestLog: Identifiable, Sendable {
         id: UUID = UUID(),
         timestamp: Date = Date(),
         source: RequestSource,
+        turnId: UUID? = nil,
         method: String,
         path: String,
         statusCode: Int,
@@ -119,6 +125,7 @@ struct RequestLog: Identifiable, Sendable {
         self.id = id
         self.timestamp = timestamp
         self.source = source
+        self.turnId = turnId
         self.method = method
         self.path = path
         self.statusCode = statusCode

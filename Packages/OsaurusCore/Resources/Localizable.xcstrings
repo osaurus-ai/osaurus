@@ -10121,6 +10121,9 @@
         }
       }
     },
+    "Detailed request logs are kept only for a short duration to save storage, so there's nothing to show for this response." : {
+
+    },
     "Detected: %@" : {
       "localizations" : {
         "de" : {
@@ -15895,6 +15898,9 @@
           }
         }
       }
+    },
+    "Insights Unavailable" : {
+
     },
     "insights.body.caption.local.request" : {
       "comment" : "Caption under the Request tab's Local sub-toggle in Insights, describing the body as the unscrubbed payload your local app handed to Osaurus.",
@@ -38326,6 +38332,9 @@
           }
         }
       }
+    },
+    "View in Insights" : {
+
     },
     "View on GitHub" : {
       "localizations" : {
