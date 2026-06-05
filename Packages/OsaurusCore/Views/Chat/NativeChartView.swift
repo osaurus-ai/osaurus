@@ -8,12 +8,15 @@
 
 import AppKit
 import AAInfographics
+import UniformTypeIdentifiers
+import WebKit
 
 final class NativeChartView: NSView {
 
     private let card = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let typePicker = NSPopUpButton()
+    private let downloadButton = NSButton()
     private let noteLabel = NSTextField(labelWithString: "")
     private let chartView = AAChartView()
 
@@ -102,6 +105,21 @@ final class NativeChartView: NSView {
         typePicker.action = #selector(chartTypeChanged)
         card.addSubview(typePicker)
 
+        // Download button — snapshots the rendered chart to a PNG file
+        downloadButton.image = NSImage(
+            systemSymbolName: "square.and.arrow.down",
+            accessibilityDescription: "Save chart as image"
+        )
+        downloadButton.imagePosition = .imageOnly
+        downloadButton.bezelStyle = .roundRect
+        downloadButton.controlSize = .small
+        downloadButton.isBordered = true
+        downloadButton.toolTip = "Save chart as image"
+        downloadButton.translatesAutoresizingMaskIntoConstraints = false
+        downloadButton.target = self
+        downloadButton.action = #selector(downloadChart)
+        card.addSubview(downloadButton)
+
         // Suppress WKWebView's white background before JS renders
         chartView.setValue(false, forKey: "drawsBackground")
         chartView.underPageBackgroundColor = .clear
@@ -142,7 +160,10 @@ final class NativeChartView: NSView {
             titleLabel.centerYAnchor.constraint(equalTo: typePicker.centerYAnchor),
 
             typePicker.topAnchor.constraint(equalTo: card.topAnchor, constant: p - 2),
-            typePicker.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -p),
+            typePicker.trailingAnchor.constraint(equalTo: downloadButton.leadingAnchor, constant: -6),
+
+            downloadButton.centerYAnchor.constraint(equalTo: typePicker.centerYAnchor),
+            downloadButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -p),
 
             chartView.topAnchor.constraint(equalTo: typePicker.bottomAnchor, constant: 4),
             chartView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
@@ -232,6 +253,70 @@ final class NativeChartView: NSView {
         let bgHex = NSColor(theme.cardBackground).hexString
         let textHex = NSColor(theme.primaryText).hexString
         redraw(spec: updated, bgHex: bgHex, textHex: textHex, theme: theme, forceFullRedraw: true)
+    }
+
+    // MARK: - Download action
+
+    /// Snapshots the rendered chart (AAChartView is a WKWebView) into a PNG and
+    /// prompts the user for a save location.
+    @objc private func downloadChart() {
+        let config = WKSnapshotConfiguration()
+        config.afterScreenUpdates = true
+        chartView.takeSnapshot(with: config) { [weak self] image, error in
+            guard let self, let image, error == nil else { return }
+            self.presentSavePanel(for: image)
+        }
+    }
+
+    private func presentSavePanel(for image: NSImage) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        let baseName = (lastSpec?.title?.isEmpty == false ? lastSpec?.title : nil) ?? "chart"
+        panel.nameFieldStringValue = "\(baseName).png"
+
+        let completion: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url else { return }
+            // Pull the (cheap) bitmap off the image on the main actor, then hand
+            // the Sendable TIFF Data to a detached task for the expensive PNG
+            // encode + disk write so the main thread never blocks.
+            Task { @MainActor in
+                guard let tiff = image.tiffRepresentation else {
+                    NSSound.beep()
+                    return
+                }
+                let saved = await Self.encodeAndWritePNG(tiff: tiff, to: url)
+                guard saved else {
+                    NSSound.beep()
+                    return
+                }
+                ToastManager.shared.action(
+                    L("Chart saved"),
+                    message: url.lastPathComponent,
+                    action: .revealInFinder(url),
+                    buttonTitle: L("Reveal in Finder")
+                )
+            }
+        }
+        // beginSheetModal is async (non-blocking); runModal is a blocking
+        // fallback only when the view isn't yet in a window.
+        if let window = self.window {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            completion(panel.runModal())
+        }
+    }
+
+    /// PNG-encodes `tiff` and writes it to `url` off the main thread.
+    private nonisolated static func encodeAndWritePNG(tiff: Data, to url: URL) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            guard
+                let bitmap = NSBitmapImageRep(data: tiff),
+                let png = bitmap.representation(using: .png, properties: [:]),
+                (try? png.write(to: url)) != nil
+            else { return false }
+            return true
+        }.value
     }
 
     // MARK: - Draw / Refresh
