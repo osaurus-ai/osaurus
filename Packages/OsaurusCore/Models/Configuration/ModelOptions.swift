@@ -252,7 +252,7 @@ struct QwenThinkingProfile: ModelProfile {
 
 // MARK: - Nemotron-3 Thinking Profile
 
-/// Nemotron-3-Nano-Omni Reasoning models — `model_type=nemotron_h` hybrid
+/// Nemotron-3 reasoning models — `model_type=nemotron_h` hybrid
 /// Mamba+Attn+MoE bundles whose chat template reads an `enable_thinking`
 /// kwarg. Osaurus exposes the toggle but does not synthesize a reasoning mode:
 /// absent values must let the model bundle/runtime decide.
@@ -264,7 +264,7 @@ struct NemotronThinkingProfile: ModelProfile {
 
     static func matches(modelId: String) -> Bool {
         let lower = modelId.lowercased()
-        return ModelFamilyNames.isNemotronOmniFamily(modelId) && !lower.contains("coder")
+        return ModelFamilyNames.isNemotronThinkingFamily(modelId) && !lower.contains("coder")
     }
 
     static let options: [ModelOptionDefinition] = [

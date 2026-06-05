@@ -761,7 +761,7 @@ struct MLXBatchAdapter {
             }
             return context
         }
-        if ModelFamilyNames.isNemotronOmniFamily(modelName) {
+        if ModelFamilyNames.isNemotronThinkingFamily(modelName) {
             if directRailReasoningEffort {
                 context["enable_thinking"] = false
                 return context

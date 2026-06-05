@@ -1552,12 +1552,12 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    /// Nemotron Omni call/audio workloads default to the closed/no-thinking
+    /// Nemotron reasoning workloads default to the closed/no-thinking
     /// rail for ordinary chat. Live JANGTQ rows otherwise stream only hidden
     /// reasoning_content and length-stop with empty visible content. Explicit
     /// user/API opt-in still enables thinking and explicit direct/off efforts
     /// still disable it.
-    @Test func additionalContext_defaultsNemotronOmniThinkingOffButHonorsExplicitOptIn() {
+    @Test func additionalContext_defaultsNemotronThinkingOffButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -1569,20 +1569,22 @@ struct MLXBatchAdapterTests {
             "dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK",
             "nemotron-omni-nano-jangtq-crack",
             "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
+            "jangq-ai/NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
         ] {
             #expect(
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
                 )["enable_thinking"] as? Bool == false,
-                "Nemotron Omni should default to the closed/no-thinking rail: \(modelName)"
+                "Nemotron should default to the closed/no-thinking rail: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
                     for: userEnabled,
                     modelName: modelName
                 )["enable_thinking"] as? Bool == true,
-                "Nemotron Omni must honor explicit thinking opt-in: \(modelName)"
+                "Nemotron must honor explicit thinking opt-in: \(modelName)"
             )
 
             let directOff = MLXBatchAdapter.additionalContext(

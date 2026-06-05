@@ -139,6 +139,9 @@ struct ModelProfileRegistryTests {
             "dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK",
             "nemotron-omni-nano-jangtq-crack",
             "nemotron-3-nano-omni-30b-a3b-mxfp4",  // case-folded picker form
+            "jangq-ai/NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            "nemotron-3-ultra-550b-a55b-jangtq-1l",
         ] {
             let profile = ModelProfileRegistry.profile(for: id)
             #expect(
@@ -166,7 +169,7 @@ struct ModelProfileRegistryTests {
             // profile.
             let isNemotron3 = profile?.displayName == NemotronThinkingProfile.displayName
             #expect(
-                !isNemotron3 || id.lowercased().contains("nemotron-3"),
+                !isNemotron3,
                 "matcher must be specific to nemotron-3, not generic nemotron"
             )
         }

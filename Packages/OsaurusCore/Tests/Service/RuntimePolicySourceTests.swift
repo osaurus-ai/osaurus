@@ -464,7 +464,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "f2144e1dc39bb33e9ed08ee21e66b0fafb314c3a"
+        let expectedRuntimeHardenedRevision = "58a4eee17da66f041a6fdd69fc3ab5ca3c24c4c7"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -2124,9 +2124,9 @@ struct RuntimePolicySourceTests {
             "Qwen local chat is an explicit exception: live tool-history rows must default to the closed/no-thinking rail instead of hidden reasoning-only length stops."
         )
         #expect(
-            adapter.contains("if ModelFamilyNames.isNemotronOmniFamily(modelName)")
+            adapter.contains("if ModelFamilyNames.isNemotronThinkingFamily(modelName)")
                 && adapter.contains("context[\"enable_thinking\"] = false"),
-            "Nemotron Omni bundles are the explicit multimodal exception: live ordinary chat must default to the closed/no-thinking rail instead of hidden reasoning-only output."
+            "Nemotron reasoning bundles are the explicit hybrid exception: live ordinary chat must default to the closed/no-thinking rail instead of hidden reasoning-only output."
         )
         #expect(
             adapter.contains("if ModelFamilyNames.isGemmaFamily(modelName)")
