@@ -74,8 +74,13 @@ struct ModelDownloadView: View {
     /// Debounced copy of `searchText` that drives filtering + grid animation
     @State private var debouncedSearchText: String = ""
 
-    /// Currently selected tab (All, Suggested, or Downloaded)
+    /// Currently selected tab (On Device or Catalog). The initial value is
+    /// overridden once on first appear by `chooseInitialTabIfNeeded()`.
     @State private var selectedTab: ModelListTab = .all
+
+    /// Ensures the smart initial-tab selection runs only on first appear so
+    /// it never overrides the user's manual tab navigation.
+    @State private var didChooseInitialTab = false
 
     /// Debounce task for the remote Hugging Face fetch.
     @State private var searchDebounceTask: Task<Void, Never>? = nil
@@ -162,6 +167,8 @@ struct ModelDownloadView: View {
                 debouncedSearchText = searchText
                 _ = modelManager.resolveModel(byRepoId: modelId)
             }
+
+            chooseInitialTabIfNeeded()
 
             // Animate content appearance before heavy operations
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
@@ -631,6 +638,22 @@ struct ModelDownloadView: View {
         }
     }
 
+    /// A single model card wired to the manager's download actions. Shared
+    /// by the catalog grid and the Recommended carousel so their behavior
+    /// stays identical.
+    private func modelCard(for model: MLXModel) -> some View {
+        ModelRowView(
+            model: model,
+            downloadState: modelManager.effectiveDownloadState(for: model),
+            metrics: modelManager.downloadMetrics[model.id],
+            totalMemoryGB: systemMonitor.totalMemoryGB,
+            onViewDetails: { modelToShowDetails = model },
+            onCancel: { modelManager.cancelDownload(model.id) },
+            onPause: { modelManager.pauseDownload(model.id) },
+            onResume: { modelManager.resumeDownload(model.id) }
+        )
+    }
+
     /// Grid of ModelRowView cards. Surviving cells (same `id` before and
     /// after a filter change) slide to their new grid position; cells
     /// that drop out scale-fade away; new cells scale-fade in. Driven by
@@ -638,20 +661,60 @@ struct ModelDownloadView: View {
     private func modelGrid(models: [MLXModel]) -> some View {
         LazyVGrid(columns: gridColumns, spacing: 20) {
             ForEach(models, id: \.id) { model in
-                ModelRowView(
-                    model: model,
-                    downloadState: modelManager.effectiveDownloadState(for: model),
-                    metrics: modelManager.downloadMetrics[model.id],
-                    totalMemoryGB: systemMonitor.totalMemoryGB,
-                    onViewDetails: { modelToShowDetails = model },
-                    onCancel: { modelManager.cancelDownload(model.id) },
-                    onPause: { modelManager.pauseDownload(model.id) },
-                    onResume: { modelManager.resumeDownload(model.id) }
-                )
-                .gridDiffCell()
+                modelCard(for: model)
+                    .gridDiffCell()
             }
         }
         .gridDiffAnimation(token: gridChangeToken)
+    }
+
+    /// Single-row, horizontally scrolling strip of curated top picks shown
+    /// at the top of the Catalog when the user isn't searching or filtering.
+    private func topPicksCarousel(_ models: [MLXModel]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Top Picks", bundle: .module)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .textCase(.uppercase)
+                .padding(.horizontal, 2)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 12) {
+                    ForEach(models, id: \.id) { model in
+                        modelCard(for: model)
+                            .frame(width: 280)
+                    }
+                }
+                .padding(.horizontal, 2)
+                .padding(.bottom, 4)
+            }
+        }
+    }
+
+    /// Catalog body: a Top Picks carousel over the newest-first grid of the
+    /// rest of the catalog while browsing; a single flat grid while searching
+    /// or filtering (so those span the whole catalog).
+    @ViewBuilder
+    private func catalogContent(lists: GridLists) -> some View {
+        let isBrowsing =
+            debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !filterState.isActive
+        if isBrowsing {
+            VStack(alignment: .leading, spacing: 16) {
+                if lists.suggested.isEmpty {
+                    modelGrid(models: lists.others)
+                } else {
+                    topPicksCarousel(lists.suggested)
+                    modelGridSection(
+                        title: L("Our Curated Models"),
+                        models: lists.others,
+                        isFirst: true
+                    )
+                }
+            }
+        } else {
+            modelGrid(models: lists.displayed)
+        }
     }
 
     /// Main content area with scrollable model list
@@ -677,7 +740,7 @@ struct ModelDownloadView: View {
                             } else {
                                 switch selectedTab {
                                 case .all:
-                                    modelGrid(models: lists.displayed)
+                                    catalogContent(lists: lists)
                                 case .downloaded:
                                     modelGrid(models: lists.downloaded)
                                 }
@@ -1001,6 +1064,23 @@ struct ModelDownloadView: View {
                         .foregroundColor(theme.accentColor)
                 }
                 .buttonStyle(PlainButtonStyle())
+            } else if selectedTab == .downloaded {
+                Button(action: {
+                    withAnimation(.easeOut(duration: 0.2)) { selectedTab = .all }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Browse Catalog", bundle: .module)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.top, 4)
             }
         }
         .frame(maxWidth: .infinity)
@@ -1012,7 +1092,7 @@ struct ModelDownloadView: View {
         case .all:
             return "cube.box"
         case .downloaded:
-            return "arrow.down.circle"
+            return "internaldrive"
         }
     }
 
@@ -1024,7 +1104,7 @@ struct ModelDownloadView: View {
         case .all:
             return L("No models available")
         case .downloaded:
-            return L("No downloaded models")
+            return L("No models on device yet")
         }
     }
 
@@ -1139,6 +1219,21 @@ struct ModelDownloadView: View {
             case .unknown: return 3
             }
         }
+        // Newest-first by release date (nil dates last), name as the stable
+        // tiebreak. Shared by the catalog, Top Picks, and Recommended sorts.
+        func newestFirst(_ lhs: MLXModel, _ rhs: MLXModel) -> Bool {
+            switch (lhs.releasedAt, rhs.releasedAt) {
+            case let (l?, r?):
+                if l != r { return l > r }
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                break
+            }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
         func applySort(_ models: [MLXModel]) -> [MLXModel] {
             switch sortOption {
             case .recommended, .nameAsc:
@@ -1166,11 +1261,13 @@ struct ModelDownloadView: View {
                     if l != r { return sortOption == .sizeAsc ? l < r : l > r }
                     return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
                 }
-            case .newest, .oldest:
+            case .newest:
+                return models.sorted(by: newestFirst)
+            case .oldest:
                 return models.sorted { lhs, rhs in
                     switch (lhs.releasedAt, rhs.releasedAt) {
                     case let (l?, r?):
-                        if l != r { return sortOption == .newest ? l > r : l < r }
+                        if l != r { return l < r }
                     case (_?, nil):
                         return true
                     case (nil, _?):
@@ -1181,6 +1278,11 @@ struct ModelDownloadView: View {
                     return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
                 }
             }
+        }
+        // Catalog default ordering is newest-first; an explicit sort choice
+        // takes over via `applySort`, matching `sortedSuggested`'s convention.
+        func sortedCatalog(_ models: [MLXModel]) -> [MLXModel] {
+            sortOption == .recommended ? models.sorted(by: newestFirst) : applySort(models)
         }
         func sortedSuggested(_ filtered: [MLXModel]) -> [MLXModel] {
             if sortOption != .recommended {
@@ -1196,18 +1298,7 @@ struct ModelDownloadView: View {
                     return lhs.isTopSuggestion
                 }
 
-                switch (lhs.releasedAt, rhs.releasedAt) {
-                case let (l?, r?) where l != r:
-                    return l > r
-                case (.some, .none):
-                    return true
-                case (.none, .some):
-                    return false
-                default:
-                    break
-                }
-
-                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                return newestFirst(lhs, rhs)
             }
         }
         func computeDownloadedList() -> [MLXModel] {
@@ -1242,24 +1333,45 @@ struct ModelDownloadView: View {
 
         let availSearched = SearchService.filterModels(allTabBase, with: searchText)
         let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
-        let allFiltered = applySort(availFiltered)
+        let allFiltered = sortedCatalog(availFiltered)
 
         let suggSearched = SearchService.filterModels(osaurusSuggested, with: searchText)
         let suggFiltered = filterState.apply(to: suggSearched, totalMemoryGB: mem)
-        let suggested = sortedSuggested(suggFiltered)
+        let recommended = sortedSuggested(suggFiltered)
 
-        let recommendedIds = Set(suggested.map { $0.id.lowercased() })
-        let others = allFiltered.filter { !recommendedIds.contains($0.id.lowercased()) }
+        // The Top Picks carousel only exists under the default Recommended
+        // sort. Any explicit sort merges the picks back into the grid so they
+        // sort alongside everything else. The carousel itself is newest-first.
+        let topPicks =
+            sortOption == .recommended
+            ? sortedCatalog(recommended.filter { $0.isTopSuggestion })
+            : []
+        let topPickIds = Set(topPicks.map { $0.id.lowercased() })
+
+        // The grid is the rest of the catalog — recommended non-top picks plus
+        // everything else — deduped and ordered newest-first (or by the
+        // explicit sort choice). This keeps the grid "how it was" minus the
+        // models promoted into the carousel.
+        var seenCatalog: Set<String> = []
+        var catalogRest: [MLXModel] = []
+        for model in recommended + allFiltered {
+            let key = model.id.lowercased()
+            if topPickIds.contains(key) { continue }
+            if seenCatalog.insert(key).inserted {
+                catalogRest.append(model)
+            }
+        }
+        let others = sortedCatalog(catalogRest)
 
         let downloaded = computeDownloadedList()
 
         let displayed: [MLXModel]
         switch input.selectedTab {
-        case .all: displayed = suggested + others
+        case .all: displayed = topPicks + others
         case .downloaded: displayed = downloaded
         }
 
-        return GridLists(suggested: suggested, others: others, downloaded: downloaded, displayed: displayed)
+        return GridLists(suggested: topPicks, others: others, downloaded: downloaded, displayed: displayed)
     }
 
     /// Eager refresh of the cached snapshot. Called from `.onAppear` and
@@ -1303,6 +1415,25 @@ struct ModelDownloadView: View {
             gridListsSnapshot = lists
             gridListsRefreshTask = nil
         }
+    }
+
+    /// Smart landing: open on "On Device" when the user already owns or is
+    /// actively downloading a model, otherwise on the "Catalog" so new users
+    /// see something to browse. Runs once on first appear and yields to a
+    /// deep link (which pins the Catalog so the linked model is visible).
+    private func chooseInitialTabIfNeeded() {
+        guard !didChooseInitialTab else { return }
+        didChooseInitialTab = true
+
+        if let modelId = deeplinkModelId, !modelId.isEmpty {
+            selectedTab = .all
+            return
+        }
+
+        let hasOwnModels =
+            modelManager.deduplicatedModels().contains { $0.isDownloaded }
+            || modelManager.activeDownloadsCount > 0
+        selectedTab = hasOwnModels ? .downloaded : .all
     }
 
     private static func isOsaurusAI(_ model: MLXModel) -> Bool {

@@ -36,6 +36,9 @@ actor HuggingFaceService {
         let pipelineTag: String?
         let modelType: String?
         let tags: [String]
+        /// Base model(s) this repo was derived from, when the card declares
+        /// them (e.g. a quantized repo pointing at the upstream weights).
+        let baseModels: [String]
         let isVLM: Bool
     }
 
@@ -58,37 +61,69 @@ actor HuggingFaceService {
         struct CardData: Decodable {
             let license: String?
             let model_type: String?
+            /// `base_model` may be a single string or an array in HF cards.
+            let base_model: StringOrArray?
+        }
+    }
+
+    /// Decodes a JSON field that HF sometimes serializes as a single
+    /// string and sometimes as an array of strings (e.g. `base_model`).
+    enum StringOrArray: Decodable {
+        case single(String)
+        case many([String])
+
+        var values: [String] {
+            switch self {
+            case .single(let s): return s.isEmpty ? [] : [s]
+            case .many(let a): return a.filter { !$0.isEmpty }
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let s = try? container.decode(String.self) {
+                self = .single(s)
+            } else if let a = try? container.decode([String].self) {
+                self = .many(a)
+            } else {
+                self = .many([])
+            }
         }
     }
 
     struct MatchedFile {
         let path: String
         let size: Int64
+        /// True when this file matches Osaurus's download patterns — i.e.
+        /// it's part of what actually gets written to disk on download.
+        /// `false` for repo extras (READMEs, alternate formats, etc.).
+        var isDownloaded: Bool = true
     }
 
     private init() {}
 
-    /// Fetch files from a Hugging Face repo that match the given glob patterns.
-    /// Files whose last path component appears in `excludedFiles` are skipped.
-    func fetchMatchingFiles(
-        repoId: String,
-        patterns: [String],
-        excludedFiles: Set<String> = []
-    ) async -> [MatchedFile]? {
+    /// A single file node from the HF repo tree.
+    private struct TreeNode: Decodable {
+        let path: String
+        let type: String?
+        let size: Int64?
+        let lfs: LFS?
+        struct LFS: Decodable { let size: Int64? }
+
+        /// Best-known byte size (`lfs.size` for large weights).
+        var bestSize: Int64 { size ?? lfs?.size ?? 0 }
+    }
+
+    /// Fetch the full recursive file tree for a repo. Returns `nil` on any
+    /// failure (network, decode, empty tree). Shared by the download-set
+    /// and full-listing helpers below.
+    private func fetchTree(repoId: String) async -> [TreeNode]? {
         var comps = URLComponents()
         comps.scheme = "https"
         comps.host = "huggingface.co"
         comps.path = "/api/models/\(repoId)/tree/main"
         comps.queryItems = [URLQueryItem(name: "recursive", value: "1")]
         guard let url = comps.url else { return nil }
-
-        struct TreeNode: Decodable {
-            let path: String
-            let type: String?
-            let size: Int64?
-            let lfs: LFS?
-            struct LFS: Decodable { let size: Int64? }
-        }
 
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -98,23 +133,277 @@ actor HuggingFaceService {
                 return nil
             }
             let nodes = try JSONDecoder().decode([TreeNode].self, from: data)
-            if nodes.isEmpty { return nil }
-            let matchers = patterns.compactMap { Glob($0) }
-            let files = nodes.compactMap { node -> MatchedFile? in
-                if node.type == "directory" { return nil }
-                guard let safePath = Self.normalizedRemoteFilePath(node.path) else { return nil }
-                let filename = (safePath as NSString).lastPathComponent
-                if excludedFiles.contains(filename) { return nil }
-                let matched = matchers.contains { $0.matches(filename) }
-                guard matched else { return nil }
-                let sz = node.size ?? node.lfs?.size ?? 0
-                guard sz > 0 else { return nil }
-                return MatchedFile(path: safePath, size: sz)
-            }
-            return files.isEmpty ? nil : files
+            return nodes.isEmpty ? nil : nodes
         } catch {
             return nil
         }
+    }
+
+    /// Fetch files from a Hugging Face repo that match the given glob patterns.
+    /// Files whose last path component appears in `excludedFiles` are skipped.
+    func fetchMatchingFiles(
+        repoId: String,
+        patterns: [String],
+        excludedFiles: Set<String> = []
+    ) async -> [MatchedFile]? {
+        guard let nodes = await fetchTree(repoId: repoId) else { return nil }
+        let matchers = patterns.compactMap { Glob($0) }
+        let files = nodes.compactMap { node -> MatchedFile? in
+            if node.type == "directory" { return nil }
+            guard let safePath = Self.normalizedRemoteFilePath(node.path) else { return nil }
+            let filename = (safePath as NSString).lastPathComponent
+            if excludedFiles.contains(filename) { return nil }
+            let matched = matchers.contains { $0.matches(filename) }
+            guard matched else { return nil }
+            let sz = node.bestSize
+            guard sz > 0 else { return nil }
+            return MatchedFile(path: safePath, size: sz)
+        }
+        return files.isEmpty ? nil : files
+    }
+
+    /// Fetch every file in a repo (not just the download set), each marked
+    /// with whether Osaurus would download it. Used by the detail modal's
+    /// "Files" section. Sorted largest-first so weights lead.
+    func fetchAllFiles(
+        repoId: String,
+        downloadPatterns: [String],
+        excludedFiles: Set<String> = []
+    ) async -> [MatchedFile]? {
+        guard let nodes = await fetchTree(repoId: repoId) else { return nil }
+        let matchers = downloadPatterns.compactMap { Glob($0) }
+        let files = nodes.compactMap { node -> MatchedFile? in
+            if node.type == "directory" { return nil }
+            guard let safePath = Self.normalizedRemoteFilePath(node.path) else { return nil }
+            let filename = (safePath as NSString).lastPathComponent
+            let matched =
+                !excludedFiles.contains(filename) && matchers.contains { $0.matches(filename) }
+            return MatchedFile(path: safePath, size: node.bestSize, isDownloaded: matched)
+        }
+        let sorted = files.sorted { $0.size > $1.size }
+        return sorted.isEmpty ? nil : sorted
+    }
+
+    /// Fetch a repo's README (model card) markdown from
+    /// `https://huggingface.co/<repoId>/raw/main/README.md`, with the
+    /// leading YAML front-matter block stripped so only the human-readable
+    /// card body renders. Returns `nil` when the repo has no README or the
+    /// request fails.
+    func fetchReadme(repoId: String) async -> String? {
+        var comps = URLComponents()
+        comps.scheme = "https"
+        comps.host = "huggingface.co"
+        comps.path = "/\(repoId)/raw/main/README.md"
+        guard let url = comps.url else { return nil }
+
+        var req = URLRequest(url: url)
+        req.setValue("text/plain", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
+            guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
+                let raw = String(data: data, encoding: .utf8)
+            else { return nil }
+            let stripped = Self.strippingFrontMatter(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !stripped.isEmpty else { return nil }
+            // Normalize HTML to markdown first (turning `<img>` into `![](…)`),
+            // then resolve every relative image path in one pass.
+            let normalized = Self.normalizingModelCardHTML(stripped)
+            return Self.resolvingRelativeImageURLs(in: normalized, repoId: repoId)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Converts the common HTML constructs HF model cards use into markdown
+    /// so they render instead of showing as raw tags. The chat markdown
+    /// engine has no HTML renderer, so cards that wrap their banner in
+    /// `<p align="center"><img .../></p>` (or use `<a>`, `<br>`, `<picture>`)
+    /// otherwise leak literal HTML into the rendered body.
+    ///
+    /// Only transforms text *outside* fenced code blocks so HTML shown as a
+    /// code sample is left intact.
+    static func normalizingModelCardHTML(_ markdown: String) -> String {
+        // Split on ``` fences: even indices are prose, odd indices are inside
+        // a fenced block. Rejoin with the same delimiter afterwards.
+        let segments = markdown.components(separatedBy: "```")
+        let transformed = segments.enumerated().map { index, segment -> String in
+            index.isMultiple(of: 2) ? normalizeHTMLProse(segment) : segment
+        }
+        return transformed.joined(separator: "```")
+    }
+
+    private static func normalizeHTMLProse(_ input: String) -> String {
+        var s = input
+
+        // `<img ... src="X" ... alt="Y">` -> standalone markdown image.
+        s = replacingMatches(in: s, pattern: #"<img\b[^>]*>"#) { tag in
+            let raw = htmlAttribute("src", in: tag) ?? htmlAttribute("data-src", in: tag)
+            guard let raw, !raw.isEmpty else { return "" }
+            // Markdown image URLs can't contain raw spaces, so encode them.
+            let url = raw.replacingOccurrences(of: " ", with: "%20")
+            let alt = htmlAttribute("alt", in: tag) ?? ""
+            return "\n\n![\(alt)](\(url))\n\n"
+        }
+
+        // `<a href="url">text</a>` -> `[text](url)`.
+        s = replacingMatches(
+            in: s,
+            pattern: #"<a\b[^>]*?\bhref\s*=\s*["'][^"']*["'][^>]*>[\s\S]*?</a>"#
+        ) { anchor in
+            let href = htmlAttribute("href", in: anchor) ?? ""
+            // Inner text = the anchor with every tag (open/close/nested)
+            // stripped, so we never re-emit HTML.
+            let inner =
+                anchor
+                .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if href.isEmpty { return inner }
+            return inner.isEmpty ? href : "[\(inner)](\(href))"
+        }
+
+        // Line breaks.
+        s = s.replacingOccurrences(
+            of: #"<br\s*/?>"#,
+            with: "\n",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        // Strip layout/inline wrapper tags that otherwise render as text.
+        s = s.replacingOccurrences(
+            of:
+                #"</?(?:p|div|center|span|picture|source|figure|figcaption|small|font|sub|sup|u|a)\b[^>]*>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        // Collapse the blank-line runs the substitutions can introduce.
+        s = s.replacingOccurrences(
+            of: #"\n{3,}"#,
+            with: "\n\n",
+            options: .regularExpression
+        )
+        return s
+    }
+
+    /// Extracts an HTML attribute value (`name="value"` / `name='value'`)
+    /// from a single tag string. Case-insensitive on the attribute name.
+    private static func htmlAttribute(_ name: String, in tag: String) -> String? {
+        let pattern = "\\b\(name)\\s*=\\s*[\"']([^\"']*)[\"']"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+            let match = regex.firstMatch(
+                in: tag,
+                range: NSRange(tag.startIndex..., in: tag)
+            ),
+            match.numberOfRanges > 1,
+            let range = Range(match.range(at: 1), in: tag)
+        else { return nil }
+        return String(tag[range])
+    }
+
+    /// Replaces every whole-match of `pattern` using `transform`, which
+    /// receives the matched substring. Matches run in reverse so earlier
+    /// ranges stay valid as later ones are rewritten.
+    private static func replacingMatches(
+        in input: String,
+        pattern: String,
+        transform: (String) -> String
+    ) -> String {
+        guard
+            let regex = try? NSRegularExpression(
+                pattern: pattern,
+                options: [.caseInsensitive]
+            )
+        else { return input }
+        var output = input
+        let matches = regex.matches(
+            in: input,
+            range: NSRange(input.startIndex..., in: input)
+        )
+        for match in matches.reversed() {
+            guard let range = Range(match.range, in: output) else { continue }
+            output.replaceSubrange(range, with: transform(String(output[range])))
+        }
+        return output
+    }
+
+    /// Rewrites repo-relative markdown image references (`![alt](path)`) in a
+    /// model card to absolute Hugging Face `resolve/main/` URLs so they
+    /// actually load. HF READMEs routinely use relative paths (e.g.
+    /// `assets/banner.png`, `./fig.png`) that carry no scheme/host and can't
+    /// be fetched directly. Absolute or protocol-relative/data URLs are left
+    /// untouched. (HTML `<img>` is converted to markdown first by
+    /// `normalizingModelCardHTML`, so this only handles markdown.)
+    static func resolvingRelativeImageURLs(in markdown: String, repoId: String) -> String {
+        let base = "https://huggingface.co/\(repoId)/resolve/main/"
+
+        func absolutize(_ raw: String) -> String {
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return raw }
+            let lower = trimmed.lowercased()
+            if lower.hasPrefix("http://") || lower.hasPrefix("https://")
+                || lower.hasPrefix("data:") || lower.hasPrefix("mailto:")
+                || trimmed.hasPrefix("//")
+            {
+                return trimmed
+            }
+            // Drop a leading `./` or `/` so we don't double the base path.
+            var path = trimmed
+            while path.hasPrefix("./") { path.removeFirst(2) }
+            while path.hasPrefix("/") { path.removeFirst() }
+            return base + path
+        }
+
+        // Markdown images: `![alt](url "optional title")`.
+        return rewriteCaptureGroup(
+            in: markdown,
+            pattern: #"(!\[[^\]]*\]\()([^)\s]+)"#,
+            group: 2,
+            transform: absolutize
+        )
+    }
+
+    /// Replaces capture `group` of every `pattern` match in `input` using
+    /// `transform`. Matches are applied in reverse so earlier ranges stay
+    /// valid as later ones are rewritten.
+    private static func rewriteCaptureGroup(
+        in input: String,
+        pattern: String,
+        group: Int,
+        transform: (String) -> String
+    ) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        else { return input }
+        var output = input
+        let matches = regex.matches(
+            in: input,
+            options: [],
+            range: NSRange(input.startIndex..., in: input)
+        )
+        for match in matches.reversed() {
+            guard match.numberOfRanges > group,
+                let range = Range(match.range(at: group), in: output)
+            else { continue }
+            output.replaceSubrange(range, with: transform(String(output[range])))
+        }
+        return output
+    }
+
+    /// Removes a leading YAML front-matter block (`---` ... `---`) from a
+    /// model card. HF cards open with metadata (license, tags, base_model)
+    /// that we already surface as structured fields, so it's noise in the
+    /// rendered body. Leaves the text untouched when there's no front-matter.
+    static func strippingFrontMatter(_ markdown: String) -> String {
+        let lines = markdown.components(separatedBy: "\n")
+        guard let first = lines.first,
+            first.trimmingCharacters(in: .whitespaces) == "---"
+        else { return markdown }
+        // Find the closing delimiter after the opening one.
+        for index in 1 ..< lines.count
+        where lines[index].trimmingCharacters(in: .whitespaces) == "---" {
+            return lines[(index + 1)...].joined(separator: "\n")
+        }
+        // Unterminated front-matter: return as-is rather than eating the file.
+        return markdown
     }
 
     /// Estimate the total size for files matching provided patterns.
@@ -227,6 +516,7 @@ actor HuggingFaceService {
                 pipelineTag: raw.pipeline_tag,
                 modelType: modelType,
                 tags: tags,
+                baseModels: raw.cardData?.base_model?.values ?? [],
                 isVLM: isVLM
             )
         } catch {

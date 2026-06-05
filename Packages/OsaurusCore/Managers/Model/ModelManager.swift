@@ -16,17 +16,18 @@ extension Notification.Name {
 }
 
 enum ModelListTab: String, CaseIterable, AnimatedTabItem {
-    /// All available models rendered as two sections (Recommended + Others)
-    case all = "All"
+    /// Models the user owns locally (includes active downloads). Listed
+    /// first so returning users land on their own models.
+    case downloaded = "On Device"
 
-    /// Only models downloaded locally (includes active downloads)
-    case downloaded = "Downloads"
+    /// Full catalog rendered as a Recommended carousel + a newest-first grid.
+    case all = "Catalog"
 
     /// Display name for the tab (required by AnimatedTabItem)
     var title: String {
         switch self {
-        case .all: return L("All")
-        case .downloaded: return L("Downloads")
+        case .downloaded: return L("On Device")
+        case .all: return L("Catalog")
         }
     }
 }
@@ -242,6 +243,13 @@ final class ModelManager: NSObject, ObservableObject {
         // models surface in the Recommended tab without requiring a code push.
         if !Self.skipBackgroundOrgFetchForTests {
             Task { [weak self] in await self?.loadOsaurusAIOrgModels() }
+
+            // Discover external bundles (HF cache, LM Studio) off the main
+            // thread. `rescan()` posts `.localModelsChanged` when the set
+            // changes, which re-runs `refreshDownloadStates()` to merge them.
+            Task.detached(priority: .utility) {
+                ExternalModelLocator.rescan()
+            }
         }
     }
 
@@ -249,7 +257,14 @@ final class ModelManager: NSObject, ObservableObject {
 
     /// Load popular MLX models
     func loadAvailableModels() {
-        let curated = Self.curatedSuggestedModels
+        // Seed sizes synchronously from the on-disk cache so the first
+        // paint shows last-known-accurate download sizes even offline.
+        // Sizes are no longer hand-coded; they're fetched + cached by the
+        // OsaurusAI org refresh / on-demand estimate and persisted in
+        // `ModelSizeCache`.
+        let curated = Self.curatedSuggestedModels.map { model in
+            model.withDownloadSize(ModelSizeCache.bytes(forId: model.id))
+        }
 
         suggestedModels = curated
         availableModels = curated
@@ -618,7 +633,6 @@ extension ModelManager {
         id: String,
         description: String,
         isTopSuggestion: Bool = false,
-        downloadSizeBytes: Int64? = nil,
         modelType: String? = nil,
         releasedAt: Date? = nil,
         useCase: ModelUseCase? = nil
@@ -629,7 +643,7 @@ extension ModelManager {
             description: description,
             downloadURL: "https://huggingface.co/\(id)",
             isTopSuggestion: isTopSuggestion,
-            downloadSizeBytes: downloadSizeBytes,
+            downloadSizeBytes: nil,
             modelType: modelType,
             releasedAt: releasedAt,
             useCase: useCase
@@ -647,7 +661,6 @@ extension ModelManager {
             description:
                 "Liquid AI LFM2.5 8B hybrid MoE (~1B active), MXFP8 — high-precision, fast Apple Silicon chat. 128K context.",
             isTopSuggestion: true,
-            downloadSizeBytes: 8_732_780_803,
             modelType: "lfm2_moe",
             releasedAt: date("2026-05-29"),
             useCase: .general
@@ -656,7 +669,6 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-E2B-it-4bit",
             description: "Smallest multimodal Gemma 4 model. Runs on any Mac.",
-            downloadSizeBytes: 4_392_120_539,
             modelType: "gemma4",
             releasedAt: date("2026-04-06"),
             useCase: .smallest
@@ -666,7 +678,6 @@ extension ModelManager {
             id: "OsaurusAI/gemma-4-E4B-it-4bit",
             description: "Multimodal edge model. Handles images, video, and audio. 128K context.",
             isTopSuggestion: true,
-            downloadSizeBytes: 6_901_389_946,
             modelType: "gemma4",
             releasedAt: date("2026-04-06"),
             useCase: .vision
@@ -676,7 +687,6 @@ extension ModelManager {
             id: "OsaurusAI/gemma-4-26B-A4B-it-mxfp4",
             description: "Best all-around vision model. MoE with only 4B active params. 128K context.",
             isTopSuggestion: true,
-            downloadSizeBytes: 14_869_637_520,
             modelType: "gemma4",
             releasedAt: date("2026-04-07"),
             useCase: .vision
@@ -694,7 +704,6 @@ extension ModelManager {
             id: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
             description: "Qwen 3.6 35B MoE vision model. MXFP4 quantization — best quality per byte.",
             isTopSuggestion: true,
-            downloadSizeBytes: 19_350_002_112,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16"),
             useCase: .vision
@@ -704,7 +713,6 @@ extension ModelManager {
             id: "LiquidAI/LFM2-24B-A2B-MLX-8bit",
             description: "Liquid AI's 24B MoE model. Only ~2B active params per token. 128K context.",
             isTopSuggestion: true,
-            downloadSizeBytes: 25_339_189_070,
             useCase: .general
         ),
 
@@ -719,7 +727,6 @@ extension ModelManager {
             id: "OsaurusAI/MiniMax-M2.7-JANGTQ4",
             description:
                 "MiniMax M2.7 228B agentic MoE, 4-bit TurboQuant routed experts. Near-bf16 quality at ~25% of bf16 disk. 192K context.",
-            downloadSizeBytes: 116_891_270_734,
             modelType: "minimax_m2",
             releasedAt: date("2026-04-17"),
             useCase: .general
@@ -729,7 +736,6 @@ extension ModelManager {
             id: "OsaurusAI/MiniMax-M2.7-JANGTQ",
             description:
                 "MiniMax M2.7 228B agentic MoE, 2-bit TurboQuant routed experts. Smallest footprint of the family. 192K context.",
-            downloadSizeBytes: 60_702_998_032,
             modelType: "minimax_m2",
             releasedAt: date("2026-04-17"),
             useCase: .general
@@ -765,7 +771,6 @@ extension ModelManager {
             description:
                 "NVIDIA Nemotron-3 30B Reasoning hybrid (Mamba-2 + MoE). MXFP4 quantization — fastest decode path. 262K context.",
             isTopSuggestion: true,
-            downloadSizeBytes: 42_390_177_816,
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28"),
             useCase: .reasoning
@@ -775,7 +780,6 @@ extension ModelManager {
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
             description:
                 "Nemotron-3 30B Reasoning hybrid, 4-bit TurboQuant routed experts. Near-bf16 quality at ~37 GB. 262K context.",
-            downloadSizeBytes: 37_026_073_381,
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28"),
             useCase: .reasoning
@@ -785,7 +789,6 @@ extension ModelManager {
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ2",
             description:
                 "Nemotron-3 30B Reasoning hybrid, 2-bit TurboQuant routed experts. Smallest footprint (~21 GB). 262K context.",
-            downloadSizeBytes: 22_338_666_862,
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28"),
             useCase: .reasoning
@@ -826,7 +829,6 @@ extension ModelManager {
             id: "OsaurusAI/Laguna-XS.2-mxfp4",
             description:
                 "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE. MXFP4 quant — fastest decode. 131K context, 256 experts top-8.",
-            downloadSizeBytes: 20_937_722_012,
             modelType: "laguna",
             releasedAt: date("2026-04-30"),
             useCase: .coding
@@ -836,7 +838,6 @@ extension ModelManager {
             id: "OsaurusAI/Laguna-XS.2-JANGTQ2",
             description:
                 "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE, 2-bit TurboQuant routed experts. Smallest footprint (~10 GB). 131K context.",
-            downloadSizeBytes: 10_103_047_827,
             modelType: "laguna",
             releasedAt: date("2026-04-30"),
             useCase: .coding
@@ -860,7 +861,6 @@ extension ModelManager {
             id: "OsaurusAI/Ling-2.6-flash-MXFP4",
             description:
                 "Ling-2.6 Flash BailingHybrid MoE. MXFP4 quantization for the highest quality Ling local path.",
-            downloadSizeBytes: 67_238_772_304,
             modelType: "bailing_hybrid",
             releasedAt: date("2026-05-06"),
             useCase: .general
@@ -870,7 +870,6 @@ extension ModelManager {
             id: "OsaurusAI/Ling-2.6-flash-JANGTQ",
             description:
                 "Ling-2.6 Flash BailingHybrid MoE with TurboQuant routed experts. Smaller local footprint for Mac inference.",
-            downloadSizeBytes: 30_601_532_582,
             modelType: "bailing_hybrid",
             releasedAt: date("2026-05-06"),
             useCase: .general
@@ -913,7 +912,6 @@ extension ModelManager {
             id: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
             description:
                 "Mistral Medium 3.5 128B + Pixtral vision. MXFP4 quant — fastest decode. 256K context, 24-language coverage.",
-            downloadSizeBytes: 85_749_286_883,
             modelType: "mistral3",
             releasedAt: date("2026-04-30"),
             useCase: .vision
@@ -923,7 +921,6 @@ extension ModelManager {
             id: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
             description:
                 "Mistral Medium 3.5 128B + Pixtral vision, 2-bit TurboQuant text decoder. ~41 GB footprint. 256K context, 24-language coverage.",
-            downloadSizeBytes: 40_795_065_942,
             modelType: "mistral3",
             releasedAt: date("2026-04-30"),
             useCase: .vision
@@ -934,21 +931,18 @@ extension ModelManager {
         curated(
             id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
             description: "OpenAI's open-source release. Strong all-around performance.",
-            downloadSizeBytes: 22_256_530_515,
             useCase: .general
         ),
 
         curated(
             id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
             description: "OpenAI's largest open model. Premium quality, requires 64GB+ unified memory.",
-            downloadSizeBytes: 124_196_929_648,
             useCase: .bestQuality
         ),
 
         curated(
             id: "OsaurusAI/Gemma-4-31B-it-JANG_4M",
             description: "Gemma 4 31B dense vision model. Top-tier quality with optimized quantization.",
-            downloadSizeBytes: 22_692_184_188,
             modelType: "gemma4",
             releasedAt: date("2026-04-16"),
             useCase: .vision
@@ -959,7 +953,6 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-26B-A4B-it-4bit",
             description: "MoE vision model with standard 4-bit quantization. 4B active params.",
-            downloadSizeBytes: 15_641_238_761,
             modelType: "gemma4",
             releasedAt: date("2026-04-07"),
             useCase: .vision
@@ -968,7 +961,6 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
             description: "Efficient MoE vision model. Only 4B active params. 256K context.",
-            downloadSizeBytes: 10_676_011_691,
             modelType: "gemma4",
             releasedAt: date("2026-04-16"),
             useCase: .vision
@@ -977,7 +969,6 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
             description: "Higher-quality MoE vision model. 4B active params with 256K context.",
-            downloadSizeBytes: 16_200_958_155,
             modelType: "gemma4",
             releasedAt: date("2026-04-16"),
             useCase: .vision
@@ -986,7 +977,6 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-E4B-it-8bit",
             description: "Multimodal edge model at 8-bit precision. Best quality for the E4B family.",
-            downloadSizeBytes: 8_997_820_763,
             modelType: "gemma4",
             releasedAt: date("2026-04-06"),
             useCase: .vision
@@ -995,7 +985,6 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/Qwen3.5-122B-A10B-JANG_4K",
             description: "Largest Qwen3.5 MoE vision model. 10B active params with top-tier reasoning.",
-            downloadSizeBytes: 66_458_339_720,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16"),
             useCase: .vision
@@ -1004,7 +993,6 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
             description: "Qwen3.5 122B MoE vision model. Compact quantization, smaller download.",
-            downloadSizeBytes: 37_770_467_470,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16"),
             useCase: .vision
@@ -1013,7 +1001,6 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
             description: "Efficient Qwen3.5 MoE vision model. Only 3B active params.",
-            downloadSizeBytes: 19_667_903_189,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16"),
             useCase: .vision
@@ -1022,7 +1009,6 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
             description: "Compact Qwen3.5 MoE vision model. Fast and lightweight.",
-            downloadSizeBytes: 11_665_354_013,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-04-16"),
             useCase: .vision
@@ -1033,7 +1019,6 @@ extension ModelManager {
         curated(
             id: "OsaurusAI/gemma-4-E2B-it-8bit",
             description: "Smallest Gemma 4 at 8-bit precision. Better quality, still runs on any Mac.",
-            downloadSizeBytes: 5_932_058_274,
             modelType: "gemma4",
             releasedAt: date("2026-04-06"),
             useCase: .smallest
@@ -1118,34 +1103,35 @@ extension ModelManager {
         return comps.url
     }
 
-    /// Per-repo info we care about. Currently just `usedStorage` (total
-    /// bytes across all files in the repo) so we can populate
-    /// `MLXModel.downloadSizeBytes` for repo ids whose names don't carry a
-    /// parseable parameter token.
-    fileprivate struct HFRepoInfo: Decodable {
-        let usedStorage: Int64?
-    }
-
-    /// Fetch `usedStorage` for a single repo. Returns `nil` on any error
-    /// (network, decode, missing field) so callers can fall through to
-    /// the existing parameter-count estimate.
-    fileprivate static func fetchUsedStorage(repoId: String) async -> Int64? {
-        var comps = URLComponents()
-        comps.scheme = "https"
-        comps.host = "huggingface.co"
-        comps.path = "/api/models/\(repoId)"
-        comps.queryItems = [URLQueryItem(name: "expand[]", value: "usedStorage")]
-        guard let url = comps.url else { return nil }
-
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        guard
-            let (data, response) = try? await GlobalProxySettings.sharedSession().data(for: request),
-            let http = response as? HTTPURLResponse,
-            (200 ..< 300).contains(http.statusCode)
-        else { return nil }
-
-        return (try? JSONDecoder().decode(HFRepoInfo.self, from: data))?.usedStorage
+    /// Resolve the accurate download size for `repoId`, preferring the
+    /// `ModelSizeCache` and only hitting the network when the cache is
+    /// missing or its revision no longer matches `revision`.
+    ///
+    /// "Download size" here is the sum of just the files Osaurus actually
+    /// writes to disk (the `ModelDownloadService.downloadFilePatterns`
+    /// set), not the whole-repo `usedStorage` HF reports — that over-counts
+    /// READMEs, `.gitattributes`, alternate-format weights, etc.
+    ///
+    /// `revision` is the HF `lastModified` string from the org listing.
+    /// When it matches the cached entry we skip the network entirely, so a
+    /// steady-state launch issues no tree requests at all. When `nil`
+    /// (callers without a cheap revision signal) the cache's TTL applies.
+    fileprivate static func resolveDownloadSize(
+        repoId: String,
+        revision: String?
+    ) async -> Int64? {
+        if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision) {
+            return cached
+        }
+        let fetched = await HuggingFaceService.shared.estimateTotalSize(
+            repoId: repoId,
+            patterns: ModelDownloadService.downloadFilePatterns,
+            excludedFiles: ModelDownloadService.downloadExcludedFiles
+        )
+        if let fetched {
+            ModelSizeCache.record(id: repoId, bytes: fetched, revision: revision)
+        }
+        return fetched
     }
 
     /// Request HF models at URL
@@ -1294,21 +1280,43 @@ extension ModelManager {
             .map(Self.makeAutoFetchedModel(from:))
 
         var statsById: [String: Int] = [:]
+        // HF `lastModified` per repo — the revision used to gate the size
+        // cache so we only re-fetch a repo's tree when it actually changes.
+        var revisionById: [String: String] = [:]
         for hf in raw {
             if let count = hf.downloads {
                 statsById[hf.id.lowercased()] = count
             }
+            if let revision = hf.lastModified {
+                revisionById[hf.id.lowercased()] = revision
+            }
+        }
+
+        // Repos to size: every repo in the org listing plus any curated
+        // entries that aren't OsaurusAI-org-published (e.g.
+        // `lmstudio-community/gpt-oss-*`, `LiquidAI/...`) so their sizes get
+        // fetched + cached too. Curated repos absent from the listing have
+        // no `lastModified`, so they fall back to the cache's TTL.
+        var repoIdsToSize: [String] = raw.map { $0.id }
+        var seenSizeIds = Set(repoIdsToSize.map { $0.lowercased() })
+        for model in Self.curatedSuggestedModels where seenSizeIds.insert(model.id.lowercased()).inserted {
+            repoIdsToSize.append(model.id)
         }
 
         // The /api/models listing endpoint doesn't return file sizes, so
-        // fan out one request per repo to `/api/models/<id>?expand[]=usedStorage`
-        // and fold the results in. URLSession multiplexes these over a few
-        // HTTP/2 connections; with ~100 repos this completes in a second
-        // or two and is only triggered by the OsaurusAI org refresh
-        // (Recommended tab refresh button + initial load), not by search.
+        // fan out one tree request per repo that needs (re)sizing. The
+        // revision gate means cached repos resolve without any network, so
+        // a steady-state refresh issues just the single listing request.
+        // URLSession multiplexes the rest over a few HTTP/2 connections.
         let sizesById: [String: Int64] = await withTaskGroup(of: (String, Int64?).self) { group in
-            for hf in raw {
-                group.addTask { (hf.id.lowercased(), await Self.fetchUsedStorage(repoId: hf.id)) }
+            for repoId in repoIdsToSize {
+                let revision = revisionById[repoId.lowercased()]
+                group.addTask {
+                    (
+                        repoId.lowercased(),
+                        await Self.resolveDownloadSize(repoId: repoId, revision: revision)
+                    )
+                }
             }
             var collected: [String: Int64] = [:]
             for await (key, value) in group {
@@ -1324,8 +1332,9 @@ extension ModelManager {
     /// curated entries (and any unrelated entries that may have been added).
     /// Internal so tests can drive the merge without hitting the network.
     /// `statsById` carries HF Hub `downloads` counts; `sizesById` carries
-    /// per-repo `usedStorage` byte counts. Both flow into curated entries
-    /// (hand-coded, no HF metadata) and auto-fetched entries at merge time.
+    /// per-repo download-size byte counts (sum of the files Osaurus
+    /// downloads, resolved via `ModelSizeCache` + the tree API). Both flow
+    /// into curated entries and auto-fetched entries at merge time.
     func applyOsaurusOrgFetch(
         autoFetched: [MLXModel],
         statsById: [String: Int] = [:],
@@ -1410,18 +1419,27 @@ extension ModelManager {
     /// Discover locally downloaded models. Cached until invalidated by model download/delete.
     nonisolated static func discoverLocalModels() -> [MLXModel] {
         localModelsCacheLock.lock()
-        if let cached = cachedLocalModels {
+        let cached = cachedLocalModels
+        localModelsCacheLock.unlock()
+
+        let scanned: [MLXModel]
+        if let cached {
+            scanned = cached
+        } else {
+            scanned = scanLocalModels()
+            localModelsCacheLock.lock()
+            cachedLocalModels = scanned
             localModelsCacheLock.unlock()
-            return cached
         }
-        localModelsCacheLock.unlock()
 
-        let models = scanLocalModels()
-
-        localModelsCacheLock.lock()
-        cachedLocalModels = models
-        localModelsCacheLock.unlock()
-        return models
+        // Append externally-discovered bundles (HF cache, LM Studio). Read
+        // fresh from the locator's in-memory registry each call (cheap) so a
+        // background rescan is reflected without invalidating the disk-scan
+        // cache above. Locally-present models win on id collision.
+        let external = ExternalModelLocator.models()
+        guard !external.isEmpty else { return scanned }
+        let scannedIds = Set(scanned.map { $0.id.lowercased() })
+        return scanned + external.filter { !scannedIds.contains($0.id.lowercased()) }
     }
 
     private nonisolated static func scanLocalModels() -> [MLXModel] {

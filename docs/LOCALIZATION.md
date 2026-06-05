@@ -18,8 +18,16 @@ All SwiftUI and `String` UI text in **OsaurusCore** must resolve against the **p
 | English | `en` | Source language |
 | German | `de` | Required |
 | Simplified Chinese | `zh-Hans` | Required |
+| Spanish | `es` | Help wanted |
+| Korean | `ko` | Help wanted |
+| Japanese | `ja` | Help wanted |
+| Traditional Chinese | `zh-Hant` | Help wanted |
 
-`zh-Hans` is listed in the Xcode project's `knownRegions`. Add new locales there when expanding support.
+All of the above are listed in the Xcode project's `knownRegions`, so the
+"help wanted" locales already have empty columns ready in the String Catalog
+editor. We're actively seeking contributors for them -- see
+**[TRANSLATORS.md](TRANSLATORS.md)** for the call to action and the contributor
+leaderboard. Add any further locales to `knownRegions` when expanding support.
 
 ## Swift API
 
@@ -86,6 +94,7 @@ In Xcode: **Product → Export Localizations…** / **Import Localizations…** 
 | `scripts/i18n/merge-locale.py` | Copy one locale from another catalog (existing keys only) |
 | `scripts/i18n/fill-zh-hans.py` | Optional machine-translation backfill (`pip install deep-translator`) |
 | `scripts/i18n/prune-catalog.py` | Remove en-only / empty Xcode auto-extraction stubs and stale keys |
+| `scripts/i18n/leaderboard.py` | Generate the translator leaderboard in `TRANSLATORS.md` from merged PRs (needs `gh`) |
 
 Shared logic: `scripts/i18n/xcstrings_util.py`.
 

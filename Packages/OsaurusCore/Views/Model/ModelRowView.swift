@@ -10,8 +10,8 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// The row has a hover effect and adapts its appearance based on download state.
-/// Users can copy the normalized model ID to their clipboard for use in API calls.
+/// The row has a hover effect and adapts its appearance based on download
+/// state. Tapping the card opens the model's detail sheet via `onViewDetails`.
 struct ModelRowView: View {
     // MARK: - Dependencies
 
@@ -54,7 +54,9 @@ struct ModelRowView: View {
                 gradientHeader
 
                 VStack(alignment: .leading, spacing: 10) {
-                    metadataBadges
+                    leadTags
+
+                    statStrip
 
                     if !model.description.isEmpty {
                         Text(model.description)
@@ -66,17 +68,12 @@ struct ModelRowView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    // Publication marker. Curated entries set `releasedAt`
-                    // explicitly; HF auto-fetched ones pick it up from
-                    // `lastModified` — either way the prefix is "Released".
-                    if let released = model.formattedReleaseMonth {
-                        Text(L("Released \(released)"))
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                    }
-
+                    // Push the footer to the bottom so the popularity /
+                    // release line sits at the same place on every card,
+                    // keeping rows easy to scan and compare.
                     Spacer(minLength: 0)
+
+                    cardFooter
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -138,12 +135,13 @@ struct ModelRowView: View {
 
             VStack {
                 HStack(alignment: .top, spacing: 6) {
+                    // Download state lives on the left so the Top Pick
+                    // ribbon keeps a fixed slot on the right and never
+                    // shifts as state changes.
+                    stateChip
                     Spacer(minLength: 0)
                     if model.isTopSuggestion {
                         topPickRibbon
-                    }
-                    if model.isDownloaded {
-                        downloadedBadge
                     }
                 }
                 Spacer(minLength: 0)
@@ -271,10 +269,39 @@ struct ModelRowView: View {
     }
 
     private var topPickRibbon: some View {
+        headerChip(icon: "star.fill", text: L("Top Pick"))
+    }
+
+    /// Unified download-state indicator pinned to the header's top-left.
+    /// Live downloads/pauses still surface their controls and metrics via
+    /// `headerProgressStrip`; this chip is the at-a-glance state.
+    @ViewBuilder
+    private var stateChip: some View {
+        switch downloadState {
+        case .downloading(let progress):
+            headerChip(
+                icon: "arrow.down.circle.fill",
+                text: "\(L("Downloading")) \(Int(progress * 100))%"
+            )
+        case .paused(let progress):
+            headerChip(
+                icon: "pause.circle.fill",
+                text: "\(L("Paused")) \(Int(progress * 100))%"
+            )
+        default:
+            if model.isDownloaded {
+                headerChip(icon: "checkmark.circle.fill", text: L("Downloaded"))
+            }
+        }
+    }
+
+    /// Shared capsule style for the header's corner chips so the state
+    /// indicator and Top Pick ribbon read as one family.
+    private func headerChip(icon: String, text: String) -> some View {
         HStack(spacing: 3) {
-            Image(systemName: "star.fill")
+            Image(systemName: icon)
                 .font(.system(size: 9, weight: .bold))
-            Text("Top Pick", bundle: .module)
+            Text(text)
                 .font(.system(size: 10, weight: .bold))
         }
         .foregroundColor(.white)
@@ -285,35 +312,87 @@ struct ModelRowView: View {
         )
     }
 
-    private var downloadedBadge: some View {
-        Image(systemName: "checkmark.circle.fill")
-            .font(.system(size: 12, weight: .bold))
-            .foregroundColor(.white)
-            .frame(width: 22, height: 22)
-            .background(
-                Circle().fill(.black.opacity(0.28))
-            )
-    }
+    // MARK: - Body Sections
 
-    // MARK: - Metadata Badges
-
-    private var metadataBadges: some View {
-        // Use-case pill leads (when set) so the eye lands on the
-        // editorial category before size / compatibility metadata.
+    /// Editorial / decision tags. Use-case leads (when set), followed by
+    /// the colored compatibility verdict and the LLM/VLM type so the eye
+    /// lands on "what is it / will it run" before raw specs.
+    private var leadTags: some View {
         FlowLayout(spacing: 6) {
             if let useCase = model.useCase {
-                UseCasePill(useCase: useCase)
-            }
-            if let size = model.formattedDownloadSize {
-                MetadataPill(text: size, icon: "internaldrive")
+                // Tint + icon come from `ModelUseCase` so the vocabulary
+                // matches the onboarding picker's `.useCase(...)` chip.
+                TintedPill(
+                    icon: useCase.iconName,
+                    label: Text(useCase.displayName, bundle: .module),
+                    color: useCase.tintColor
+                )
             }
             compatibilityBadge
             if model.useCase != .vision {
                 modelTypeBadge
             }
-            if let quant = model.quantization {
-                MetadataPill(text: quant, icon: "gauge.with.dots.needle.bottom.50percent")
+        }
+    }
+
+    /// Fixed three-column spec strip. Columns stay in the same order with
+    /// a "—" placeholder for missing values so cards line up for
+    /// side-by-side comparison.
+    private var statStrip: some View {
+        HStack(spacing: 0) {
+            StatSegment(label: L("Size"), value: model.formattedDownloadSize)
+            statDivider
+            StatSegment(label: L("Params"), value: model.parameterCount)
+            statDivider
+            StatSegment(label: L("Quant"), value: model.quantization)
+        }
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground)
+        )
+    }
+
+    private var statDivider: some View {
+        Rectangle()
+            .fill(theme.cardBorder)
+            .frame(width: 1, height: 22)
+    }
+
+    /// Muted footer with popularity and release recency. Pinned to the
+    /// bottom of the card via a `Spacer` so it aligns across rows.
+    @ViewBuilder
+    private var cardFooter: some View {
+        let downloads = model.formattedDownloads
+        let released = model.formattedReleaseMonth
+        if downloads != nil || released != nil {
+            HStack(spacing: 8) {
+                if let downloads {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 9, weight: .medium))
+                        Text(L("\(downloads) downloads"))
+                            .font(.system(size: 11))
+                    }
+                    .foregroundColor(theme.tertiaryText)
+                }
+
+                // Push popularity to the leading edge and release recency
+                // to the trailing edge so the two read as distinct stats.
+                Spacer(minLength: 8)
+
+                // Curated entries set `releasedAt` explicitly; HF
+                // auto-fetched ones pick it up from `lastModified` —
+                // either way the prefix is "Released".
+                if let released {
+                    Text(L("Released \(released)"))
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
             }
+            .lineLimit(1)
+            .truncationMode(.tail)
         }
     }
 
@@ -321,11 +400,11 @@ struct ModelRowView: View {
     private var compatibilityBadge: some View {
         switch model.compatibility(totalMemoryGB: totalMemoryGB) {
         case .compatible:
-            CompatibilityPill(text: L("Runs Well"), icon: "checkmark.shield", color: theme.successColor)
+            TintedPill(icon: "checkmark.shield", label: Text(L("Runs Well")), color: theme.successColor)
         case .tight:
-            CompatibilityPill(text: L("Tight Fit"), icon: "exclamationmark.triangle", color: theme.warningColor)
+            TintedPill(icon: "exclamationmark.triangle", label: Text(L("Tight Fit")), color: theme.warningColor)
         case .tooLarge:
-            CompatibilityPill(text: L("Too Large"), icon: "xmark.circle", color: theme.errorColor)
+            TintedPill(icon: "xmark.circle", label: Text(L("Too Large")), color: theme.errorColor)
         case .unknown:
             EmptyView()
         }
@@ -334,73 +413,58 @@ struct ModelRowView: View {
     /// Badge showing whether model is LLM or VLM
     private var modelTypeBadge: some View {
         let isVLM = model.isVLM
-        let typeLabel = isVLM ? "VLM" : "LLM"
-        let color: Color = isVLM ? .purple : theme.accentColor
-        let icon = isVLM ? "eye" : "text.bubble"
-
-        return HStack(spacing: 3) {
-            Image(systemName: icon)
-                .font(.system(size: 8, weight: .semibold))
-            Text(typeLabel)
-                .font(.system(size: 10, weight: .semibold))
-        }
-        .foregroundColor(color)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
-            Capsule()
-                .fill(color.opacity(0.12))
+        return TintedPill(
+            icon: isVLM ? "eye" : "text.bubble",
+            label: Text(isVLM ? "VLM" : "LLM"),
+            color: isVLM ? .purple : theme.accentColor
         )
     }
 
 }
 
-// MARK: - Metadata Pill Component
+// MARK: - Stat Segment Component
 
-/// Small pill-shaped badge for displaying model metadata
-private struct MetadataPill: View {
+/// One fixed column of the spec strip: a value over a small uppercase
+/// label. Missing values render as a muted "—" so columns stay aligned
+/// across cards for comparison.
+private struct StatSegment: View {
     @Environment(\.theme) private var theme
 
-    let text: String
-    let icon: String?
-
-    init(text: String, icon: String? = nil) {
-        self.text = text
-        self.icon = icon
-    }
+    let label: String
+    let value: String?
 
     var body: some View {
-        HStack(spacing: 3) {
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 8, weight: .medium))
-            }
-            Text(text)
-                .font(.system(size: 10, weight: .medium))
+        VStack(spacing: 2) {
+            Text(value ?? "—")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(value == nil ? theme.tertiaryText : theme.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .textCase(.uppercase)
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
         }
-        .foregroundColor(theme.secondaryText)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
-            Capsule()
-                .fill(theme.tertiaryBackground)
-        )
+        .frame(maxWidth: .infinity)
     }
 }
 
-// MARK: - Compatibility Pill Component
+// MARK: - Tinted Pill Component
 
-/// Colored pill indicating hardware compatibility
-private struct CompatibilityPill: View {
-    let text: String
+/// Colored icon + label capsule shared by the use-case, compatibility, and
+/// LLM/VLM badges. Callers supply the `Text` so each keeps its own
+/// localization (literal, `L(...)`, or module-bundle key).
+private struct TintedPill: View {
     let icon: String
+    let label: Text
     let color: Color
 
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: icon)
                 .font(.system(size: 8, weight: .semibold))
-            Text(text)
+            label
                 .font(.system(size: 10, weight: .semibold))
         }
         .foregroundColor(color)
@@ -409,31 +473,6 @@ private struct CompatibilityPill: View {
         .background(
             Capsule()
                 .fill(color.opacity(0.12))
-        )
-    }
-}
-
-// MARK: - Use Case Pill Component
-
-/// Colored pill surfacing a model's editorial use-case category. Tint +
-/// icon come from `ModelUseCase` so the vocabulary matches the onboarding
-/// picker's `.useCase(...)` chip.
-private struct UseCasePill: View {
-    let useCase: ModelUseCase
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: useCase.iconName)
-                .font(.system(size: 8, weight: .semibold))
-            Text(useCase.displayName, bundle: .module)
-                .font(.system(size: 10, weight: .semibold))
-        }
-        .foregroundColor(useCase.tintColor)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
-            Capsule()
-                .fill(useCase.tintColor.opacity(0.12))
         )
     }
 }

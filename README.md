@@ -304,6 +304,9 @@ Osaurus is actively developed and we welcome contributions: bug fixes, new plugi
 
 Check out [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), read the [Contributing Guide](CONTRIBUTING.md), or join [Discord](https://discord.gg/osaurus). See [docs/FEATURES.md](docs/FEATURES.md) for the full feature inventory.
 
+> [!NOTE]
+> **🌐 Help translate Osaurus.** We're looking for contributors to localize the app into **Spanish**, **Korean**, **Japanese**, and **Traditional Chinese** -- these locales are already wired up in Xcode, so you can start translating right away. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md) for how to contribute and the contributor leaderboard.
+
 ## Community
 
 - [Discord](https://discord.gg/osaurus) -- chat, feedback, show-and-tell

@@ -2576,7 +2576,15 @@ public actor ModelRuntime {
     }
 
     private static func findLocalDirectory(forModelId id: String) -> URL? {
-        return resolveLocalModelDirectory(forModelId: id, in: DirectoryPickerService.effectiveModelsDirectory())
+        if let dir = resolveLocalModelDirectory(
+            forModelId: id,
+            in: DirectoryPickerService.effectiveModelsDirectory()
+        ) {
+            return dir
+        }
+        // Fall back to externally-discovered bundles (HF cache, LM Studio)
+        // that live outside the models directory.
+        return ExternalModelLocator.path(forId: id)
     }
 
     /// Preflight check for JANGTQ-routed models. Reads `jang_config.json`
