@@ -147,7 +147,8 @@ struct HuggingFaceParsingTests {
     }
 
     @Test func convertsBreakTagsToNewlines() {
-        let output = HuggingFaceService.normalizingModelCardHTML("a<br>b<br/>c")
+        let input = "a<br>b<br/>c"
+        let output = HuggingFaceService.normalizingModelCardHTML(input)
         #expect(output.contains("a\nb\nc"))
     }
 
