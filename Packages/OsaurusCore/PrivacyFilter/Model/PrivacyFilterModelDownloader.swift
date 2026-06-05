@@ -275,7 +275,12 @@ public final class PrivacyFilterModelDownloader: NSObject, ObservableObject {
     private func verifyAndFinalize(at directory: URL) async {
         state = .verifying
         do {
-            try PrivacyFilterModelBundle.verify(at: directory)
+            // `verify` streams SHA-256 over every bundle file, including the
+            // multi-GB safetensors weights. That hashing must not run on the
+            // main actor — it blocks the UI for seconds on finalize.
+            try await Task.detached(priority: .userInitiated) {
+                try PrivacyFilterModelBundle.verify(at: directory)
+            }.value
         } catch {
             state = .failed("Bundle verification failed: \(error.localizedDescription)")
             return
