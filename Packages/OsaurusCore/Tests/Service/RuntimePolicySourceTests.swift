@@ -2307,4 +2307,16 @@ struct RuntimePolicySourceTests {
             Issue.record("\(message)")
         }
     }
+
+    @Test("Sentry inference breadcrumbs expose token count without prompt-content filtering")
+    func sentryInferenceBreadcrumbsExposeTokenCountWithoutPromptFilter() throws {
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+
+        #expect(adapter.contains("input_tokens=\\(prepared.promptTokens.count)"))
+        #expect(
+            !adapter.contains("message: \"begin model=\\(modelName) promptTokens="),
+            "Sentry scrubs breadcrumbs containing prompt-like fields as content; token counts must remain visible for OOM/context-growth triage"
+        )
+        #expect(adapter.contains("submit model=\\(modelName) batch=\\(maxBatchSize)"))
+    }
 }

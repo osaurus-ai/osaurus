@@ -942,7 +942,7 @@ struct MLXBatchAdapter {
         // Identifiers and counts only, never prompt content.
         CrashReportingService.recordBreadcrumb(
             category: "inference.generate",
-            message: "begin model=\(modelName) promptTokens=\(prepared.promptTokens.count) batch=\(maxBatchSize)"
+            message: "begin model=\(modelName) input_tokens=\(prepared.promptTokens.count) batch=\(maxBatchSize)"
         )
 
         let engine = await Registry.shared.engine(
