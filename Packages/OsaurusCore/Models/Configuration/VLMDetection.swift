@@ -11,13 +11,62 @@ import Foundation
 import MLXVLM
 
 enum VLMDetection {
+    // MARK: - Memoization
+
+    // `isVLM(at:)` / `isVLM(modelId:)` are read from view bodies (e.g.
+    // `ModelRowView.modelTypeBadge` via `MLXModel.isVLM`) on every SwiftUI body
+    // evaluation, and each call reads + parses config.json from disk — synchronous
+    // I/O that hangs the UI when it runs per row per body eval. Verdicts are pure
+    // functions of the on-disk model, so they're cached and dropped on
+    // `.localModelsChanged` to stay in sync with downloads and deletions.
+    private static let cacheLock = NSLock()
+    private nonisolated(unsafe) static var verdictCache: [String: Bool] = [:]
+    private nonisolated(unsafe) static var didInstallObserver = false
+
+    private static func cachedVerdict(_ key: String, compute: () -> Bool) -> Bool {
+        ensureCacheObserverInstalled()
+        cacheLock.lock()
+        if let cached = verdictCache[key] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let result = compute()
+
+        cacheLock.lock()
+        verdictCache[key] = result
+        cacheLock.unlock()
+        return result
+    }
+
+    private static func ensureCacheObserverInstalled() {
+        cacheLock.lock()
+        let already = didInstallObserver
+        didInstallObserver = true
+        cacheLock.unlock()
+        if already { return }
+
+        NotificationCenter.default.addObserver(
+            forName: .localModelsChanged,
+            object: nil,
+            queue: nil
+        ) { _ in
+            VLMDetection.cacheLock.lock()
+            VLMDetection.verdictCache.removeAll(keepingCapacity: true)
+            VLMDetection.cacheLock.unlock()
+        }
+    }
+
     /// Check if a downloaded model at the given directory is a VLM.
     /// Uses vision_config key presence in config.json as the definitive signal,
     /// disambiguating model types registered in both LLM and VLM factories
     /// (e.g. gemma4 has both text-only and vision variants).
     static func isVLM(at directory: URL) -> Bool {
-        guard let json = readConfigJSON(at: directory) else { return false }
-        return json["vision_config"] != nil
+        cachedVerdict("dir:\(directory.path)") {
+            guard let json = readConfigJSON(at: directory) else { return false }
+            return json["vision_config"] != nil
+        }
     }
 
     /// Check if a model_type string is a known VLM architecture.
@@ -37,8 +86,10 @@ enum VLMDetection {
         {
             return false
         }
-        guard let dir = findLocalModelDirectory(forModelId: modelId) else { return false }
-        return isVLM(at: dir)
+        return cachedVerdict("id:\(modelId)") {
+            guard let dir = findLocalModelDirectory(forModelId: modelId) else { return false }
+            return isVLM(at: dir)
+        }
     }
 
     /// Read model_type from a model's local config.json.

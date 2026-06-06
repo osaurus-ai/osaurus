@@ -1714,11 +1714,29 @@ final class NativeToolCallRowView: NSView {
             && TTSService.shared.activeSpeakCallId == item.call.id
     }
 
+    /// Memoized `ToolEnvelope.isError` verdict. The sniff scans the whole result
+    /// string, which gets expensive for large tool results, and the status color is
+    /// recomputed on every cell (re)configure tick while a response streams. Results
+    /// are write-once per call, so the verdict is keyed by (call id, byte length).
+    private var cachedErrorVerdict: (callId: String, resultBytes: Int, isError: Bool)?
+
+    private func isErrorResult(_ result: String, callId: String) -> Bool {
+        let bytes = result.utf8.count
+        if let cached = cachedErrorVerdict,
+            cached.callId == callId, cached.resultBytes == bytes
+        {
+            return cached.isError
+        }
+        let verdict = ToolEnvelope.isError(result)
+        cachedErrorVerdict = (callId, bytes, verdict)
+        return verdict
+    }
+
     /// Color of the node (icon + fill tint + ring), driven by run status:
     /// running = accent, error = red, success = green.
     private func nodeStatusColor(item: ToolCallItem, theme: any ThemeProtocol) -> NSColor {
         if isRunning(item) { return NSColor(theme.accentColor) }
-        if let r = item.result, ToolEnvelope.isError(r) {
+        if let r = item.result, isErrorResult(r, callId: item.call.id) {
             return NSColor(theme.errorColor)
         }
         return NSColor(theme.successColor)
