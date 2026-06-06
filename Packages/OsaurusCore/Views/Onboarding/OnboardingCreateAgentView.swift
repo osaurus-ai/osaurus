@@ -113,6 +113,23 @@ struct CreateAgentBody: View {
             .color ?? theme.accentColor
     }
 
+    /// Centralized layout rhythm + sizing. Kept together so the vertical
+    /// spacing and hero / swatch dimensions stay consistent and are easy to
+    /// retune as a set — the step is hand-fit to the fixed onboarding window.
+    private enum Layout {
+        static let contentMaxWidth: CGFloat = 700
+        static let heroDiameter: CGFloat = 132
+        static let taglineMaxWidth: CGFloat = 560
+        static let swatchDiameter: CGFloat = 56
+        static let swatchCell: CGFloat = 66
+        static let swatchSpacing: CGFloat = 12
+
+        // Vertical rhythm between the centered content groups.
+        static let heroToBadge: CGFloat = 16
+        static let badgeToTagline: CGFloat = 10
+        static let sectionGap: CGFloat = 22
+    }
+
     /// Non-scrolling, vertically-centered layout. The step is intentionally
     /// sized to fit the fixed onboarding window without scrolling — the
     /// "edit later" hint lives in the footer caption slot (see
@@ -123,25 +140,25 @@ struct CreateAgentBody: View {
 
             heroDino
 
-            Spacer().frame(height: 14)
+            Spacer().frame(height: Layout.heroToBadge)
 
             nameBadge
 
-            Spacer().frame(height: 8)
+            Spacer().frame(height: Layout.badgeToTagline)
 
             tagline
 
-            Spacer().frame(height: 14)
+            Spacer().frame(height: Layout.sectionGap)
 
             avatarRow
 
-            Spacer().frame(height: 14)
+            Spacer().frame(height: Layout.sectionGap)
 
             archetypeRow
 
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: 700)
+        .frame(maxWidth: Layout.contentMaxWidth)
         .padding(.horizontal, OnboardingMetrics.rightColumnHorizontalPadding)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -153,7 +170,7 @@ struct CreateAgentBody: View {
     /// archetype. The bounce on change makes selection feel responsive and
     /// fun rather than form-like, and the glow adopts the dino's color.
     private var heroDino: some View {
-        let diameter: CGFloat = 140
+        let diameter = Layout.heroDiameter
         return ZStack {
             Circle()
                 .fill(selectedColor.opacity(theme.isDark ? 0.32 : 0.20))
@@ -166,7 +183,7 @@ struct CreateAgentBody: View {
                 name: state.resolvedName,
                 tint: selectedColor,
                 diameter: diameter,
-                monogramFontSize: 48,
+                monogramFontSize: 44,
                 borderWidth: 2.5,
                 bleedsToEdge: true
             )
@@ -243,7 +260,9 @@ struct CreateAgentBody: View {
             .multilineTextAlignment(.center)
             .lineSpacing(3)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: 420)
+            // Wide enough that every role's tagline stays on one line, so the
+            // layout doesn't jump (and feel crowded) when switching roles.
+            .frame(maxWidth: Layout.taglineMaxWidth)
             .id(state.selectedTemplate)
             .transition(.opacity.combined(with: .scale(scale: 0.96)))
             .animation(theme.animationQuick(), value: state.selectedTemplate)
@@ -255,9 +274,13 @@ struct CreateAgentBody: View {
     /// always picks a colorful mascot so the row of cute dinos reads as the
     /// brand — the monogram/no-avatar option lives in Settings.
     private var avatarRow: some View {
-        VStack(spacing: OnboardingMetrics.labelToInput + 4) {
+        // Tighter label gap than the role row: the swatch cells are taller
+        // than their circles (`cellSize` > `diameter`), so this offsets that
+        // built-in top inset and keeps the label→content gap visually equal
+        // to the role chips below.
+        VStack(spacing: OnboardingMetrics.labelToInput) {
             sectionLabel("Pick a color")
-            HStack(spacing: 12) {
+            HStack(spacing: Layout.swatchSpacing) {
                 ForEach(AgentMascot.allCases) { mascot in
                     avatarChip(mascot: mascot)
                 }
@@ -267,8 +290,8 @@ struct CreateAgentBody: View {
 
     private func avatarChip(mascot: AgentMascot) -> some View {
         let isSelected = state.selectedAvatar == mascot.id
-        let diameter: CGFloat = 56
-        let cellSize: CGFloat = 66
+        let diameter = Layout.swatchDiameter
+        let cellSize = Layout.swatchCell
         return Button {
             withAnimation(theme.animationQuick()) {
                 state.selectedAvatar = mascot.id
