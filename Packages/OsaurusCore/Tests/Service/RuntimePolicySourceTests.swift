@@ -485,12 +485,14 @@ struct RuntimePolicySourceTests {
         // explicit unsupported boundary for unproven unified image/audio/video,
         // and Gemma4 proportional RoPE support needed by full-attention layers,
         // plus safe auto-enabled Nemotron Ultra JANGTQ streaming dispatch that
-        // avoids full expert materialization for 512-expert stacked-only models.
+        // avoids full expert materialization for 512-expert stacked-only models,
+        // with Nemotron Ultra BF16 activation retention and weighted MoE
+        // fast-path controls wired behind explicit disable env vars.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "d03beb22b0f9421b30b30c4e0dcadcb61d4d89d7"
+        let expectedRuntimeHardenedRevision = "45a1560d96a10899a7c20f4797b2769d26e3294d"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -498,7 +500,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, and Nemotron Ultra JANGTQ streaming dispatch guard; an internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, and Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards; an internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
