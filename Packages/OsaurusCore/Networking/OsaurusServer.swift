@@ -74,16 +74,13 @@ public actor OsaurusServer: Sendable {
                         // Connection cap (first handler): a flood of idle-held
                         // sockets can't exhaust file descriptors / pin memory.
                         ConnectionLimitHandler(),
-                        // Slow-loris / idle-hold defense: drop a connection that
-                        // accepts no writes or sits fully idle past the budget.
-                        // Do not enforce a post-request read timeout here:
-                        // long SSE streams can spend minutes in cold model load
-                        // or prefill while only writing keepalive comments.
-                        IdleStateHandler(
-                            readTimeout: nil,
-                            writeTimeout: .seconds(150),
-                            allTimeout: .seconds(300)
-                        ),
+                        // Slow-loris / idle-hold defense cannot use NIO idle
+                        // timeouts on this pipeline: long local non-streaming
+                        // model calls intentionally produce no response bytes
+                        // until generation completes, and slow cold loads can
+                        // exceed several minutes. ConnectionLimitHandler keeps
+                        // idle-held sockets bounded without closing legitimate
+                        // in-flight inference requests.
                         HTTPHandler(
                             configuration: serverConfiguration,
                             apiKeyValidatorProvider: { validatorSnapshot.value() },

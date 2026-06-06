@@ -473,6 +473,26 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("HTTP server does not close long local inference for NIO idle timeout")
+    func osaurusServerDoesNotInstallNIOIdleTimeoutForInferenceChannels() throws {
+        let source = try Self.source("Networking/OsaurusServer.swift")
+        let initializerStart = try #require(source.range(of: ".childChannelInitializer { channel in"))
+        let initializerEnd = try #require(
+            source.range(of: ".childChannelOption", range: initializerStart.upperBound ..< source.endIndex)
+        )
+        let initializer = String(source[initializerStart.lowerBound ..< initializerEnd.lowerBound])
+
+        #expect(initializer.contains("ConnectionLimitHandler()"))
+        #expect(initializer.contains("HTTPHandler("))
+        #expect(!initializer.contains("IdleStateHandler("))
+        #expect(!initializer.contains("writeTimeout:"))
+        #expect(!initializer.contains("allTimeout:"))
+        #expect(
+            initializer.contains("long local non-streaming"),
+            "source comment should preserve why NIO idle timeouts break slow local /v1/chat/completions"
+        )
+    }
+
     @Test("vmlx pin uses consolidated package with runtime hardening")
     func vmlxPinIncludesRuntimeHardening() throws {
         let manifest = try Self.source("Package.swift")
