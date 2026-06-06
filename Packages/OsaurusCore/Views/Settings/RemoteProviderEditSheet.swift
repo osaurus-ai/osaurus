@@ -28,6 +28,71 @@ private func parseManualModelIds(_ text: String) -> [String] {
     return values
 }
 
+// MARK: - Pasted URL Detection
+
+/// Endpoint components recovered from a full URL pasted into a host field,
+/// so users can paste e.g. "https://api.example.com:8443/v1" and have the
+/// protocol, host, port, and base path fields filled in automatically.
+private struct PastedEndpointComponents {
+    var providerProtocol: RemoteProviderProtocol?
+    var host: String
+    var port: Int?
+    var basePath: String?
+}
+
+/// Only restructure input that was pasted (multi-character change) or that
+/// carries an explicit scheme; never mangle text the user is typing out
+/// character by character.
+private func shouldSplitHostInput(previous: String, value: String) -> Bool {
+    value.contains("://") || (value.count - previous.count > 1 && (value.contains("/") || value.contains(":")))
+}
+
+/// Parses host-field input that looks like a full URL. Returns nil when the
+/// text is already a bare host so callers leave their state untouched.
+private func parsePastedEndpoint(_ text: String) -> PastedEndpointComponents? {
+    var remainder = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !remainder.isEmpty else { return nil }
+
+    var providerProtocol: RemoteProviderProtocol?
+    if let schemeRange = remainder.range(of: "://") {
+        switch remainder[..<schemeRange.lowerBound].lowercased() {
+        case "https": providerProtocol = .https
+        case "http": providerProtocol = .http
+        default: break  // Unknown scheme: still salvage host/port/path below.
+        }
+        remainder = String(remainder[schemeRange.upperBound...])
+    }
+
+    // Plain host input has nothing to split apart.
+    guard providerProtocol != nil || remainder.contains("/") || remainder.contains(":") else { return nil }
+
+    // Drop query string and fragment.
+    if let cutoff = remainder.firstIndex(where: { $0 == "?" || $0 == "#" }) {
+        remainder = String(remainder[..<cutoff])
+    }
+
+    var basePath: String?
+    if let slash = remainder.firstIndex(of: "/") {
+        var path = String(remainder[slash...])
+        remainder = String(remainder[..<slash])
+        while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+        if path != "/" { basePath = path }
+    }
+
+    var port: Int?
+    if let colon = remainder.lastIndex(of: ":"),
+        // Don't treat colons inside an IPv6 literal ("[::1]") as a port separator.
+        remainder.lastIndex(of: "]").map({ colon > $0 }) ?? true
+    {
+        port = Int(remainder[remainder.index(after: colon)...])
+        remainder = String(remainder[..<colon])
+    }
+
+    let host = remainder.trimmingCharacters(in: .whitespaces)
+    guard !host.isEmpty else { return nil }
+    return PastedEndpointComponents(providerProtocol: providerProtocol, host: host, port: port, basePath: basePath)
+}
+
 // MARK: - Main View
 
 struct RemoteProviderEditSheet: View {
@@ -453,6 +518,32 @@ private struct AddProviderFlow: View {
         .buttonStyle(PlainButtonStyle())
     }
 
+    /// When a full URL lands in the known-provider host field, distribute its
+    /// pieces across the protocol/port/base path fields so users can paste
+    /// the whole endpoint instead of hand-splitting it.
+    private func handleKnownHostChange(previous: String, value: String) {
+        testResult = nil
+        guard shouldSplitHostInput(previous: previous, value: value),
+            let components = parsePastedEndpoint(value)
+        else { return }
+        knownHost = components.host
+        if let providerProtocol = components.providerProtocol { knownProtocol = providerProtocol }
+        if let port = components.port { knownPort = String(port) }
+        if let basePath = components.basePath { knownBasePath = basePath }
+    }
+
+    /// Same full-URL paste handling for the custom provider host field.
+    private func handleCustomHostChange(previous: String, value: String) {
+        guard shouldSplitHostInput(previous: previous, value: value),
+            let components = parsePastedEndpoint(value)
+        else { return }
+        testResult = nil
+        customHost = components.host
+        if let providerProtocol = components.providerProtocol { customProtocol = providerProtocol }
+        if let port = components.port { customPort = String(port) }
+        if let basePath = components.basePath { customBasePath = basePath }
+    }
+
     private func initializeKnownConnection(for preset: ProviderPreset) {
         let config = preset.configuration
         knownHost = config.host
@@ -495,7 +586,9 @@ private struct AddProviderFlow: View {
                     text: $knownHost,
                     isMonospaced: true
                 )
-                .onChange(of: knownHost) { _, _ in testResult = nil }
+                .onChange(of: knownHost) { previous, value in
+                    handleKnownHostChange(previous: previous, value: value)
+                }
             }
 
             HStack(spacing: 12) {
@@ -618,7 +711,9 @@ private struct AddProviderFlow: View {
                     text: $knownHost,
                     isMonospaced: true
                 )
-                .onChange(of: knownHost) { _, _ in testResult = nil }
+                .onChange(of: knownHost) { previous, value in
+                    handleKnownHostChange(previous: previous, value: value)
+                }
             }
 
             HStack(spacing: 12) {
@@ -916,6 +1011,9 @@ private struct AddProviderFlow: View {
                 .frame(width: 140)
 
                 ProviderTextField(label: "Host", placeholder: "api.example.com", text: $customHost, isMonospaced: true)
+                    .onChange(of: customHost) { previous, value in
+                        handleCustomHostChange(previous: previous, value: value)
+                    }
             }
 
             HStack(spacing: 12) {
@@ -1872,6 +1970,9 @@ private struct EditProviderFlow: View {
                 .frame(width: 140)
 
                 ProviderTextField(label: "Host", placeholder: "api.example.com", text: $host, isMonospaced: true)
+                    .onChange(of: host) { previous, value in
+                        handleHostChange(previous: previous, value: value)
+                    }
             }
 
             HStack(spacing: 12) {
@@ -2234,6 +2335,20 @@ private struct EditProviderFlow: View {
     }
 
     // MARK: - Actions
+
+    /// When a full URL lands in the host field, distribute its pieces across
+    /// the protocol/port/base path fields so users can paste the whole
+    /// endpoint instead of hand-splitting it.
+    private func handleHostChange(previous: String, value: String) {
+        guard shouldSplitHostInput(previous: previous, value: value),
+            let components = parsePastedEndpoint(value)
+        else { return }
+        testResult = nil
+        host = components.host
+        if let pastedProtocol = components.providerProtocol { providerProtocol = pastedProtocol }
+        if let port = components.port { portString = String(port) }
+        if let basePath = components.basePath { self.basePath = basePath }
+    }
 
     private func loadProvider() {
         name = provider.name
