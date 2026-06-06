@@ -213,6 +213,11 @@ public final class RemoteProviderManager: ObservableObject {
                     let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
                     await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: provider.id)
                 }
+            } else if provider.authType == .xaiOAuth {
+                if let tokens = await provider.getOAuthTokensOffMainActor(), tokens.isExpired {
+                    let refreshed = try await XAIOAuthService.refresh(tokens)
+                    await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: provider.id)
+                }
             }
 
             // Fetch models from the provider and merge any manually configured deployment IDs.
@@ -229,7 +234,7 @@ public final class RemoteProviderManager: ObservableObject {
             let models = provider.mergedModelIds(discovered: discoveredModels)
             let resolvedHeaders = await provider.resolvedHeadersOffMainActor()
             let cachedOAuthTokens =
-                provider.authType == .openAICodexOAuth
+                (provider.authType == .openAICodexOAuth || provider.authType == .xaiOAuth)
                 ? await provider.getOAuthTokensOffMainActor()
                 : nil
 
@@ -466,6 +471,12 @@ public final class RemoteProviderManager: ObservableObject {
             // is enough to render the "test succeeded" UI; the real catalog is
             // fetched on connect via RemoteProviderService.fetchModels.
             return OpenAICodexOAuthService.supportedModels
+        }
+
+        if authType == .xaiOAuth {
+            // xAI OAuth tokens cannot list models (HTTP 403); use the built-in
+            // catalog, matching RemoteProviderService.fetchModels.
+            return XAIOAuthService.supportedModels
         }
 
         // Build temporary provider for testing

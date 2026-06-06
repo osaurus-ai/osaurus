@@ -213,9 +213,21 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     /// Whether this is a known provider (not custom)
     var isKnown: Bool { self != .custom }
 
-    /// Known presets sorted alphabetically by display name (excludes custom)
+    /// OAuth-capable presets, surfaced first in provider lists because a
+    /// browser sign-in is the lowest-friction path (no API-key paste). Order
+    /// within the group is curated.
+    static let oauthFirstPresets: [ProviderPreset] = [.openai, .xai, .openrouter]
+
+    /// Known presets (excludes custom). OAuth-capable providers lead (see
+    /// `oauthFirstPresets`), then the remaining providers alphabetically by
+    /// display name.
     static var knownPresets: [ProviderPreset] {
-        allCases.filter { $0.isKnown }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let oauthFirst = oauthFirstPresets.filter { $0.isKnown }
+        let rest =
+            allCases
+            .filter { $0.isKnown && !oauthFirst.contains($0) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return oauthFirst + rest
     }
 
     // MARK: - Configuration
@@ -493,6 +505,37 @@ enum OpenRouterCredentialMode {
             return "Authorize in your browser and we'll mint a key automatically."
         case .apiKey:
             return "Paste a key from openrouter.ai/keys."
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .oauthSignIn: return "person.crop.circle.badge.checkmark"
+        case .apiKey: return "key.fill"
+        }
+    }
+}
+
+/// Credential mode for the xAI (Grok) provider. The OAuth path runs PKCE in the
+/// browser and persists the returned access/refresh tokens (`authType:
+/// .xaiOAuth`); the API-key path stores a `console.x.ai` key the usual way.
+enum XAICredentialMode {
+    case oauthSignIn
+    case apiKey
+
+    var title: String {
+        switch self {
+        case .oauthSignIn: return "Connect with Grok (SuperGrok / X Premium+)"
+        case .apiKey: return "xAI API key"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .oauthSignIn:
+            return "Sign in with your SuperGrok or X Premium+ subscription."
+        case .apiKey:
+            return "Paste a key from console.x.ai."
         }
     }
 
