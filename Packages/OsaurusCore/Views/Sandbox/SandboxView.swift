@@ -103,14 +103,14 @@ private extension SandboxView {
 
     var sandboxSubtitle: String {
         if !sandboxState.availability.isAvailable {
-            return "Unavailable"
+            return L("Unavailable")
         }
         switch sandboxState.status {
-        case .running: return "Container running"
-        case .stopped: return "Container stopped"
-        case .starting: return "Container starting..."
-        case .notProvisioned: return "Not provisioned"
-        case .error(let msg): return "Error: \(msg)"
+        case .running: return L("Container running")
+        case .stopped: return L("Container stopped")
+        case .starting: return L("Container starting...")
+        case .notProvisioned: return L("Not provisioned")
+        case .error(let msg): return L("Error: \(msg)")
         }
     }
 }

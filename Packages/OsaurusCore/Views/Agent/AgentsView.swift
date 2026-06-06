@@ -769,18 +769,18 @@ private enum DetailTab: String, CaseIterable {
 
     var label: String {
         switch self {
-        case .configure: return "Configure"
-        case .capabilities: return "Capabilities"
-        case .customization: return "Customization"
-        case .network: return "Network"
-        case .sandbox: return "Sandbox"
-        case .automation: return "Automation"
-        case .memory: return "Memory"
-        case .home: return "Home"
-        case .schema: return "Schema"
-        case .data: return "Data"
-        case .views: return "Views"
-        case .activity: return "Activity"
+        case .configure: return L("Configure")
+        case .capabilities: return L("Capabilities")
+        case .customization: return L("Customization")
+        case .network: return L("Network")
+        case .sandbox: return L("Sandbox")
+        case .automation: return L("Automation")
+        case .memory: return L("Memory")
+        case .home: return L("Home")
+        case .schema: return L("Schema")
+        case .data: return L("Data")
+        case .views: return L("Views")
+        case .activity: return L("Activity")
         }
     }
 
@@ -803,23 +803,23 @@ private enum DetailTab: String, CaseIterable {
 
     var helperText: String {
         switch self {
-        case .configure: return "Identity, model, and behavior overrides."
-        case .capabilities: return "Pick which tools and skills this agent can use."
-        case .customization: return "Avatar, empty state, and visual theme."
-        case .network: return "Bonjour discovery and relay tunnel."
-        case .sandbox: return "Container-based code execution."
-        case .automation: return "Schedules and file watchers for autonomous behavior."
-        case .memory: return "Conversation history, pinned facts, and episode summaries."
+        case .configure: return L("Identity, model, and behavior overrides.")
+        case .capabilities: return L("Pick which tools and skills this agent can use.")
+        case .customization: return L("Avatar, empty state, and visual theme.")
+        case .network: return L("Bonjour discovery and relay tunnel.")
+        case .sandbox: return L("Container-based code execution.")
+        case .automation: return L("Schedules and file watchers for autonomous behavior.")
+        case .memory: return L("Conversation history, pinned facts, and episode summaries.")
         case .home:
-            return "Dashboard of pinned views — the agent's own home screen."
+            return L("Dashboard of pinned views — the agent's own home screen.")
         case .schema:
-            return "Tables, columns, indexes the agent has created in its private database."
+            return L("Tables, columns, indexes the agent has created in its private database.")
         case .data:
-            return "Browse, inspect, and export the rows stored in the agent's database."
+            return L("Browse, inspect, and export the rows stored in the agent's database.")
         case .views:
-            return "Saved SQL views the agent reuses across runs."
+            return L("Saved SQL views the agent reuses across runs.")
         case .activity:
-            return "Run history and the audit trail of every write the agent has done."
+            return L("Run history and the audit trail of every write the agent has done.")
         }
     }
 }
@@ -2015,13 +2015,13 @@ struct AgentDetailView: View {
         AgentDetailSection(title: L("Identity"), icon: "person.crop.circle") {
             VStack(alignment: .leading, spacing: 10) {
                 StyledTextField(
-                    placeholder: "e.g., Code Assistant",
+                    placeholder: L("e.g., Code Assistant"),
                     text: $name,
                     icon: "textformat"
                 )
 
                 StyledTextField(
-                    placeholder: "Brief description (optional)",
+                    placeholder: L("Brief description (optional)"),
                     text: $description,
                     icon: "text.alignleft"
                 )
@@ -2207,7 +2207,7 @@ struct AgentDetailView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                 StyledTextField(
-                    placeholder: "Welcome back, friend",
+                    placeholder: L("Welcome back, friend"),
                     text: $chatGreetingDraft,
                     icon: "text.cursor"
                 )
@@ -2218,7 +2218,7 @@ struct AgentDetailView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                 StyledTextField(
-                    placeholder: "How can I help today?",
+                    placeholder: L("How can I help today?"),
                     text: $chatSubtitleDraft,
                     icon: "text.cursor"
                 )
@@ -4239,7 +4239,7 @@ struct AgentDetailView: View {
     /// Bar" rather than "Chat" to match the surrounding section copy.
     private var actionBarBlock: some View {
         quickActionsModeGroup(
-            label: "Action Bar",
+            label: L("Action Bar"),
             icon: "bolt.fill",
             actions: $chatQuickActions,
             defaults: AgentQuickAction.defaultChatQuickActions
@@ -4450,21 +4450,21 @@ struct AgentDetailView: View {
 
                     HStack(spacing: 10) {
                         StyledTextField(
-                            placeholder: "SF Symbol name",
+                            placeholder: L("SF Symbol name"),
                             text: quickActionBinding(in: actions, for: action.id, keyPath: \.icon),
                             icon: "star"
                         )
                         .frame(width: 160)
 
                         StyledTextField(
-                            placeholder: "Display text",
+                            placeholder: L("Display text"),
                             text: quickActionBinding(in: actions, for: action.id, keyPath: \.text),
                             icon: "textformat"
                         )
                     }
 
                     StyledTextField(
-                        placeholder: "Prompt prefix (e.g. 'Explain ')",
+                        placeholder: L("Prompt prefix (e.g. 'Explain ')"),
                         text: quickActionBinding(in: actions, for: action.id, keyPath: \.prompt),
                         icon: "text.cursor"
                     )
@@ -4600,7 +4600,7 @@ struct AgentDetailView: View {
 
                             Spacer()
 
-                            Text(schedule.isEnabled ? "Active" : "Paused")
+                            Text(schedule.isEnabled ? L("Active") : L("Paused"))
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(schedule.isEnabled ? theme.successColor : theme.tertiaryText)
                                 .padding(.horizontal, 8)
@@ -5697,7 +5697,7 @@ private struct AgentEditorSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             AgentSheetSectionLabel("Name")
             StyledTextField(
-                placeholder: "e.g., Code Assistant",
+                placeholder: L("e.g., Code Assistant"),
                 text: $name,
                 icon: "textformat"
             )

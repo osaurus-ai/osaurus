@@ -99,7 +99,7 @@ struct ToolsManagerView: View {
             HeaderIconButton(
                 "arrow.clockwise",
                 isLoading: isRefreshingInstalled,
-                help: isRefreshingInstalled ? "Refreshing..." : "Reload tools"
+                help: isRefreshingInstalled ? L("Refreshing...") : L("Reload tools")
             ) {
                 Task {
                     isRefreshingInstalled = true
@@ -187,7 +187,7 @@ struct ToolsManagerView: View {
                     }
 
                     if !remoteTools.isEmpty {
-                        InstalledSectionHeader(title: "Remote Tools", icon: "server.rack")
+                        InstalledSectionHeader(title: L("Remote Tools"), icon: "server.rack")
 
                         ForEach(remoteTools, id: \.provider.id) { item in
                             RemoteProviderToolsCard(
@@ -466,13 +466,13 @@ private struct SandboxPluginsTabContent: View {
                 }
 
                 if !builtInTools.isEmpty {
-                    InstalledSectionHeader(title: "Built-in Sandbox Tools", icon: "terminal")
+                    InstalledSectionHeader(title: L("Built-in Sandbox Tools"), icon: "terminal")
 
                     LazyVStack(spacing: 8) {
                         ForEach(builtInTools) { entry in
                             RuntimeManagedToolEntryRow(
                                 entry: entry,
-                                badge: "Sandbox",
+                                badge: L("Sandbox"),
                                 policyInfo: policyInfoCache[entry.name],
                                 onChange: onChange
                             )

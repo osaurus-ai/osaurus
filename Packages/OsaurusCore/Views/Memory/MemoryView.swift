@@ -282,14 +282,14 @@ struct MemoryView: View {
     // MARK: - Identity Section
 
     private var identitySection: some View {
-        MemorySectionCard(title: "Identity", icon: "person.text.rectangle") {
+        MemorySectionCard(title: L("Identity"), icon: "person.text.rectangle") {
             // "Distill pending" goes through `syncNow()` directly. The
             // important difference vs `recoverOrphanedSignals()` (which
             // runs at app launch) is that this path skips the
             // `canDistillCheaply` guard, so it works for users who picked
             // a large local MLX model that isn't resident yet.
             MemorySectionActionButton(
-                isDistilling ? "Distilling..." : "Distill pending",
+                isDistilling ? L("Distilling...") : L("Distill pending"),
                 icon: "wand.and.stars"
             ) {
                 guard !isDistilling else { return }
@@ -394,7 +394,7 @@ struct MemoryView: View {
     private var overridesSection: some View {
         let overrides = identity?.overrides ?? []
         return MemorySectionCard(
-            title: "Your Overrides",
+            title: L("Your Overrides"),
             icon: "pin.fill",
             count: overrides.isEmpty ? nil : overrides.count
         ) {
@@ -585,7 +585,7 @@ struct MemoryView: View {
     // MARK: - Agents Section
 
     private var agentsSection: some View {
-        MemorySectionCard(title: "Agents", icon: "person.2") {
+        MemorySectionCard(title: L("Agents"), icon: "person.2") {
             VStack(spacing: 0) {
                 defaultAgentMemoryGroup
 
@@ -640,7 +640,7 @@ struct MemoryView: View {
     // MARK: - Statistics Section
 
     private var statsSection: some View {
-        MemorySectionCard(title: "Statistics", icon: "chart.bar") {
+        MemorySectionCard(title: L("Statistics"), icon: "chart.bar") {
             HStack(spacing: 0) {
                 statBlock(label: "Total Calls", value: "\(processingStats.totalCalls)")
                 Divider().frame(height: 36).opacity(0.5)
@@ -658,7 +658,7 @@ struct MemoryView: View {
     // MARK: - Configuration Section
 
     private var configurationSection: some View {
-        MemorySectionCard(title: "Configuration", icon: "gearshape") {
+        MemorySectionCard(title: L("Configuration"), icon: "gearshape") {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 12) {
                     Text("Core Model", bundle: .module)

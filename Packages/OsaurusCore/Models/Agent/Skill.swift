@@ -110,11 +110,11 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             // Research & Analysis
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000001")!,
-                name: "Research Analyst",
-                description: "In-depth research with fact-checking and balanced analysis",
+                name: L("Research Analyst"),
+                description: L("In-depth research with fact-checking and balanced analysis"),
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "research",
+                category: L("research"),
                 keywords: ["research", "fact-check", "sources", "analysis", "citations", "evidence"],
                 enabled: false,
                 instructions: """
@@ -155,11 +155,11 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             // Creative
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000002")!,
-                name: "Creative Brainstormer",
-                description: "Generate ideas, overcome creative blocks, and explore possibilities",
+                name: L("Creative Brainstormer"),
+                description: L("Generate ideas, overcome creative blocks, and explore possibilities"),
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "creative",
+                category: L("creative"),
                 keywords: ["brainstorm", "ideation", "creative", "ideas", "innovation", "imagination"],
                 enabled: false,
                 instructions: """
@@ -201,11 +201,11 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             // Learning & Education
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000003")!,
-                name: "Study Tutor",
-                description: "Patient explanations, practice problems, and learning strategies",
+                name: L("Study Tutor"),
+                description: L("Patient explanations, practice problems, and learning strategies"),
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "learning",
+                category: L("learning"),
                 keywords: ["tutor", "teach", "learn", "study", "explain", "practice", "education"],
                 enabled: false,
                 instructions: """
@@ -247,11 +247,11 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             // Productivity
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000004")!,
-                name: "Productivity Coach",
-                description: "Task management, prioritization, and goal achievement",
+                name: L("Productivity Coach"),
+                description: L("Task management, prioritization, and goal achievement"),
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "productivity",
+                category: L("productivity"),
                 keywords: ["productivity", "tasks", "prioritize", "goals", "time-management", "planning"],
                 enabled: false,
                 instructions: """
@@ -293,11 +293,11 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             // Content Summarizer
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000005")!,
-                name: "Content Summarizer",
-                description: "Extract key points and create structured summaries",
+                name: L("Content Summarizer"),
+                description: L("Extract key points and create structured summaries"),
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "productivity",
+                category: L("productivity"),
                 keywords: ["summarize", "summary", "tldr", "key-points", "digest", "condense"],
                 enabled: false,
                 instructions: """
@@ -338,11 +338,11 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             // Debug Assistant (keeping one coding skill)
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000006")!,
-                name: "Debug Assistant",
-                description: "Systematic debugging and problem-solving approach",
+                name: L("Debug Assistant"),
+                description: L("Systematic debugging and problem-solving approach"),
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "development",
+                category: L("development"),
                 keywords: ["debug", "bug", "error", "crash", "fix", "troubleshoot", "diagnose"],
                 enabled: false,
                 instructions: """
@@ -389,12 +389,11 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             // Sandbox Plugin Self-Creation
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000010")!,
-                name: "Sandbox Plugin Creator",
-                description:
-                    "Create new sandbox plugins when you need an integration or capability that doesn't exist yet",
+                name: L("Sandbox Plugin Creator"),
+                description: L("Create new sandbox plugins when you need an integration or capability that doesn't exist yet"),
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "development",
+                category: L("development"),
                 keywords: [
                     "plugin", "integration", "connect", "api", "create plugin",
                     "sandbox plugin", "tool creation", "service", "tools",
@@ -414,11 +413,11 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             // Data Visualization
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000007")!,
-                name: "Data Visualizer",
-                description: "Render charts and graphs from data inline or from file attachments",
+                name: L("Data Visualizer"),
+                description: L("Render charts and graphs from data inline or from file attachments"),
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "productivity",
+                category: L("productivity"),
                 keywords: ["chart", "graph", "plot", "visualize", "bar", "line", "pie", "data", "table", "csv"],
                 enabled: false,
                 instructions: """

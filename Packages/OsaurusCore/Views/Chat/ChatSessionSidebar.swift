@@ -624,7 +624,7 @@ private struct SessionRow: View {
             ThemedAlertRequest(
                 id: requestId,
                 title: "Delete Conversation?",
-                message: "\"\(session.title)\" will be removed permanently. This can't be undone.",
+                message: L("\"\(session.title)\" will be removed permanently. This can't be undone."),
                 accessory: accessory,
                 buttons: [
                     .cancel(L("Cancel")),

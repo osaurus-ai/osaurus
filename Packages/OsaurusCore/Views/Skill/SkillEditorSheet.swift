@@ -129,14 +129,14 @@ struct SkillEditorSheet: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(isEditing ? (isBuiltIn ? "View Skill" : "Edit Skill") : "Create Skill")
+                Text(isEditing ? (isBuiltIn ? L("View Skill") : L("Edit Skill")) : (L("Create Skill")))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.primaryText)
 
                 Text(
                     isEditing
-                        ? (isBuiltIn ? "Preview built-in skill instructions" : "Modify your skill's instructions")
-                        : "Define specialized guidance for the AI"
+                        ? (isBuiltIn ? L("Preview built-in skill instructions") : L("Modify your skill's instructions"))
+                        : L("Define specialized guidance for the AI")
                 )
                 .font(.system(size: 12))
                 .foregroundColor(themeManager.currentTheme.secondaryText)
@@ -180,7 +180,7 @@ struct SkillEditorSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 // Identity Section
-                SkillEditorSection(title: "Identity", icon: "sparkles") {
+                SkillEditorSection(title: L("Identity"), icon: "sparkles") {
                     VStack(alignment: .leading, spacing: 16) {
                         // Name
                         VStack(alignment: .leading, spacing: 6) {
@@ -189,7 +189,7 @@ struct SkillEditorSheet: View {
                                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
                             SkillStyledTextField(
-                                placeholder: "e.g., Research Analyst",
+                                placeholder: L("e.g., Research Analyst"),
                                 text: $name,
                                 icon: nil
                             )
@@ -203,7 +203,7 @@ struct SkillEditorSheet: View {
                                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
                             SkillStyledTextField(
-                                placeholder: "Brief description (optional)",
+                                placeholder: L("Brief description (optional)"),
                                 text: $description,
                                 icon: nil
                             )
@@ -213,7 +213,7 @@ struct SkillEditorSheet: View {
                 }
 
                 // Metadata Section
-                SkillEditorSection(title: "Metadata", icon: "tag.fill") {
+                SkillEditorSection(title: L("Metadata"), icon: "tag.fill") {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack(spacing: 12) {
                             // Category
@@ -223,7 +223,7 @@ struct SkillEditorSheet: View {
                                     .foregroundColor(themeManager.currentTheme.secondaryText)
 
                                 SkillStyledTextField(
-                                    placeholder: "e.g., productivity",
+                                    placeholder: L("e.g., productivity"),
                                     text: $category,
                                     icon: nil
                                 )
@@ -253,7 +253,7 @@ struct SkillEditorSheet: View {
                                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
                             SkillStyledTextField(
-                                placeholder: "Your name (optional)",
+                                placeholder: L("Your name (optional)"),
                                 text: $author,
                                 icon: nil
                             )
@@ -263,7 +263,7 @@ struct SkillEditorSheet: View {
                 }
 
                 // Status Section
-                SkillEditorSection(title: "Status", icon: "checkmark.circle.fill") {
+                SkillEditorSection(title: L("Status"), icon: "checkmark.circle.fill") {
                     HStack {
                         HStack(spacing: 8) {
                             Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
@@ -278,7 +278,7 @@ struct SkillEditorSheet: View {
                                 Text("Enabled", bundle: .module)
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundColor(themeManager.currentTheme.primaryText)
-                                Text(enabled ? "Skill is available for use" : "Skill is hidden")
+                                Text(enabled ? L("Skill is available for use") : L("Skill is hidden"))
                                     .font(.system(size: 11))
                                     .foregroundColor(themeManager.currentTheme.tertiaryText)
                             }
@@ -416,11 +416,11 @@ struct SkillEditorSheet: View {
 
             Spacer()
 
-            Button(isBuiltIn ? "Close" : "Cancel", action: onCancel)
+            Button(isBuiltIn ? L("Close") : L("Cancel"), action: onCancel)
                 .buttonStyle(SkillSecondaryButtonStyle())
 
             if !isBuiltIn {
-                Button(isEditing ? "Save Changes" : "Create Skill") {
+                Button(isEditing ? L("Save Changes") : L("Create Skill")) {
                     saveSkill()
                 }
                 .buttonStyle(SkillPrimaryButtonStyle())

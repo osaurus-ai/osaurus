@@ -1389,12 +1389,12 @@ private struct AgentPicker: View {
     }
 
     private var selectedAgentName: String {
-        selectedAgent?.name ?? "Default"
+        selectedAgent?.name ?? L("Default")
     }
 
     private var selectedAgentDescription: String? {
         if selectedAgentId == nil {
-            return "Uses the default system behavior"
+            return L("Uses the default system behavior")
         }
         let desc = selectedAgent?.description ?? ""
         return desc.isEmpty ? nil : desc
@@ -1704,11 +1704,11 @@ struct ScheduleEditorSheet: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(isEditing ? "Edit Schedule" : "Create Schedule")
+                Text(isEditing ? L("Edit Schedule") : L("Create Schedule"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text(isEditing ? "Modify your scheduled task" : "Set up an automated AI task")
+                Text(isEditing ? L("Modify your scheduled task") : L("Set up an automated AI task"))
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             }
@@ -1748,7 +1748,7 @@ struct ScheduleEditorSheet: View {
     // MARK: - Schedule Info Section
 
     private var scheduleInfoSection: some View {
-        ScheduleEditorSection(title: "Schedule Info", icon: "info.circle.fill") {
+        ScheduleEditorSection(title: L("Schedule Info"), icon: "info.circle.fill") {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Name", bundle: .module)
@@ -1756,7 +1756,7 @@ struct ScheduleEditorSheet: View {
                         .foregroundColor(theme.secondaryText)
 
                     ScheduleTextField(
-                        placeholder: "e.g., Daily Summary",
+                        placeholder: L("e.g., Daily Summary"),
                         text: $name,
                         icon: "textformat",
                         isInvalid: nameInvalid
@@ -1782,7 +1782,7 @@ struct ScheduleEditorSheet: View {
                             Text("Enabled", bundle: .module)
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(theme.primaryText)
-                            Text(isEnabled ? "Schedule is active" : "Schedule is paused")
+                            Text(isEnabled ? L("Schedule is active") : L("Schedule is paused"))
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                         }
@@ -1818,7 +1818,7 @@ struct ScheduleEditorSheet: View {
     private var hasFolder: Bool { selectedFolderPath != nil }
 
     private var folderContextSection: some View {
-        ScheduleEditorSection(title: "Working Directory", icon: "folder.fill") {
+        ScheduleEditorSection(title: L("Working Directory"), icon: "folder.fill") {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 12) {
                     ZStack {
@@ -1925,7 +1925,7 @@ struct ScheduleEditorSheet: View {
     // MARK: - Instructions Section
 
     private var instructionsSection: some View {
-        ScheduleEditorSection(title: "Instructions", icon: "text.alignleft") {
+        ScheduleEditorSection(title: L("Instructions"), icon: "text.alignleft") {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topLeading) {
                     if instructions.isEmpty {
@@ -1972,7 +1972,7 @@ struct ScheduleEditorSheet: View {
     // MARK: - Frequency Section
 
     private var frequencySection: some View {
-        ScheduleEditorSection(title: "Frequency", icon: "clock.fill") {
+        ScheduleEditorSection(title: L("Frequency"), icon: "clock.fill") {
             VStack(spacing: 16) {
                 FrequencySelector(selection: $frequencyType)
                 frequencyOptionsView
@@ -2384,7 +2384,7 @@ struct ScheduleEditorSheet: View {
                 .foregroundColor(isError ? theme.errorColor : theme.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(isError ? "Error" : "Schedule")
+                Text(isError ? L("Error") : L("Schedule"))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(isError ? theme.errorColor : theme.tertiaryText)
                 Text(text)
@@ -2408,7 +2408,7 @@ struct ScheduleEditorSheet: View {
     // MARK: - Agent Section
 
     private var agentSection: some View {
-        ScheduleEditorSection(title: "Agent", icon: "person.circle.fill") {
+        ScheduleEditorSection(title: L("Agent"), icon: "person.circle.fill") {
             VStack(alignment: .leading, spacing: 8) {
                 AgentPicker(
                     selectedAgentId: $selectedAgentId,
@@ -2433,7 +2433,7 @@ struct ScheduleEditorSheet: View {
             Button(action: onCancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(ScheduleSecondaryButtonStyle())
 
-            Button(isEditing ? "Save Changes" : "Create Schedule") {
+            Button(isEditing ? L("Save Changes") : L("Create Schedule")) {
                 saveSchedule()
             }
             .buttonStyle(SchedulePrimaryButtonStyle())

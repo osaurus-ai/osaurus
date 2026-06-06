@@ -587,13 +587,13 @@ struct WatcherEditorSheet: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(isEditing ? "Edit Watcher" : "Create Watcher")
+                Text(isEditing ? L("Edit Watcher") : L("Create Watcher"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
                 Text(
                     isEditing
-                        ? "Modify your file system watcher" : "Set up a folder monitor"
+                        ? L("Modify your file system watcher") : L("Set up a folder monitor")
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
@@ -645,7 +645,7 @@ struct WatcherEditorSheet: View {
                 .foregroundColor(theme.secondaryText)
 
             WatcherTextField(
-                placeholder: "e.g., Downloads Organizer",
+                placeholder: L("e.g., Downloads Organizer"),
                 text: $name,
                 icon: "textformat"
             )
@@ -657,7 +657,7 @@ struct WatcherEditorSheet: View {
     private var hasWatchFolder: Bool { selectedWatchPath != nil }
 
     private var watchedFolderSection: some View {
-        WatcherEditorSection(title: "Watched Folder", icon: "folder.badge.gearshape") {
+        WatcherEditorSection(title: L("Watched Folder"), icon: "folder.badge.gearshape") {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 12) {
                     ZStack {
@@ -772,7 +772,7 @@ struct WatcherEditorSheet: View {
     // MARK: - Instructions Section
 
     private var instructionsSection: some View {
-        WatcherEditorSection(title: "Instructions", icon: "text.alignleft") {
+        WatcherEditorSection(title: L("Instructions"), icon: "text.alignleft") {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topLeading) {
                     if instructions.isEmpty {
@@ -816,7 +816,7 @@ struct WatcherEditorSheet: View {
     // MARK: - Monitoring Section
 
     private var monitoringSection: some View {
-        WatcherEditorSection(title: "Monitoring", icon: "gear") {
+        WatcherEditorSection(title: L("Monitoring"), icon: "gear") {
             VStack(alignment: .leading, spacing: 14) {
                 // Recursive toggle (compact inline)
                 HStack(spacing: 8) {
@@ -870,7 +870,7 @@ struct WatcherEditorSheet: View {
     // MARK: - Agent Section
 
     private var agentSection: some View {
-        WatcherEditorSection(title: "Agent", icon: "person.circle.fill") {
+        WatcherEditorSection(title: L("Agent"), icon: "person.circle.fill") {
             VStack(alignment: .leading, spacing: 8) {
                 WatcherAgentPicker(
                     selectedAgentId: $selectedAgentId,
@@ -895,7 +895,7 @@ struct WatcherEditorSheet: View {
             Button(action: onCancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(WatcherSecondaryButtonStyle())
 
-            Button(isEditing ? "Save Changes" : "Create Watcher") {
+            Button(isEditing ? L("Save Changes") : L("Create Watcher")) {
                 saveWatcher()
             }
             .buttonStyle(WatcherPrimaryButtonStyle())
@@ -1173,11 +1173,11 @@ private struct WatcherAgentOptionRow: View {
     @State private var isHovering = false
 
     private var displayName: String {
-        agent?.name ?? "Default"
+        agent?.name ?? L("Default")
     }
 
     private var displayDescription: String {
-        agent?.description ?? "Uses the default system behavior"
+        agent?.description ?? L("Uses the default system behavior")
     }
 
     var body: some View {

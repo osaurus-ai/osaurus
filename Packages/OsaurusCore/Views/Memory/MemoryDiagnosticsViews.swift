@@ -30,7 +30,7 @@ extension MemoryView {
     ///   * distill running but skipping   → log full of "skipped" rows
     ///   * distill calling an unhealthy model → log full of "error" rows
     var diagnosticsSection: some View {
-        MemorySectionCard(title: "Diagnostics", icon: "stethoscope") {
+        MemorySectionCard(title: L("Diagnostics"), icon: "stethoscope") {
             MemorySectionActionButton(
                 backfillButtonTitle,
                 icon: "tray.and.arrow.down"
@@ -40,7 +40,7 @@ extension MemoryView {
             .disabled(backfillRunning || !config.enabled)
 
             MemorySectionActionButton(
-                probeBufferRunning ? "Probing..." : "Test buffer",
+                probeBufferRunning ? L("Probing...") : L("Test buffer"),
                 icon: "syringe"
             ) {
                 runBufferProbe()
@@ -94,11 +94,11 @@ extension MemoryView {
     // MARK: - Backfill
 
     var backfillButtonTitle: String {
-        guard backfillRunning else { return "Backfill history" }
+        guard backfillRunning else { return L("Backfill history") }
         switch backfillProgress.stage {
-        case .buffering: return "Buffering..."
-        case .distilling: return "Distilling..."
-        case .done, .cancelled: return "Backfilling..."
+        case .buffering: return L("Buffering...")
+        case .distilling: return L("Distilling...")
+        case .done, .cancelled: return L("Backfilling...")
         }
     }
 
@@ -241,23 +241,23 @@ extension MemoryView {
         VStack(alignment: .leading, spacing: 8) {
             diagnosticRow(
                 label: "Memory enabled",
-                value: config.enabled ? "yes" : "no",
+                value: config.enabled ? L("yes") : L("no"),
                 statusColor: config.enabled ? .green : .red
             )
             diagnosticRow(
                 label: "Memory DB open",
-                value: memoryDBOpen ? "yes" : "no",
+                value: memoryDBOpen ? L("yes") : L("no"),
                 statusColor: memoryDBOpen ? .green : .red,
                 detail: memoryDBOpen
                     ? nil
-                    : "Memory database failed to open. Check Console for SQLCipher errors and the storage migration logs."
+                    : L("Memory database failed to open. Check Console for SQLCipher errors and the storage migration logs.")
             )
             diagnosticRow(
                 label: "Extraction mode",
                 value: extractionModeDescription(config.extractionMode),
                 statusColor: config.extractionMode == .sessionEnd ? .green : .orange,
                 detail: config.extractionMode == .manual
-                    ? "Manual mode never auto-distills. Use 'Distill pending' or set to sessionEnd."
+                    ? L("Manual mode never auto-distills. Use 'Distill pending' or set to sessionEnd.")
                     : nil
             )
             diagnosticRow(
@@ -295,7 +295,7 @@ extension MemoryView {
                 value: chatActive ? "active" : "idle",
                 statusColor: chatActive ? .orange : .green,
                 detail: chatActive
-                    ? "Background distillation is paused while a chat generation is streaming — they share GPU/unified memory."
+                    ? L("Background distillation is paused while a chat generation is streaming — they share GPU/unified memory.")
                     : nil
             )
             diagnosticRow(
@@ -329,11 +329,11 @@ extension MemoryView {
     private var pendingSignalsStatusDetail: String? {
         if pendingSignals.allTimeSignals == 0 {
             return
-                "No turns have ever reached the database. The chat code never calls bufferTurn for this install — see Buffer Telemetry below."
+                L("No turns have ever reached the database. The chat code never calls bufferTurn for this install — see Buffer Telemetry below.")
         }
         if pendingSignals.totalSignals == 0 {
             return
-                "All buffered turns have been distilled (or purged). The pipeline is healthy when episodes are growing."
+                L("All buffered turns have been distilled (or purged). The pipeline is healthy when episodes are growing.")
         }
         return nil
     }
@@ -344,9 +344,9 @@ extension MemoryView {
         let detail: String?
         let color: Color
         if t.attempts == 0 {
-            valueText = "0 attempts since launch"
+            valueText = L("0 attempts since launch")
             detail =
-                "MemoryService.bufferTurn has not been invoked since the app started. The chat finalization path isn't reaching it — likely an upstream gate (per-agent disableMemory, hasContent=false, or a non-default chat path)."
+                L("MemoryService.bufferTurn has not been invoked since the app started. The chat finalization path isn't reaching it — likely an upstream gate (per-agent disableMemory, hasContent=false, or a non-default chat path).")
             color = .red
         } else if t.insertSuccesses == 0 {
             let buckets = [
