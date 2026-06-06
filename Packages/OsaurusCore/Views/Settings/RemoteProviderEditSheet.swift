@@ -100,6 +100,10 @@ struct RemoteProviderEditSheet: View {
 
     let provider: RemoteProvider?
     var initialPreset: ProviderPreset?
+    /// When `true` and no `initialPreset` is given, the add flow opens directly
+    /// on the grouped "Use an API key" sub-list instead of the OAuth-first top
+    /// level. Used by the empty-state "Use an API key" shortcut.
+    var startAtAPIKeyPicker: Bool = false
     let onSave: (RemoteProvider, String?, RemoteProviderOAuthTokens?) -> Void
 
     var body: some View {
@@ -107,7 +111,11 @@ struct RemoteProviderEditSheet: View {
             if let provider {
                 EditProviderFlow(provider: provider, onSave: onSave)
             } else {
-                AddProviderFlow(initialPreset: initialPreset, onSave: onSave)
+                AddProviderFlow(
+                    initialPreset: initialPreset,
+                    startAtAPIKeyPicker: startAtAPIKeyPicker,
+                    onSave: onSave
+                )
             }
         }
         .environment(\.theme, themeManager.currentTheme)
@@ -123,17 +131,27 @@ private struct AddProviderFlow: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let initialPreset: ProviderPreset?
+    var startAtAPIKeyPicker: Bool = false
     let onSave: (RemoteProvider, String?, RemoteProviderOAuthTokens?) -> Void
 
     @State private var selectedPreset: ProviderPreset?
+    /// When `selectedPreset == nil`, controls whether the OAuth-first top level
+    /// (`false`) or the grouped "Use an API key" sub-list (`true`) is shown.
+    @State private var showingAPIKeyPicker = false
     @State private var apiKey: String = ""
-    @State private var openAIAuthMode: OpenAIProviderCredentialMode = .chatGPTSubscription
-    @State private var openRouterAuthMode: OpenRouterCredentialMode = .oauthSignIn
-    @State private var xaiAuthMode: XAICredentialMode = .oauthSignIn
+    /// The connection method pinned for the selected provider. Set at selection
+    /// time from the catalog (OAuth for top-level rows, `.apiKey` for the "Use
+    /// an API key" sub-list) so there's no in-form fork. Drives the CTA, the key
+    /// field, save/test branches, and back-routing.
+    @State private var selectedAuthMethod: ProviderPickerAuthMethod = .apiKey
     @State private var oauthTokens: RemoteProviderOAuthTokens?
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
     @State private var hasAppeared = false
+    /// Guards against saving twice: a successful test auto-finalizes the add,
+    /// but the footer button is also still tappable during the brief green
+    /// confirmation window, so both routes funnel through this one-shot latch.
+    @State private var hasFinalized = false
 
     // Known provider connection overrides for presets whose endpoint is user-specific.
     @State private var knownHost: String = ""
@@ -165,13 +183,9 @@ private struct AddProviderFlow: View {
         if preset == .azureOpenAI {
             return !knownHost.trimmingCharacters(in: .whitespaces).isEmpty && !apiKey.isEmpty && apiKey.count > 5
         }
-        if preset == .openai && openAIAuthMode == .chatGPTSubscription {
-            return true
-        }
-        if preset == .openrouter && openRouterAuthMode == .oauthSignIn {
-            return true
-        }
-        if preset == .xai && xaiAuthMode == .oauthSignIn {
+        // A browser sign-in is connectable as soon as the provider is picked —
+        // the OAuth flow itself collects the credential.
+        if selectedAuthMethod.isOAuth {
             return true
         }
         return !apiKey.isEmpty && apiKey.count > 5
@@ -190,8 +204,13 @@ private struct AddProviderFlow: View {
             // Content - stepped flow
             ZStack {
                 if selectedPreset == nil {
-                    providerSelectionStep
-                        .transition(stepTransition)
+                    if showingAPIKeyPicker {
+                        apiKeyProviderSelectionStep
+                            .transition(stepTransition)
+                    } else {
+                        providerSelectionStep
+                            .transition(stepTransition)
+                    }
                 } else if selectedPreset == .custom {
                     customProviderStep
                         .transition(stepTransition)
@@ -201,6 +220,7 @@ private struct AddProviderFlow: View {
                 }
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selectedPreset)
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showingAPIKeyPicker)
         }
         .frame(width: 540, height: 620)
         .background(theme.primaryBackground)
@@ -215,7 +235,14 @@ private struct AddProviderFlow: View {
         .onAppear {
             if let initialPreset {
                 initializeKnownConnection(for: initialPreset)
+                // Pin the entry's primary method (OAuth for the top-level rows
+                // that open the sheet pre-selected) so dual-mode providers open
+                // their sign-in flow, not the API-key form.
+                selectedAuthMethod =
+                    ProviderCatalog.entry(for: initialPreset)?.authMethods.first ?? .apiKey
                 selectedPreset = initialPreset
+            } else if startAtAPIKeyPicker {
+                showingAPIKeyPicker = true
             }
             withAnimation { hasAppeared = true }
         }
@@ -311,13 +338,23 @@ private struct AddProviderFlow: View {
                     .foregroundColor(theme.primaryText)
                     .padding(.horizontal, 4)
 
+                // OAuth-first: one-click sign-in providers as first-class rows,
+                // then a single "Use an API key" drill-in that holds every
+                // paste-a-key vendor, Ollama (local), and the custom endpoint.
                 VStack(spacing: 10) {
-                    ForEach(ProviderPreset.knownPresets + [.custom]) { preset in
-                        ProviderSelectionCard(preset: preset) {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                initializeKnownConnection(for: preset)
-                                selectedPreset = preset
-                            }
+                    ForEach(ProviderCatalog.topLevel) { entry in
+                        ProviderRowCard(entry: entry) {
+                            selectCatalogEntry(entry)
+                        }
+                    }
+
+                    ProviderRowCard(
+                        icon: "key.fill",
+                        title: "Use an API key",
+                        subtitle: "Anthropic, Google, Ollama, custom, and more"
+                    ) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            showingAPIKeyPicker = true
                         }
                     }
                 }
@@ -333,6 +370,70 @@ private struct AddProviderFlow: View {
             }
             .padding(24)
         }
+    }
+
+    // MARK: - Step 1b: "Use an API key" sub-list (grouped)
+
+    private var apiKeyProviderSelectionStep: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        showingAPIKeyPicker = false
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Back", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(theme.secondaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                ForEach(ProviderCatalog.apiKeyGroups(includeAzure: true)) { section in
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(LocalizedStringKey(section.title), bundle: .module)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.tertiaryText)
+                            .tracking(0.5)
+                            .textCase(.uppercase)
+                            .padding(.horizontal, 4)
+
+                        VStack(spacing: 10) {
+                            ForEach(section.entries) { entry in
+                                ProviderRowCard(entry: entry, preferAPIKey: true) {
+                                    selectCatalogEntry(entry, preferAPIKey: true)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(24)
+        }
+    }
+
+    /// Commit a catalog selection from either picker level and drill into its
+    /// configuration step.
+    ///
+    /// The connection method is decided by where the card lives: the OAuth-first
+    /// top level uses the entry's primary (OAuth) method, the "Use an API key"
+    /// sub-list (`preferAPIKey`) uses `.apiKey`. There is no in-form fork, so we
+    /// pin `selectedAuthMethod` here at selection time.
+    private func selectCatalogEntry(_ entry: ProviderCatalogEntry, preferAPIKey: Bool = false) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            initializeKnownConnection(for: entry.preset)
+            selectedAuthMethod = preferAPIKey ? .apiKey : (entry.authMethods.first ?? .apiKey)
+            selectedPreset = entry.preset
+        }
+    }
+
+    /// The OAuth flavor of the current selection, if any.
+    private var selectedOAuthKind: ProviderOAuthKind? {
+        if case .oauth(let kind) = selectedAuthMethod { return kind }
+        return nil
     }
 
     // MARK: - Step 2a: Known Provider (API key only)
@@ -366,21 +467,13 @@ private struct AddProviderFlow: View {
                             .foregroundColor(theme.primaryText)
                     }
 
-                    if selectedPreset == .openai {
-                        openAIAuthChoiceSection
-                    }
-
-                    if selectedPreset == .openrouter {
-                        openRouterAuthChoiceSection
-                    }
-
-                    if selectedPreset == .xai {
-                        xaiAuthChoiceSection
-                    }
-
                     if selectedPreset == .azureOpenAI {
                         azureConnectionSection
                         azureDeploymentsSection
+                    }
+
+                    if let kind = selectedOAuthKind {
+                        oauthInfoSection(for: kind)
                     }
 
                     if shouldShowKnownAPIKeyField {
@@ -492,12 +585,15 @@ private struct AddProviderFlow: View {
     private var backToSelectionButton: some View {
         Button {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                // Return to the level the form was reached from. Dual-mode
+                // presets appear at both levels, so read the pinned auth method
+                // (an API-key method means we came from the "Use an API key"
+                // sub-list) before the reset below clears it.
+                showingAPIKeyPicker = !selectedAuthMethod.isOAuth && selectedPreset != nil
                 selectedPreset = nil
                 apiKey = ""
                 oauthTokens = nil
-                openAIAuthMode = .chatGPTSubscription
-                openRouterAuthMode = .oauthSignIn
-                xaiAuthMode = .oauthSignIn
+                selectedAuthMethod = .apiKey
                 testResult = nil
                 customName = ""
                 customHost = ""
@@ -674,8 +770,8 @@ private struct AddProviderFlow: View {
     /// talks to OpenAI's fixed OAuth backend so a base-URL override is moot.
     private var showsKnownEndpointOverride: Bool {
         guard let preset = selectedPreset, preset.isKnown, preset != .azureOpenAI else { return false }
-        if preset == .openai && openAIAuthMode == .chatGPTSubscription { return false }
-        if preset == .xai && xaiAuthMode == .oauthSignIn { return false }
+        // OAuth providers talk to a fixed backend, so a base-URL override is moot.
+        if selectedAuthMethod.isOAuth { return false }
         return true
     }
 
@@ -784,209 +880,41 @@ private struct AddProviderFlow: View {
         }
     }
 
-    /// Whether the known-provider API key + help sections should render. Both
-    /// OpenAI and OpenRouter expose an OAuth alternative, so we hide the raw
-    /// key field when the user picks the browser sign-in flow.
+    /// Whether the known-provider API key + help sections should render. For
+    /// dual-mode providers we hide the raw key field when the user picked the
+    /// browser sign-in; everything else always shows it.
     private var shouldShowKnownAPIKeyField: Bool {
-        guard let preset = selectedPreset else { return true }
-        switch preset {
-        case .openai:
-            return openAIAuthMode == .platformAPIKey
-        case .openrouter:
-            return openRouterAuthMode == .apiKey
-        case .xai:
-            return xaiAuthMode == .apiKey
-        default:
-            return true
+        guard let preset = selectedPreset, let entry = ProviderCatalog.entry(for: preset) else { return true }
+        if entry.primaryOAuthKind != nil { return selectedAuthMethod == .apiKey }
+        return true
+    }
+
+    /// Body shown for the OAuth-first entry of a dual-mode preset. There's no
+    /// key field — the footer button starts the browser flow — so this banner
+    /// carries the short "here's how this works" context.
+    private func oauthInfoSection(for kind: ProviderOAuthKind) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: kind.icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(theme.accentColor.opacity(0.12)))
+            Text(LocalizedStringKey(kind.subtitle), bundle: .module)
+                .font(.system(size: 13))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
-    }
-
-    private var openAIAuthChoiceSection: some View {
-        authChoiceSection(
-            cards: [
-                authChoiceCardSpec(
-                    mode: OpenAIProviderCredentialMode.chatGPTSubscription,
-                    isSelected: openAIAuthMode == .chatGPTSubscription,
-                    action: { selectOpenAIMode(.chatGPTSubscription) }
-                ),
-                authChoiceCardSpec(
-                    mode: OpenAIProviderCredentialMode.platformAPIKey,
-                    isSelected: openAIAuthMode == .platformAPIKey,
-                    action: { selectOpenAIMode(.platformAPIKey) }
-                ),
-            ]
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
         )
-    }
-
-    private var openRouterAuthChoiceSection: some View {
-        authChoiceSection(
-            cards: [
-                authChoiceCardSpec(
-                    mode: OpenRouterCredentialMode.oauthSignIn,
-                    isSelected: openRouterAuthMode == .oauthSignIn,
-                    action: { selectOpenRouterMode(.oauthSignIn) }
-                ),
-                authChoiceCardSpec(
-                    mode: OpenRouterCredentialMode.apiKey,
-                    isSelected: openRouterAuthMode == .apiKey,
-                    action: { selectOpenRouterMode(.apiKey) }
-                ),
-            ]
-        )
-    }
-
-    private func selectOpenAIMode(_ mode: OpenAIProviderCredentialMode) {
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-            openAIAuthMode = mode
-            testResult = nil
-            oauthTokens = nil
-        }
-    }
-
-    private func selectOpenRouterMode(_ mode: OpenRouterCredentialMode) {
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-            openRouterAuthMode = mode
-            testResult = nil
-            // Clear any previously-minted key so the field doesn't read as
-            // "already provided" when the user flips back to paste.
-            apiKey = ""
-        }
-    }
-
-    private var xaiAuthChoiceSection: some View {
-        authChoiceSection(
-            cards: [
-                authChoiceCardSpec(
-                    mode: XAICredentialMode.oauthSignIn,
-                    isSelected: xaiAuthMode == .oauthSignIn,
-                    action: { selectXAIMode(.oauthSignIn) }
-                ),
-                authChoiceCardSpec(
-                    mode: XAICredentialMode.apiKey,
-                    isSelected: xaiAuthMode == .apiKey,
-                    action: { selectXAIMode(.apiKey) }
-                ),
-            ]
-        )
-    }
-
-    private func selectXAIMode(_ mode: XAICredentialMode) {
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-            xaiAuthMode = mode
-            testResult = nil
-            oauthTokens = nil
-            apiKey = ""
-        }
-    }
-
-    /// Lightweight DTO used to feed `authChoiceSection` without forcing
-    /// callers to recite the per-mode title/subtitle/icon triple.
-    private struct AuthChoiceCardSpec {
-        let title: String
-        let subtitle: String
-        let icon: String
-        let isSelected: Bool
-        let action: () -> Void
-    }
-
-    private func authChoiceCardSpec(
-        mode: OpenAIProviderCredentialMode,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> AuthChoiceCardSpec {
-        AuthChoiceCardSpec(
-            title: mode.title,
-            subtitle: mode.subtitle,
-            icon: mode.icon,
-            isSelected: isSelected,
-            action: action
-        )
-    }
-
-    private func authChoiceCardSpec(
-        mode: OpenRouterCredentialMode,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> AuthChoiceCardSpec {
-        AuthChoiceCardSpec(
-            title: mode.title,
-            subtitle: mode.subtitle,
-            icon: mode.icon,
-            isSelected: isSelected,
-            action: action
-        )
-    }
-
-    private func authChoiceCardSpec(
-        mode: XAICredentialMode,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> AuthChoiceCardSpec {
-        AuthChoiceCardSpec(
-            title: mode.title,
-            subtitle: mode.subtitle,
-            icon: mode.icon,
-            isSelected: isSelected,
-            action: action
-        )
-    }
-
-    private func authChoiceSection(cards: [AuthChoiceCardSpec]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("HOW DO YOU WANT TO CONNECT?", bundle: .module)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.5)
-
-            VStack(spacing: 10) {
-                ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
-                    authChoiceCard(card)
-                }
-            }
-        }
-    }
-
-    private func authChoiceCard(_ card: AuthChoiceCardSpec) -> some View {
-        Button(action: card.action) {
-            HStack(spacing: 12) {
-                Image(systemName: card.icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(card.isSelected ? theme.accentColor : theme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(
-                        Circle()
-                            .fill(card.isSelected ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground)
-                    )
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(card.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(card.subtitle)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                Image(systemName: card.isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(card.isSelected ? theme.accentColor : theme.tertiaryText)
-            }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(card.isSelected ? theme.accentColor.opacity(0.08) : theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(
-                                card.isSelected ? theme.accentColor.opacity(0.55) : theme.cardBorder,
-                                lineWidth: 1
-                            )
-                    )
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
     }
 
     private func helpSection(for preset: ProviderPreset) -> some View {
@@ -1367,16 +1295,13 @@ private struct AddProviderFlow: View {
     }
 
     private var actionButtonTitle: String {
-        let isOpenAIOAuth = selectedPreset == .openai && openAIAuthMode == .chatGPTSubscription
-        let isOpenRouterOAuth = selectedPreset == .openrouter && openRouterAuthMode == .oauthSignIn
-        let isXAIOAuth = selectedPreset == .xai && xaiAuthMode == .oauthSignIn
-        let isBrowserSignIn = isOpenAIOAuth || isOpenRouterOAuth || isXAIOAuth
-        if isTesting { return isBrowserSignIn ? L("Signing in...") : L("Testing...") }
+        let oauthKind = selectedOAuthKind
+        if isTesting { return oauthKind != nil ? L("Signing in...") : L("Testing...") }
         if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return L("Add Provider") }
         if case .failure = testResult { return L("Retry") }
-        if isOpenAIOAuth { return L("Sign in with ChatGPT") }
-        if isOpenRouterOAuth { return L("Sign in with OpenRouter") }
-        if isXAIOAuth { return L("Connect with Grok (SuperGrok / X Premium+)") }
+        if let oauthKind {
+            return NSLocalizedString(oauthKind.ctaTitle, bundle: .module, comment: "")
+        }
         return L("Test Connection")
     }
 
@@ -1403,13 +1328,13 @@ private struct AddProviderFlow: View {
         Task {
             do {
                 let models: [String]
-                if preset == .openai && openAIAuthMode == .chatGPTSubscription {
+                if selectedOAuthKind == .openAICodex {
                     let tokens = try await OpenAICodexOAuthService.signIn()
                     await MainActor.run {
                         oauthTokens = tokens
                     }
                     models = await OpenAICodexOAuthService.availableModels(for: tokens)
-                } else if preset == .openrouter && openRouterAuthMode == .oauthSignIn {
+                } else if selectedOAuthKind == .openRouter {
                     // The browser sign-in mints a regular OpenRouter API key.
                     // Stash it in `apiKey` so `saveKnownProvider` persists it
                     // via the same path as a pasted key, then verify by
@@ -1428,7 +1353,7 @@ private struct AddProviderFlow: View {
                         apiKey: key,
                         headers: HeaderEntry.buildHeaders(from: customHeaders)
                     )
-                } else if preset == .xai && xaiAuthMode == .oauthSignIn {
+                } else if selectedOAuthKind == .xai {
                     // Grok sign-in returns access/refresh tokens; stash them so
                     // `saveKnownProvider` persists them as `.xaiOAuth`. The
                     // browser sign-in IS the test — xAI OAuth tokens cannot list
@@ -1456,14 +1381,17 @@ private struct AddProviderFlow: View {
                         testResult = .success(models); isTesting = false
                     }
                 }
+                // Auto-complete on green: a successful test/sign-in is the
+                // confirmation, so finalize without a second "Add Provider"
+                // press. The brief pause lets the green success state register.
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                await MainActor.run { saveKnownProvider() }
             } catch {
                 let message: String
-                if preset == .openai && openAIAuthMode == .chatGPTSubscription {
-                    message = OpenAICodexOAuthService.diagnosticMessage(for: error)
-                } else if preset == .xai && xaiAuthMode == .oauthSignIn {
-                    message = XAIOAuthService.diagnosticMessage(for: error)
-                } else {
-                    message = error.localizedDescription
+                switch selectedOAuthKind {
+                case .openAICodex: message = OpenAICodexOAuthService.diagnosticMessage(for: error)
+                case .xai: message = XAIOAuthService.diagnosticMessage(for: error)
+                default: message = error.localizedDescription
                 }
                 await MainActor.run {
                     withAnimation {
@@ -1475,12 +1403,17 @@ private struct AddProviderFlow: View {
     }
 
     private func saveKnownProvider() {
+        guard !hasFinalized else { return }
         guard let preset = selectedPreset else { return }
+        hasFinalized = true
         let config = preset.configuration
         let connection = knownProviderConnection(for: preset)
         let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
-        let isCodexOAuth = preset == .openai && openAIAuthMode == .chatGPTSubscription
-        let isXAIOAuth = preset == .xai && xaiAuthMode == .oauthSignIn
+        // OpenAI Codex and xAI persist OAuth tokens via a service-provided
+        // provider config; OpenRouter's OAuth mints a plain key handled by the
+        // standard apiKey path below.
+        let isCodexOAuth = selectedOAuthKind == .openAICodex
+        let isXAIOAuth = selectedOAuthKind == .xai
         let usesOAuthTokens = isCodexOAuth || isXAIOAuth
         let providerConfig: RemoteProvider? =
             isCodexOAuth
@@ -1540,6 +1473,9 @@ private struct AddProviderFlow: View {
                         testResult = .success(models); isTesting = false
                     }
                 }
+                // Auto-complete on green (see `testKnownProvider`).
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                await MainActor.run { saveCustomProvider() }
             } catch {
                 await MainActor.run {
                     withAnimation {
@@ -1551,6 +1487,8 @@ private struct AddProviderFlow: View {
     }
 
     private func saveCustomProvider() {
+        guard !hasFinalized else { return }
+        hasFinalized = true
         let trimmedName = customName.trimmingCharacters(in: .whitespaces)
         let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
         let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
@@ -2565,83 +2503,6 @@ private struct NoTimeoutWarningContent: View {
             Text(verbatim: "•")
             Text(text, bundle: .module)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-// MARK: - Provider Selection Card
-
-private struct ProviderSelectionCard: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    let preset: ProviderPreset
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                // Icon
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(
-                            LinearGradient(
-                                colors: isHovered
-                                    ? preset.gradient : [theme.tertiaryBackground, theme.tertiaryBackground],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 42, height: 42)
-
-                    ProviderIcon(preset: preset, size: 16, color: isHovered ? .white : theme.secondaryText)
-                }
-
-                // Text
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 7) {
-                        Text(preset.name)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-
-                        if let badge = preset.badge {
-                            ProviderBadge(badge, gradient: preset.gradient)
-                        }
-                    }
-                    Text(preset.description)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                // Arrow
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(
-                                isHovered ? theme.accentColor.opacity(0.4) : theme.cardBorder,
-                                lineWidth: 1
-                            )
-                    )
-            )
-            .scaleEffect(isHovered ? 1.01 : 1.0)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                isHovered = hovering
-            }
         }
     }
 }

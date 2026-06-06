@@ -90,8 +90,8 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             source.range(
-                of: "await ToolIndexService.shared.syncFromRegistry()\n            "
-                    + "await SkillSearchService.shared.rebuildIndex()"
+                of:
+                    "await ToolIndexService.shared.syncFromRegistry()\n            await SkillSearchService.shared.rebuildIndex()"
             ) == nil,
             "startup must not await the full VecturaKit tool/skill/method rebuild before health/API can respond"
         )

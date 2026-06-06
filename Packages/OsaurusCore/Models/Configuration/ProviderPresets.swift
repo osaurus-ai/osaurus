@@ -230,6 +230,42 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         return oauthFirst + rest
     }
 
+    // MARK: - OAuth-first picker grouping
+
+    /// Preset-keyed views of `ProviderCatalog`, kept so existing call sites and
+    /// tests that think in `ProviderPreset` terms don't have to. The catalog is
+    /// the source of truth; these just project its entries down to presets.
+
+    /// OAuth-capable presets surfaced as first-class rows at the top of the
+    /// provider picker.
+    static var oauthProviders: [ProviderPreset] { ProviderCatalog.topLevel.map(\.preset) }
+
+    /// API-key vendors shown inside the "Use an API key" drill-in, alphabetical
+    /// by display name. Includes the OAuth-first presets because each also
+    /// offers a paste-a-key path; excludes Ollama (local) and Custom.
+    static var apiKeyProviders: [ProviderPreset] {
+        ProviderCatalog.apiKeyGroups(includeAzure: true)
+            .first { $0.id == "apiKey" }?
+            .entries.map(\.preset) ?? []
+    }
+
+    /// A labeled section in the "Use an API key" drill-in sub-list. `title` is a
+    /// localization key the view localizes via `.module` bundle.
+    struct PickerSection: Identifiable {
+        let id: String
+        let title: String
+        let presets: [ProviderPreset]
+    }
+
+    /// Sections for the "Use an API key" drill-in, projected from
+    /// `ProviderCatalog.apiKeyGroups`. Onboarding omits Azure OpenAI via
+    /// `includeAzure`.
+    static func apiKeyPickerGroups(includeAzure: Bool) -> [PickerSection] {
+        ProviderCatalog.apiKeyGroups(includeAzure: includeAzure).map {
+            PickerSection(id: $0.id, title: $0.title, presets: $0.entries.map(\.preset))
+        }
+    }
+
     // MARK: - Configuration
 
     /// Connection configuration for this preset
@@ -454,96 +490,6 @@ struct ProviderPresetConfiguration {
         self.authType = authType
         self.providerType = providerType
         self.defaultManualModelIds = defaultManualModelIds
-    }
-}
-
-enum OpenAIProviderCredentialMode {
-    case chatGPTSubscription
-    case platformAPIKey
-
-    var title: String {
-        switch self {
-        case .chatGPTSubscription: return "ChatGPT / Codex subscription"
-        case .platformAPIKey: return "OpenAI Platform API key"
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .chatGPTSubscription:
-            return "Sign in with ChatGPT Plus/Pro and use Codex OAuth."
-        case .platformAPIKey:
-            return "Paste a key from platform.openai.com and use Platform billing."
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .chatGPTSubscription: return "person.crop.circle.badge.checkmark"
-        case .platformAPIKey: return "key.fill"
-        }
-    }
-}
-
-/// Credential mode for the OpenRouter provider. The OAuth path runs PKCE in
-/// the browser and persists the returned `sk-or-v1-...` key the same way as
-/// a pasted key — there is no separate token storage.
-enum OpenRouterCredentialMode {
-    case oauthSignIn
-    case apiKey
-
-    var title: String {
-        switch self {
-        case .oauthSignIn: return "Sign in with OpenRouter"
-        case .apiKey: return "OpenRouter API key"
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .oauthSignIn:
-            return "Authorize in your browser and we'll mint a key automatically."
-        case .apiKey:
-            return "Paste a key from openrouter.ai/keys."
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .oauthSignIn: return "person.crop.circle.badge.checkmark"
-        case .apiKey: return "key.fill"
-        }
-    }
-}
-
-/// Credential mode for the xAI (Grok) provider. The OAuth path runs PKCE in the
-/// browser and persists the returned access/refresh tokens (`authType:
-/// .xaiOAuth`); the API-key path stores a `console.x.ai` key the usual way.
-enum XAICredentialMode {
-    case oauthSignIn
-    case apiKey
-
-    var title: String {
-        switch self {
-        case .oauthSignIn: return "Connect with Grok (SuperGrok / X Premium+)"
-        case .apiKey: return "xAI API key"
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .oauthSignIn:
-            return "Sign in with your SuperGrok or X Premium+ subscription."
-        case .apiKey:
-            return "Paste a key from console.x.ai."
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .oauthSignIn: return "person.crop.circle.badge.checkmark"
-        case .apiKey: return "key.fill"
-        }
     }
 }
 

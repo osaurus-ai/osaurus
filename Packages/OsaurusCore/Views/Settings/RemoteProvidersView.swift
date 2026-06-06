@@ -21,6 +21,9 @@ struct RemoteProvidersView: View {
     private struct AddSheetConfig: Identifiable {
         let id = UUID()
         let preset: ProviderPreset?
+        /// Open the add sheet directly on the grouped "Use an API key" sub-list
+        /// (only meaningful when `preset` is nil).
+        var startAtAPIKeyPicker: Bool = false
     }
 
     var body: some View {
@@ -53,7 +56,11 @@ struct RemoteProvidersView: View {
             }
         }
         .sheet(item: $addSheetConfig) { config in
-            RemoteProviderEditSheet(provider: nil, initialPreset: config.preset) { provider, apiKey, oauthTokens in
+            RemoteProviderEditSheet(
+                provider: nil,
+                initialPreset: config.preset,
+                startAtAPIKeyPicker: config.startAtAPIKeyPicker
+            ) { provider, apiKey, oauthTokens in
                 manager.addProvider(provider, apiKey: apiKey, oauthTokens: oauthTokens)
             }
         }
@@ -97,6 +104,10 @@ struct RemoteProvidersView: View {
         addSheetConfig = AddSheetConfig(preset: preset)
     }
 
+    private func presentAPIKeyPicker() {
+        addSheetConfig = AddSheetConfig(preset: nil, startAtAPIKeyPicker: true)
+    }
+
     private var emptyStateView: some View {
         VStack(spacing: 24) {
             Spacer().frame(height: 20)
@@ -122,16 +133,21 @@ struct RemoteProvidersView: View {
                     .multilineTextAlignment(.center)
             }
 
-            // Quick-add provider cards
-            VStack(spacing: 8) {
-                ForEach(ProviderPreset.knownPresets) { preset in
-                    EmptyStateProviderCard(preset: preset) {
-                        presentAddSheet(for: preset)
+            // Quick-add: OAuth providers first-class, everything else behind
+            // a single "Use an API key" entry (mirrors the add-sheet picker).
+            VStack(spacing: 10) {
+                ForEach(ProviderCatalog.topLevel) { entry in
+                    ProviderRowCard(entry: entry) {
+                        presentAddSheet(for: entry.preset)
                     }
                 }
 
-                EmptyStateProviderCard(preset: .custom) {
-                    presentAddSheet(for: .custom)
+                ProviderRowCard(
+                    icon: "key.fill",
+                    title: "Use an API key",
+                    subtitle: "Anthropic, Google, Ollama, custom, and more"
+                ) {
+                    presentAPIKeyPicker()
                 }
             }
             .padding(.horizontal, 20)
@@ -163,77 +179,6 @@ struct RemoteProvidersView: View {
                         manager.setEnabled(enabled, for: provider.id)
                     }
                 )
-            }
-        }
-    }
-}
-
-// MARK: - Empty State Provider Card
-
-private struct EmptyStateProviderCard: View {
-    @Environment(\.theme) private var theme
-    let preset: ProviderPreset
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(
-                            LinearGradient(
-                                colors: isHovered
-                                    ? preset.gradient : [theme.tertiaryBackground, theme.tertiaryBackground],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 36, height: 36)
-
-                    ProviderIcon(preset: preset, size: 14, color: isHovered ? .white : theme.secondaryText)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(preset.name)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-
-                        if let badge = preset.badge {
-                            ProviderBadge(badge, gradient: preset.gradient)
-                        }
-                    }
-                    Text(preset.description)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.secondaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isHovered ? theme.accentColor.opacity(0.4) : theme.primaryBorder,
-                                lineWidth: 1
-                            )
-                    )
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                isHovered = hovering
             }
         }
     }

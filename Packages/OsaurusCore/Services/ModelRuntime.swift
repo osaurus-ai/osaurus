@@ -689,7 +689,6 @@ public actor ModelRuntime {
             ?? intValue(config["n_kv_heads"])
             ?? intValue(config["num_attention_heads"])
             ?? intValue(config["n_heads"])
-
         let headDim =
             intValue(config["head_dim"])
             ?? intValue(config["kv_channels"])
@@ -700,7 +699,6 @@ public actor ModelRuntime {
                 else { return nil }
                 return hidden / heads
             }()
-
         let maxPositions =
             intValue(config["max_position_embeddings"])
             ?? intValue(config["max_sequence_length"])
@@ -712,7 +710,6 @@ public actor ModelRuntime {
         }
 
         let dtypeBytes = cacheElementByteWidth(config: config)
-
         let kvBytes =
             Int64(attentionLayers)
             * 2
@@ -729,7 +726,6 @@ public actor ModelRuntime {
         let ssmState = intValue(config["ssm_state_size"]) ?? intValue(config["mamba_d_state"]) ?? 0
         let convKernel = intValue(config["conv_kernel"]) ?? intValue(config["mamba_d_conv"]) ?? 0
         let mambaHeadDim = intValue(config["mamba_head_dim"]) ?? 0
-
         let ssmBytes =
             Int64(max(0, mambaLayers))
             * Int64(max(0, mambaHeads))
@@ -2814,7 +2810,6 @@ public actor ModelRuntime {
             "model.safetensors.index.json",
             "pytorch_model.safetensors.index.json",
         ]
-
         let knownIndexURL =
             commonIndexNames
             .map { directory.appendingPathComponent($0) }

@@ -54,6 +54,9 @@ enum LocalSubstate: Equatable {
 
 enum APISubstate: Equatable {
     case picker
+    /// "Use an API key" drill-in: grouped list of API-key vendors, the local
+    /// Ollama option, and the custom OpenAI-compatible escape hatch.
+    case apiKeyPicker
     case keyForm(ProviderPreset)
     case customForm
 }
@@ -64,20 +67,6 @@ enum APITestResult: Equatable {
 }
 
 // MARK: - Auth choice protocol
-
-/// Bridges the OpenAI and OpenRouter credential-mode enums so the
-/// auth-choice card UI doesn't need a copy-pasted row factory per
-/// provider. Each conforming type just exposes the human-readable
-/// title / subtitle / SF Symbol it should render with.
-private protocol AuthChoiceMode {
-    var title: String { get }
-    var subtitle: String { get }
-    var icon: String { get }
-}
-
-extension OpenAIProviderCredentialMode: AuthChoiceMode {}
-extension OpenRouterCredentialMode: AuthChoiceMode {}
-extension XAICredentialMode: AuthChoiceMode {}
 
 // MARK: - Resolved provider config
 
@@ -134,21 +123,6 @@ struct CustomProviderForm {
 
 @MainActor
 final class ConfigureAIState: ObservableObject {
-    /// Provider order inside the Cloud tab. Curation reasoning:
-    ///   1. OAuth-capable providers lead — they're the lowest-friction
-    ///      onboarding path (one browser round-trip, no API-key paste).
-    ///   2. Ollama follows, badged as "Local", so users who already run
-    ///      a local server discover it without scrolling.
-    ///   3. The rest of the paste-an-API-key providers follow.
-    ///   4. The "Custom / OpenAI-compatible" escape hatch lives at the
-    ///      tail end.
-    static let onboardingPresets: [ProviderPreset] = [
-        .openai, .xai, .openrouter,
-        .ollama,
-        .anthropic, .atlasCloud, .google, .deepseek, .minimax, .venice,
-        .custom,
-    ]
-
     @Published var selectedPath: ConfigurePath = .local
     @Published var localSubstate: LocalSubstate = .picker
     @Published var apiSubstate: APISubstate = .picker
@@ -169,14 +143,25 @@ final class ConfigureAIState: ObservableObject {
 
     // API
     @Published var apiKey: String = ""
-    @Published var openAIAuthMode: OpenAIProviderCredentialMode = .chatGPTSubscription
-    @Published var openRouterAuthMode: OpenRouterCredentialMode = .oauthSignIn
-    @Published var xaiAuthMode: XAICredentialMode = .oauthSignIn
+    /// The connection method pinned for the selected provider, set from the
+    /// catalog at selection time (OAuth for top-level rows, `.apiKey` for the
+    /// "Use an API key" sub-list). There is no in-form fork; this drives the
+    /// CTA, key field, save/test branches, and back-routing.
+    @Published var selectedAuthMethod: ProviderPickerAuthMethod = .apiKey
     @Published var oauthTokens: RemoteProviderOAuthTokens? = nil
+
+    /// The OAuth flavor of the current selection, if any.
+    var selectedOAuthKind: ProviderOAuthKind? {
+        if case .oauth(let kind) = selectedAuthMethod { return kind }
+        return nil
+    }
     @Published var customForm = CustomProviderForm()
     @Published var isTesting = false
     @Published var isSaving = false
     @Published var testResult: APITestResult? = nil
+    /// One-shot latch so the auto-advance-on-green and a manual CTA press can't
+    /// both finalize. Reset whenever credentials are cleared (back / reselect).
+    var hasFinalizedAPI = false
 
     /// Two-tab layout: a curated download (Local) and a provider picker
     /// (Cloud / locally-hosted via Ollama). Apple Intelligence was
@@ -357,7 +342,7 @@ final class ConfigureAIState: ObservableObject {
         switch apiSubstate {
         case .keyForm(let p): return p
         case .customForm: return .custom
-        case .picker: return nil
+        case .picker, .apiKeyPicker: return nil
         }
     }
 
@@ -369,13 +354,9 @@ final class ConfigureAIState: ObservableObject {
             // press Connect with an empty key (Ollama, LM Studio, etc.).
             return customForm.isLocalhost || apiKey.count > 5
         }
-        if provider == .openai && openAIAuthMode == .chatGPTSubscription {
-            return true
-        }
-        if provider == .openrouter && openRouterAuthMode == .oauthSignIn {
-            return true
-        }
-        if provider == .xai && xaiAuthMode == .oauthSignIn {
+        // A browser sign-in is connectable as soon as the provider is picked —
+        // the OAuth flow itself collects the credential.
+        if selectedAuthMethod.isOAuth {
             return true
         }
         // Presets that don't require auth (e.g. Ollama) are connectable as soon
@@ -407,20 +388,63 @@ final class ConfigureAIState: ObservableObject {
     func resetAPIState(direction: OnboardingDirection = .backward) {
         substateDirection = direction
         apiSubstate = .picker
+        clearAPICredentials()
+    }
+
+    /// Clear entered credentials, auth-mode selections, and the last test
+    /// result. Shared by every "back out of a form" path so stale secrets
+    /// never leak across provider selections.
+    private func clearAPICredentials() {
         apiKey = ""
-        openAIAuthMode = .chatGPTSubscription
-        openRouterAuthMode = .oauthSignIn
-        xaiAuthMode = .oauthSignIn
+        selectedAuthMethod = .apiKey
         oauthTokens = nil
         customForm.reset()
         testResult = nil
+        hasFinalizedAPI = false
+    }
+
+    /// Top-level "Use an API key" drill-in (OAuth-first picker → grouped
+    /// API-key sub-list).
+    func showAPIKeyPicker() {
+        substateDirection = .forward
+        apiSubstate = .apiKeyPicker
+    }
+
+    /// Back out of the API-key sub-list to the OAuth-first top level.
+    func popAPIKeyPickerToTop() {
+        substateDirection = .backward
+        apiSubstate = .picker
+    }
+
+    /// Back out of a provider form. A form entered via the OAuth-first top level
+    /// returns there; everything reached through the "Use an API key" sub-list
+    /// (key vendors including the dual-mode OAuth presets, Ollama, Custom)
+    /// returns to that sub-list. Routing is read from the pinned auth mode
+    /// *before* `clearAPICredentials()` resets it to the OAuth defaults.
+    func popFormToPicker(for preset: ProviderPreset) {
+        substateDirection = .backward
+        // A form reached via OAuth lives at the top level; everything else
+        // (pasted-key vendors, dual-mode presets in api-key mode, Ollama,
+        // Custom) was reached through the "Use an API key" sub-list. Read the
+        // pinned method before `clearAPICredentials()` resets it.
+        let returnToTop = selectedAuthMethod.isOAuth
+        clearAPICredentials()
+        apiSubstate = returnToTop ? .picker : .apiKeyPicker
     }
 
     /// Picker → form drill-in. Tapping a provider card immediately advances
     /// to its key form (or the custom-provider form), no "Continue" press
     /// required.
-    func selectAPIPreset(_ preset: ProviderPreset) {
+    ///
+    /// The connection method for dual-mode providers (OpenAI, OpenRouter, xAI)
+    /// is decided by where the card lives: the OAuth-first top level uses OAuth,
+    /// the "Use an API key" sub-list (`preferAPIKey`) uses the pasted key. There
+    /// is no in-form fork, so we pin the auth mode here at selection time.
+    func selectAPIPreset(_ preset: ProviderPreset, preferAPIKey: Bool = false) {
         substateDirection = .forward
+        if let entry = ProviderCatalog.entry(for: preset) {
+            selectedAuthMethod = preferAPIKey ? .apiKey : (entry.authMethods.first ?? .apiKey)
+        }
         if preset == .custom {
             apiSubstate = .customForm
         } else {
@@ -460,21 +484,22 @@ final class ConfigureAIState: ObservableObject {
             guard let self = self else { return }
             let result: APITestResult
             do {
-                if self.currentAPIProvider == .openai && self.openAIAuthMode == .chatGPTSubscription {
+                switch self.selectedAuthMethod {
+                case .oauth(.openAICodex):
                     let tokens = try await OpenAICodexOAuthService.signIn()
                     self.oauthTokens = tokens
-                } else if self.currentAPIProvider == .openrouter && self.openRouterAuthMode == .oauthSignIn {
+                case .oauth(.openRouter):
                     // The browser sign-in IS the test: it returns a freshly minted
                     // OpenRouter API key, which we stash in `apiKey` for the save
                     // step to persist via the standard apiKey path.
                     let key = try await OpenRouterOAuthService.signIn()
                     self.apiKey = key
-                } else if self.currentAPIProvider == .xai && self.xaiAuthMode == .oauthSignIn {
+                case .oauth(.xai):
                     // Grok sign-in returns access/refresh tokens stashed for the
                     // save step to persist via the `.xaiOAuth` path.
                     let tokens = try await XAIOAuthService.signIn()
                     self.oauthTokens = tokens
-                } else {
+                case .apiKey, .none:
                     _ = try await RemoteProviderManager.shared.testConnection(
                         host: config.host,
                         providerProtocol: config.providerProtocol,
@@ -496,10 +521,18 @@ final class ConfigureAIState: ObservableObject {
     }
 
     func saveProviderAndContinue(onComplete: () -> Void) {
+        // One-shot: a successful test auto-advances, but the CTA is also still
+        // tappable during the brief green window, so both routes funnel through
+        // this latch to avoid adding the provider (and advancing) twice.
+        guard !hasFinalizedAPI else { return }
         guard let config = resolvedAPIConfig() else { return }
+        hasFinalizedAPI = true
         isSaving = true
 
-        if currentAPIProvider == .openai && openAIAuthMode == .chatGPTSubscription {
+        // OpenAI Codex and xAI persist OAuth tokens via a service-provided
+        // provider config; OpenRouter's OAuth mints a plain key handled by the
+        // standard apiKey path below.
+        if selectedOAuthKind == .openAICodex {
             let provider = OpenAICodexOAuthService.makeProvider()
             RemoteProviderManager.shared.addProvider(provider, apiKey: nil, oauthTokens: oauthTokens)
             isSaving = false
@@ -507,7 +540,7 @@ final class ConfigureAIState: ObservableObject {
             return
         }
 
-        if currentAPIProvider == .xai && xaiAuthMode == .oauthSignIn {
+        if selectedOAuthKind == .xai {
             let provider = XAIOAuthService.makeProvider()
             RemoteProviderManager.shared.addProvider(provider, apiKey: nil, oauthTokens: oauthTokens)
             isSaving = false
@@ -629,6 +662,7 @@ struct ConfigureAIBody: View {
         case .apiProvider:
             switch state.apiSubstate {
             case .picker: return "api-picker"
+            case .apiKeyPicker: return "api-key-picker"
             case .keyForm(let p): return "api-key-\(p.rawValue)"
             case .customForm: return "api-custom"
             }
@@ -680,17 +714,24 @@ struct ConfigureAIBody: View {
         switch state.apiSubstate {
         case .picker:
             OnboardingScrollContainer { apiPickerView }
+        case .apiKeyPicker:
+            substateWithBackBar(
+                title: L("Use an API key"),
+                onBack: { state.popAPIKeyPickerToTop() }
+            ) {
+                apiKeyPickerView
+            }
         case .keyForm(let provider):
             substateWithBackBar(
                 title: provider == .openai ? L("Connect OpenAI") : "Connect \(provider.name)",
-                onBack: { state.resetAPIState() }
+                onBack: { state.popFormToPicker(for: provider) }
             ) {
                 apiKeyFormView
             }
         case .customForm:
             substateWithBackBar(
                 title: L("Custom provider"),
-                onBack: { state.resetAPIState() }
+                onBack: { state.popFormToPicker(for: .custom) }
             ) {
                 apiCustomFormView
             }
@@ -1141,27 +1182,65 @@ struct ConfigureAIBody: View {
 
     // MARK: - API picker
 
+    /// OAuth-first top level: one-click sign-in providers as first-class rows,
+    /// then a single "Use an API key" drill-in that holds every paste-a-key
+    /// vendor, the local Ollama option, and the custom escape hatch.
     private var apiPickerView: some View {
         VStack(spacing: OnboardingMetrics.cardSpacing) {
-            ForEach(ConfigureAIState.onboardingPresets, id: \.id) { preset in
+            ForEach(ProviderPreset.oauthProviders, id: \.id) { preset in
                 apiPresetCard(preset)
+            }
+            useAPIKeyCard
+        }
+    }
+
+    /// Drill-in entry to the grouped API-key sub-list. Titled "Use an API key"
+    /// even though it also houses Ollama (local) and Custom, because API-key
+    /// vendors are the dominant case; the sub-list section headers disambiguate.
+    private var useAPIKeyCard: some View {
+        OnboardingRowCard(
+            icon: .symbol("key.fill"),
+            title: L("Use an API key"),
+            subtitle: L("Anthropic, Google, Ollama, custom, and more"),
+            accessory: .chevron
+        ) {
+            state.showAPIKeyPicker()
+        }
+    }
+
+    /// Grouped API-key sub-list (key vendors / Local / Custom). Azure OpenAI is
+    /// omitted in onboarding (it needs extra endpoint + deployment fields).
+    private var apiKeyPickerView: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(ProviderPreset.apiKeyPickerGroups(includeAzure: false)) { section in
+                VStack(alignment: .leading, spacing: OnboardingMetrics.cardSpacing) {
+                    Text(LocalizedStringKey(section.title), bundle: .module)
+                        .font(theme.font(size: 11, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .textCase(.uppercase)
+                    ForEach(section.presets, id: \.id) { preset in
+                        apiPresetCard(preset, preferAPIKey: true)
+                    }
+                }
             }
         }
     }
 
-    private func apiPresetCard(_ preset: ProviderPreset) -> some View {
+    /// `preferAPIKey` distinguishes the "Use an API key" sub-list rows (pasted
+    /// key) from the OAuth-first top-level rows for the dual-mode presets.
+    private func apiPresetCard(_ preset: ProviderPreset, preferAPIKey: Bool = false) -> some View {
         OnboardingRowCard(
             icon: .custom {
                 ProviderIcon(preset: preset, size: 18, color: theme.secondaryText)
             },
             title: presetTitle(for: preset),
-            subtitle: presetSubtitle(for: preset),
+            subtitle: presetSubtitle(for: preset, preferAPIKey: preferAPIKey),
             badges: presetBadges(for: preset),
             accessory: .chevron
         ) {
             // Drill-in: tapping a card commits the choice and advances
             // straight to the matching key form. No "Continue" press needed.
-            state.selectAPIPreset(preset)
+            state.selectAPIPreset(preset, preferAPIKey: preferAPIKey)
         }
     }
 
@@ -1170,15 +1249,15 @@ struct ConfigureAIBody: View {
     }
 
     /// Onboarding-specific subtitle. Diverges from the generic
-    /// `preset.description` for OpenAI (call out OAuth + key options) and
-    /// for the custom card (concrete example providers).
-    private func presetSubtitle(for preset: ProviderPreset) -> String {
-        switch preset {
-        case .custom: return L("Together AI, LM Studio, and more")
-        case .openai: return L("ChatGPT, Codex, or Platform API")
-        case .xai: return L("Connect with Grok (SuperGrok / X Premium+) or API key")
-        default: return preset.description
-        }
+    /// `preset.description` for the custom card (concrete example providers) and
+    /// for the dual-mode presets, whose subtitle reflects the entry point: the
+    /// OAuth-first top level describes the browser sign-in, the "Use an API key"
+    /// sub-list (`preferAPIKey`) describes the pasted key.
+    private func presetSubtitle(for preset: ProviderPreset, preferAPIKey: Bool = false) -> String {
+        // Returns localization *keys*; the row card localizes via
+        // `LocalizedStringKey(subtitle)`, so don't pre-localize here.
+        ProviderCatalog.entry(for: preset)?.pickerSubtitle(preferAPIKey: preferAPIKey)
+            ?? preset.description
     }
 
     /// Lift selected provider badges to a richer style so the cloud
@@ -1208,15 +1287,13 @@ struct ConfigureAIBody: View {
         let isNoAuth = provider.configuration.authType == .none
 
         return VStack(spacing: 14) {
-            switch provider {
-            case .openai: openAIAuthChoiceSection
-            case .openrouter: openRouterAuthChoiceSection
-            case .xai: xaiAuthChoiceSection
-            default: EmptyView()
-            }
-
             if isNoAuth {
                 noAuthEndpointBanner(for: provider)
+            } else if let kind = state.selectedOAuthKind {
+                // Dual-mode preset reached via the OAuth-first top level: the
+                // browser sign-in IS the action (footer CTA), so the body just
+                // explains what's about to happen.
+                oauthInfoBanner(for: kind)
             }
             if showsKeyField {
                 apiKeyField(provider: provider)
@@ -1224,6 +1301,27 @@ struct ConfigureAIBody: View {
             if showsKeyField || isNoAuth {
                 helpSection(for: provider)
             }
+        }
+    }
+
+    /// Body shown for the OAuth-first entry of a dual-mode preset. There's no
+    /// key field — the footer button starts the browser flow — so this banner
+    /// carries the short "here's how this works" context the auth-choice card
+    /// used to provide.
+    private func oauthInfoBanner(for kind: ProviderOAuthKind) -> some View {
+        OnboardingGlassCard {
+            HStack(spacing: 10) {
+                Image(systemName: kind.icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                Text(LocalizedStringKey(kind.subtitle), bundle: .module)
+                    .font(theme.font(size: 13))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
         }
     }
 
@@ -1264,16 +1362,12 @@ struct ConfigureAIBody: View {
     /// section. Both OpenAI and OpenRouter offer an OAuth alternative, and
     /// the field is only relevant when the user picks the paste-key mode.
     private func shouldShowKeyField(for provider: ProviderPreset) -> Bool {
-        switch provider {
-        case .openai:
-            return state.openAIAuthMode == .platformAPIKey
-        case .openrouter:
-            return state.openRouterAuthMode == .apiKey
-        case .xai:
-            return state.xaiAuthMode == .apiKey
-        default:
-            return provider.configuration.authType == .apiKey
+        // Dual-mode providers only show the raw key field in api-key mode;
+        // everything else falls back to whether the preset uses an API key.
+        if let entry = ProviderCatalog.entry(for: provider), entry.primaryOAuthKind != nil {
+            return state.selectedAuthMethod == .apiKey
         }
+        return provider.configuration.authType == .apiKey
     }
 
     private var apiCustomFormView: some View {
@@ -1367,130 +1461,6 @@ struct ConfigureAIBody: View {
         .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
     }
 
-    private var openAIAuthChoiceSection: some View {
-        authChoiceCard(
-            headline: "Choose your OpenAI access",
-            rows: [
-                authChoiceRowSpec(
-                    mode: OpenAIProviderCredentialMode.chatGPTSubscription,
-                    isSelected: state.openAIAuthMode == .chatGPTSubscription,
-                    action: { selectOpenAIMode(.chatGPTSubscription) }
-                ),
-                authChoiceRowSpec(
-                    mode: OpenAIProviderCredentialMode.platformAPIKey,
-                    isSelected: state.openAIAuthMode == .platformAPIKey,
-                    action: { selectOpenAIMode(.platformAPIKey) }
-                ),
-            ]
-        )
-    }
-
-    private var openRouterAuthChoiceSection: some View {
-        authChoiceCard(
-            headline: "Choose your OpenRouter access",
-            rows: [
-                authChoiceRowSpec(
-                    mode: OpenRouterCredentialMode.oauthSignIn,
-                    isSelected: state.openRouterAuthMode == .oauthSignIn,
-                    action: { selectOpenRouterMode(.oauthSignIn) }
-                ),
-                authChoiceRowSpec(
-                    mode: OpenRouterCredentialMode.apiKey,
-                    isSelected: state.openRouterAuthMode == .apiKey,
-                    action: { selectOpenRouterMode(.apiKey) }
-                ),
-            ]
-        )
-    }
-
-    private var xaiAuthChoiceSection: some View {
-        authChoiceCard(
-            headline: "Choose your Grok access",
-            rows: [
-                authChoiceRowSpec(
-                    mode: XAICredentialMode.oauthSignIn,
-                    isSelected: state.xaiAuthMode == .oauthSignIn,
-                    action: { selectXAIMode(.oauthSignIn) }
-                ),
-                authChoiceRowSpec(
-                    mode: XAICredentialMode.apiKey,
-                    isSelected: state.xaiAuthMode == .apiKey,
-                    action: { selectXAIMode(.apiKey) }
-                ),
-            ]
-        )
-    }
-
-    /// State mutation stays unwrapped (no `withAnimation`) so it doesn't
-    /// propagate a transaction to observers like the footer CTA.
-    private func selectOpenAIMode(_ mode: OpenAIProviderCredentialMode) {
-        state.openAIAuthMode = mode
-        state.oauthTokens = nil
-        state.testResult = nil
-    }
-
-    private func selectOpenRouterMode(_ mode: OpenRouterCredentialMode) {
-        state.openRouterAuthMode = mode
-        // Clear any previously-minted key so the field doesn't read as
-        // "already provided" when the user flips back to paste.
-        state.apiKey = ""
-        state.testResult = nil
-    }
-
-    private func selectXAIMode(_ mode: XAICredentialMode) {
-        state.xaiAuthMode = mode
-        state.oauthTokens = nil
-        state.apiKey = ""
-        state.testResult = nil
-    }
-
-    private struct AuthChoiceRowSpec {
-        let title: LocalizedStringKey
-        let subtitle: LocalizedStringKey
-        let icon: String
-        let isSelected: Bool
-        let action: () -> Void
-    }
-
-    /// Shared shape of OpenAI and OpenRouter credential-mode enums so the
-    /// auth-choice card factory only needs one row constructor.
-    private func authChoiceRowSpec<Mode: AuthChoiceMode>(
-        mode: Mode,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> AuthChoiceRowSpec {
-        AuthChoiceRowSpec(
-            title: LocalizedStringKey(mode.title),
-            subtitle: LocalizedStringKey(mode.subtitle),
-            icon: mode.icon,
-            isSelected: isSelected,
-            action: action
-        )
-    }
-
-    private func authChoiceCard(
-        headline: LocalizedStringKey,
-        rows: [AuthChoiceRowSpec]
-    ) -> some View {
-        OnboardingGlassCard {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(headline, bundle: .module)
-                    .font(theme.font(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    OnboardingSelectableRow(
-                        icon: row.icon,
-                        title: row.title,
-                        subtitle: row.subtitle,
-                        isSelected: row.isSelected,
-                        action: row.action
-                    )
-                }
-            }
-            .padding(14)
-        }
-    }
-
     private var endpointPreview: some View {
         HStack(spacing: 8) {
             Image(systemName: "link")
@@ -1564,6 +1534,24 @@ struct ConfigureAICTA: View {
                     onComplete()
                 }
             }
+            .onChange(of: state.isAPISuccess) { _, success in
+                // Auto-advance once connected (green): a successful test/sign-in
+                // is the confirmation, so move to the next onboarding step
+                // without a second "Continue" press. The brief pause lets the
+                // green success state register first.
+                guard success else { return }
+                switch state.apiSubstate {
+                case .keyForm, .customForm:
+                    Task {
+                        try? await Task.sleep(nanoseconds: 400_000_000)
+                        await MainActor.run {
+                            state.saveProviderAndContinue(onComplete: onComplete)
+                        }
+                    }
+                case .picker, .apiKeyPicker:
+                    break
+                }
+            }
     }
 
     @ViewBuilder
@@ -1584,7 +1572,7 @@ struct ConfigureAICTA: View {
 
         case .apiProvider:
             switch state.apiSubstate {
-            case .picker:
+            case .picker, .apiKeyPicker:
                 // Provider cards drill in on tap — no Continue press
                 // required. The button stays visible and disabled so the
                 // footer chrome doesn't blank out, and the layout doesn't
@@ -1625,17 +1613,10 @@ struct ConfigureAICTA: View {
     }
 
     private var apiActionButton: some View {
-        let provider = state.currentAPIProvider
-        let isOpenAIChatGPT = provider == .openai && state.openAIAuthMode == .chatGPTSubscription
-        let isOpenRouterOAuth = provider == .openrouter && state.openRouterAuthMode == .oauthSignIn
-        let isXAIOAuth = provider == .xai && state.xaiAuthMode == .oauthSignIn
-        let isBrowserSignIn = isOpenAIChatGPT || isOpenRouterOAuth || isXAIOAuth
-        let idleTitle: LocalizedStringKey = {
-            if isOpenAIChatGPT { return "Sign in with ChatGPT" }
-            if isOpenRouterOAuth { return "Sign in with OpenRouter" }
-            if isXAIOAuth { return "Connect with Grok (SuperGrok / X Premium+)" }
-            return "Connect"
-        }()
+        let oauthKind = state.selectedOAuthKind
+        let isBrowserSignIn = oauthKind != nil
+        let idleTitle: LocalizedStringKey =
+            oauthKind.map { LocalizedStringKey($0.ctaTitle) } ?? "Connect"
         return OnboardingStatefulButton(
             state: state.apiButtonState,
             idleTitle: idleTitle,
