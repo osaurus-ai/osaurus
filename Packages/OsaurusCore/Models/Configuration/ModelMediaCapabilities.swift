@@ -194,6 +194,12 @@ public enum ModelMediaCapabilities {
         }
 
         let detected = from(modelId: modelId)
+        if detected == .textOnly,
+            ModelFamilyNames.isNemotronThinkingFamily(modelId),
+            !ModelFamilyNames.isNemotronOmniFamily(modelId)
+        {
+            return .textOnly
+        }
         guard fallbackSupportsImages, !detected.supportsImage else {
             return detected
         }
