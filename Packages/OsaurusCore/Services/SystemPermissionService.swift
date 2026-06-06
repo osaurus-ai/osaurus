@@ -205,13 +205,15 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
                 }
             }
 
-            // Automation states use the last known cached value and location reads the
-            // main-actor CLLocationManager, so both must be resolved on the MainActor.
+            // Automation states and location use the last known cached value: automation
+            // probes run AppleScript, and reading the location authorization makes a
+            // synchronous XPC call to locationd that can block the main thread for seconds.
+            // Location stays fresh via the CLLocationManager delegate callback.
             await MainActor.run {
                 for permission in SystemPermission.allCases where permission.isAutomationBased {
                     newStates[permission] = self.permissionStates[permission]
                 }
-                newStates[.location] = self.checkLocationPermission()
+                newStates[.location] = self.permissionStates[.location]
                 self.setPermissions(newStates)
             }
         }
@@ -247,8 +249,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             }
 
             await MainActor.run {
-                // Location reads the main-actor CLLocationManager.
-                results[.location] = self.checkLocationPermission()
+                // Location is intentionally not probed here: the authorization read makes a
+                // synchronous XPC call to locationd, and the delegate callback already keeps
+                // the cached state fresh.
                 // Only update if changed to avoid unnecessary saves.
                 for (permission, granted) in results where self.permissionStates[permission] != granted {
                     self.setPermission(permission, isGranted: granted)
