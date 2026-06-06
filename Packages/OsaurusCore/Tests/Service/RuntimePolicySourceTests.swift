@@ -505,13 +505,15 @@ struct RuntimePolicySourceTests {
         // and Gemma4 proportional RoPE support needed by full-attention layers,
         // plus safe auto-enabled Nemotron Ultra JANGTQ streaming dispatch that
         // avoids full expert materialization for 512-expert stacked-only models,
-        // with Nemotron Ultra BF16 activation retention and weighted MoE
-        // fast-path controls wired behind explicit disable env vars.
+        // with Nemotron Ultra BF16 activation retention, weighted MoE
+        // fast-path controls wired behind explicit disable env vars, and the
+        // native Nemotron XML tool fallback preserving required parameter
+        // metadata for strict tool choice.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "7a7481f9793d253cb2dacff31cb0b3f18a307ef6"
+        let expectedRuntimeHardenedRevision = "fb72783969d4dc30ccde78e8fd7d322b1438db85"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -519,7 +521,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, and Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards; an internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, and Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards plus native XML required-tool metadata; an internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
