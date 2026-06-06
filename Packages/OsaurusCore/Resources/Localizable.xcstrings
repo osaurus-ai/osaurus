@@ -2373,18 +2373,18 @@
         }
       }
     },
-    "A different dino for every job. Your memories stick around, ready when you need them." : {
+    "Set up a dino for each kind of work. It remembers your context, so you stop re-explaining yourself." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Für jede Aufgabe ein anderer Dino. Deine Erinnerungen bleiben erhalten, bereit, wenn du sie brauchst."
+            "value" : "Richte für jede Art von Arbeit einen Dino ein. Er merkt sich deinen Kontext, sodass du dich nicht ständig wiederholen musst."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每项工作都有不同的小恐龙。你的记忆会一直保留，需要时随时可用。"
+            "value" : "为每种工作设置一只小恐龙。它会记住你的上下文，让你不必反复解释。"
           }
         }
       }
@@ -3628,18 +3628,18 @@
         }
       }
     },
-    "AI that runs on your Mac. Pick any brain, plug in your tools, and keep everything yours." : {
+    "Runs on your Mac. Your chats, files, and keys stay with you. No account, no cloud required." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "KI, die auf deinem Mac läuft. Wähle ein beliebiges Gehirn, binde deine Tools ein und behalte alles für dich."
+            "value" : "Läuft auf deinem Mac. Deine Chats, Dateien und Schlüssel bleiben bei dir. Kein Konto, keine Cloud nötig."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在你的 Mac 上运行的 AI。挑选任意大脑，接入你的工具，让一切都归你所有。"
+            "value" : "在你的 Mac 上运行。你的聊天记录、文件和密钥都留在你这里。无需账户，无需云端。"
           }
         }
       }
@@ -5065,18 +5065,18 @@
         }
       }
     },
-    "Ask anything. Osaurus plans, runs the tools it needs, and checks itself before answering." : {
+    "Ask for something real. It uses the web, your files, and your apps to finish the job, then double-checks before answering." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Frag alles. Osaurus plant, führt die benötigten Tools aus und überprüft sich selbst, bevor es antwortet."
+            "value" : "Bitte um etwas Konkretes. Es nutzt das Web, deine Dateien und deine Apps, um die Aufgabe zu erledigen, und prüft alles noch einmal, bevor es antwortet."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "尽管提问。Osaurus 会进行规划、运行所需的工具，并在回答前进行自我检查。"
+            "value" : "提出一个真实的任务。它会使用网络、你的文件和你的应用来完成工作，并在回答前再次核对。"
           }
         }
       }
@@ -7846,18 +7846,18 @@
         }
       }
     },
-    "Chats live on your Mac. Swap brains any time without losing your history." : {
+    "Chats, files, and keys stay on your device. No servers, no account, no one reading over your shoulder." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Chats bleiben auf deinem Mac. Tausche jederzeit das Gehirn aus, ohne deinen Verlauf zu verlieren."
+            "value" : "Chats, Dateien und Schlüssel bleiben auf deinem Gerät. Keine Server, kein Konto, niemand schaut dir über die Schulter."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "聊天记录保存在你的 Mac 上。可随时更换大脑，且不会丢失历史记录。"
+            "value" : "聊天记录、文件和密钥都留在你的设备上。没有服务器，没有账户，也没有人能窥探你。"
           }
         }
       }
@@ -11670,18 +11670,18 @@
         }
       }
     },
-    "Data is aggregated and anonymous — it isn't tied to you." : {
+    "Data is aggregated and anonymous, so it isn't tied to you." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die Daten sind aggregiert und anonym – sie werden nicht mit dir verknüpft."
+            "value" : "Die Daten werden zusammengefasst und anonymisiert, sodass sie nicht mit dir verknüpft sind."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "数据经过汇总且匿名——不会与你关联。"
+            "value" : "数据经过汇总且匿名，因此不会与你关联。"
           }
         }
       }
@@ -18455,18 +18455,18 @@
         }
       }
     },
-    "How a chat actually works" : {
+    "It does the work, not just the talking" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Wie ein Chat tatsächlich funktioniert"
+            "value" : "Es erledigt die Arbeit, nicht nur das Reden"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "聊天实际上是如何工作的"
+            "value" : "它动手做事，而不只是动嘴说说"
           }
         }
       }
@@ -35840,20 +35840,20 @@
         }
       }
     },
-    "Run a brain on your Mac, or plug in one you already pay for. You can swap brains any time — chats come along." : {
+    "Run a brain on your Mac, or plug in one you already pay for. You can swap brains any time, and your chats come along." : {
       "comment" : "Body text for the \"Pick a brain\" section of the ConfigureAIBody view.",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Betreibe ein Gehirn auf deinem Mac oder binde eines ein, für das du bereits bezahlst. Du kannst Gehirne jederzeit austauschen – die Chats kommen mit."
+            "value" : "Betreibe ein Gehirn auf deinem Mac oder binde eines ein, für das du bereits bezahlst. Du kannst Gehirne jederzeit austauschen, und deine Chats kommen mit."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在你的 Mac 上运行一个大脑，或接入一个你已经付费的大脑。你可以随时更换大脑——聊天记录会一起保留。"
+            "value" : "在你的 Mac 上运行一个大脑，或接入一个你已经付费的大脑。你可以随时更换大脑，聊天记录也会一起跟着走。"
           }
         }
       }
@@ -36302,13 +36302,19 @@
         }
       }
     },
-    "Runs right on your Mac — private, and works offline." : {
+    "Runs right on your Mac. Private, and works offline." : {
       "comment" : "Subtitle for the \"Local\" substate in the \"Configure AI\" onboarding step.",
       "localizations" : {
-        "en" : {
+        "de" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "Runs right on your Mac — private, and works offline."
+            "state" : "translated",
+            "value" : "Läuft direkt auf deinem Mac. Privat und auch offline."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接在你的 Mac 上运行。私密，且可离线使用。"
           }
         }
       }
@@ -43742,18 +43748,18 @@
         }
       }
     },
-    "Tools are little powers your dino can use — like reading the web or grabbing a file. Add a couple now, swap them in and out any time from Settings." : {
+    "Tools are little powers your dino can use, like reading the web or grabbing a file. Add a couple now, swap them in and out any time from Settings." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tools sind kleine Fähigkeiten, die dein Dino nutzen kann – wie das Lesen des Webs oder das Holen einer Datei. Füge jetzt ein paar hinzu und tausche sie jederzeit über die Einstellungen aus."
+            "value" : "Tools sind kleine Fähigkeiten, die dein Dino nutzen kann, wie das Lesen des Webs oder das Holen einer Datei. Füge jetzt ein paar hinzu und tausche sie jederzeit über die Einstellungen aus."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "工具是你的小恐龙可以使用的小本领——比如阅读网络或获取文件。现在就添加几个，随时可以从“设置”中增减它们。"
+            "value" : "工具是你的小恐龙可以使用的小本领，比如阅读网络或获取文件。现在就添加几个，随时可以从“设置”中增减它们。"
           }
         }
       }

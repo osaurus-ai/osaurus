@@ -605,7 +605,7 @@ struct ConfigureAIBody: View {
             illustrationAsset: "osaurus-brain",
             leftHeadline: "Pick a brain",
             leftBody:
-                "Run a brain on your Mac, or plug in one you already pay for. You can swap brains any time — chats come along.",
+                "Run a brain on your Mac, or plug in one you already pay for. You can swap brains any time, and your chats come along.",
             subtitle: pathSubtitle,
             // We manage our own inner scroll: the segmented control stays
             // pinned at the top while the substate body scrolls beneath it.
@@ -642,7 +642,7 @@ struct ConfigureAIBody: View {
 
     private var pathSubtitle: LocalizedStringKey {
         switch state.selectedPath {
-        case .local: return "Runs right on your Mac — private, and works offline."
+        case .local: return "Runs right on your Mac. Private, and works offline."
         case .apiProvider:
             return "Already have a favorite AI? Connect it in a tap."
         }

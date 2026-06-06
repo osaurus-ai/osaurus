@@ -114,7 +114,7 @@ struct ConsentBody: View {
                 bulletRow(
                     icon: "person.fill.questionmark",
                     title: L("No accounts, no profiles"),
-                    detail: L("Data is aggregated and anonymous — it isn't tied to you.")
+                    detail: L("Data is aggregated and anonymous, so it isn't tied to you.")
                 )
             }
             .padding(14)

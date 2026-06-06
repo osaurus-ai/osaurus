@@ -33,7 +33,7 @@ enum WalkthroughPage: Int, CaseIterable, Identifiable {
 
     var headline: LocalizedStringKey {
         switch self {
-        case .loop: return "How a chat actually works"
+        case .loop: return "It does the work, not just the talking"
         case .personal: return "Made to feel like yours"
         case .privacy: return "Your data stays yours"
         }
@@ -43,12 +43,13 @@ enum WalkthroughPage: Int, CaseIterable, Identifiable {
         switch self {
         case .loop:
             return
-                "Ask anything. Osaurus plans, runs the tools it needs, and checks itself before answering."
+                "Ask for something real. It uses the web, your files, and your apps to finish the job, then double-checks before answering."
         case .personal:
             return
-                "A different dino for every job. Your memories stick around, ready when you need them."
+                "Set up a dino for each kind of work. It remembers your context, so you stop re-explaining yourself."
         case .privacy:
-            return "Chats live on your Mac. Swap brains any time without losing your history."
+            return
+                "Chats, files, and keys stay on your device. No servers, no account, no one reading over your shoulder."
         }
     }
 }

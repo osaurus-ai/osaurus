@@ -216,7 +216,7 @@ struct ChoosePluginsBody: View {
             illustrationAsset: "osaurus-tool",
             leftHeadline: "Pick what your dino can do",
             leftBody:
-                "Tools are little powers your dino can use — like reading the web or grabbing a file. Add a couple now, swap them in and out any time from Settings.",
+                "Tools are little powers your dino can use, like reading the web or grabbing a file. Add a couple now, swap them in and out any time from Settings.",
             subtitle: "All optional. Add or remove anytime."
         ) {
             content
