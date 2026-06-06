@@ -410,7 +410,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/osaurus-ai/vmlx-swift",
       "state" : {
-        "revision" : "9e28ccdf3f0bf07f7e867ce3b4925fc547adbdd7"
+        "revision" : "f50ab1ac7f1744d91ed46a77c5c87a173d91423b"
       }
     },
     {
