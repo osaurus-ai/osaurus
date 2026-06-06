@@ -216,27 +216,36 @@ struct IdentityView: View {
     }
 
     private func loadExistingIdentity() {
-        do {
-            let deviceId = try DeviceKey.currentDeviceId()
-            let context = OsaurusIdentityContext.biometric()
-            var masterKeyData = try MasterKey.getPrivateKey(context: context)
-            defer { masterKeyData.zeroOut() }
+        let agents = agentManager.agents
+        Task { @MainActor in
+            // The device and master key reads block on securityd XPC + decrypt,
+            // which can take seconds on a slow or legacy keychain, so the load
+            // runs off the main actor and only the resulting phase is published.
+            let (newPhase, newDrift): (IdentityPhase, IdentityDrift?) = await Task.detached(
+                priority: .userInitiated
+            ) {
+                do {
+                    let deviceId = try DeviceKey.currentDeviceId()
+                    let context = OsaurusIdentityContext.biometric()
+                    var masterKeyData = try MasterKey.getPrivateKey(context: context)
+                    defer { masterKeyData.zeroOut() }
 
-            let osaurusId = try deriveOsaurusId(from: masterKeyData)
+                    let osaurusId = try deriveOsaurusId(from: masterKeyData)
 
-            let agents = agentManager.agents
-            let accessKeys = APIKeyManager.shared.listKeys()
-            let diagnosed = IdentityHealthCheck.diagnose(
-                masterKey: masterKeyData,
-                agents: agents,
-                accessKeys: accessKeys
-            )
+                    let accessKeys = APIKeyManager.shared.listKeys()
+                    let diagnosed = IdentityHealthCheck.diagnose(
+                        masterKey: masterKeyData,
+                        agents: agents,
+                        accessKeys: accessKeys
+                    )
+                    return (.ready(osaurusId: osaurusId, deviceId: deviceId), diagnosed)
+                } catch {
+                    return (.noIdentity, nil)
+                }
+            }.value
 
-            phase = .ready(osaurusId: osaurusId, deviceId: deviceId)
-            drift = diagnosed
-        } catch {
-            phase = .noIdentity
-            drift = nil
+            phase = newPhase
+            drift = newDrift
         }
     }
 
@@ -344,27 +353,36 @@ struct IdentityView: View {
         recoveryPhraseError = nil
 
         Task { @MainActor in
-            do {
-                let context = OsaurusIdentityContext.biometric()
-                let words: [String]
-                if MasterMnemonicStore.exists() {
-                    words = try MasterMnemonicStore.load(context: context)
-                } else {
-                    // Backfill from the seed for legacy installs.
-                    var seed = try MasterKey.getPrivateKey(context: context)
-                    defer { seed.zeroOut() }
-                    let derived = try MasterKeyMnemonic.mnemonic(forKey: seed)
-                    try? MasterMnemonicStore.store(derived)
-                    words = derived
+            // Same slow-keychain hazard as the identity load: the mnemonic and
+            // seed reads block on securityd, so resolve the words off the main actor.
+            let outcome: Result<[String], Error> = await Task.detached(priority: .userInitiated) {
+                do {
+                    let context = OsaurusIdentityContext.biometric()
+                    let words: [String]
+                    if MasterMnemonicStore.exists() {
+                        words = try MasterMnemonicStore.load(context: context)
+                    } else {
+                        // Backfill from the seed for legacy installs.
+                        var seed = try MasterKey.getPrivateKey(context: context)
+                        defer { seed.zeroOut() }
+                        let derived = try MasterKeyMnemonic.mnemonic(forKey: seed)
+                        try? MasterMnemonicStore.store(derived)
+                        words = derived
+                    }
+                    return .success(words)
+                } catch {
+                    return .failure(error)
                 }
+            }.value
+
+            switch outcome {
+            case .success(let words):
                 recoveryPhraseWords = words
-                isLoadingRecoveryPhrase = false
-                showRecoveryPhraseSheet = true
-            } catch {
+            case .failure(let error):
                 recoveryPhraseError = error.localizedDescription
-                isLoadingRecoveryPhrase = false
-                showRecoveryPhraseSheet = true
             }
+            isLoadingRecoveryPhrase = false
+            showRecoveryPhraseSheet = true
         }
     }
 
