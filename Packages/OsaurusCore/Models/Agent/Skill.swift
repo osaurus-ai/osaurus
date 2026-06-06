@@ -390,7 +390,12 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000010")!,
                 name: L("Sandbox Plugin Creator"),
-                description: L("Create new sandbox plugins when you need an integration or capability that doesn't exist yet"),
+                description: L(
+                    """
+                    Create new sandbox plugins when you need an integration \
+                    or capability that doesn't exist yet
+                    """
+                ),
                 version: "1.0.0",
                 author: "Osaurus",
                 category: L("development"),

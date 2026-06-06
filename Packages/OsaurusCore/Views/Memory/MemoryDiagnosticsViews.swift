@@ -250,7 +250,12 @@ extension MemoryView {
                 statusColor: memoryDBOpen ? .green : .red,
                 detail: memoryDBOpen
                     ? nil
-                    : L("Memory database failed to open. Check Console for SQLCipher errors and the storage migration logs.")
+                    : L(
+                        """
+                        Memory database failed to open. Check Console for \
+                        SQLCipher errors and the storage migration logs.
+                        """
+                    )
             )
             diagnosticRow(
                 label: "Extraction mode",
@@ -295,7 +300,12 @@ extension MemoryView {
                 value: chatActive ? "active" : "idle",
                 statusColor: chatActive ? .orange : .green,
                 detail: chatActive
-                    ? L("Background distillation is paused while a chat generation is streaming — they share GPU/unified memory.")
+                    ? L(
+                        """
+                        Background distillation is paused while a chat \
+                        generation is streaming — they share GPU/unified memory.
+                        """
+                    )
                     : nil
             )
             diagnosticRow(
@@ -329,11 +339,21 @@ extension MemoryView {
     private var pendingSignalsStatusDetail: String? {
         if pendingSignals.allTimeSignals == 0 {
             return
-                L("No turns have ever reached the database. The chat code never calls bufferTurn for this install — see Buffer Telemetry below.")
+                L(
+                    """
+                    No turns have ever reached the database. The chat code \
+                    never calls bufferTurn for this install — see Buffer Telemetry below.
+                    """
+                )
         }
         if pendingSignals.totalSignals == 0 {
             return
-                L("All buffered turns have been distilled (or purged). The pipeline is healthy when episodes are growing.")
+                L(
+                    """
+                    All buffered turns have been distilled (or purged). \
+                    The pipeline is healthy when episodes are growing.
+                    """
+                )
         }
         return nil
     }
@@ -346,7 +366,13 @@ extension MemoryView {
         if t.attempts == 0 {
             valueText = L("0 attempts since launch")
             detail =
-                L("MemoryService.bufferTurn has not been invoked since the app started. The chat finalization path isn't reaching it — likely an upstream gate (per-agent disableMemory, hasContent=false, or a non-default chat path).")
+                L(
+                    """
+                    MemoryService.bufferTurn has not been invoked since the app started. \
+                    The chat finalization path isn't reaching it — likely an upstream gate \
+                    (per-agent disableMemory, hasContent=false, or a non-default chat path).
+                    """
+                )
             color = .red
         } else if t.insertSuccesses == 0 {
             let buckets = [
