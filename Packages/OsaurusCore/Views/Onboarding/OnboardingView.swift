@@ -275,16 +275,21 @@ public struct OnboardingView: View {
                 Spacer(minLength: 0)
             }
         case .consent:
-            ConsentCTA(onFinish: {
-                // Record both consent choices *before* finishing. For usage
-                // data, granting flushes the funnel events buffered during
-                // onboarding and declining drops them; `finishOnboarding` then
-                // fires `onboarding_completed`, sent or dropped per that choice.
-                // Crash reporting is independent (opt-out) and applied here too.
-                TelemetryService.shared.setEnabled(consentState.shareUsageData)
-                CrashReportingService.shared.setEnabled(consentState.shareCrashReports)
-                finishOnboarding(via: .finishButton)
-            })
+            // Centered, content-hugging pill — consistent with the other steps.
+            HStack {
+                Spacer(minLength: 0)
+                ConsentCTA(onFinish: {
+                    // Record both consent choices *before* finishing. For usage
+                    // data, granting flushes the funnel events buffered during
+                    // onboarding and declining drops them; `finishOnboarding` then
+                    // fires `onboarding_completed`, sent or dropped per that choice.
+                    // Crash reporting is independent (opt-out) and applied here too.
+                    TelemetryService.shared.setEnabled(consentState.shareUsageData)
+                    CrashReportingService.shared.setEnabled(consentState.shareCrashReports)
+                    finishOnboarding(via: .finishButton)
+                })
+                Spacer(minLength: 0)
+            }
         }
     }
 

@@ -35,7 +35,7 @@ struct WelcomeCTA: View {
 
     var body: some View {
         OnboardingBrandButton(title: "Get Started", action: onContinue)
-            .frame(width: OnboardingMetrics.ctaWidthCompact)
+            .fixedSize(horizontal: true, vertical: false)
     }
 }
 

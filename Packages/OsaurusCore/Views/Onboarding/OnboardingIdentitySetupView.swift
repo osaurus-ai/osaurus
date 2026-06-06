@@ -498,17 +498,17 @@ struct IdentityCTA: View {
         switch state.phase {
         case .prompt, .error:
             OnboardingBrandButton(title: "Make My Signature", action: state.generate)
-                .frame(width: OnboardingMetrics.ctaWidthCompact)
+                .fixedSize(horizontal: true, vertical: false)
 
         case .generating, .done:
-            // Reserve the CTA footprint so the action row doesn't twitch
-            // when the phase advances. `.done` auto-advances via the
-            // `onChange` observer above.
-            Color.clear.frame(width: OnboardingMetrics.ctaWidthCompact, height: OnboardingMetrics.buttonHeight)
+            // Reserve the row height so the action row doesn't twitch when the
+            // phase advances (the secondary slot is empty in these phases too).
+            // `.done` auto-advances via the `onChange` observer above.
+            Color.clear.frame(height: OnboardingMetrics.buttonHeight)
 
         case .alreadyExists:
             OnboardingBrandButton(title: "Continue", action: onComplete)
-                .frame(width: OnboardingMetrics.ctaWidthCompact)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 }

@@ -219,7 +219,7 @@ struct SandboxSetupCTA: View {
         OnboardingBrandButton(title: "Set Up Sandbox") {
             state.kickoffProvisioning(onComplete: onComplete)
         }
-        .frame(width: OnboardingMetrics.ctaWidthCompact)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

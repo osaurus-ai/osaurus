@@ -152,7 +152,7 @@ struct ConsentCTA: View {
 
     var body: some View {
         OnboardingBrandButton(title: "Start using Osaurus", action: onFinish)
-            .frame(width: OnboardingMetrics.ctaWidthCompact)
+            .fixedSize(horizontal: true, vertical: false)
     }
 }
 
