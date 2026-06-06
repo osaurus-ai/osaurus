@@ -15,7 +15,7 @@ public actor ToolIndexService {
 
     /// Populate tool_index from ToolRegistry. Called once at startup after
     /// ToolDatabase and ToolSearchService are both initialized.
-    public func syncFromRegistry() async {
+    public func syncFromRegistry(rebuildVectorIndex: Bool = true) async {
         let (tools, sandboxNames, mcpNames, builtInNames, excludedNames):
             (
                 [ToolRegistry.ToolEntry], Set<String>, Set<String>, Set<String>, Set<String>
@@ -80,7 +80,9 @@ public actor ToolIndexService {
             ToolIndexLogger.service.error("Failed to load entries for pruning: \(error)")
         }
 
-        await ToolSearchService.shared.rebuildIndex()
+        if rebuildVectorIndex {
+            await ToolSearchService.shared.rebuildIndex()
+        }
 
         let count = (try? ToolDatabase.shared.entryCount()) ?? 0
         ToolIndexLogger.service.info("Tool index synced: \(count) entries from registry")
@@ -105,7 +107,6 @@ public actor ToolIndexService {
         )
         do {
             try ToolDatabase.shared.upsertEntry(entry)
-            await ToolSearchService.shared.indexEntry(entry, parameters: parameters)
         } catch {
             ToolIndexLogger.service.error("Failed to index registered tool '\(name)': \(error)")
         }

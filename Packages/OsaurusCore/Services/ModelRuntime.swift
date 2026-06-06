@@ -2038,7 +2038,7 @@ public actor ModelRuntime {
                 "native MTP inspection failed for \(modelDirectory.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)"
             )
             return NativeMTPLaunchPlan(
-                loadConfiguration: .default,
+                loadConfiguration: .osaurusProduction,
                 draftStrategy: nil,
                 statusLine: nil,
                 reason: "MTP inspection failed; using autoregressive load."
@@ -2051,7 +2051,7 @@ public actor ModelRuntime {
             status: status
         )
         let loadConfiguration = settings.resolvedLoadConfiguration(
-            base: .default,
+            base: .osaurusProduction,
             configData: configData,
             jangConfig: jangConfig,
             status: status

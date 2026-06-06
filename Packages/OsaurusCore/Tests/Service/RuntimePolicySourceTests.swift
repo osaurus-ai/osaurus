@@ -78,12 +78,29 @@ struct RuntimePolicySourceTests {
     @Test("AppDelegate starts storage-heavy embedding init off the main actor")
     func appDelegateDoesNotBlockServerStartupOnEmbeddingStorageInit() throws {
         let source = try Self.source("AppDelegate.swift")
+        let toolIndex = try Self.source("Services/Tool/ToolIndexService.swift")
 
         #expect(source.contains("let embeddingInitTask = Task.detached(priority: .utility)"))
         #expect(source.contains("await serverController.startServer()"))
+        #expect(source.contains("syncFromRegistry(rebuildVectorIndex: false)"))
+        #expect(!source.contains("rebuildSearchIndexesInBackground()"))
         #expect(
             source.range(of: "let embeddingInitTask = Task {") == nil,
             "startup memory/vector initialization must not inherit MainActor and block server startup"
+        )
+        #expect(
+            source.range(of: "await ToolIndexService.shared.syncFromRegistry()\n            await SkillSearchService.shared.rebuildIndex()") == nil,
+            "startup must not await the full VecturaKit tool/skill/method rebuild before health/API can respond"
+        )
+        let registerStart = try #require(toolIndex.range(of: "public func onToolRegistered("))
+        let registerEnd = try #require(
+            toolIndex.range(of: "/// Remove a tool from the index when unregistered", range: registerStart.upperBound ..< toolIndex.endIndex)
+        )
+        let registerBody = String(toolIndex[registerStart.lowerBound ..< registerEnd.lowerBound])
+        #expect(registerBody.contains("ToolDatabase.shared.upsertEntry(entry)"))
+        #expect(
+            !registerBody.contains("ToolSearchService.shared.indexEntry"),
+            "live tool registration must update the SQL/BM25 catalog without loading the embedding model on the launch path"
         )
     }
 
@@ -1669,11 +1686,15 @@ struct RuntimePolicySourceTests {
 
         #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
         #expect(runtime.contains("resolvedLoadConfiguration("))
+        #expect(runtime.contains("base: .osaurusProduction"))
+        #expect(runtime.contains("loadConfiguration: .osaurusProduction"))
+        #expect(!runtime.contains("base: .default"))
+        #expect(!runtime.contains("loadConfiguration: .default"))
         #expect(
             !runtime.contains(
                 "loadModelContainer(\n                from: localURL,\n                using: tokenizerLoader\n            )"
             ),
-            "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.default, including load-time memory caps, mmap safetensors, and JANGTQ prestack/alignment"
+            "ModelRuntime must not use the plain local-directory load overload; it bypasses vmlx LoadConfiguration.osaurusProduction, including load-time memory caps, mmap safetensors, and routed MLXPress auto policy"
         )
     }
 

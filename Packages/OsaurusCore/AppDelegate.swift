@@ -374,9 +374,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
             await SkillSearchService.shared.initialize()
 
-            await ToolIndexService.shared.syncFromRegistry()
-            await SkillSearchService.shared.rebuildIndex()
-            await MethodSearchService.shared.rebuildIndex()
+            await ToolIndexService.shared.syncFromRegistry(rebuildVectorIndex: false)
         }
         // Start activity tracking, drain any pending sessions left over from
         // the previous launch, and arm the periodic consolidator.
