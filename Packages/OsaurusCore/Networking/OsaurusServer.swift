@@ -75,12 +75,12 @@ public actor OsaurusServer: Sendable {
                         // sockets can't exhaust file descriptors / pin memory.
                         ConnectionLimitHandler(),
                         // Slow-loris / idle-hold defense: drop a connection that
-                        // sends no bytes, accepts no writes, or sits fully idle
-                        // past the budget. Long SSE streams emit periodic
-                        // keepalive comments well inside the write window, so
-                        // legitimate streaming is unaffected.
+                        // accepts no writes or sits fully idle past the budget.
+                        // Do not enforce a post-request read timeout here:
+                        // long SSE streams can spend minutes in cold model load
+                        // or prefill while only writing keepalive comments.
                         IdleStateHandler(
-                            readTimeout: .seconds(60),
+                            readTimeout: nil,
                             writeTimeout: .seconds(150),
                             allTimeout: .seconds(300)
                         ),

@@ -189,13 +189,10 @@ class SystemMonitorService: ObservableObject {
 
     /// Query storage capacity off the main actor and publish the result back.
     ///
-    /// `OsaurusPaths.volumeFreeBytes` uses the modern URL-keyed
-    /// `.volumeAvailableCapacityForImportantUsageKey` (the value Finder shows; the
-    /// legacy `attributesOfFileSystem(.systemFreeSize)` returns 0 for sandboxed
-    /// container paths). It's the same helper as `ModelDownloadService.freeBytesOnVolume`
-    /// so the two read-outs can't silently drift. That key routes through macOS's
-    /// CacheDelete/purgeable-space machinery and can block the caller for seconds,
-    /// so it must not run on the main thread.
+    /// `OsaurusPaths.volumeFreeBytes` prefers the cheap filesystem free-space
+    /// query and falls back to the URL-keyed important-usage capacity only when
+    /// needed. This avoids CacheDelete stalls on external model volumes while
+    /// still covering sandbox/container zero-free-space reports from bug #964.
     private func refreshStorageUsage() {
         guard !isRefreshingStorage else { return }
         isRefreshingStorage = true

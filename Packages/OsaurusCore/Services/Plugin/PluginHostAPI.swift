@@ -674,8 +674,8 @@ final class PluginHostContext: @unchecked Sendable {
     // default turns any omitted `max_iterations` into "stop before executing
     // the first model-emitted tool call", which is especially visible on
     // Qwen-family local models that rely on multi-turn tool/result loops.
-    private static let defaultMaxIterations = 8
-    private static let maxIterationsCap = 30
+    private static let defaultMaxIterations = 30
+    private static let maxIterationsCap = 120
 
     // MARK: Inference Types
 

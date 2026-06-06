@@ -60,13 +60,9 @@ enum ChatSessionStore {
     /// rotation is in flight. Normally a no-op fast path.
     private static func ensureOpen() {
         guard !didOpen else { return }
-        // Close the prewarm race: a session-touching call can arrive before
-        // the launch key prewarm lands. Load the key now (this is not the
-        // launch-critical path) so chat history isn't reported unavailable
-        // purely because the cache is still cold.
-        if !StorageKeyManager.shared.hasCachedKey {
-            try? StorageKeyManager.shared.prewarmCurrentKey()
-        }
+        // Do not synchronously prewarm here. This runs on MainActor, and
+        // Sentry APPLE-MACOS-40/41/42 showed Keychain decrypt/read can hang
+        // the UI when a cold cache reaches this path.
         guard StorageKeyManager.shared.hasCachedKey else {
             print("[ChatSessionStore] Chat history unavailable: storage key is not already unlocked")
             return

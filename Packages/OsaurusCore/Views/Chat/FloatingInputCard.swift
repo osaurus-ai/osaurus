@@ -3252,14 +3252,9 @@ class PasteMonitorView: NSView {
 
         let pasteboard = NSPasteboard.general
 
-        // Check if pasteboard contains an image
-        guard let types = pasteboard.types,
-            types.contains(where: { $0 == .png || $0 == .tiff || $0 == .fileURL })
-        else {
-            return false
-        }
-
-        // Try to get image data directly
+        // Avoid pasteboard type enumeration and object-conversion APIs here.
+        // Sentry APPLE-MACOS-43 showed AppKit pasteboard conversion can race
+        // paste monitoring on Cmd+V.
         if let imageData = pasteboard.data(forType: .png) {
             onImagePaste?(imageData)
             return true
@@ -3273,18 +3268,23 @@ class PasteMonitorView: NSView {
             return true
         }
 
-        // Try file URL (for copied files)
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
-            for url in urls {
-                if let uti = try? url.resourceValues(forKeys: [.typeIdentifierKey]).typeIdentifier,
-                    UTType(uti)?.conforms(to: .image) == true,
-                    let data = try? Data(contentsOf: url),
-                    let nsImage = NSImage(data: data),
-                    let pngData = nsImage.pngData()
-                {
-                    onImagePaste?(pngData)
-                    return true
-                }
+        let fileURLTypes: [NSPasteboard.PasteboardType] = [
+            .fileURL,
+            NSPasteboard.PasteboardType("public.file-url"),
+        ]
+        for type in fileURLTypes {
+            guard let raw = pasteboard.string(forType: type),
+                let url = URL(string: raw),
+                url.isFileURL
+            else { continue }
+            if let uti = try? url.resourceValues(forKeys: [.typeIdentifierKey]).typeIdentifier,
+                UTType(uti)?.conforms(to: .image) == true,
+                let data = try? Data(contentsOf: url),
+                let nsImage = NSImage(data: data),
+                let pngData = nsImage.pngData()
+            {
+                onImagePaste?(pngData)
+                return true
             }
         }
 

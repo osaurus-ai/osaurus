@@ -224,6 +224,12 @@ public enum ModelMediaCapabilities {
             return from(modelId: modelId)
         }
 
+        if ModelFamilyNames.isNemotronThinkingFamily(modelId)
+            && !ModelFamilyNames.isNemotronOmniFamily(modelId)
+        {
+            return .textOnly
+        }
+
         let modelType = (json["model_type"] as? String)?.lowercased() ?? ""
         let hasVisionConfig = json["vision_config"] != nil
 

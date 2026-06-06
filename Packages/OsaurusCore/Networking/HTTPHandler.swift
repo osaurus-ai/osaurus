@@ -3303,7 +3303,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return req.tool_choice ?? .auto
             }()
 
-            let maxIterations = 30
+            let configuredMaxToolAttempts = await MainActor.run {
+                ChatConfigurationStore.load().maxToolAttempts ?? 30
+            }
+            let maxIterations = max(1, min(configuredMaxToolAttempts, 120))
             var iteration = 0
             let requestId = UUID().uuidString
             // Per-request harness state. The agent-run endpoint is stateless
@@ -6185,6 +6188,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         "kv_headroom_bytes": f.kvHeadroomBytes,
                         "projected_bytes": f.projectedBytes,
                         "physical_memory_bytes": f.physicalMemoryBytes,
+                        "available_memory_bytes": f.availableMemoryBytes,
+                        "required_available_bytes": f.requiredAvailableBytes,
                         "soft_limit_bytes": f.softLimitBytes,
                         "hard_limit_bytes": f.hardLimitBytes,
                     ] as [String: Any]

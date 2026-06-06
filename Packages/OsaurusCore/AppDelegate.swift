@@ -277,16 +277,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             PluginRepositoryService.shared.startBackgroundRefresh()
         }
 
-        // Pre-warm caches immediately for instant first window (no async deps).
-        // The unified prewarm builds the picker with whatever is currently
-        // available; once remote providers finish connecting below they post
-        // .remoteProviderModelsChanged and the cache rebuilds automatically.
+        // Pre-warm cheap caches immediately for instant first window.
         _ = SpeechConfigurationStore.load()
-        ModelPickerItemCache.shared.prewarm()
 
         // Bind the local HTTP server before heavier optional startup work such
-        // as provider connection, scheduler DB polling, sandbox registration,
-        // or Parakeet/CoreML auto-load can occupy the main actor or accelerator.
+        // as provider connection, model-picker bundle metadata scans,
+        // scheduler DB polling, sandbox registration, or Parakeet/CoreML
+        // auto-load can occupy the main actor or accelerator.
         let serverStartupTask = Task { @MainActor in
             await serverController.startServer()
         }
@@ -297,6 +294,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task { @MainActor in
             await serverStartupTask.value
             serverController.markLaunchComplete()
+            // The unified prewarm builds the picker with whatever is currently
+            // available; once remote providers finish connecting below they post
+            // .remoteProviderModelsChanged and the cache rebuilds automatically.
+            // Keep this after server bind so very large local bundles cannot
+            // block `/health` and API startup while their config is inspected.
+            ModelPickerItemCache.shared.prewarm()
         }
 
         Task.detached(priority: .utility) {

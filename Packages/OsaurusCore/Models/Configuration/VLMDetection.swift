@@ -81,7 +81,12 @@ enum VLMDetection {
     /// Best-effort check for a model by its Hugging Face repo ID.
     /// Returns false if the model is not downloaded locally.
     static func isVLM(modelId: String) -> Bool {
-        cachedVerdict("id:\(modelId)") {
+        if ModelFamilyNames.isNemotronThinkingFamily(modelId)
+            && !ModelFamilyNames.isNemotronOmniFamily(modelId)
+        {
+            return false
+        }
+        return cachedVerdict("id:\(modelId)") {
             guard let dir = findLocalModelDirectory(forModelId: modelId) else { return false }
             return isVLM(at: dir)
         }
