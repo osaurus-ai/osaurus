@@ -2,7 +2,7 @@
 //  OnboardingWalkthroughView.swift
 //  osaurus
 //
-//  Onboarding step 5 — a 4-page tour rendered as an internal carousel.
+//  Onboarding step 5 — a 3-page tour rendered as an internal carousel.
 //
 //  Unlike the rest of the flow (which is a navigation stack), the
 //  walkthrough is a free-form carousel. Pages can be advanced with the
@@ -162,7 +162,7 @@ struct WalkthroughBody: View {
 
     // MARK: - Carousel (filmstrip)
 
-    /// Filmstrip carousel: all four pages live in a horizontal HStack,
+    /// Filmstrip carousel: all pages live in a horizontal HStack,
     /// each sized to the carousel's exact width. The strip offsets to show
     /// the current page (`-index * width`). Direction is naturally encoded
     /// in the index delta — no captured-state ambiguity (the prior
@@ -186,7 +186,13 @@ struct WalkthroughBody: View {
                 value: state.pageIndex
             )
         }
-        .clipped()
+        // Clip horizontally so adjacent filmstrip pages never peek past the
+        // page edge, but extend the clip upward so the hero glow bleeds into
+        // the header the same way the static hero steps do. A plain
+        // `.clipped()` sheared the glow flat at the top, overriding the chrome
+        // shell's `BodyClipShape` top-overflow and making the tour look
+        // inconsistent with Welcome.
+        .clipShape(CarouselClipShape(topOverflow: OnboardingMetrics.bodyGlowOverflow))
         .contentShape(Rectangle())
         .gesture(
             DragGesture()
@@ -258,6 +264,28 @@ struct WalkthroughBody: View {
     }
 }
 
+// MARK: - Carousel Clip Shape
+
+/// Clips the filmstrip tight on the horizontal edges (so neighboring pages
+/// stay hidden during slides) while extending the clip upward by
+/// `topOverflow`, letting the hero glow bleed into the header instead of
+/// being sheared flat. Mirrors the chrome shell's `BodyClipShape` so the
+/// tour's hero treatment matches the static hero steps.
+private struct CarouselClipShape: Shape {
+    var topOverflow: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        Path(
+            CGRect(
+                x: rect.minX,
+                y: rect.minY - topOverflow,
+                width: rect.width,
+                height: rect.height + topOverflow
+            )
+        )
+    }
+}
+
 // MARK: - CTA
 
 struct WalkthroughCTA: View {
@@ -267,13 +295,17 @@ struct WalkthroughCTA: View {
     let onContinue: () -> Void
 
     var body: some View {
-        if state.isLastPage {
-            OnboardingBrandButton(title: "Continue", action: onContinue)
-                .frame(width: OnboardingMetrics.ctaWidthCompact)
-        } else {
-            OnboardingBrandButton(title: "Next", action: { state.advance(by: 1) })
-                .frame(width: OnboardingMetrics.ctaWidthCompact)
-        }
+        OnboardingBrandButton(
+            title: state.isLastPage ? "Continue" : "Next",
+            action: {
+                if state.isLastPage {
+                    onContinue()
+                } else {
+                    state.advance(by: 1)
+                }
+            }
+        )
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

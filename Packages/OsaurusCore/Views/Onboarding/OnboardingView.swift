@@ -265,10 +265,15 @@ public struct OnboardingView: View {
                 Spacer(minLength: 0)
             }
         case .walkthrough:
-            WalkthroughCTA(
-                state: walkthroughState,
-                onContinue: { advance(to: .consent) }
-            )
+            // Centered, content-hugging pill — consistent with the other steps.
+            HStack {
+                Spacer(minLength: 0)
+                WalkthroughCTA(
+                    state: walkthroughState,
+                    onContinue: { advance(to: .consent) }
+                )
+                Spacer(minLength: 0)
+            }
         case .consent:
             ConsentCTA(onFinish: {
                 // Record both consent choices *before* finishing. For usage
