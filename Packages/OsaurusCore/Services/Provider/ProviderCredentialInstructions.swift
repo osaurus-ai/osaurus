@@ -210,7 +210,8 @@ public enum ProviderCredentialInstructionsCatalog {
                 authMethod: .oauth,
                 getKeyURL: getKeyURL,
                 keyFormatHint: L(
-                    "Connect with Grok using a SuperGrok or X Premium+ subscription, or paste a key from console.x.ai."),
+                    "Connect with Grok using a SuperGrok or X Premium+ subscription, or paste a key from console.x.ai."
+                ),
                 storageAuthType: .xaiOAuth,
                 presetId: preset.rawValue
             )

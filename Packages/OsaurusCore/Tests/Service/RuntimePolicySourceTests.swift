@@ -2060,10 +2060,8 @@ struct RuntimePolicySourceTests {
         #expect(
             toolsView.contains("RuntimeManagedToolEntryRow")
                 && toolsView.contains("badge: runtimeBadge(for: entry)")
-                && (
-                    toolsView.contains("badge: \"Sandbox\"")
-                        || toolsView.contains("badge: L(\"Sandbox\")")
-                ),
+                && (toolsView.contains("badge: \"Sandbox\"")
+                    || toolsView.contains("badge: L(\"Sandbox\")")),
             "Runtime-managed tools must be visible as operational rows without pretending they are normal plugin toggle rows."
         )
         #expect(
