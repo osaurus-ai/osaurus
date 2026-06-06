@@ -116,11 +116,12 @@ struct OnboardingChromeShell<
 
     // MARK: - Footer (transparent, no rule)
 
-    /// Footer chrome cluster. Vertically: footer caption → action row.
+    /// Footer chrome cluster. Vertically: footer caption → action row. The
+    /// caption slot owns its own bottom spacing so a captionless step collapses
+    /// flush against the action row instead of leaving a reserved gap.
     private var footerColumn: some View {
         VStack(spacing: 0) {
             footerCaptionSlot
-                .padding(.bottom, OnboardingMetrics.footerCaptionToCTA)
 
             // Action row — wizard layout: secondary on the leading edge,
             // primary CTA on the trailing edge.

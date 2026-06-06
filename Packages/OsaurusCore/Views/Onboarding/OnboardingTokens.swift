@@ -94,6 +94,10 @@ enum OnboardingMetrics {
     static let buttonHeight: CGFloat = 42
     /// Standard CTA width used by every primary footer button.
     static let ctaWidthCompact: CGFloat = 200
+    /// Horizontal padding inside content-hugging CTAs (Create Agent /
+    /// Configure AI) so a `.fixedSize` pill keeps comfortable breathing room
+    /// around its label instead of clamping tight to the text.
+    static let ctaContentPaddingH: CGFloat = 26
     /// Label size for the brand / stateful CTAs in the footer.
     static let ctaLabelSize: CGFloat = 15
     /// Label size for inline / compact buttons (in-card actions).

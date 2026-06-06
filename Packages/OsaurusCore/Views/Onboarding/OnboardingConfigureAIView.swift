@@ -19,7 +19,6 @@
 //     per-path substate body that slides direction-aware between picker
 //     and drilled-in forms.
 //   - `ConfigureAICTA`: the footer primary action, dispatched per substate.
-//   - `ConfigureAISecondary`: the footer secondary text-link slot.
 //
 
 import SwiftUI
@@ -140,6 +139,10 @@ final class ConfigureAIState: ObservableObject {
 
     // Local
     @Published var selectedModel: MLXModel? = nil
+    /// Whether the local picker has expanded past the single opinionated
+    /// default to reveal the remaining eligible models. Lives on the state
+    /// (not the body view) so the choice survives step slide transitions.
+    @Published var showAllLocalModels = false
 
     // API
     @Published var apiKey: String = ""
@@ -163,20 +166,28 @@ final class ConfigureAIState: ObservableObject {
     /// both finalize. Reset whenever credentials are cleared (back / reselect).
     var hasFinalizedAPI = false
 
-    /// Two-tab layout: a curated download (Local) and a provider picker
-    /// (Cloud / locally-hosted via Ollama). Apple Intelligence was
-    /// retired from onboarding; it lives in Settings for the small
-    /// audience that wants it.
-    var availablePaths: [ConfigurePath] {
-        [.local, .apiProvider]
+    /// Whether the Local tab should be offered at all on this Mac. Under the
+    /// `cloudDefaultMemoryCeilingGB` threshold the curated local picks are too
+    /// heavy to run well, so we hide Local entirely and steer the user to a
+    /// hosted provider. `totalMemoryGB <= 0` (monitor not reported yet) fails
+    /// open so we never wrongly hide Local on a capable machine.
+    static func isLocalTabAvailable(totalMemoryGB: Double) -> Bool {
+        totalMemoryGB <= 0 || totalMemoryGB >= cloudDefaultMemoryCeilingGB
     }
 
-    var footerCaption: LocalizedStringKey {
-        switch selectedPath {
-        case .local: return "Stays on your Mac. Nothing sent anywhere."
-        case .apiProvider: return "Your key stays on your Mac, locked in the Keychain."
-        }
+    /// Paths offered on this Mac: both tabs normally, Cloud-only when the
+    /// machine can't comfortably run a local brain.
+    func availablePaths(totalMemoryGB: Double) -> [ConfigurePath] {
+        Self.isLocalTabAvailable(totalMemoryGB: totalMemoryGB)
+            ? [.local, .apiProvider]
+            : [.apiProvider]
     }
+
+    // No footer caption on either tab. The reassurance copy crowded the footer,
+    // and — more importantly — a caption on one tab but not the other makes the
+    // footer (and thus the centered left-column dino) jump in height when the
+    // user switches tabs. Keeping both captionless holds the layout steady.
+    var footerCaption: LocalizedStringKey? { nil }
 
     func selectPath(_ path: ConfigurePath) {
         // Path changes are lateral, but we treat them as forward motion so
@@ -262,42 +273,48 @@ final class ConfigureAIState: ObservableObject {
         }
     }
 
-    /// Auto-selects the local row the user is most likely to want.
+    /// Auto-selects the recommended local pick — the best model this Mac can
+    /// run — so the picker lands on a sensible default the user can just
+    /// accept. The rule is deliberately simple and hardware-deterministic:
     ///
-    /// Priority:
-    ///   1. A model already on disk — so a user re-onboarded by an
-    ///      `onboardingVersion` bump lands on "Continue" instead of being
-    ///      nudged to re-download something they already have. A curated
-    ///      top-pick that's downloaded wins over an ad-hoc local model.
-    ///   2. Otherwise the first `isTopSuggestion` model this Mac can run,
-    ///      so onboarding never auto-selects a disabled row that would
-    ///      dead-end the CTA.
+    ///   1. If a curated top pick is already on disk, keep it. The user
+    ///      downloaded (and presumably ran) it before, so the compat
+    ///      heuristic shouldn't lock them out.
+    ///   2. Otherwise pick the *largest* top pick this Mac can comfortably
+    ///      run (`.compatible`), falling back to the largest that merely fits
+    ///      when nothing lands in the comfortable band. Bigger ≈ higher
+    ///      quality, so "the best the machine can handle" is the best
+    ///      first-run experience.
     ///
-    /// When nothing is downloaded and every curated candidate is
-    /// `.tooLarge`, `selectedModel` stays nil and the picker shows the
-    /// empty-state redirect instead. `.unknown` (no param info / monitor
-    /// not yet populated) falls through as eligible.
+    /// Stays nil when nothing is downloaded and every curated candidate is
+    /// `.tooLarge`, so the picker shows the empty-state redirect instead.
+    /// `.unknown` (no param info / monitor not yet populated) fails open.
     func ensureLocalSelection(totalMemoryGB: Double) {
         guard selectedModel == nil else { return }
         let fits: (MLXModel) -> Bool = {
             $0.compatibility(totalMemoryGB: totalMemoryGB) != .tooLarge
         }
 
-        // A model already on disk is runnable regardless of the compat
-        // heuristic — the user downloaded (and presumably ran) it before.
+        // 1. A curated top pick already on disk wins. Onboarding only shows
+        // top picks, so we don't fall back to ad-hoc downloaded models that
+        // wouldn't appear in the list anyway.
         let downloaded = ModelManager.shared.deduplicatedModels().filter(\.isDownloaded)
         if let topDownloaded = downloaded.first(where: \.isTopSuggestion) {
             selectedModel = topDownloaded
             return
         }
-        if let anyDownloaded = downloaded.first {
-            selectedModel = anyDownloaded
-            return
-        }
 
-        selectedModel = ModelManager.shared.suggestedModels.first(where: {
+        // 2. The largest top pick the Mac can comfortably run.
+        let candidates = ModelManager.shared.suggestedModels.filter {
             $0.isTopSuggestion && fits($0)
-        })
+        }
+        let comfortable = candidates.filter {
+            $0.compatibility(totalMemoryGB: totalMemoryGB) == .compatible
+        }
+        let pool = comfortable.isEmpty ? candidates : comfortable
+        selectedModel =
+            pool.max(by: { ($0.estimatedMemoryGB ?? 0) < ($1.estimatedMemoryGB ?? 0) })
+            ?? candidates.first
     }
 
     func startLocalDownloadOrContinue(onComplete: () -> Void) {
@@ -595,7 +612,9 @@ struct ConfigureAIBody: View {
             useScrollView: false
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                pathSegmentedControl
+                if showsModeToggle {
+                    pathSegmentedControl
+                }
 
                 // Substate envelope. Clipped horizontally so the slide
                 // transition never bleeds into the left column, but
@@ -623,8 +642,9 @@ struct ConfigureAIBody: View {
 
     private var pathSubtitle: LocalizedStringKey {
         switch state.selectedPath {
-        case .local: return "Lives on your Mac. Works offline."
-        case .apiProvider: return "Plug in a brain you already pay for, or run one locally with Ollama."
+        case .local: return "Runs right on your Mac — private, and works offline."
+        case .apiProvider:
+            return "Already have a favorite AI? Connect it in a tap."
         }
     }
 
@@ -641,10 +661,29 @@ struct ConfigureAIBody: View {
         )
     }
 
+    /// Paths offered on this Mac, gated by available memory (Cloud-only on
+    /// sub-24GB machines). Computed from the live monitor reading rather than
+    /// `state` so the first frame is already correct — no Local-tab flash.
+    private var availablePaths: [ConfigurePath] {
+        state.availablePaths(totalMemoryGB: systemMonitor.totalMemoryGB)
+    }
+
+    /// The mode toggle is the single top-level nav: show it only on the two
+    /// top-level pickers, and only when there's actually a choice to make.
+    /// Once the user drills into the API-key hub / a form / a download, the
+    /// in-section "Back" row owns navigation instead.
+    private var showsModeToggle: Bool {
+        guard availablePaths.count > 1 else { return false }
+        switch state.selectedPath {
+        case .local: return state.localSubstate == .picker
+        case .apiProvider: return state.apiSubstate == .picker
+        }
+    }
+
     private var pathSegmentedControl: some View {
         OnboardingSegmentedControl(
             selection: pathBinding,
-            items: state.availablePaths.map {
+            items: availablePaths.map {
                 OnboardingSegmentItem(tag: $0, title: $0.title, icon: $0.icon)
             }
         )
@@ -700,10 +739,7 @@ struct ConfigureAIBody: View {
         case .picker:
             OnboardingScrollContainer { localPickerView }
         case .downloading:
-            substateWithBackBar(
-                title: state.selectedModel?.name ?? L("Downloading"),
-                onBack: { state.popLocalToPicker() }
-            ) {
+            substateWithBackBar(onBack: { state.popLocalToPicker() }) {
                 localDownloadingView
             }
         }
@@ -715,24 +751,15 @@ struct ConfigureAIBody: View {
         case .picker:
             OnboardingScrollContainer { apiPickerView }
         case .apiKeyPicker:
-            substateWithBackBar(
-                title: L("Use an API key"),
-                onBack: { state.popAPIKeyPickerToTop() }
-            ) {
+            substateWithBackBar(onBack: { state.popAPIKeyPickerToTop() }) {
                 apiKeyPickerView
             }
         case .keyForm(let provider):
-            substateWithBackBar(
-                title: provider == .openai ? L("Connect OpenAI") : "Connect \(provider.name)",
-                onBack: { state.popFormToPicker(for: provider) }
-            ) {
+            substateWithBackBar(onBack: { state.popFormToPicker(for: provider) }) {
                 apiKeyFormView
             }
         case .customForm:
-            substateWithBackBar(
-                title: L("Custom provider"),
-                onBack: { state.popFormToPicker(for: .custom) }
-            ) {
+            substateWithBackBar(onBack: { state.popFormToPicker(for: .custom) }) {
                 apiCustomFormView
             }
         }
@@ -743,22 +770,23 @@ struct ConfigureAIBody: View {
     /// scroll container for any overflow (key forms, custom-provider
     /// form, etc.).
     private func substateWithBackBar<C: View>(
-        title: String,
         onBack: @escaping () -> Void,
         @ViewBuilder content: () -> C
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            substateBackRow(title: title, onBack: onBack)
+            substateBackRow(onBack: onBack)
             OnboardingScrollContainer { content() }
         }
     }
 
-    private func substateBackRow(title: String, onBack: @escaping () -> Void) -> some View {
+    private func substateBackRow(onBack: @escaping () -> Void) -> some View {
+        // Always a plain "Back" — the section title was redundant breadcrumb
+        // noise (and truncated awkwardly, e.g. "Use an API k…").
         Button(action: onBack) {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 11, weight: .semibold))
-                Text(title)
+                Text("Back", bundle: .module)
                     .font(theme.font(size: 13, weight: .semibold))
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -785,25 +813,14 @@ struct ConfigureAIBody: View {
             .map { ($0, $0.compatibility(totalMemoryGB: totalMemoryGB)) }
     }
 
-    /// What the local picker actually renders: any models the user already
-    /// has on disk, followed by the curated top suggestions.
+    /// What the local picker renders: the curated top suggestions only.
     ///
-    /// Historically this step listed only curated top picks, so a user
-    /// re-onboarded by an `onboardingVersion` bump was told to download
-    /// models they already had — their existing models simply weren't
-    /// curated top-picks and so never appeared. Prepending the on-disk
-    /// models (deduped against the curated list, so a downloaded top pick
-    /// isn't shown twice) lets a returning user pick "Continue".
+    /// Onboarding is intentionally opinionated — it surfaces only our curated
+    /// top picks (downloaded ones still appear, badged "Downloaded"), so the
+    /// first-run list never balloons with ad-hoc / auto-fetched models the
+    /// user happens to have on disk. The full catalog lives in the Models tab.
     private var localPickerModels: [(model: MLXModel, compatibility: ModelCompatibility)] {
-        let totalMemoryGB = systemMonitor.totalMemoryGB
-        let curated = topSuggestionsWithCompatibility
-        let curatedIds = Set(curated.map { $0.model.id.lowercased() })
-
-        let downloaded = modelManager.deduplicatedModels()
-            .filter { $0.isDownloaded && !curatedIds.contains($0.id.lowercased()) }
-            .map { (model: $0, compatibility: $0.compatibility(totalMemoryGB: totalMemoryGB)) }
-
-        return downloaded + curated
+        topSuggestionsWithCompatibility
     }
 
     @ViewBuilder
@@ -821,35 +838,86 @@ struct ConfigureAIBody: View {
         if !hasAnyRunnable {
             localNoCompatibleModelsView
         } else {
+            // Be opinionated: surface a single recommended pick (the model
+            // `ensureLocalSelection` chose) and tuck everything else behind a
+            // disclosure, so first-run isn't a wall of model choices.
+            let featuredId = state.selectedModel?.id
+            let featured = pairs.first(where: { $0.model.id == featuredId }) ?? pairs.first
+            let rest = pairs.filter { $0.model.id != featured?.model.id }
+
             VStack(spacing: OnboardingMetrics.cardSpacing) {
                 computeIntensiveCallout
-                ForEach(pairs, id: \.model.id) { pair in
-                    let model = pair.model
-                    OnboardingRowCard(
-                        icon: .symbol(model.isVLM ? "eye" : "cpu"),
-                        title: model.name,
-                        subtitle: model.description,
-                        secondaryLine: model.formattedReleaseMonth.map { L("Released \($0)") },
-                        badges: localBadges(for: model, compatibility: pair.compatibility),
-                        // Local model rows ship up to four badges
-                        // (use case · size · modality · compat verdict);
-                        // inline next to the title they truncated the
-                        // model name to "Gemm…". Bump them to their own
-                        // row so the full name is always readable.
-                        badgesBelowTitle: true,
-                        accessory: .radio(isSelected: state.selectedModel?.id == model.id),
-                        isSelected: state.selectedModel?.id == model.id,
-                        isDisabled: pair.compatibility == .tooLarge && !model.isDownloaded
-                    ) {
-                        // No `withAnimation` — selecting a model otherwise
-                        // morphs the CTA between "Continue" and
-                        // "Download & Install" as a side-effect of the
-                        // shared transaction.
-                        state.selectedModel = model
+                if let featured {
+                    localModelCard(for: featured)
+                }
+                if !rest.isEmpty {
+                    localMoreOptionsDisclosure(count: rest.count)
+                    if state.showAllLocalModels {
+                        ForEach(rest, id: \.model.id) { pair in
+                            localModelCard(for: pair)
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// One selectable local-model row. Shared by the featured default and the
+    /// disclosure-revealed remainder so both read identically.
+    private func localModelCard(
+        for pair: (model: MLXModel, compatibility: ModelCompatibility)
+    ) -> some View {
+        let model = pair.model
+        return OnboardingRowCard(
+            icon: .symbol(model.isVLM ? "eye" : "cpu"),
+            title: model.name,
+            subtitle: model.description,
+            secondaryLine: model.formattedReleaseMonth.map { L("Released \($0)") },
+            badges: localBadges(for: model, compatibility: pair.compatibility),
+            // Local model rows ship up to four badges
+            // (use case · size · modality · compat verdict);
+            // inline next to the title they truncated the
+            // model name to "Gemm…". Bump them to their own
+            // row so the full name is always readable.
+            badgesBelowTitle: true,
+            accessory: .radio(isSelected: state.selectedModel?.id == model.id),
+            isSelected: state.selectedModel?.id == model.id,
+            isDisabled: pair.compatibility == .tooLarge && !model.isDownloaded
+        ) {
+            // No `withAnimation` — selecting a model otherwise
+            // morphs the CTA between "Continue" and
+            // "Download & Install" as a side-effect of the
+            // shared transaction.
+            state.selectedModel = model
+        }
+    }
+
+    /// Expand / collapse control for the non-featured local models.
+    private func localMoreOptionsDisclosure(count: Int) -> some View {
+        Button {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                state.showAllLocalModels.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .rotationEffect(.degrees(state.showAllLocalModels ? 180 : 0))
+                Text(
+                    state.showAllLocalModels
+                        ? L("Hide other options")
+                        : L("See other options (\(count))")
+                )
+                .font(theme.font(size: 13, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            .foregroundColor(theme.accentColor)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .localizedHelp("See other options")
     }
 
     /// Inline explainer rendered above the curated list — first-time
@@ -1201,7 +1269,7 @@ struct ConfigureAIBody: View {
         OnboardingRowCard(
             icon: .symbol("key.fill"),
             title: L("Use an API key"),
-            subtitle: L("Anthropic, Google, Ollama, custom, and more"),
+            subtitle: L("Anthropic, Google, Ollama, and more — paste a key to connect"),
             accessory: .chevron
         ) {
             state.showAPIKeyPicker()
@@ -1511,13 +1579,18 @@ struct ConfigureAIBody: View {
 
 // MARK: - CTA
 
-/// Primary CTA for the Configure AI step. Always rendered (never hidden) —
-/// disabled until the active substate has a valid action. The picker
-/// substates use a `Continue` button that's disabled until a selection is
-/// made; the form substates use the stateful Connect/Test/Continue button.
+/// Primary CTA for the Configure AI step, dispatched per substate:
+///   - Local picker: Download/Continue, enabled once a model is selected.
+///   - Local downloading: a single adaptive "Continue in Background" →
+///     "Continue" button (plus "Try Again" on failure).
+///   - Cloud picker / API-key hub: cards drill in on tap, so a quiet hint
+///     stands in for the (absent) Continue button.
+///   - Cloud forms: the stateful Connect/Test/Continue button.
 struct ConfigureAICTA: View {
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
+
+    @Environment(\.theme) private var theme
 
     /// Observed-but-not-read: the CTA's `isLocalCompleted` / `isLocalFailed`
     /// reads bounce through `ConfigureAIState`, but those computed
@@ -1565,7 +1638,7 @@ struct ConfigureAICTA: View {
                     action: { state.startLocalDownloadOrContinue(onComplete: onComplete) },
                     isEnabled: state.selectedModel != nil
                 )
-                .frame(width: OnboardingMetrics.ctaWidthCompact)
+                .fixedSize(horizontal: true, vertical: false)
             case .downloading:
                 localDownloadingCTA
             }
@@ -1574,19 +1647,23 @@ struct ConfigureAICTA: View {
             switch state.apiSubstate {
             case .picker, .apiKeyPicker:
                 // Provider cards drill in on tap — no Continue press
-                // required. The button stays visible and disabled so the
-                // footer chrome doesn't blank out, and the layout doesn't
-                // reflow when the user navigates into a key form.
-                OnboardingBrandButton(
-                    title: "Continue",
-                    action: {},
-                    isEnabled: false
-                )
-                .frame(width: OnboardingMetrics.ctaWidthCompact)
+                // required. A subtle hint replaces the dead disabled button so
+                // the footer reads as guidance, not a broken control.
+                providerPickerHint
             case .keyForm, .customForm:
                 apiActionButton
             }
         }
+    }
+
+    /// Footer text shown on the Cloud provider list / API-key hub, where the
+    /// cards themselves are the action. A quiet hint reads better than a dead
+    /// disabled "Continue".
+    private var providerPickerHint: some View {
+        Text("Pick a provider to continue", bundle: .module)
+            .font(theme.font(size: OnboardingMetrics.captionSize))
+            .foregroundColor(theme.tertiaryText)
+            .frame(height: OnboardingMetrics.buttonHeight)
     }
 
     /// CTA for the local downloading screen. Mirrors the inline state-driven
@@ -1601,14 +1678,18 @@ struct ConfigureAICTA: View {
                 title: "Try Again",
                 action: { state.startLocalDownload() }
             )
-            .frame(width: OnboardingMetrics.ctaWidthCompact)
+            .fixedSize(horizontal: true, vertical: false)
         } else {
+            // Single CTA: the user can always proceed. While the download is
+            // still running it reads "Continue in Background" (onboarding moves
+            // on, the download keeps going); once finished it becomes a plain
+            // "Continue". This replaces the old disabled-CTA + separate
+            // text-link pairing.
             OnboardingBrandButton(
-                title: "Continue",
-                action: onComplete,
-                isEnabled: state.isLocalCompleted
+                title: state.isLocalCompleted ? "Continue" : "Continue in Background",
+                action: onComplete
             )
-            .frame(width: OnboardingMetrics.ctaWidthCompact)
+            .fixedSize(horizontal: true, vertical: false)
         }
     }
 
@@ -1632,47 +1713,7 @@ struct ConfigureAICTA: View {
             },
             isEnabled: state.canTestAPI
         )
-        .frame(width: OnboardingMetrics.ctaWidthCompact)
-    }
-}
-
-// MARK: - Secondary
-
-/// Secondary action (text-link, leading edge of the footer) for Configure AI.
-/// Only the local-downloading substate currently has one ("Download later").
-struct ConfigureAISecondary: View {
-    @ObservedObject var state: ConfigureAIState
-    let onComplete: () -> Void
-
-    var body: some View {
-        switch state.selectedPath {
-        case .local:
-            switch state.localSubstate {
-            case .downloading:
-                // Always offer a soft escape so the user can finish
-                // onboarding even mid-download. The inline failure card
-                // already exposes Retry + Choose-another-model, so when
-                // failed we just show "Skip for now" rather than a
-                // duplicate retry affordance.
-                OnboardingTextButton(
-                    title: secondaryDownloadingTitle,
-                    action: onComplete
-                )
-            case .picker:
-                EmptyView()
-            }
-        case .apiProvider:
-            EmptyView()
-        }
-    }
-
-    private var secondaryDownloadingTitle: String {
-        switch state.localDownloadState {
-        case .failed: return L("Skip for now")
-        case .paused: return L("Finish later")
-        case .downloading: return L("Continue in background")
-        case .completed, .notStarted: return L("Download later")
-        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -1706,7 +1747,6 @@ private struct HelpStepRow: View {
             return VStack {
                 ConfigureAIBody(state: state).frame(height: 460)
                 HStack {
-                    ConfigureAISecondary(state: state, onComplete: {})
                     Spacer()
                     ConfigureAICTA(state: state, onComplete: {})
                 }

@@ -154,6 +154,7 @@ struct OnboardingStatefulButton: View {
                         .font(theme.font(size: 15, weight: .semibold))
                 }
                 .foregroundColor(labelColor)
+                .padding(.horizontal, OnboardingMetrics.ctaContentPaddingH)
             }
             .frame(maxWidth: .infinity)
             .frame(height: OnboardingMetrics.buttonHeight)
@@ -265,6 +266,7 @@ struct OnboardingBrandButton: View {
                         .offset(x: isHovered ? 2 : 0)
                 }
                 .foregroundColor(labelColor)
+                .padding(.horizontal, OnboardingMetrics.ctaContentPaddingH)
             }
             .frame(maxWidth: .infinity)
             .frame(height: OnboardingMetrics.buttonHeight)

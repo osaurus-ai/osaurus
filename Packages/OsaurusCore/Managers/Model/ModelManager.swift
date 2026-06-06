@@ -692,6 +692,16 @@ extension ModelManager {
             useCase: .vision
         ),
 
+        curated(
+            id: "OsaurusAI/gemma-4-12B-it-MXFP8",
+            description:
+                "Gemma 4 12B multimodal — images, video, and audio at high-precision MXFP8. 128K context.",
+            isTopSuggestion: true,
+            modelType: "gemma4",
+            releasedAt: date("2026-06-01"),
+            useCase: .vision
+        ),
+
         // MARK: Qwen 3.6
         //
         // Qwen 3.6 keeps the `qwen3_5_moe` / `qwen3_5` model_type identifier,

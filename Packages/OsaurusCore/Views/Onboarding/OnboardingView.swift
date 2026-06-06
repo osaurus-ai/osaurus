@@ -138,10 +138,10 @@ public struct OnboardingView: View {
         }
     }
 
-    /// When a step has no caption we reserve the vertical footprint
-    /// with a transparent `Color.clear` block (hidden from VoiceOver)
-    /// so the action row's vertical position stays stable across
-    /// step transitions.
+    /// The action row is bottom-anchored, so a captionless step doesn't need a
+    /// reserved placeholder — collapsing it (no text, no spacing) reclaims the
+    /// dead gap above the CTA without shifting the CTA itself. The caption owns
+    /// its own bottom spacing so the empty case contributes nothing.
     @ViewBuilder
     private var stepFooterCaptionText: some View {
         if let caption = chromeFooterCaption {
@@ -150,17 +150,8 @@ public struct OnboardingView: View {
                 .foregroundColor(theme.tertiaryText)
                 .multilineTextAlignment(.center)
                 .lineLimit(1)
-        } else {
-            Color.clear
-                .frame(height: footerCaptionLineHeight)
-                .accessibilityHidden(true)
+                .padding(.bottom, OnboardingMetrics.footerCaptionToCTA)
         }
-    }
-
-    /// Approximate height of one caption line at
-    /// `OnboardingMetrics.captionSize`.
-    private var footerCaptionLineHeight: CGFloat {
-        OnboardingMetrics.captionSize + 4
     }
 
     @ViewBuilder
@@ -238,10 +229,16 @@ public struct OnboardingView: View {
                 Spacer(minLength: 0)
             }
         case .configureAI:
-            ConfigureAICTA(
-                state: configureAIState,
-                onComplete: { advance(to: .choosePlugins) }
-            )
+            // Centered (like Create Agent) with a content-hugging pill, so the
+            // CTA reads consistently across the two adjacent steps.
+            HStack {
+                Spacer(minLength: 0)
+                ConfigureAICTA(
+                    state: configureAIState,
+                    onComplete: { advance(to: .choosePlugins) }
+                )
+                Spacer(minLength: 0)
+            }
         case .identitySetup:
             IdentityCTA(
                 state: identityState,
@@ -286,7 +283,9 @@ public struct OnboardingView: View {
             // this step, and the CTA is always enabled so it's a single tap.
             EmptyView()
         case .configureAI:
-            ConfigureAISecondary(state: configureAIState, onComplete: { advance(to: .choosePlugins) })
+            // The download escape hatch now lives in the primary CTA
+            // ("Continue in Background"), so there's no secondary slot.
+            EmptyView()
         case .identitySetup:
             IdentitySecondary(
                 state: identityState,

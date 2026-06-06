@@ -475,7 +475,7 @@ struct CreateAgentCTA: View {
             action: { if state.saveAgent() { onContinue() } },
             isEnabled: state.canSave
         )
-        .frame(width: OnboardingMetrics.ctaWidthCompact)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
