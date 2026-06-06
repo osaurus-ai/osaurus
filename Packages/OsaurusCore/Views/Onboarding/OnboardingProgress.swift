@@ -4,7 +4,6 @@
 //
 //  Progress indicators used in the onboarding flow:
 //   - `OnboardingShimmerBar` for download progress.
-//   - `OnboardingStepIndicator` dots for the walkthrough.
 //
 
 import SwiftUI
@@ -82,33 +81,5 @@ struct OnboardingShimmerBar: View {
             .opacity(progress > 0 ? 1 : 0)
         }
         .clipped()
-    }
-}
-
-// MARK: - Step Indicator
-
-/// Dot-based step indicator. Shows `total` dots with `current` highlighted
-/// in the accent color and slightly enlarged.
-struct OnboardingStepIndicator: View {
-    let current: Int
-    let total: Int
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(1 ... total, id: \.self) { step in
-                Circle()
-                    .fill(step == current ? theme.accentColor : theme.primaryBorder)
-                    .frame(width: 8, height: 8)
-                    .scaleEffect(step == current ? 1.2 : 1.0)
-                    .animation(theme.springAnimation(), value: current)
-            }
-        }
-        // Collapse the row of dots into a single VoiceOver utterance so
-        // screen-reader users hear "Step 2 of 5" instead of five
-        // unlabelled "Circle" announcements in a row.
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Step \(current) of \(total)", bundle: .module))
     }
 }

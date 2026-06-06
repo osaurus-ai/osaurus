@@ -2,13 +2,16 @@
 //  OnboardingCreateAgentView.swift
 //  osaurus
 //
-//  Onboarding step 2 — a stripped-down "Create your agent" form.
-//  Split into:
-//    - `CreateAgentState`: ObservableObject holding form state (lives in
-//      OnboardingView via @StateObject, so values survive slide transitions).
-//    - `CreateAgentBody`: the body slot (template strip + name + mascot).
+//  Onboarding step 2 — a delightful, low-friction "Meet your dino" step.
+//  The user picks an avatar and an archetype and can tweak the name right
+//  in the badge; the system prompt is derived from the chosen archetype,
+//  and everything is editable later in Settings. Split into:
+//    - `CreateAgentState`: ObservableObject holding the selections + name
+//      (lives in OnboardingView via @StateObject, so values survive slide
+//      transitions).
+//    - `CreateAgentBody`: the single-column body slot (hero dino + editable
+//      name badge + role description + avatar picker + archetype picker).
 //    - `CreateAgentCTA`: the primary "Create Dino" footer button.
-//    - `CreateAgentSecondary`: the leading "Skip for now" text link.
 //
 
 import SwiftUI
@@ -17,51 +20,56 @@ import SwiftUI
 
 @MainActor
 final class CreateAgentState: ObservableObject {
-    @Published var selectedTemplate: AgentStarterTemplate = .blank
-    @Published var name: String = ""
-    @Published var systemPrompt: String = ""
-    /// Flips to `true` once the user types into the name field, so switching
-    /// presets stops clobbering their input.
-    @Published var nameUserEdited: Bool = false
-    /// Flips to `true` once the user edits the system prompt, so switching
-    /// presets stops clobbering their changes.
-    @Published var systemPromptUserEdited: Bool = false
+    /// Defaults to the general-purpose `.assistant` so a user who just wants
+    /// to move on can tap "Create Dino" immediately.
+    @Published var selectedTemplate: AgentStarterTemplate = .assistant
     @Published var selectedAvatar: String? = AgentMascot.allCases.first?.id
+    /// Editable name, surfaced as the badge under the hero. Seeded from the
+    /// archetype and kept in sync until the user types their own.
+    @Published var name: String
+    /// Flips to `true` once the user edits the name, so switching archetypes
+    /// stops clobbering their input.
+    @Published var nameUserEdited: Bool = false
     @Published var isSaving: Bool = false
 
     /// ID of the agent created by `saveAgent`. Read by
     /// `OnboardingView.finishOnboarding` to flip
     /// `AgentManager.activeAgentId` so the user lands in chat with the
-    /// agent they just made already selected. `nil` when the user
-    /// skipped this step.
+    /// agent they just made already selected.
     @Published private(set) var createdAgentId: UUID?
 
     init() {
-        applyTemplate(.blank)
+        name = AgentStarterTemplate.assistant.defaultName
     }
+
+    /// Always savable — selections always have a default and the name falls
+    /// back to the archetype default, so the CTA is enabled immediately.
+    var canSave: Bool { !isSaving }
 
     var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var canSave: Bool { !trimmedName.isEmpty && !isSaving }
+    /// Resolved name actually persisted: the user's text, or the archetype
+    /// default when they've left it blank.
+    var resolvedName: String {
+        trimmedName.isEmpty ? selectedTemplate.defaultName : trimmedName
+    }
 
-    /// Apply a template to the form. The name and system prompt are
-    /// overwritten only if the user hasn't edited those fields directly —
-    /// once they have, the starter chips become an indicator of "where I
-    /// began" rather than a destructive action.
-    func applyTemplate(_ template: AgentStarterTemplate) {
+    /// Select an archetype. The name follows the archetype's default until
+    /// the user types their own, at which point presets stop touching it.
+    func selectArchetype(_ template: AgentStarterTemplate) {
         selectedTemplate = template
         if !nameUserEdited {
             name = template.defaultName
-        }
-        if !systemPromptUserEdited {
-            systemPrompt = template.systemPrompt
         }
     }
 
     /// Persists the agent and returns whether save succeeded. The caller is
     /// responsible for advancing the flow afterwards.
+    ///
+    /// The system prompt is derived from the chosen archetype and the
+    /// description from its tagline; both are editable later in Settings.
     ///
     /// Idempotent: if the user navigates back from a later onboarding
     /// step and re-fires the CTA, the previously-created agent's id is
@@ -70,13 +78,13 @@ final class CreateAgentState: ObservableObject {
     @discardableResult
     func saveAgent() -> Bool {
         if createdAgentId != nil { return true }
-        guard !trimmedName.isEmpty, !isSaving else { return false }
+        guard !isSaving else { return false }
         isSaving = true
         let agent = Agent(
             id: UUID(),
-            name: trimmedName,
-            description: "",
-            systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: resolvedName,
+            description: selectedTemplate.tagline,
+            systemPrompt: selectedTemplate.systemPrompt,
             createdAt: Date(),
             updatedAt: Date(),
             toolSelectionMode: .auto,
@@ -95,196 +103,251 @@ struct CreateAgentBody: View {
     @ObservedObject var state: CreateAgentState
 
     @Environment(\.theme) private var theme
+    @FocusState private var nameFocused: Bool
 
+    /// The selected dino's signature color — themes the hero glow, avatar
+    /// tints, and selection rings so the whole screen reacts in color.
+    private var selectedColor: Color {
+        state.selectedAvatar
+            .flatMap(AgentMascot.init(rawValue:))?
+            .color ?? theme.accentColor
+    }
+
+    /// Non-scrolling, vertically-centered layout. The step is intentionally
+    /// sized to fit the fixed onboarding window without scrolling — the
+    /// "edit later" hint lives in the footer caption slot (see
+    /// `OnboardingView.chromeFooterCaption`) so it never crowds the body.
     var body: some View {
-        OnboardingTwoColumnBody(
-            leftColumn: { leftColumnContent },
-            rightContent: { rightColumnContent }
-        )
-    }
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
 
-    // MARK: - Left column
+            heroDino
 
-    /// Left-column content for the shared two-column body. The shared
-    /// container handles widths, padding, and vertical centring so this
-    /// view only needs to lay out the in-column composition.
-    private var leftColumnContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            agentPreviewCard
+            Spacer().frame(height: 14)
 
-            Spacer().frame(height: OnboardingMetrics.illustrationToHeadline)
+            nameBadge
 
-            Text("Say hi to your dino", bundle: .module)
-                .font(theme.font(size: OnboardingMetrics.leftHeadlineSize, weight: .bold))
-                .foregroundColor(theme.primaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer().frame(height: 8)
 
-            Spacer().frame(height: OnboardingMetrics.leftHeadlineToBody)
+            tagline
 
-            Text(
-                "Pick a starter, then make it yours. The preview updates as you choose an avatar, name, and role.",
-                bundle: .module
-            )
-            .font(theme.font(size: OnboardingMetrics.leftBodySize))
-            .foregroundColor(theme.secondaryText)
-            .lineSpacing(4)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
+            Spacer().frame(height: 14)
 
-    // MARK: - Right column
-
-    /// Right-column form. Wrapped by the shared two-column body in an
-    /// `OnboardingScrollContainer`, so the column gets the standard
-    /// scroll buffer (which clears glass-card hover shadows on the
-    /// chrome's clip) without each step re-applying it manually.
-    ///
-    /// We deliberately don't cap this with a `formMaxWidth` — at the
-    /// fixed window size the two-column body already gives the right
-    /// column exactly the breathing room it needs (~424pt usable). Any
-    /// max-width constraint wider than that just pushed the chrome out
-    /// past the rest of the onboarding flow.
-    private var rightColumnContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Sequenced top-to-bottom in dependency order: pick a visual
-            // identity (avatar), then a behavior preset (starter) — which
-            // prefills both name and prompt — then refine.
             avatarRow
-            starterRow
-            nameField
-            systemPromptField
+
+            Spacer().frame(height: 14)
+
+            archetypeRow
+
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: 700)
+        .padding(.horizontal, OnboardingMetrics.rightColumnHorizontalPadding)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Live agent preview rendered as an `OnboardingGlassCard` so the
-    /// preview shares the same radius / border / shadow vocabulary as
-    /// every other onboarding card.
-    private var agentPreviewCard: some View {
-        OnboardingGlassCard {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .center, spacing: 14) {
-                    AgentAvatarView(
-                        mascotId: state.selectedAvatar,
-                        name: previewName,
-                        tint: agentColorFor(previewName),
-                        diameter: 68,
-                        monogramFontSize: 24,
-                        borderWidth: 1.5
-                    )
-                    .shadow(
-                        color: theme.accentColor.opacity(theme.isDark ? 0.24 : 0.16),
-                        radius: 18,
-                        x: 0,
-                        y: 8
-                    )
+    // MARK: - Hero dino
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(previewName)
-                            .font(theme.font(size: 20, weight: .bold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
+    /// Big, playful centerpiece that updates as the user picks an avatar or
+    /// archetype. The bounce on change makes selection feel responsive and
+    /// fun rather than form-like, and the glow adopts the dino's color.
+    private var heroDino: some View {
+        let diameter: CGFloat = 140
+        return ZStack {
+            Circle()
+                .fill(selectedColor.opacity(theme.isDark ? 0.32 : 0.20))
+                .frame(width: diameter + 52, height: diameter + 52)
+                .blur(radius: 28)
+                .animation(theme.animationQuick(), value: selectedColor)
 
-                        HStack(spacing: 6) {
-                            Image(systemName: state.selectedTemplate.icon)
-                                .font(.system(size: 11, weight: .semibold))
-                            Text(LocalizedStringKey(state.selectedTemplate.label), bundle: .module)
-                                .font(theme.font(size: 11, weight: .semibold))
-                        }
-                        .foregroundColor(theme.accentColor)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(theme.accentColor.opacity(0.12)))
-                        .overlay(Capsule().strokeBorder(theme.accentColor.opacity(0.22), lineWidth: 1))
-                    }
-                }
-
-                Divider()
-                    .overlay(theme.primaryBorder.opacity(0.45))
-
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "quote.opening")
-                            .font(.system(size: 10, weight: .bold))
-                        Text("Preview", bundle: .module)
-                            .font(theme.font(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(theme.tertiaryText)
-
-                    // No `lineLimit` — the whole instructions text should
-                    // be readable in the preview, since that's the entire
-                    // point of the card. `fixedSize(vertical:)` lets the
-                    // card grow to fit; the left column has plenty of
-                    // vertical space below the headline copy.
-                    Text(previewPrompt)
-                        .font(theme.font(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .lineSpacing(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(18)
-            // `minHeight` is the floor for short prompts (so the card
-            // never feels under-filled). No `maxHeight` — when the prompt
-            // is long the card grows so every line is visible.
-            .frame(
-                maxWidth: .infinity,
-                minHeight: OnboardingMetrics.illustrationMaxHeight,
-                alignment: .topLeading
+            AgentAvatarView(
+                mascotId: state.selectedAvatar,
+                name: state.resolvedName,
+                tint: selectedColor,
+                diameter: diameter,
+                monogramFontSize: 48,
+                borderWidth: 2.5,
+                bleedsToEdge: true
             )
+            .shadow(
+                color: selectedColor.opacity(theme.isDark ? 0.36 : 0.24),
+                radius: 22,
+                x: 0,
+                y: 10
+            )
+            .id(state.selectedAvatar)
+            .transition(.scale.combined(with: .opacity))
         }
+        .frame(height: diameter + 12)
+        .animation(.spring(response: 0.42, dampingFraction: 0.62), value: state.selectedAvatar)
     }
 
-    private var previewName: String {
-        state.trimmedName.isEmpty ? "Your dino" : state.trimmedName
-    }
+    // MARK: - Editable name badge
 
-    private var previewPrompt: String {
-        let trimmedPrompt = state.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedPrompt.isEmpty {
-            return "Start blank, or pick a starter to give your dino a clear role."
+    /// The name, surfaced as the prominent capsule badge under the hero. The
+    /// archetype icon on the leading edge keeps the role glanceable while the
+    /// text stays editable; a faint pencil hints that it's tappable.
+    private var nameBadge: some View {
+        HStack(spacing: 8) {
+            Image(systemName: state.selectedTemplate.icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(selectedColor)
+
+            TextField(
+                text: $state.name,
+                prompt: Text(LocalizedStringKey(state.selectedTemplate.defaultName), bundle: .module)
+            ) {
+                Text(LocalizedStringKey(state.selectedTemplate.defaultName), bundle: .module)
+            }
+            .textFieldStyle(.plain)
+            .font(theme.font(size: 19, weight: .bold))
+            .foregroundColor(theme.primaryText)
+            .multilineTextAlignment(.center)
+            .fixedSize()
+            .focused($nameFocused)
+            .onChange(of: state.name) { _, newValue in
+                if newValue != state.selectedTemplate.defaultName {
+                    state.nameUserEdited = true
+                }
+            }
+
+            Image(systemName: "pencil")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .opacity(nameFocused ? 0 : 0.7)
         }
-        return trimmedPrompt
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .background(
+            Capsule().fill(selectedColor.opacity(nameFocused ? 0.18 : 0.12))
+        )
+        .overlay(
+            Capsule().strokeBorder(
+                selectedColor.opacity(nameFocused ? 0.7 : 0.3),
+                lineWidth: nameFocused ? 2 : 1
+            )
+        )
+        .animation(theme.animationQuick(), value: nameFocused)
+        .animation(theme.animationQuick(), value: selectedColor)
+        .contentShape(Capsule())
+        .onTapGesture { nameFocused = true }
     }
 
-    // MARK: - Starter chips
+    // MARK: - Role description preview
 
-    private var starterRow: some View {
-        VStack(alignment: .leading, spacing: OnboardingMetrics.labelToInput) {
-            sectionLabel("Starter")
-            HStack(spacing: 6) {
-                ForEach(AgentStarterTemplate.allCases) { template in
-                    templateChip(template)
+    private var tagline: some View {
+        Text(LocalizedStringKey(state.selectedTemplate.tagline), bundle: .module)
+            .font(theme.font(size: 14))
+            .foregroundColor(theme.secondaryText)
+            .multilineTextAlignment(.center)
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 420)
+            .id(state.selectedTemplate)
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            .animation(theme.animationQuick(), value: state.selectedTemplate)
+    }
+
+    // MARK: - Avatar picker
+
+    /// Six mascots as a centered row of tappable swatches. The create flow
+    /// always picks a colorful mascot so the row of cute dinos reads as the
+    /// brand — the monogram/no-avatar option lives in Settings.
+    private var avatarRow: some View {
+        VStack(spacing: OnboardingMetrics.labelToInput + 4) {
+            sectionLabel("Pick a color")
+            HStack(spacing: 12) {
+                ForEach(AgentMascot.allCases) { mascot in
+                    avatarChip(mascot: mascot)
                 }
             }
         }
     }
 
-    private func templateChip(_ template: AgentStarterTemplate) -> some View {
+    private func avatarChip(mascot: AgentMascot) -> some View {
+        let isSelected = state.selectedAvatar == mascot.id
+        let diameter: CGFloat = 56
+        let cellSize: CGFloat = 66
+        return Button {
+            withAnimation(theme.animationQuick()) {
+                state.selectedAvatar = mascot.id
+            }
+        } label: {
+            ZStack {
+                if isSelected {
+                    Circle()
+                        .fill(mascot.color.opacity(0.3))
+                        .frame(width: diameter + 16, height: diameter + 16)
+                        .blur(radius: 8)
+                }
+
+                AgentAvatarView(
+                    mascotId: mascot.id,
+                    name: "",
+                    tint: mascot.color,
+                    diameter: diameter,
+                    monogramFontSize: 18,
+                    borderWidth: 1.5,
+                    bleedsToEdge: true
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(
+                            isSelected ? mascot.color : Color.clear,
+                            lineWidth: 2.5
+                        )
+                        .padding(-3)
+                )
+            }
+            .frame(width: cellSize, height: cellSize)
+            .scaleEffect(isSelected ? 1.0 : 0.9)
+            .opacity(isSelected ? 1.0 : 0.78)
+            .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isSelected)
+        }
+        .buttonStyle(.plain)
+        .help(Text(mascot.displayName))
+    }
+
+    // MARK: - Archetype picker
+
+    /// Curated archetypes (excludes the from-scratch `.blank`) as a centered,
+    /// wrapping row of chips. Selecting one drives the hero label, the
+    /// description, and the agent's derived name + system prompt.
+    private var archetypeRow: some View {
+        VStack(spacing: OnboardingMetrics.labelToInput + 4) {
+            sectionLabel("Pick a role")
+            CenteredFlowLayout(spacing: 8, lineSpacing: 10) {
+                ForEach(AgentStarterTemplate.onboardingArchetypes) { template in
+                    archetypeChip(template)
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func archetypeChip(_ template: AgentStarterTemplate) -> some View {
         let isSelected = state.selectedTemplate == template
         return Button {
             withAnimation(theme.animationQuick()) {
-                state.applyTemplate(template)
+                state.selectArchetype(template)
             }
         } label: {
-            VStack(spacing: 5) {
+            HStack(spacing: 8) {
                 Image(systemName: template.icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(height: 16)
+                    .font(.system(size: 15, weight: .semibold))
                 Text(LocalizedStringKey(template.label), bundle: .module)
-                    .font(theme.font(size: 11, weight: .semibold))
+                    .font(theme.font(size: 15, weight: .semibold))
                     .lineLimit(1)
             }
             .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
             .background(
-                RoundedRectangle(cornerRadius: OnboardingMetrics.selectableRowRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: OnboardingMetrics.buttonCornerRadius, style: .continuous)
                     .fill(isSelected ? theme.accentColor.opacity(0.12) : theme.inputBackground)
                     .overlay(
-                        RoundedRectangle(cornerRadius: OnboardingMetrics.selectableRowRadius, style: .continuous)
+                        RoundedRectangle(cornerRadius: OnboardingMetrics.buttonCornerRadius, style: .continuous)
                             .strokeBorder(
                                 isSelected ? theme.accentColor.opacity(0.45) : theme.inputBorder,
                                 lineWidth: isSelected ? 1.5 : 1
@@ -295,134 +358,85 @@ struct CreateAgentBody: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Name
-
-    private var nameField: some View {
-        VStack(alignment: .leading, spacing: OnboardingMetrics.labelToInput) {
-            sectionLabel("Name")
-            OnboardingTextField(
-                label: "",
-                placeholder: "e.g. Code Assistant",
-                text: $state.name
-            )
-            .onChange(of: state.name) { _, newValue in
-                if newValue != state.selectedTemplate.defaultName {
-                    state.nameUserEdited = true
-                }
-            }
-        }
-    }
-
-    // MARK: - Instructions
-
-    private var systemPromptField: some View {
-        VStack(alignment: .leading, spacing: OnboardingMetrics.labelToInput) {
-            sectionLabel("Instructions")
-            // Onboarding's "Meet your dino" flow shouldn't read like a
-            // terminal — opt out of the monospaced default so the field
-            // matches the friendly tone of the rest of the step.
-            OnboardingTextEditor(
-                label: "",
-                placeholder: "Instructions for this dino…",
-                text: $state.systemPrompt,
-                isMonospaced: false,
-                height: 110
-            )
-            .onChange(of: state.systemPrompt) { _, newValue in
-                // Track edits so switching starters won't overwrite the
-                // user's hand-tuned prompt. Equality with the active
-                // template's prompt covers the no-op "I just re-selected
-                // the same chip" case so we don't lock prematurely.
-                if newValue != state.selectedTemplate.systemPrompt {
-                    state.systemPromptUserEdited = true
-                }
-            }
-        }
-    }
-
-    // MARK: - Avatar
-
-    /// Six mascots, one chip each. The "no avatar" / monogram option lives
-    /// in Configure post-onboarding — the create form always picks a
-    /// colorful mascot so the row of cute dinos can read as the brand.
-    ///
-    /// Chips distribute themselves with flexible spacers between them
-    /// rather than a fixed gap, so the row stays balanced as the right
-    /// column resizes (and never overflows the 424pt usable width that
-    /// would otherwise push the chrome wider than the other steps).
-    private var avatarRow: some View {
-        VStack(alignment: .leading, spacing: OnboardingMetrics.labelToInput) {
-            sectionLabel("Avatar")
-            HStack(spacing: 0) {
-                ForEach(Array(AgentMascot.allCases.enumerated()), id: \.element.id) { index, mascot in
-                    avatarChip(mascotId: mascot.id)
-                    if index < AgentMascot.allCases.count - 1 {
-                        Spacer(minLength: 4)
-                    }
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    private func avatarChip(mascotId: String?) -> some View {
-        let isSelected = state.selectedAvatar == mascotId
-        let diameter: CGFloat = 52
-        let cellSize: CGFloat = 56
-        return Button {
-            withAnimation(theme.animationQuick()) {
-                state.selectedAvatar = mascotId
-            }
-        } label: {
-            ZStack {
-                if isSelected {
-                    Circle()
-                        .fill(theme.accentColor.opacity(0.22))
-                        .frame(width: diameter + 14, height: diameter + 14)
-                        .blur(radius: 7)
-                }
-
-                AgentAvatarView(
-                    mascotId: mascotId,
-                    name: state.name,
-                    tint: agentColorFor(state.name),
-                    diameter: diameter,
-                    monogramFontSize: 16,
-                    borderWidth: 1.5
-                )
-                .overlay(
-                    Circle()
-                        .strokeBorder(
-                            isSelected ? theme.accentColor : Color.clear,
-                            lineWidth: 2
-                        )
-                        .padding(-3)
-                )
-            }
-            .frame(width: cellSize, height: cellSize)
-            .scaleEffect(isSelected ? 1.0 : 0.96)
-            .opacity(isSelected ? 1.0 : 0.85)
-            .animation(theme.animationQuick(), value: isSelected)
-        }
-        .buttonStyle(.plain)
-        .help(Text(LocalizedStringKey(avatarTooltip(for: mascotId)), bundle: .module))
-    }
-
-    /// Friendly tooltip label for the avatar chip. Avoids leaking the raw
-    /// mascot enum case (`"blue"`, `"yellow"`, …) into help text.
-    private func avatarTooltip(for mascotId: String?) -> String {
-        guard let mascotId else { return "Initial" }
-        if let mascot = AgentMascot(rawValue: mascotId) {
-            return "Avatar: \(mascot.displayName)"
-        }
-        return "Avatar: \(mascotId)"
-    }
-
     @ViewBuilder
     private func sectionLabel(_ key: String) -> some View {
         Text(LocalizedStringKey(key), bundle: .module)
-            .font(theme.font(size: 11, weight: .semibold))
+            .font(theme.font(size: 12, weight: .semibold))
             .foregroundColor(theme.tertiaryText)
+    }
+}
+
+// MARK: - Centered Flow Layout
+
+/// Minimal wrapping HStack: lays children left-to-right and wraps to the
+/// next line when they'd overflow the proposed width, centering each line.
+/// Used for the archetype chips so the curated set stays balanced and never
+/// overflows the fixed onboarding window. (The shared `FlowLayout` in
+/// Views/Common left-aligns rows; this one centers them for the playful,
+/// centered onboarding step.)
+private struct CenteredFlowLayout: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        let rows = computeRows(maxWidth: maxWidth, subviews: subviews)
+        let width = rows.map(\.width).max() ?? 0
+        let height =
+            rows.map(\.height).reduce(0, +)
+            + CGFloat(max(0, rows.count - 1)) * lineSpacing
+        return CGSize(width: min(width, maxWidth), height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Void
+    ) {
+        let rows = computeRows(maxWidth: bounds.width, subviews: subviews)
+        var y = bounds.minY
+        for row in rows {
+            var x = bounds.minX + (bounds.width - row.width) / 2
+            for item in row.items {
+                let size = subviews[item].sizeThatFits(.unspecified)
+                subviews[item].place(
+                    at: CGPoint(x: x, y: y + (row.height - size.height) / 2),
+                    proposal: ProposedViewSize(size)
+                )
+                x += size.width + spacing
+            }
+            y += row.height + lineSpacing
+        }
+    }
+
+    private struct Row {
+        var items: [Int] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func computeRows(maxWidth: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = []
+        var current = Row()
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let projected = current.items.isEmpty ? size.width : current.width + spacing + size.width
+            if !current.items.isEmpty && projected > maxWidth {
+                rows.append(current)
+                current = Row()
+                current.items = [index]
+                current.width = size.width
+                current.height = size.height
+            } else {
+                if !current.items.isEmpty { current.width += spacing }
+                current.items.append(index)
+                current.width += size.width
+                current.height = max(current.height, size.height)
+            }
+        }
+        if !current.items.isEmpty { rows.append(current) }
+        return rows
     }
 }
 
@@ -442,16 +456,6 @@ struct CreateAgentCTA: View {
     }
 }
 
-// MARK: - Secondary
-
-struct CreateAgentSecondary: View {
-    let onSkip: () -> Void
-
-    var body: some View {
-        OnboardingTextButton(title: "Skip for now", action: onSkip)
-    }
-}
-
 // MARK: - Preview
 
 #if DEBUG
@@ -459,14 +463,10 @@ struct CreateAgentSecondary: View {
         static var previews: some View {
             let state = CreateAgentState()
             return VStack {
-                CreateAgentBody(state: state).frame(height: 460)
-                HStack {
-                    CreateAgentSecondary(onSkip: {})
-                    Spacer()
-                    CreateAgentCTA(state: state, onContinue: {})
-                }
+                CreateAgentBody(state: state).frame(height: 520)
+                CreateAgentCTA(state: state, onContinue: {})
             }
-            .frame(width: OnboardingMetrics.windowWidth, height: 620)
+            .frame(width: OnboardingMetrics.windowWidth, height: 660)
         }
     }
 #endif

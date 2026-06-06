@@ -2224,6 +2224,22 @@
         }
       }
     },
+    "A careful guide for digging into topics and weighing sources." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein sorgfältiger Begleiter, um Themen zu durchdringen und Quellen abzuwägen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一个细致的向导，帮你深入探究主题并权衡资料来源。"
+          }
+        }
+      }
+    },
     "A device wants to pair with **%@**.\nAllow this device to connect?" : {
       "localizations" : {
         "de" : {
@@ -2256,6 +2272,38 @@
         }
       }
     },
+    "A focused helper for planning, todos, and staying on track." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein fokussierter Helfer fürs Planen, To-dos und den Überblick."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一个专注的助手，帮你规划、管理待办并保持节奏。"
+          }
+        }
+      }
+    },
+    "A friendly all-rounder for everyday questions and tasks." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein freundliches Allround-Talent für alltägliche Fragen und Aufgaben."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一个友好的全能助手，应对日常问题与任务。"
+          }
+        }
+      }
+    },
     "A microphone button will appear in the chat input when voice is ready" : {
       "localizations" : {
         "de" : {
@@ -2268,6 +2316,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当语音准备好时，麦克风按钮将出现在聊天输入中"
+          }
+        }
+      }
+    },
+    "A pragmatic pair-programmer for reading and writing code." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein pragmatischer Pair-Programmer zum Lesen und Schreiben von Code."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一个务实的结对程序员，帮你读写代码。"
           }
         }
       }
@@ -2348,6 +2412,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "停滞的提供方或断开的连接可能使请求无限期挂起。你需要手动停止它"
+          }
+        }
+      }
+    },
+    "A thoughtful partner for drafting, editing, and polishing prose." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein einfühlsamer Partner zum Entwerfen, Überarbeiten und Verfeinern von Texten."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一个体贴的伙伴，帮你起草、编辑并润色文字。"
           }
         }
       }
@@ -5080,29 +5160,6 @@
         }
       }
     },
-    "Uses your OpenRouter account." : {
-      "comment" : "Subtitle for the OpenRouter OAuth sign-in option.",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nutzt dein OpenRouter-Konto."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Uses your OpenRouter account."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用你的 OpenRouter 账户。"
-          }
-        }
-      }
-    },
     "Authorize this invite to chat with someone else's agent." : {
       "localizations" : {
         "de" : {
@@ -5662,6 +5719,7 @@
       }
     },
     "Avatar: %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -9251,52 +9309,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "连接到远程MCP服务器以访问其他工具"
-          }
-        }
-      }
-    },
-    "Sign in with Grok" : {
-      "comment" : "Button title for connecting to the XAI provider using OAuth.",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mit Grok anmelden"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Sign in with Grok"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 Grok 登录"
-          }
-        }
-      }
-    },
-    "Sign in with Grok using a SuperGrok or X Premium+ subscription, or paste a key from console.x.ai." : {
-      "comment" : "Help text for the \"Sign in with Grok\" field in the provider credential instructions.",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Melde dich über ein SuperGrok- oder X Premium+-Abo mit Grok an oder füge einen Schlüssel von console.x.ai ein."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Sign in with Grok using a SuperGrok or X Premium+ subscription, or paste a key from console.x.ai."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 SuperGrok 或 X Premium+ 订阅通过 Grok 登录，或从 console.x.ai 粘贴一个密钥。"
           }
         }
       }
@@ -27939,6 +27951,22 @@
         }
       }
     },
+    "Pick a color" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle eine Farbe"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个颜色"
+          }
+        }
+      }
+    },
     "Pick a folder for the .osaurus-agent bundle." : {
       "localizations" : {
         "de" : {
@@ -27977,6 +28005,22 @@
         }
       }
     },
+    "Pick a role" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle eine Rolle"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个角色"
+          }
+        }
+      }
+    },
     "Pick a starter, name it, write a prompt" : {
       "localizations" : {
         "de" : {
@@ -27994,6 +28038,7 @@
       }
     },
     "Pick a starter, then make it yours. The preview updates as you choose an avatar, name, and role." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -35649,6 +35694,7 @@
       }
     },
     "Say hi to your dino" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -38067,25 +38113,48 @@
         }
       }
     },
-    "Uses your ChatGPT Plus/Pro subscription." : {
-      "comment" : "Subtitle for the OpenAI ChatGPT/Codex OAuth option.",
+    "Sign in with Grok" : {
+      "comment" : "Button title for connecting to the XAI provider using OAuth.",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nutzt dein ChatGPT Plus/Pro-Abo."
+            "value" : "Mit Grok anmelden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Uses your ChatGPT Plus/Pro subscription."
+            "value" : "Sign in with Grok"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用你的 ChatGPT Plus/Pro 订阅。"
+            "value" : "使用 Grok 登录"
+          }
+        }
+      }
+    },
+    "Sign in with Grok using a SuperGrok or X Premium+ subscription, or paste a key from console.x.ai." : {
+      "comment" : "Help text for the \"Sign in with Grok\" field in the provider credential instructions.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Melde dich über ein SuperGrok- oder X Premium+-Abo mit Grok an oder füge einen Schlüssel von console.x.ai ein."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Sign in with Grok using a SuperGrok or X Premium+ subscription, or paste a key from console.x.ai."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 SuperGrok 或 X Premium+ 订阅通过 Grok 登录，或从 console.x.ai 粘贴一个密钥。"
           }
         }
       }
@@ -38160,29 +38229,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用你的 ChatGPT 账户登录。"
-          }
-        }
-      }
-    },
-    "Uses your SuperGrok or X Premium+ subscription." : {
-      "comment" : "Subtitle for the xAI (Grok) OAuth sign-in option.",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nutzt dein SuperGrok- oder X Premium+-Abo."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Uses your SuperGrok or X Premium+ subscription."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用你的 SuperGrok 或 X Premium+ 订阅。"
           }
         }
       }
@@ -39513,6 +39559,7 @@
       }
     },
     "Step %lld of %lld" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -43901,6 +43948,29 @@
         }
       }
     },
+    "Uses your ChatGPT Plus/Pro subscription." : {
+      "comment" : "Subtitle for the OpenAI ChatGPT/Codex OAuth option.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nutzt dein ChatGPT Plus/Pro-Abo."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Uses your ChatGPT Plus/Pro subscription."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用你的 ChatGPT Plus/Pro 订阅。"
+          }
+        }
+      }
+    },
     "Uses your global chat settings" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -43930,6 +44000,52 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用你的全局记忆设置"
+          }
+        }
+      }
+    },
+    "Uses your OpenRouter account." : {
+      "comment" : "Subtitle for the OpenRouter OAuth sign-in option.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nutzt dein OpenRouter-Konto."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Uses your OpenRouter account."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用你的 OpenRouter 账户。"
+          }
+        }
+      }
+    },
+    "Uses your SuperGrok or X Premium+ subscription." : {
+      "comment" : "Subtitle for the xAI (Grok) OAuth sign-in option.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nutzt dein SuperGrok- oder X Premium+-Abo."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Uses your SuperGrok or X Premium+ subscription."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用你的 SuperGrok 或 X Premium+ 订阅。"
           }
         }
       }
@@ -45801,6 +45917,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "你可以随时在「设置 → 隐私」中更改此设置。"
+          }
+        }
+      }
+    },
+    "You can rename and customize your dino anytime in Settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Du kannst deinen Dino jederzeit in den Einstellungen umbenennen und anpassen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你可以随时在设置中重命名和自定义你的恐龙。"
           }
         }
       }

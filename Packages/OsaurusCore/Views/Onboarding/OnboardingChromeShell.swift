@@ -4,15 +4,15 @@
 //
 //  The single chrome shell shared by every onboarding step. Owns the
 //  full-width header (back + title + close), the body region, and the
-//  full-width footer (progress dots, caption row, and macOS-wizard action
-//  row [secondary | spacer | primary]).
+//  full-width footer (caption row and macOS-wizard action row
+//  [secondary | spacer | primary]).
 //
 //  All chrome is fully transparent (no fills, no rules) so the window's
 //  blurred glass background shows through naturally. The body slides
 //  horizontally between steps; the structural chrome stays put. The title,
-//  step-indicator, footer caption, secondary, body and CTA are all
-//  caller-supplied ViewBuilder slots so the parent can wrap them in
-//  animated containers that slide together as a single visual unit.
+//  footer caption, secondary, body and CTA are all caller-supplied
+//  ViewBuilder slots so the parent can wrap them in animated containers that
+//  slide together as a single visual unit.
 //
 //  Layout:
 //
@@ -23,7 +23,6 @@
 //      │                       BODY SLOT                        │  ← caller-supplied
 //      │                                                        │
 //      ├────────────────────────────────────────────────────────┤
-//      │                       • • • •                          │  ← progress strip
 //      │                  caption (optional)                    │  ← footer caption
 //      │ [Secondary]                              [Primary CTA] │  ← action row
 //      └────────────────────────────────────────────────────────┘
@@ -35,7 +34,6 @@ import SwiftUI
 
 struct OnboardingChromeShell<
     TitleSlot: View,
-    ProgressSlot: View,
     FooterCaptionSlot: View,
     SecondarySlot: View,
     BodyContent: View,
@@ -45,7 +43,6 @@ struct OnboardingChromeShell<
     let onClose: () -> Void
 
     let titleSlot: TitleSlot
-    let progressSlot: ProgressSlot
     let footerCaptionSlot: FooterCaptionSlot
     let secondarySlot: SecondarySlot
     let bodyContent: BodyContent
@@ -55,7 +52,6 @@ struct OnboardingChromeShell<
         onBack: (() -> Void)? = nil,
         onClose: @escaping () -> Void,
         @ViewBuilder title: () -> TitleSlot,
-        @ViewBuilder progressIndicator: () -> ProgressSlot,
         @ViewBuilder footerCaption: () -> FooterCaptionSlot,
         @ViewBuilder secondary: () -> SecondarySlot,
         @ViewBuilder body: () -> BodyContent,
@@ -64,7 +60,6 @@ struct OnboardingChromeShell<
         self.onBack = onBack
         self.onClose = onClose
         self.titleSlot = title()
-        self.progressSlot = progressIndicator()
         self.footerCaptionSlot = footerCaption()
         self.secondarySlot = secondary()
         self.bodyContent = body()
@@ -73,7 +68,11 @@ struct OnboardingChromeShell<
 
     var body: some View {
         VStack(spacing: 0) {
+            // Header draws above the body so a body glow that bleeds up into
+            // the header region renders *behind* the title/buttons (ambient),
+            // not on top of them.
             header
+                .zIndex(1)
             bodyRegion
             footerColumn
         }
@@ -104,27 +103,22 @@ struct OnboardingChromeShell<
 
     // MARK: - Body region
 
-    /// Body is clipped so per-step horizontal slide transitions never bleed
-    /// outside the body bounds (over the chrome).
+    /// The body is clipped **horizontally** so per-step horizontal slide
+    /// transitions never bleed sideways over the chrome — but the clip is
+    /// extended upward so soft hero glows / shadows aren't sheared off at the
+    /// body's top edge (a plain `.clipped()` cut them flat). The bottom stays
+    /// clipped so opaque body content can't spill into the footer.
     private var bodyRegion: some View {
         bodyContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
+            .clipShape(BodyClipShape(topOverflow: OnboardingMetrics.bodyGlowOverflow))
     }
 
     // MARK: - Footer (transparent, no rule)
 
-    /// Footer chrome cluster. Vertically: progress dots → footer caption →
-    /// action row. The dots live at the top of the footer (not in a strip
-    /// between body and footer) so they read as global chrome paired with
-    /// the action row, instead of crowding the last row of the body content.
+    /// Footer chrome cluster. Vertically: footer caption → action row.
     private var footerColumn: some View {
         VStack(spacing: 0) {
-            progressSlot
-                .frame(maxWidth: .infinity)
-                .frame(height: OnboardingMetrics.progressStripHeight)
-                .padding(.bottom, OnboardingMetrics.footerCaptionToCTA)
-
             footerCaptionSlot
                 .padding(.bottom, OnboardingMetrics.footerCaptionToCTA)
 
@@ -141,6 +135,27 @@ struct OnboardingChromeShell<
         .padding(.horizontal, OnboardingMetrics.footerHorizontal)
         .padding(.top, OnboardingMetrics.footerTopPadding)
         .padding(.bottom, OnboardingMetrics.footerBottomPadding)
+    }
+}
+
+// MARK: - Body Clip Shape
+
+/// Clips the body to its bounds horizontally and at the bottom, but extends
+/// the clip region upward by `topOverflow` so soft glows / drop shadows
+/// around hero content render fully instead of being cut flat at the body's
+/// top edge. Horizontal edges stay tight so slide transitions are contained.
+private struct BodyClipShape: Shape {
+    var topOverflow: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        Path(
+            CGRect(
+                x: rect.minX,
+                y: rect.minY - topOverflow,
+                width: rect.width,
+                height: rect.height + topOverflow
+            )
+        )
     }
 }
 

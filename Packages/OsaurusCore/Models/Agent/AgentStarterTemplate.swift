@@ -14,6 +14,7 @@ import Foundation
 
 enum AgentStarterTemplate: String, CaseIterable, Identifiable {
     case blank
+    case assistant
     case writer
     case researcher
     case coder
@@ -21,9 +22,17 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Curated, ordered archetype list shown in the onboarding "Meet your
+    /// dino" step. Excludes `.blank` (a from-scratch option that only makes
+    /// sense in the in-app editor) and leads with the general-purpose
+    /// `.assistant` so a brand-new user can pick one and move on.
+    static let onboardingArchetypes: [AgentStarterTemplate] =
+        [.assistant, .writer, .researcher, .coder, .productivity]
+
     var label: String {
         switch self {
         case .blank: return "Blank"
+        case .assistant: return "Assistant"
         case .writer: return "Writer"
         case .researcher: return "Researcher"
         case .coder: return "Coder"
@@ -34,6 +43,7 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .blank: return "doc"
+        case .assistant: return "sparkles"
         case .writer: return "pencil.line"
         case .researcher: return "magnifyingglass"
         case .coder: return "chevron.left.forwardslash.chevron.right"
@@ -46,6 +56,7 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
     var defaultName: String {
         switch self {
         case .blank: return ""
+        case .assistant: return "Assistant"
         case .writer: return "Writer"
         case .researcher: return "Researcher"
         case .coder: return "Coder"
@@ -53,10 +64,38 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Short, friendly one-liner shown as a preview under the dino avatar in
+    /// the onboarding step. Distinct from `systemPrompt` (which is the full
+    /// behavior spec) — this is human-facing marketing copy.
+    var tagline: String {
+        switch self {
+        case .blank:
+            return ""
+        case .assistant:
+            return "A friendly all-rounder for everyday questions and tasks."
+        case .writer:
+            return "A thoughtful partner for drafting, editing, and polishing prose."
+        case .researcher:
+            return "A careful guide for digging into topics and weighing sources."
+        case .coder:
+            return "A pragmatic pair-programmer for reading and writing code."
+        case .productivity:
+            return "A focused helper for planning, todos, and staying on track."
+        }
+    }
+
     var systemPrompt: String {
         switch self {
         case .blank:
             return ""
+        case .assistant:
+            return """
+                You are a friendly, capable everyday assistant. Help the user with \
+                whatever they're working on — answering questions, thinking through \
+                problems, drafting, and getting things done. Be clear and concise, \
+                ask a quick clarifying question when intent is ambiguous, and adapt \
+                your depth to what they need.
+                """
         case .writer:
             return """
                 You are a thoughtful writing partner. Help the user draft, edit, and \

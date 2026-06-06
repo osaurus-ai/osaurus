@@ -27,9 +27,10 @@ enum OnboardingMetrics {
     /// Horizontal padding for header content (back/close hug the edges via this).
     static let headerHorizontal: CGFloat = 20
 
-    // Step indicator
-    /// Height the progress-dots row occupies inside the footer column.
-    static let progressStripHeight: CGFloat = 8
+    /// How far the body's clip region extends above its top edge so soft hero
+    /// glows / shadows render fully instead of being sheared off. Comfortably
+    /// covers the largest onboarding glow blur radii.
+    static let bodyGlowOverflow: CGFloat = 90
 
     // Footer
     /// Vertical padding above the footer's caption / action row.

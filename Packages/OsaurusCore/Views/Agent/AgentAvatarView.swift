@@ -18,6 +18,21 @@ public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
     public var assetName: String { "osaurus-avatar-\(rawValue)" }
 
+    /// The dino's signature color, used to theme surfaces around the mascot
+    /// (e.g. the onboarding hero glow, avatar tint, and selection ring) so
+    /// the UI reacts in the selected dino's actual color rather than a
+    /// name-hash approximation.
+    public var color: Color {
+        switch self {
+        case .blue: return Color(red: 0.30, green: 0.56, blue: 0.92)
+        case .green: return Color(red: 0.36, green: 0.72, blue: 0.42)
+        case .orange: return Color(red: 0.95, green: 0.58, blue: 0.24)
+        case .purple: return Color(red: 0.62, green: 0.42, blue: 0.92)
+        case .red: return Color(red: 0.91, green: 0.38, blue: 0.36)
+        case .yellow: return Color(red: 0.95, green: 0.78, blue: 0.27)
+        }
+    }
+
     /// Human-friendly label for accessibility / tooltip surfaces. Avoids
     /// leaking the raw enum case (`"blue"`) into help text — the avatar
     /// strip in onboarding used to read `"Avatar: blue"`.

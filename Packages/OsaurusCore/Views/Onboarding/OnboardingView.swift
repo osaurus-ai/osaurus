@@ -60,11 +60,7 @@ public struct OnboardingView: View {
     // they're configured implicitly on completion (see `finishOnboarding`).
     // The `.identitySetup` / `.sandboxSetup` cases are kept in the enum and
     // the step switches so the DEBUG `forceShowIdentity` reset flow still
-    // works, but they're absent from the normal forward flow and the
-    // progress dots.
-    private static let progressSteps: [OnboardingStep] = [
-        .createAgent, .configureAI, .choosePlugins, .walkthrough,
-    ]
+    // works, but they're absent from the normal forward flow.
 
     public init(
         forceShowIdentity: Bool = false,
@@ -85,7 +81,6 @@ public struct OnboardingView: View {
                 onBack: chromeOnBack,
                 onClose: { finishOnboarding(via: .closeButton) },
                 title: { titleSlot },
-                progressIndicator: { progressSlot },
                 footerCaption: { footerCaptionSlot },
                 secondary: { secondarySlot },
                 body: { bodySlot },
@@ -131,22 +126,6 @@ public struct OnboardingView: View {
                 .font(theme.font(size: OnboardingMetrics.titleSize, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .lineLimit(1)
-        }
-    }
-
-    @ViewBuilder
-    private var progressSlot: some View {
-        ZStack {
-            stepProgressDots
-                .id(currentStep)
-                .transition(slideTransition)
-        }
-    }
-
-    @ViewBuilder
-    private var stepProgressDots: some View {
-        if let index = progressIndex(for: currentStep) {
-            OnboardingStepIndicator(current: index, total: Self.progressSteps.count)
         }
     }
 
@@ -248,10 +227,16 @@ public struct OnboardingView: View {
                 Spacer(minLength: 0)
             }
         case .createAgent:
-            CreateAgentCTA(
-                state: createAgentState,
-                onContinue: { advance(to: .configureAI) }
-            )
+            // Centered (like Welcome) — there's no secondary action on this
+            // step, so a trailing-pinned CTA looked lopsided.
+            HStack {
+                Spacer(minLength: 0)
+                CreateAgentCTA(
+                    state: createAgentState,
+                    onContinue: { advance(to: .configureAI) }
+                )
+                Spacer(minLength: 0)
+            }
         case .configureAI:
             ConfigureAICTA(
                 state: configureAIState,
@@ -297,10 +282,9 @@ public struct OnboardingView: View {
         case .welcome:
             EmptyView()
         case .createAgent:
-            CreateAgentSecondary(onSkip: {
-                OnboardingTelemetry.stepSkipped(.createAgent)
-                advance(to: .configureAI)
-            })
+            // Non-skippable by design — creating a dino is the whole point of
+            // this step, and the CTA is always enabled so it's a single tap.
+            EmptyView()
         case .configureAI:
             ConfigureAISecondary(state: configureAIState, onComplete: { advance(to: .choosePlugins) })
         case .identitySetup:
@@ -349,7 +333,7 @@ public struct OnboardingView: View {
     private var chromeFooterCaption: LocalizedStringKey? {
         switch currentStep {
         case .welcome: return nil
-        case .createAgent: return nil
+        case .createAgent: return "You can rename and customize your dino anytime in Settings."
         case .configureAI: return configureAIState.footerCaption
         case .identitySetup: return identityState.footerCaption
         case .sandboxSetup: return nil
@@ -397,19 +381,6 @@ public struct OnboardingView: View {
 
     private func advanceFromIdentity() {
         advance(to: sandboxStepAvailable ? .sandboxSetup : .choosePlugins)
-    }
-
-    // MARK: - Step indicator
-
-    /// 1-indexed position in the global progress dots, or `nil` to hide the
-    /// indicator. Welcome has no progress (it's the title screen); the
-    /// Walkthrough has its own internal page indicator inside the body
-    /// (showing both at once just reads as duplicated dots); and the consent
-    /// step is a terminal screen that sits outside the numbered flow.
-    private func progressIndex(for step: OnboardingStep) -> Int? {
-        if step == .walkthrough || step == .consent { return nil }
-        guard let idx = Self.progressSteps.firstIndex(of: step) else { return nil }
-        return idx + 1
     }
 
     // MARK: - Slide Transition (pure horizontal)
