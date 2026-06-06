@@ -483,12 +483,14 @@ struct RuntimePolicySourceTests {
         // envelopes, plus Gemma4 unified 12B config dispatch, processor
         // tool-schema preservation, quoted native call:value parsing, the
         // explicit unsupported boundary for unproven unified image/audio/video,
-        // and Gemma4 proportional RoPE support needed by full-attention layers.
+        // and Gemma4 proportional RoPE support needed by full-attention layers,
+        // plus safe auto-enabled Nemotron Ultra JANGTQ streaming dispatch that
+        // avoids full expert materialization for 512-expert stacked-only models.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "525fc6dc17650efd420e7f9adfc1c37e40650a73"
+        let expectedRuntimeHardenedRevision = "d03beb22b0f9421b30b30c4e0dcadcb61d4d89d7"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -496,7 +498,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, and Gemma4 quoted tool-key parser coverage; an internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, and Nemotron Ultra JANGTQ streaming dispatch guard; an internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
