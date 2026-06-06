@@ -230,6 +230,40 @@ struct MLXBatchAdapterTests {
         #expect(!effective.compiledBatchDecode)
     }
 
+    @Test func effectiveGenerationSettings_preservesNemotronUltraBundleDefaultsWithoutInventingTopK() {
+        let generation = GenerationParameters(
+            temperature: nil,
+            maxTokens: 256,
+            maxTokensExplicit: true,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+        let ultraDefaults = LocalGenerationDefaults.Defaults(
+            maxTokens: nil,
+            temperature: 1.0,
+            topP: 0.95,
+            topK: nil,
+            minP: nil,
+            repetitionPenalty: nil,
+            doSample: true
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            generation: generation,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0, topK: nil),
+            maxBatchSize: 1,
+            modelDefaults: ultraDefaults
+        )
+
+        #expect(effective.temperature == 1.0)
+        #expect(effective.topP == 0.95)
+        #expect(effective.topK == 0)
+        #expect(effective.minP == 0)
+        #expect(effective.repetitionPenalty == nil)
+    }
+
     @Test func effectiveGenerationSettings_explicitRequestWinsOverBundleDefaults() {
         let generation = GenerationParameters(
             temperature: 0.2,
@@ -799,6 +833,31 @@ struct MLXBatchAdapterTests {
         #expect(key.contains("restore=disk-backed"))
         #expect(key.contains("kv=turbo(4,3)"))
         #expect(!key.contains("layers=hybrid-ssm"))
+    }
+
+    @Test func nemotronUltraCacheCoordinatorKeyPreservesRealHybridTopology() {
+        let topology = ModelCacheTopologySnapshot(
+            layerCount: 60,
+            kvLayerCount: 12,
+            mambaLayerCount: 48
+        )
+
+        let key = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            kvModeTag: "fp16",
+            cacheTopology: topology
+        )
+
+        #expect(key.contains("layers=hybrid-ssm"))
+        #expect(key.contains("topology=real"))
+        #expect(key.contains("layers=60"))
+        #expect(key.contains("kvLayers=12"))
+        #expect(key.contains("mambaLayers=48"))
+        #expect(key.contains("companion=ssm"))
+        #expect(key.contains("restore=disk-backed"))
+        #expect(key.contains("kv=fp16"))
+        #expect(!key.contains("media=omni-audio-video"))
+        #expect(!key.contains("turbo("))
     }
 
     @Test func cacheDiskDirectoryOverrideHonorsBlockDiskDirectory() {

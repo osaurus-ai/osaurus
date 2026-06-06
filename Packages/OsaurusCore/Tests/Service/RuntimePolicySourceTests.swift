@@ -516,12 +516,15 @@ struct RuntimePolicySourceTests {
         // native Nemotron XML tool fallback preserving required parameter
         // metadata for strict tool choice, plus the Nemotron Ultra resident
         // perf harness load split and mmap growing-cache proof for
-        // disk-backed hybrid SSM companion hits.
+        // disk-backed hybrid SSM companion hits, plus the Nemotron Ultra
+        // mamba_projection role alias so Osaurus auto-settings consume the
+        // same 8-bit affine Mamba projection metadata as mamba_proj-stamped
+        // bundles.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "4f9e2d176ceeac24886751e816ce3054579c3b19"
+        let expectedRuntimeHardenedRevision = "0aead34029503b1f43443584c0efe763f777123a"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -529,7 +532,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards plus native XML required-tool metadata, the Nemotron Ultra resident/mmap cache-proof harness, and the mmap graph-breakdown documentation; an internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards plus native XML required-tool metadata, the Nemotron Ultra resident/mmap cache-proof harness, mmap graph-breakdown documentation, and the Nemotron Ultra mamba_projection role alias and mmap quantized-matmul trace; an internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
