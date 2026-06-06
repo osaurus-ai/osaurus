@@ -89,12 +89,18 @@ struct RuntimePolicySourceTests {
             "startup memory/vector initialization must not inherit MainActor and block server startup"
         )
         #expect(
-            source.range(of: "await ToolIndexService.shared.syncFromRegistry()\n            await SkillSearchService.shared.rebuildIndex()") == nil,
+            source.range(
+                of:
+                    "await ToolIndexService.shared.syncFromRegistry()\n            await SkillSearchService.shared.rebuildIndex()"
+            ) == nil,
             "startup must not await the full VecturaKit tool/skill/method rebuild before health/API can respond"
         )
         let registerStart = try #require(toolIndex.range(of: "public func onToolRegistered("))
         let registerEnd = try #require(
-            toolIndex.range(of: "/// Remove a tool from the index when unregistered", range: registerStart.upperBound ..< toolIndex.endIndex)
+            toolIndex.range(
+                of: "/// Remove a tool from the index when unregistered",
+                range: registerStart.upperBound ..< toolIndex.endIndex
+            )
         )
         let registerBody = String(toolIndex[registerStart.lowerBound ..< registerEnd.lowerBound])
         #expect(registerBody.contains("ToolDatabase.shared.upsertEntry(entry)"))

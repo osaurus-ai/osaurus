@@ -683,12 +683,14 @@ public actor ModelRuntime {
         let hiddenLayers = intValue(config["num_hidden_layers"]) ?? 0
         guard attentionLayers > 0, hiddenLayers > 0 else { return nil }
 
-        let kvHeads = intValue(config["num_key_value_heads"])
+        let kvHeads =
+            intValue(config["num_key_value_heads"])
             ?? intValue(config["num_kv_heads"])
             ?? intValue(config["n_kv_heads"])
             ?? intValue(config["num_attention_heads"])
             ?? intValue(config["n_heads"])
-        let headDim = intValue(config["head_dim"])
+        let headDim =
+            intValue(config["head_dim"])
             ?? intValue(config["kv_channels"])
             ?? {
                 guard let hidden = intValue(config["hidden_size"]),
@@ -697,7 +699,8 @@ public actor ModelRuntime {
                 else { return nil }
                 return hidden / heads
             }()
-        let maxPositions = intValue(config["max_position_embeddings"])
+        let maxPositions =
+            intValue(config["max_position_embeddings"])
             ?? intValue(config["max_sequence_length"])
             ?? intValue(config["seq_length"])
             ?? intValue(config["sliding_window"])
@@ -707,7 +710,8 @@ public actor ModelRuntime {
         }
 
         let dtypeBytes = cacheElementByteWidth(config: config)
-        let kvBytes = Int64(attentionLayers)
+        let kvBytes =
+            Int64(attentionLayers)
             * 2
             * Int64(kvHeads)
             * Int64(headDim)
@@ -722,7 +726,8 @@ public actor ModelRuntime {
         let ssmState = intValue(config["ssm_state_size"]) ?? intValue(config["mamba_d_state"]) ?? 0
         let convKernel = intValue(config["conv_kernel"]) ?? intValue(config["mamba_d_conv"]) ?? 0
         let mambaHeadDim = intValue(config["mamba_head_dim"]) ?? 0
-        let ssmBytes = Int64(max(0, mambaLayers))
+        let ssmBytes =
+            Int64(max(0, mambaLayers))
             * Int64(max(0, mambaHeads))
             * Int64(max(0, ssmState + convKernel * max(1, mambaHeadDim)))
             * Int64(dtypeBytes)
@@ -2805,7 +2810,8 @@ public actor ModelRuntime {
             "model.safetensors.index.json",
             "pytorch_model.safetensors.index.json",
         ]
-        let knownIndexURL = commonIndexNames
+        let knownIndexURL =
+            commonIndexNames
             .map { directory.appendingPathComponent($0) }
             .first { fm.fileExists(atPath: $0.path) }
         if knownIndexURL != nil {

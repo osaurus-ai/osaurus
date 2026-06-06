@@ -392,7 +392,8 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 addGenerationPrompt: addGenerationPrompt
             )
         }
-        if (modelTypeIsGemma4 || (!modelTypeIsNemotron && upstream.bosToken == "<bos>") || (!modelTypeIsNemotron && hasGemma4NativeToolSentinels)),
+        if (modelTypeIsGemma4 || (!modelTypeIsNemotron && upstream.bosToken == "<bos>")
+            || (!modelTypeIsNemotron && hasGemma4NativeToolSentinels)),
             !(chatTemplateTools?.isEmpty ?? true),
             !modelTypeIsGemma3n,
             Self.requiresToolChoice(adjustedContext),
