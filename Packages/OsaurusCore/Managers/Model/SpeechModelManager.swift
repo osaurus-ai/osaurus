@@ -289,7 +289,7 @@ public final class SpeechModelManager: ObservableObject {
         SpeechModel(
             id: SpeechModelVersion.v3.rawValue,
             name: "Parakeet TDT v3 (0.6B)",
-            description: "Multilingual model. Supports 25 European languages. Recommended for most users.",
+            description: L("Multilingual model. Supports 25 European languages. Recommended for most users."),
             size: "~600 MB",
             isEnglishOnly: false,
             isRecommended: true,
@@ -298,7 +298,7 @@ public final class SpeechModelManager: ObservableObject {
         SpeechModel(
             id: SpeechModelVersion.v2.rawValue,
             name: "Parakeet TDT v2 (0.6B)",
-            description: "English-only model. Highest recall for English transcription.",
+            description: L("English-only model. Highest recall for English transcription."),
             size: "~600 MB",
             isEnglishOnly: true,
             isRecommended: false,

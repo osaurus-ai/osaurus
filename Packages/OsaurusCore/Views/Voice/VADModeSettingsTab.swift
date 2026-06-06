@@ -273,7 +273,7 @@ struct VADModeSettingsTab: View {
 
             VStack(spacing: 12) {
                 RequirementRow(
-                    title: "Microphone Access",
+                    title: L("Microphone Access"),
                     isComplete: speechService.microphonePermissionGranted,
                     action: {
                         Task {
@@ -283,13 +283,13 @@ struct VADModeSettingsTab: View {
                 )
 
                 RequirementRow(
-                    title: "Speech Model Downloaded",
+                    title: L("Speech Model Downloaded"),
                     isComplete: modelManager.downloadedModelsCount > 0,
                     action: nil
                 )
 
                 RequirementRow(
-                    title: "Model Selected",
+                    title: L("Model Selected"),
                     isComplete: modelManager.selectedModel != nil,
                     action: nil
                 )
@@ -458,8 +458,8 @@ struct VADModeSettingsTab: View {
 
             // Auto-start voice input
             ToggleSettingRow(
-                title: "Auto-Start Voice Input",
-                description: "Immediately start voice input after agent activation",
+                title: L("Auto-Start Voice Input"),
+                description: L("Immediately start voice input after agent activation"),
                 isOn: $autoStartVoiceInput,
                 onChange: { saveSettings() }
             )
@@ -978,7 +978,7 @@ private struct TestButton: View {
             HStack(spacing: 8) {
                 Image(systemName: isActive ? "stop.fill" : "mic.fill")
                     .font(.system(size: 14))
-                Text(isActive ? "Stop Test" : "Start Test")
+                Text(isActive ? L("Stop Test") : L("Start Test"))
                     .font(.system(size: 14, weight: .medium))
             }
             .foregroundColor(.white)

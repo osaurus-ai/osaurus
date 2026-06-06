@@ -267,8 +267,8 @@ struct TranscriptionModeSettingsTab: View {
 
             VStack(spacing: 12) {
                 RequirementRowView(
-                    title: "Accessibility Permission",
-                    description: "Required to type into other applications",
+                    title: L("Accessibility Permission"),
+                    description: L("Required to type into other applications"),
                     isComplete: keyboardService.hasAccessibilityPermission,
                     action: {
                         keyboardService.requestAccessibilityPermission()
@@ -276,8 +276,8 @@ struct TranscriptionModeSettingsTab: View {
                 )
 
                 RequirementRowView(
-                    title: "Microphone Access",
-                    description: "Required for voice input",
+                    title: L("Microphone Access"),
+                    description: L("Required for voice input"),
                     isComplete: speechService.microphonePermissionGranted,
                     action: {
                         Task {
@@ -287,15 +287,15 @@ struct TranscriptionModeSettingsTab: View {
                 )
 
                 RequirementRowView(
-                    title: "Speech Model Downloaded",
-                    description: "Required for transcription",
+                    title: L("Speech Model Downloaded"),
+                    description: L("Required for transcription"),
                     isComplete: modelManager.downloadedModelsCount > 0,
                     action: nil
                 )
 
                 RequirementRowView(
-                    title: "Model Selected",
-                    description: "Select a default model in the Models tab",
+                    title: L("Model Selected"),
+                    description: L("Select a default model in the Models tab"),
                     isComplete: modelManager.selectedModel != nil,
                     action: nil
                 )
@@ -439,7 +439,7 @@ struct TranscriptionModeSettingsTab: View {
                             systemName: transcriptionService.state == .transcribing ? "stop.fill" : "mic.fill"
                         )
                         .font(.system(size: 14))
-                        Text(transcriptionService.state == .transcribing ? "Stop" : "Start Test")
+                        Text(transcriptionService.state == .transcribing ? L("Stop") : L("Start Test"))
                             .font(.system(size: 14, weight: .medium))
                     }
                     .foregroundColor(

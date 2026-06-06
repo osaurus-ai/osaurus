@@ -367,8 +367,8 @@ struct VoiceSetupTab: View {
                 // Hint text
                 Text(
                     isTestingVoice
-                        ? "Listening..."
-                        : (isSetupComplete ? "Tap to test your voice" : "Complete setup to begin")
+                        ? L("Listening...")
+                        : (isSetupComplete ? L("Tap to test your voice") : L("Complete setup to begin"))
                 )
                 .font(.system(size: 14))
                 .foregroundColor(theme.tertiaryText)
