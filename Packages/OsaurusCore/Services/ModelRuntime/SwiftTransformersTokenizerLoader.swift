@@ -242,6 +242,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             || normalizedModelType == "lfm2_moe"
             || normalizedModelType == "lfm2-vl"
             || normalizedModelType == "lfm2_vl"
+        let modelTypeIsNemotron =
+            normalizedModelType == "nemotron"
+            || normalizedModelType == "nemotron_h"
         let hasZayaChatTokens =
             upstream.bosToken == "<bos>"
             && upstream.convertTokenToId("<|im_start|>") != nil
@@ -372,7 +375,20 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 addGenerationPrompt: addGenerationPrompt
             )
         }
-        if (modelTypeIsGemma4 || upstream.bosToken == "<bos>" || hasGemma4NativeToolSentinels),
+        if modelTypeIsNemotron,
+            !(chatTemplateTools?.isEmpty ?? true),
+            (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
+            return try fallback(
+                label: "NemotronMinimal",
+                template: MLXLMCommon.ChatTemplateFallbacks.nemotronMinimal,
+                messages: messages,
+                tools: chatTemplateTools,
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
+            )
+        }
+        if (modelTypeIsGemma4 || (!modelTypeIsNemotron && upstream.bosToken == "<bos>") || (!modelTypeIsNemotron && hasGemma4NativeToolSentinels)),
             !(chatTemplateTools?.isEmpty ?? true),
             !modelTypeIsGemma3n,
             Self.requiresToolChoice(adjustedContext),
