@@ -81,6 +81,24 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(cap == .textOnly)
     }
 
+    @Test("D1 boundary: Nemotron 3 Ultra composer fallback stays text-only")
+    func d1_nemotronUltraComposerFallbackTextOnly() {
+        for modelId in [
+            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            "nemotron-3-ultra-550b-a55b-jangtq-1l",
+        ] {
+            let cap = ModelMediaCapabilities.composerCapabilities(
+                modelId: modelId,
+                fallbackSupportsImages: true
+            )
+            #expect(
+                cap == .textOnly,
+                "explicit text-only Nemotron Ultra must not inherit stale image fallback: \(modelId)"
+            )
+        }
+    }
+
     @Test("Step 3.7 text runtime does not advertise media")
     func step37TextRuntimeDoesNotAdvertiseMedia() {
         #expect(ModelMediaCapabilities.from(modelId: "JANGQ-AI/Step-3.7-Flash-JANG_2L") == .textOnly)
