@@ -206,11 +206,12 @@ public enum ProviderCredentialInstructionsCatalog {
         case .xai:
             return ProviderCredentialInstructions(
                 providerType: providerType,
-                displayName: L("xAI"),
-                authMethod: .apiKey,
+                displayName: L("Grok"),
+                authMethod: .oauth,
                 getKeyURL: getKeyURL,
-                keyFormatHint: L("Get a key from console.x.ai."),
-                storageAuthType: .apiKey,
+                keyFormatHint: L(
+                    "Connect with Grok using a SuperGrok or X Premium+ subscription, or paste a key from console.x.ai."),
+                storageAuthType: .xaiOAuth,
                 presetId: preset.rawValue
             )
         case .venice:

@@ -40,7 +40,7 @@ public enum OAuthSignInCoordinator {
     /// rendering an "API key" field and a "Sign in with …" button.
     public static func supportsOAuth(_ preset: ProviderPreset) -> Bool {
         switch preset {
-        case .openrouter: return true
+        case .openrouter, .xai: return true
         default: return false
         }
     }
@@ -62,6 +62,9 @@ public enum OAuthSignInCoordinator {
         case .openrouter:
             let key = try await OpenRouterOAuthService.signIn()
             return .apiKey(key)
+        case .xai:
+            let tokens = try await XAIOAuthService.signIn()
+            return .tokens(tokens)
         default:
             throw OAuthSignInCoordinatorError.unsupportedPreset(preset: preset)
         }

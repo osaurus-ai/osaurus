@@ -29,6 +29,7 @@ public enum RemoteProviderAuthType: String, Codable, Sendable, CaseIterable {
     case none
     case apiKey
     case openAICodexOAuth
+    case xaiOAuth
 }
 
 enum RemoteProviderHeaderRedactor {
@@ -357,6 +358,16 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
                     headers["Authorization"] = "Bearer \(apiKey)"
                 }
             }
+        }
+
+        // xAI (Grok) OAuth: inject the access token as a Bearer credential so
+        // the generic OpenAI-compatible path (model discovery, etc.) authorizes
+        // correctly. Per-request refresh happens in `RemoteProviderService`;
+        // the connect path refreshes before headers are resolved here.
+        if authType == .xaiOAuth, headers["Authorization"] == nil,
+            let tokens = getOAuthTokens(), !tokens.accessToken.isEmpty
+        {
+            headers["Authorization"] = "Bearer \(tokens.accessToken)"
         }
 
         // OpenRouter app attribution: surfaces Osaurus on openrouter.ai/rankings.

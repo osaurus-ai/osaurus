@@ -273,7 +273,7 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
                 buildAndAdd(
                     displayName: displayName,
                     resolution: resolution,
-                    storageAuthType: .openAICodexOAuth,
+                    storageAuthType: request.instructions.storageAuthType,
                     hostOverride: hostOverride,
                     extraHeaders: nil,
                     apiKey: nil,

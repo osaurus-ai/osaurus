@@ -129,6 +129,7 @@ private struct AddProviderFlow: View {
     @State private var apiKey: String = ""
     @State private var openAIAuthMode: OpenAIProviderCredentialMode = .chatGPTSubscription
     @State private var openRouterAuthMode: OpenRouterCredentialMode = .oauthSignIn
+    @State private var xaiAuthMode: XAICredentialMode = .oauthSignIn
     @State private var oauthTokens: RemoteProviderOAuthTokens?
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
@@ -168,6 +169,9 @@ private struct AddProviderFlow: View {
             return true
         }
         if preset == .openrouter && openRouterAuthMode == .oauthSignIn {
+            return true
+        }
+        if preset == .xai && xaiAuthMode == .oauthSignIn {
             return true
         }
         return !apiKey.isEmpty && apiKey.count > 5
@@ -370,6 +374,10 @@ private struct AddProviderFlow: View {
                         openRouterAuthChoiceSection
                     }
 
+                    if selectedPreset == .xai {
+                        xaiAuthChoiceSection
+                    }
+
                     if selectedPreset == .azureOpenAI {
                         azureConnectionSection
                         azureDeploymentsSection
@@ -489,6 +497,7 @@ private struct AddProviderFlow: View {
                 oauthTokens = nil
                 openAIAuthMode = .chatGPTSubscription
                 openRouterAuthMode = .oauthSignIn
+                xaiAuthMode = .oauthSignIn
                 testResult = nil
                 customName = ""
                 customHost = ""
@@ -666,6 +675,7 @@ private struct AddProviderFlow: View {
     private var showsKnownEndpointOverride: Bool {
         guard let preset = selectedPreset, preset.isKnown, preset != .azureOpenAI else { return false }
         if preset == .openai && openAIAuthMode == .chatGPTSubscription { return false }
+        if preset == .xai && xaiAuthMode == .oauthSignIn { return false }
         return true
     }
 
@@ -784,6 +794,8 @@ private struct AddProviderFlow: View {
             return openAIAuthMode == .platformAPIKey
         case .openrouter:
             return openRouterAuthMode == .apiKey
+        case .xai:
+            return xaiAuthMode == .apiKey
         default:
             return true
         }
@@ -841,6 +853,32 @@ private struct AddProviderFlow: View {
         }
     }
 
+    private var xaiAuthChoiceSection: some View {
+        authChoiceSection(
+            cards: [
+                authChoiceCardSpec(
+                    mode: XAICredentialMode.oauthSignIn,
+                    isSelected: xaiAuthMode == .oauthSignIn,
+                    action: { selectXAIMode(.oauthSignIn) }
+                ),
+                authChoiceCardSpec(
+                    mode: XAICredentialMode.apiKey,
+                    isSelected: xaiAuthMode == .apiKey,
+                    action: { selectXAIMode(.apiKey) }
+                ),
+            ]
+        )
+    }
+
+    private func selectXAIMode(_ mode: XAICredentialMode) {
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+            xaiAuthMode = mode
+            testResult = nil
+            oauthTokens = nil
+            apiKey = ""
+        }
+    }
+
     /// Lightweight DTO used to feed `authChoiceSection` without forcing
     /// callers to recite the per-mode title/subtitle/icon triple.
     private struct AuthChoiceCardSpec {
@@ -867,6 +905,20 @@ private struct AddProviderFlow: View {
 
     private func authChoiceCardSpec(
         mode: OpenRouterCredentialMode,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> AuthChoiceCardSpec {
+        AuthChoiceCardSpec(
+            title: mode.title,
+            subtitle: mode.subtitle,
+            icon: mode.icon,
+            isSelected: isSelected,
+            action: action
+        )
+    }
+
+    private func authChoiceCardSpec(
+        mode: XAICredentialMode,
         isSelected: Bool,
         action: @escaping () -> Void
     ) -> AuthChoiceCardSpec {
@@ -1317,12 +1369,14 @@ private struct AddProviderFlow: View {
     private var actionButtonTitle: String {
         let isOpenAIOAuth = selectedPreset == .openai && openAIAuthMode == .chatGPTSubscription
         let isOpenRouterOAuth = selectedPreset == .openrouter && openRouterAuthMode == .oauthSignIn
-        let isBrowserSignIn = isOpenAIOAuth || isOpenRouterOAuth
+        let isXAIOAuth = selectedPreset == .xai && xaiAuthMode == .oauthSignIn
+        let isBrowserSignIn = isOpenAIOAuth || isOpenRouterOAuth || isXAIOAuth
         if isTesting { return isBrowserSignIn ? L("Signing in...") : L("Testing...") }
         if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return L("Add Provider") }
         if case .failure = testResult { return L("Retry") }
         if isOpenAIOAuth { return L("Sign in with ChatGPT") }
         if isOpenRouterOAuth { return L("Sign in with OpenRouter") }
+        if isXAIOAuth { return L("Connect with Grok (SuperGrok / X Premium+)") }
         return L("Test Connection")
     }
 
@@ -1374,6 +1428,17 @@ private struct AddProviderFlow: View {
                         apiKey: key,
                         headers: HeaderEntry.buildHeaders(from: customHeaders)
                     )
+                } else if preset == .xai && xaiAuthMode == .oauthSignIn {
+                    // Grok sign-in returns access/refresh tokens; stash them so
+                    // `saveKnownProvider` persists them as `.xaiOAuth`. The
+                    // browser sign-in IS the test — xAI OAuth tokens cannot list
+                    // models (HTTP 403), so we surface the built-in catalog
+                    // rather than probing /models.
+                    let tokens = try await XAIOAuthService.signIn()
+                    await MainActor.run {
+                        oauthTokens = tokens
+                    }
+                    models = XAIOAuthService.supportedModels
                 } else {
                     models = try await RemoteProviderManager.shared.testConnection(
                         host: connection.host,
@@ -1392,10 +1457,14 @@ private struct AddProviderFlow: View {
                     }
                 }
             } catch {
-                let message =
-                    preset == .openai && openAIAuthMode == .chatGPTSubscription
-                    ? OpenAICodexOAuthService.diagnosticMessage(for: error)
-                    : error.localizedDescription
+                let message: String
+                if preset == .openai && openAIAuthMode == .chatGPTSubscription {
+                    message = OpenAICodexOAuthService.diagnosticMessage(for: error)
+                } else if preset == .xai && xaiAuthMode == .oauthSignIn {
+                    message = XAIOAuthService.diagnosticMessage(for: error)
+                } else {
+                    message = error.localizedDescription
+                }
                 await MainActor.run {
                     withAnimation {
                         testResult = .failure(message); isTesting = false
@@ -1411,7 +1480,12 @@ private struct AddProviderFlow: View {
         let connection = knownProviderConnection(for: preset)
         let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
         let isCodexOAuth = preset == .openai && openAIAuthMode == .chatGPTSubscription
-        let providerConfig = isCodexOAuth ? OpenAICodexOAuthService.makeProvider() : nil
+        let isXAIOAuth = preset == .xai && xaiAuthMode == .oauthSignIn
+        let usesOAuthTokens = isCodexOAuth || isXAIOAuth
+        let providerConfig: RemoteProvider? =
+            isCodexOAuth
+            ? OpenAICodexOAuthService.makeProvider()
+            : (isXAIOAuth ? XAIOAuthService.makeProvider() : nil)
 
         let remoteProvider = RemoteProvider(
             id: providerConfig?.id ?? UUID(),
@@ -1432,7 +1506,11 @@ private struct AddProviderFlow: View {
         )
 
         saveSecretHeaders(for: remoteProvider.id)
-        onSave(remoteProvider, isCodexOAuth ? nil : (apiKey.isEmpty ? nil : apiKey), isCodexOAuth ? oauthTokens : nil)
+        onSave(
+            remoteProvider,
+            usesOAuthTokens ? nil : (apiKey.isEmpty ? nil : apiKey),
+            usesOAuthTokens ? oauthTokens : nil
+        )
         dismiss()
     }
 
@@ -1899,6 +1977,23 @@ private struct EditProviderFlow: View {
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundColor(theme.primaryText)
                                 Text("Signed in with ChatGPT Plus/Pro. Tokens are stored in Keychain.", bundle: .module)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(theme.secondaryText)
+                            }
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(theme.accentColor.opacity(0.08)))
+                    } else if authType == .xaiOAuth {
+                        HStack(spacing: 10) {
+                            Image(systemName: "person.crop.circle.badge.checkmark")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(theme.accentColor)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Grok (SuperGrok / X Premium+)", bundle: .module)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(theme.primaryText)
+                                Text("Signed in with Grok. Tokens are stored in Keychain.", bundle: .module)
                                     .font(.system(size: 12))
                                     .foregroundColor(theme.secondaryText)
                             }
@@ -2379,6 +2474,8 @@ private struct EditProviderFlow: View {
 
         Task {
             do {
+                // xAI OAuth tokens cannot list models (HTTP 403); the manager
+                // short-circuits to the built-in catalog for `.xaiOAuth`.
                 let models = try await RemoteProviderManager.shared.testConnection(
                     host: trimmedHost,
                     providerProtocol: providerProtocol,
@@ -2394,10 +2491,14 @@ private struct EditProviderFlow: View {
                     isTesting = false
                 }
             } catch {
-                let message =
-                    authType == .openAICodexOAuth || providerType == .openAICodex
-                    ? OpenAICodexOAuthService.diagnosticMessage(for: error)
-                    : error.localizedDescription
+                let message: String
+                if authType == .openAICodexOAuth || providerType == .openAICodex {
+                    message = OpenAICodexOAuthService.diagnosticMessage(for: error)
+                } else if authType == .xaiOAuth {
+                    message = XAIOAuthService.diagnosticMessage(for: error)
+                } else {
+                    message = error.localizedDescription
+                }
                 await MainActor.run {
                     testResult = .failure(message)
                     isTesting = false

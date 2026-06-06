@@ -68,6 +68,13 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
 
     public let expectedState: String
     public let callbackPath: String
+    /// Hosts whose cross-origin requests to the loopback callback get CORS
+    /// headers echoed back. Required by providers (e.g. xAI/Grok) whose auth
+    /// page delivers the authorization code via a browser `fetch()` rather than
+    /// a top-level redirect — without `Access-Control-Allow-Origin` the fetch is
+    /// blocked and the page falls back to a manual code-paste screen. Empty for
+    /// redirect-based providers (Codex, OpenRouter, MCP), which need no CORS.
+    public let corsOriginAllowlist: [String]
     private let listener: NWListener
     private let lock = NSLock()
     private var continuation: CheckedContinuation<OAuthCallbackResult, Error>?
@@ -89,10 +96,12 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
     public init(
         expectedState: String,
         port: LoopbackPort,
-        callbackPath: String = "/callback"
+        callbackPath: String = "/callback",
+        corsOriginAllowlist: [String] = []
     ) throws {
         self.expectedState = expectedState
         self.callbackPath = callbackPath.hasPrefix("/") ? callbackPath : "/" + callbackPath
+        self.corsOriginAllowlist = corsOriginAllowlist
         do {
             switch port {
             case .fixed(let value):
@@ -188,38 +197,89 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
 
     // MARK: - Connection handling
 
+    /// What to do with a parsed HTTP request on the loopback server.
+    private enum CallbackOutcome {
+        /// Not our authorization callback (favicon probe, CORS preflight, wrong
+        /// path/method). Respond politely but keep listening — must NOT resolve
+        /// the awaiter, or stray browser requests would abort the flow.
+        case ignore(status: String)
+        /// A request on the configured callback path. Resolve the awaiter with
+        /// this result (success or a real OAuth failure).
+        case deliver(Result<OAuthCallbackResult, Error>)
+    }
+
     private func handle(_ connection: NWConnection) {
         connection.start(queue: Self.queue)
         // OAuth callbacks are well under 8KB even with extra params; we only need
-        // the request line for HTTP/1.1 GETs from a browser.
+        // the request line (and Origin header) for HTTP/1.1 requests from a browser.
         connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
             guard let self else { return }
-            let result = self.parseCallback(from: data)
-            self.sendResponse(for: result, on: connection)
-            self.complete(result)
+            let request = data.flatMap { String(data: $0, encoding: .utf8) }
+            let requestLine = request?.components(separatedBy: "\r\n").first
+            let origin = self.parseOrigin(from: request)
+            let parts = requestLine?.split(separator: " ") ?? []
+            let method = parts.first.map(String.init) ?? ""
+
+            // CORS preflight: the auth page probes the loopback before delivering
+            // the code via fetch(). Answer it without completing the flow.
+            if method == "OPTIONS" {
+                self.sendPreflight(origin: origin, on: connection)
+                return
+            }
+
+            let outcome = self.parseCallback(requestLine: requestLine)
+            switch outcome {
+            case .ignore(let status):
+                self.sendSimple(status: status, origin: origin, on: connection)
+            case .deliver(let result):
+                self.sendResponse(for: result, origin: origin, on: connection)
+                self.complete(result)
+            }
         }
     }
 
-    private func parseCallback(from data: Data?) -> Result<OAuthCallbackResult, Error> {
-        guard let data,
-            let request = String(data: data, encoding: .utf8),
-            let requestLine = request.components(separatedBy: "\r\n").first,
-            requestLine.hasPrefix("GET ")
+    /// Extract the `Origin` request header value (case-insensitive), if present.
+    private func parseOrigin(from request: String?) -> String? {
+        guard let request else { return nil }
+        for line in request.components(separatedBy: "\r\n") {
+            let lower = line.lowercased()
+            if lower.hasPrefix("origin:") {
+                let value = line.dropFirst("origin:".count).trimmingCharacters(in: .whitespaces)
+                return value.isEmpty ? nil : value
+            }
+        }
+        return nil
+    }
+
+    /// `Access-Control-Allow-Origin` value to echo, if `origin`'s host is on the
+    /// allowlist; otherwise `nil` (no CORS headers — same-origin/redirect flows).
+    private func accessControlAllowOrigin(for origin: String?) -> String? {
+        guard !corsOriginAllowlist.isEmpty,
+            let origin,
+            let host = URLComponents(string: origin)?.host,
+            corsOriginAllowlist.contains(where: { $0.caseInsensitiveCompare(host) == .orderedSame })
         else {
-            return .failure(OAuthLoopbackError.invalidCallback)
+            return nil
+        }
+        return origin
+    }
+
+    private func parseCallback(requestLine: String?) -> CallbackOutcome {
+        guard let requestLine, requestLine.hasPrefix("GET ") else {
+            return .ignore(status: "405 Method Not Allowed")
         }
 
         let parts = requestLine.split(separator: " ")
         guard parts.count >= 2,
             let callbackURL = URL(string: "http://127.0.0.1\(parts[1])")
         else {
-            return .failure(OAuthLoopbackError.invalidCallback)
+            return .ignore(status: "400 Bad Request")
         }
 
-        // Reject anything that isn't on the configured callback path so unrelated
-        // browser probes (favicon.ico etc.) don't accidentally complete the flow.
+        // Ignore anything that isn't on the configured callback path so unrelated
+        // browser probes (favicon.ico etc.) don't abort the flow.
         guard callbackURL.path == callbackPath else {
-            return .failure(OAuthLoopbackError.invalidCallback)
+            return .ignore(status: "404 Not Found")
         }
 
         let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
@@ -229,24 +289,41 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
 
         // Per RFC 6749 §4.1.2.1: surface server-side errors with description.
         if let error = value("error"), !error.isEmpty {
-            return .failure(
-                OAuthLoopbackError.oauthError(error: error, description: value("error_description"))
+            return .deliver(
+                .failure(
+                    OAuthLoopbackError.oauthError(error: error, description: value("error_description"))
+                )
             )
         }
         guard let state = value("state"), state == expectedState else {
-            return .failure(OAuthLoopbackError.stateMismatch)
+            return .deliver(.failure(OAuthLoopbackError.stateMismatch))
         }
         guard let code = value("code"), !code.isEmpty else {
-            return .failure(OAuthLoopbackError.missingCode)
+            return .deliver(.failure(OAuthLoopbackError.missingCode))
         }
-        return .success(OAuthCallbackResult(code: code, state: state, url: callbackURL))
+        return .deliver(.success(OAuthCallbackResult(code: code, state: state, url: callbackURL)))
     }
 
-    private func sendResponse(for result: Result<OAuthCallbackResult, Error>, on connection: NWConnection) {
-        let success: Bool = {
-            if case .success = result { return true }
-            return false
-        }()
+    /// CORS preflight response. Does not complete the flow.
+    private func sendPreflight(origin: String?, on connection: NWConnection) {
+        send(
+            status: "204 No Content",
+            headers: corsHeaders(for: origin, includePreflight: true),
+            on: connection
+        )
+    }
+
+    /// Minimal status-only response for ignored probes. Does not complete the flow.
+    private func sendSimple(status: String, origin: String?, on connection: NWConnection) {
+        send(status: status, headers: corsHeaders(for: origin, includePreflight: false), on: connection)
+    }
+
+    private func sendResponse(
+        for result: Result<OAuthCallbackResult, Error>,
+        origin: String?,
+        on connection: NWConnection
+    ) {
+        let success = (try? result.get()) != nil
         let title = success ? "Sign-in complete" : "Sign-in failed"
         let message =
             success
@@ -257,20 +334,51 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
             <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 32px;">
             <h1>\(title)</h1><p>\(message)</p><script>window.close();</script></body></html>
             """
-        let status = success ? "200 OK" : "400 Bad Request"
-        let response = [
-            "HTTP/1.1 \(status)",
-            "Content-Type: text/html; charset=utf-8",
-            "Content-Length: \(body.utf8.count)",
-            "Connection: close",
-            "",
-            body,
-        ].joined(separator: "\r\n")
+        send(
+            status: success ? "200 OK" : "400 Bad Request",
+            headers: corsHeaders(for: origin, includePreflight: false),
+            contentType: "text/html; charset=utf-8",
+            body: body,
+            on: connection
+        )
+    }
+
+    /// CORS response headers to echo for an allowlisted `origin`, in deterministic
+    /// order. Empty for non-allowlisted origins (redirect-based flows need none).
+    private func corsHeaders(for origin: String?, includePreflight: Bool) -> [(String, String)] {
+        guard let allowOrigin = accessControlAllowOrigin(for: origin) else { return [] }
+        var headers = [("Access-Control-Allow-Origin", allowOrigin)]
+        if includePreflight {
+            headers.append(("Access-Control-Allow-Methods", "GET, OPTIONS"))
+            headers.append(("Access-Control-Allow-Headers", "*"))
+            headers.append(("Access-Control-Max-Age", "600"))
+        }
+        headers.append(("Vary", "Origin"))
+        return headers
+    }
+
+    /// Write a minimal HTTP/1.1 response and close the connection.
+    private func send(
+        status: String,
+        headers: [(String, String)] = [],
+        contentType: String? = nil,
+        body: String = "",
+        on connection: NWConnection
+    ) {
+        var lines = ["HTTP/1.1 \(status)"]
+        for (name, value) in headers {
+            lines.append("\(name): \(value)")
+        }
+        if let contentType {
+            lines.append("Content-Type: \(contentType)")
+        }
+        lines.append("Content-Length: \(body.utf8.count)")
+        lines.append("Connection: close")
+        lines.append("")
+        lines.append(body)
         connection.send(
-            content: Data(response.utf8),
-            completion: .contentProcessed { _ in
-                connection.cancel()
-            }
+            content: Data(lines.joined(separator: "\r\n").utf8),
+            completion: .contentProcessed { _ in connection.cancel() }
         )
     }
 
