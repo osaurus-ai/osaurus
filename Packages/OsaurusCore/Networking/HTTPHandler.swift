@@ -6184,6 +6184,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         "model": f.modelName,
                         "verdict": f.verdict.rawValue,
                         "incoming_weights_bytes": f.incomingWeightsBytes,
+                        "incoming_load_footprint_bytes": f.incomingLoadFootprintBytes,
                         "resident_weights_bytes": f.residentWeightsBytes,
                         "kv_headroom_bytes": f.kvHeadroomBytes,
                         "projected_bytes": f.projectedBytes,

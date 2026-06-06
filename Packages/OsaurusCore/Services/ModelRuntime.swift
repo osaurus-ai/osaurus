@@ -624,6 +624,7 @@ public actor ModelRuntime {
         public let modelName: String
         public let verdict: Verdict
         public let incomingWeightsBytes: Int64
+        public let incomingLoadFootprintBytes: Int64
         public let residentWeightsBytes: Int64
         public let kvHeadroomBytes: Int64
         public let projectedBytes: Int64
@@ -782,6 +783,7 @@ public actor ModelRuntime {
     private func checkRAMFeasibility(
         modelName: String,
         incomingWeightsBytes: Int64,
+        incomingLoadFootprintBytes: Int64,
         excludingResident excludedName: String?,
         modelDirectory: URL? = nil
     ) throws {
@@ -794,13 +796,13 @@ public actor ModelRuntime {
         // (empty) cache and both pass, doubling the real footprint.
         let inflightOther = inflightLoadWeightBytes(excluding: excludedName)
         let kvHeadroom = Self.estimatedKVHeadroomBytes(
-            forWeights: incomingWeightsBytes,
+            forWeights: incomingLoadFootprintBytes,
             modelDirectory: modelDirectory,
             modelName: modelName
         )
         let available = Self.availableMemoryBytes()
-        let requiredAvailable = incomingWeightsBytes + kvHeadroom
-        let projected = resident + inflightOther + incomingWeightsBytes + kvHeadroom
+        let requiredAvailable = incomingLoadFootprintBytes + kvHeadroom
+        let projected = resident + inflightOther + incomingLoadFootprintBytes + kvHeadroom
         let softLimit = Int64(Double(physical) * Self.ramSoftThreshold)
         let hardLimit = Int64(Double(physical) * Self.ramHardThreshold)
 
@@ -817,6 +819,7 @@ public actor ModelRuntime {
             modelName: modelName,
             verdict: verdict,
             incomingWeightsBytes: incomingWeightsBytes,
+            incomingLoadFootprintBytes: incomingLoadFootprintBytes,
             residentWeightsBytes: resident,
             kvHeadroomBytes: kvHeadroom,
             projectedBytes: projected,
@@ -842,7 +845,7 @@ public actor ModelRuntime {
             CrashReportingService.recordBreadcrumb(
                 category: "model.load",
                 message:
-                    "refused model=\(modelName) weightsBytes=\(incomingWeightsBytes) kvHeadroomBytes=\(kvHeadroom) availableBytes=\(available) requiredAvailableBytes=\(requiredAvailable) physicalBytes=\(physical)"
+                    "refused model=\(modelName) weightsBytes=\(incomingWeightsBytes) loadFootprintBytes=\(incomingLoadFootprintBytes) kvHeadroomBytes=\(kvHeadroom) availableBytes=\(available) requiredAvailableBytes=\(requiredAvailable) physicalBytes=\(physical)"
             )
             let projGB = String(format: "%.1f", Double(projected) / 1_073_741_824)
             let physGB = String(format: "%.1f", Double(physical) / 1_073_741_824)
@@ -1061,8 +1064,13 @@ public actor ModelRuntime {
         // below — were blind under the default strict policy. The value also
         // feeds `mlxCacheLimit()` and the `/health` + model-picker surfaces.
         let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
+        let loadFootprintBytes = Self.effectiveLoadFootprintBytes(
+            rawWeightsBytes: weightsBytes,
+            modelDirectory: localURL,
+            modelName: name
+        )
         genLog.info(
-            "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public)"
+            "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public) loadFootprintBytes=\(loadFootprintBytes, privacy: .public)"
         )
 
         // Reserve this load's footprint the instant it's known, BEFORE the
@@ -1072,7 +1080,7 @@ public actor ModelRuntime {
         // — by the time the success path returns, the model is already
         // resident in `modelCache`, so dropping the reservation can't
         // momentarily under-count.
-        inflightLoadWeights[name] = weightsBytes
+        inflightLoadWeights[name] = loadFootprintBytes
         defer { inflightLoadWeights.removeValue(forKey: name) }
 
         try Task.checkCancellation()
@@ -1080,7 +1088,7 @@ public actor ModelRuntime {
         if policy == .manualMultiModel {
             await unloadForFlexibleResidentBudget(
                 targetName: name,
-                incomingWeightsSizeBytes: weightsBytes
+                incomingWeightsSizeBytes: loadFootprintBytes
             )
         }
         try Task.checkCancellation()
@@ -1093,6 +1101,7 @@ public actor ModelRuntime {
         try checkRAMFeasibility(
             modelName: name,
             incomingWeightsBytes: weightsBytes,
+            incomingLoadFootprintBytes: loadFootprintBytes,
             excludingResident: name,
             modelDirectory: localURL
         )
@@ -1144,7 +1153,7 @@ public actor ModelRuntime {
             return SessionHolder(
                 name: name,
                 container: container,
-                weightsSizeBytes: weightsBytes,
+                weightsSizeBytes: loadFootprintBytes,
                 isVLM: isVLM,
                 draftStrategy: mtpPlan.draftStrategy
             )
@@ -2718,6 +2727,70 @@ public actor ModelRuntime {
             }
         }
         return total
+    }
+
+    static func effectiveLoadFootprintBytes(
+        rawWeightsBytes: Int64,
+        modelDirectory: URL?,
+        modelName: String? = nil
+    ) -> Int64 {
+        guard rawWeightsBytes > 0, let modelDirectory else { return rawWeightsBytes }
+        guard isRoutedJANGTQCompressionLoad(at: modelDirectory, modelName: modelName) else {
+            return rawWeightsBytes
+        }
+
+        // vMLX `.osaurusProduction` loads routed JANGTQ through mmap-backed
+        // safetensors and MLXPress compression-first residency. The default
+        // compression policy advises 70% of routed weights cold, so the
+        // pre-load crash-prevention gate should budget the hot working set,
+        // not require the entire routed shard total to be immediately free.
+        let hotFraction = 0.30
+        let floor: Int64 = 4 * 1024 * 1024 * 1024
+        let estimated = Int64(Double(rawWeightsBytes) * hotFraction)
+        return min(rawWeightsBytes, max(floor, estimated))
+    }
+
+    private static func isRoutedJANGTQCompressionLoad(at directory: URL, modelName: String?) -> Bool {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: directory.appendingPathComponent("jangtq_runtime.safetensors").path)
+        else { return false }
+
+        let config = Self.readJSONObject(at: directory.appendingPathComponent("config.json"))
+        let jang = Self.readJSONObject(at: directory.appendingPathComponent("jang_config.json"))
+        guard !config.isEmpty || !jang.isEmpty else { return false }
+
+        let weightFormat =
+            Self.stringValue(jang["weight_format"])
+            ?? Self.stringValue(config["weight_format"])
+            ?? ""
+        let profile =
+            ((jang["quantization"] as? [String: Any]).flatMap { Self.stringValue($0["profile"]) }
+                ?? Self.stringValue(jang["profile"])
+                ?? "")
+        let declaresJANGTQ =
+            weightFormat.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "mxtq"
+            || profile.lowercased().contains("jangtq")
+            || (modelName?.lowercased().contains("jangtq") ?? false)
+        guard declaresJANGTQ else { return false }
+
+        let routedExperts =
+            Self.intValue(config["n_routed_experts"])
+            ?? Self.intValue(config["num_routed_experts"])
+            ?? Self.intValue(config["num_experts"])
+            ?? Self.intValue(config["num_local_experts"])
+        if (routedExperts ?? 0) > 0 { return true }
+
+        if let actions = (jang["quantization"] as? [String: Any])?["actions"] as? [String: Any],
+            (Self.intValue(actions["routed_tq"]) ?? 0) > 0
+        {
+            return true
+        }
+        if let mxtqBits = jang["mxtq_bits"] as? [String: Any],
+            mxtqBits["routed_expert"] != nil
+        {
+            return true
+        }
+        return false
     }
 
     /// Verify every weight shard referenced by a `*.safetensors.index.json`

@@ -1731,10 +1731,14 @@ struct RuntimePolicySourceTests {
         // reservation both need the incoming bundle's footprint up front.
         #expect(loadPreflight.contains("if policy == .manualMultiModel"))
         #expect(loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)"))
+        #expect(
+            loadPreflight.contains("let loadFootprintBytes = Self.effectiveLoadFootprintBytes("),
+            "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set, not the whole safetensors shard total."
+        )
         // Feasibility gate + concurrent-load reservation must run before the
         // load task is allocated, so a cold load can't bypass RAM accounting.
         #expect(
-            loadPreflight.contains("inflightLoadWeights[name] = weightsBytes"),
+            loadPreflight.contains("inflightLoadWeights[name] = loadFootprintBytes"),
             "Cold loads must reserve their footprint before the feasibility gate so a parallel load of another model can't double-book unified memory."
         )
         #expect(
@@ -1744,6 +1748,7 @@ struct RuntimePolicySourceTests {
         #expect(
             runtime.contains("availableMemoryBytes()")
                 && runtime.contains("requiredAvailable > available")
+                && runtime.contains("incomingLoadFootprintBytes")
                 && runtime.contains("availableBytes=")
                 && runtime.contains("Clear memory, unload other models, or choose a smaller/more-quantized model."),
             "The load gate must stop low-available-memory launches before Metal OOMs and expose a user-actionable resource message, not a fatal C++ exception."
@@ -1752,6 +1757,7 @@ struct RuntimePolicySourceTests {
         let health = try Self.source("Networking/HTTPHandler.swift")
         #expect(health.contains("\"available_memory_bytes\": f.availableMemoryBytes"))
         #expect(health.contains("\"required_available_bytes\": f.requiredAvailableBytes"))
+        #expect(health.contains("\"incoming_load_footprint_bytes\": f.incomingLoadFootprintBytes"))
     }
 
     @Test("MTP bundles auto-resolve vmlx tuning into load and generation")
