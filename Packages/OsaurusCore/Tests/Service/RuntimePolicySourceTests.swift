@@ -519,7 +519,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "9e28ccdf3f0bf07f7e867ce3b4925fc547adbdd7"
+        let expectedRuntimeHardenedRevision = "8ba63f93e0b25302303b6b8b3573a2f97cf4f8f9"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -2058,7 +2058,10 @@ struct RuntimePolicySourceTests {
         #expect(
             toolsView.contains("RuntimeManagedToolEntryRow")
                 && toolsView.contains("badge: runtimeBadge(for: entry)")
-                && toolsView.contains("badge: \"Sandbox\""),
+                && (
+                    toolsView.contains("badge: \"Sandbox\"")
+                        || toolsView.contains("badge: L(\"Sandbox\")")
+                ),
             "Runtime-managed tools must be visible as operational rows without pretending they are normal plugin toggle rows."
         )
         #expect(
