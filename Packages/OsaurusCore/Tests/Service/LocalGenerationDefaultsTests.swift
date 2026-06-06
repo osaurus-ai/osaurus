@@ -109,6 +109,33 @@ struct LocalGenerationDefaultsTests {
         #expect(d.doSample == nil)
     }
 
+    @Test("Nemotron Ultra JANGTQ_1L: temperature and top_p, no top_k")
+    func nemotronUltraJANGTQ1L() {
+        // Copied from the local
+        // NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L generation_config.json.
+        // The missing top_k is intentional: osaurus must not invent one for
+        // this model family.
+        let d = Self.defaults(
+            fromJSON: #"""
+                {
+                  "bos_token_id": 1,
+                  "do_sample": true,
+                  "eos_token_id": [2, 11],
+                  "pad_token_id": 0,
+                  "temperature": 1.0,
+                  "top_p": 0.95,
+                  "transformers_version": "4.55.4"
+                }
+                """#
+        )
+        #expect(d.temperature == 1.0)
+        #expect(d.topP == 0.95)
+        #expect(d.doSample == true)
+        #expect(d.topK == nil)
+        #expect(d.minP == nil)
+        #expect(d.repetitionPenalty == nil)
+    }
+
     @Test("Full generation_config surface mirrors vmlx GenerationConfigFile")
     func fullGenerationConfigSurface() {
         let d = Self.defaults(

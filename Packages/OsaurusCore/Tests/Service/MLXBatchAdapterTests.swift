@@ -230,6 +230,40 @@ struct MLXBatchAdapterTests {
         #expect(!effective.compiledBatchDecode)
     }
 
+    @Test func effectiveGenerationSettings_preservesNemotronUltraBundleDefaultsWithoutInventingTopK() {
+        let generation = GenerationParameters(
+            temperature: nil,
+            maxTokens: 256,
+            maxTokensExplicit: true,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+        let ultraDefaults = LocalGenerationDefaults.Defaults(
+            maxTokens: nil,
+            temperature: 1.0,
+            topP: 0.95,
+            topK: nil,
+            minP: nil,
+            repetitionPenalty: nil,
+            doSample: true
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            generation: generation,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0, topK: nil),
+            maxBatchSize: 1,
+            modelDefaults: ultraDefaults
+        )
+
+        #expect(effective.temperature == 1.0)
+        #expect(effective.topP == 0.95)
+        #expect(effective.topK == 0)
+        #expect(effective.minP == 0)
+        #expect(effective.repetitionPenalty == nil)
+    }
+
     @Test func effectiveGenerationSettings_explicitRequestWinsOverBundleDefaults() {
         let generation = GenerationParameters(
             temperature: 0.2,
