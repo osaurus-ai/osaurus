@@ -166,9 +166,15 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     private var didPrewarmChatView = false
     func prewarmChatView() {
         guard !didPrewarmChatView else { return }
-        didPrewarmChatView = true
         // A live chat window already paid (and warmed) this cost.
         guard windowCount == 0 else { return }
+        // Constructing ChatWindowState pulls up ChatSessionsManager, which opens the
+        // chat store and needs the storage key. If the launch-time key prewarm is still
+        // stuck inside a slow Keychain read, that lookup would park the main thread
+        // behind it, so only prewarm once the key is already resident. Skipping is
+        // safe: the first real window pays the realization cost on demand instead.
+        guard StorageKeyManager.shared.hasCachedKey else { return }
+        didPrewarmChatView = true
 
         let windowState = ChatWindowState(
             windowId: UUID(),
