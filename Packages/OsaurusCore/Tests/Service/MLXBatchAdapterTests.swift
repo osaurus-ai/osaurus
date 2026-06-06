@@ -735,6 +735,8 @@ struct MLXBatchAdapterTests {
             "qwen3_6_moe",
             "qwen36_moe",
             "qwen3-next-80b-jangtq",
+            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
             "ibm-granite/granite-3.0-moe-hybrid-7b",
             "tiiuae/falcon-h1-34b",
             "baichuan-m1-14b",

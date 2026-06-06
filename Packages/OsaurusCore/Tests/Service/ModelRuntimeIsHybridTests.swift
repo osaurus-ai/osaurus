@@ -33,6 +33,8 @@ struct ModelRuntimeIsHybridTests {
             "dealign.ai/Nemotron-Omni-Nano-JANGTQ4-CRACK",
             "dealign.ai/Nemotron-Omni-Nano-MXFP4-CRACK",
             "nemotron_omni_nano_jangtq",
+            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
             "JANGQ-AI/Nemotron-3-Reasoning-Future-Variant",  // forward-compat
         ] {
             #expect(
