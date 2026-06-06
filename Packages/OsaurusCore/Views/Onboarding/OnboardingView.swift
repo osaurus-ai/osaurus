@@ -250,10 +250,20 @@ public struct OnboardingView: View {
                 onComplete: { advance(to: .choosePlugins) }
             )
         case .choosePlugins:
-            ChoosePluginsCTA(
-                state: choosePluginsState,
-                onComplete: { advance(to: .walkthrough) }
-            )
+            // Centered, content-hugging pill. "Skip" is folded into this CTA
+            // when nothing is ticked, so there's no separate secondary link.
+            HStack {
+                Spacer(minLength: 0)
+                ChoosePluginsCTA(
+                    state: choosePluginsState,
+                    onComplete: { advance(to: .walkthrough) },
+                    onSkip: {
+                        OnboardingTelemetry.stepSkipped(.choosePlugins)
+                        advance(to: .walkthrough)
+                    }
+                )
+                Spacer(minLength: 0)
+            }
         case .walkthrough:
             WalkthroughCTA(
                 state: walkthroughState,
@@ -300,10 +310,8 @@ public struct OnboardingView: View {
                 advance(to: .choosePlugins)
             })
         case .choosePlugins:
-            ChoosePluginsSecondary(onSkip: {
-                OnboardingTelemetry.stepSkipped(.choosePlugins)
-                advance(to: .walkthrough)
-            })
+            // Skip is folded into the primary CTA when nothing is selected.
+            EmptyView()
         case .walkthrough:
             EmptyView()
         case .consent:

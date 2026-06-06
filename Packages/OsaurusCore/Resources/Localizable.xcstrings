@@ -9529,6 +9529,7 @@
       }
     },
     "Connect OpenAI" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -11397,6 +11398,7 @@
       }
     },
     "Custom provider" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -39852,6 +39854,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "技能为人工智能提供专业知识和指导。"
+          }
+        }
+      }
+    },
+    "Skip" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Überspringen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳过"
           }
         }
       }

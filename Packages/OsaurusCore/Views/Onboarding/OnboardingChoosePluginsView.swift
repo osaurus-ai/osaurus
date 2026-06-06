@@ -47,7 +47,7 @@ final class ChoosePluginsState: ObservableObject {
     @Published var isLoading: Bool = false
 
     /// Curated picks shown in the onboarding picker. Order matters — the
-    /// grid renders in this order. Only entries that also exist in the
+    /// list renders in this order. Only entries that also exist in the
     /// remote catalog (`PluginRepositoryService.shared.plugins`) are
     /// surfaced; everything else is silently dropped.
     ///
@@ -170,8 +170,8 @@ final class ChoosePluginsState: ObservableObject {
     }
 
     /// IDs that will actually be installed when the CTA fires (selected
-    /// but not yet installed). Drives the CTA's title between "Install
-    /// picks" and "Continue".
+    /// but not yet installed). Drives the CTA between "Install N Tools" and,
+    /// when empty, "Skip".
     var idsToInstall: [String] {
         let installed = Set(visiblePicks.filter { $0.state.isInstalled }.map { $0.pick.pluginId })
         return selectedIds.subtracting(installed).sorted()
@@ -197,23 +197,6 @@ final class ChoosePluginsState: ObservableObject {
         }
         onComplete()
     }
-}
-
-// MARK: - Layout constants
-
-/// Onboarding-only layout tuning for the plugin picker grid. Kept
-/// file-local so other onboarding steps don't accidentally inherit a
-/// 2-column rhythm that's specific to this picker.
-private enum PluginPickerLayout {
-    /// Two equal-width cards per row. The right column of the
-    /// two-column onboarding body is ~424pt wide, which gives ~207pt
-    /// per card after the inner spacing — tight, but workable with the
-    /// 28pt icon + compact accessory layout in `PluginPickCard`.
-    static let columns: [GridItem] = [
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10),
-    ]
-    static let gridSpacing: CGFloat = 10
 }
 
 // MARK: - Body
@@ -255,21 +238,44 @@ struct ChoosePluginsBody: View {
             }
         } else {
             VStack(alignment: .leading, spacing: OnboardingMetrics.cardSpacing) {
-                pluginGrid(picks: picks)
+                pluginList(picks: picks)
                 footnoteRow
             }
         }
     }
 
-    private func pluginGrid(picks: [ChoosePluginsState.VisiblePick]) -> some View {
-        LazyVGrid(columns: PluginPickerLayout.columns, spacing: PluginPickerLayout.gridSpacing) {
+    /// Single-column list of full-width row cards — the same
+    /// `OnboardingRowCard` rhythm the model and provider pickers use, so the
+    /// step reads consistently with the earlier onboarding screens.
+    private func pluginList(picks: [ChoosePluginsState.VisiblePick]) -> some View {
+        VStack(spacing: OnboardingMetrics.cardSpacing) {
             ForEach(picks) { entry in
-                PluginPickCard(
-                    entry: entry,
-                    isSelected: state.isSelected(entry.pick.pluginId),
-                    onToggle: { state.toggle(entry.pick.pluginId) }
-                )
+                pluginRow(entry)
             }
+        }
+    }
+
+    private func pluginRow(_ entry: ChoosePluginsState.VisiblePick) -> some View {
+        let pluginId = entry.pick.pluginId
+        let installed = entry.state.isInstalled
+        let installing = entry.state.isInstalling
+        let selected = state.isSelected(pluginId)
+        // Installed picks read as a passive "Installed" badge with no radio
+        // (the disabled row hides the accessory), matching the model picker's
+        // already-downloaded treatment.
+        let badges: [OnboardingRowBadge] =
+            installed ? [OnboardingRowBadge(L("Installed"), style: .success)] : []
+
+        return OnboardingRowCard(
+            icon: .symbol(entry.pick.icon),
+            title: entry.pick.displayName,
+            subtitle: entry.pick.blurb,
+            badges: badges,
+            accessory: .radio(isSelected: selected),
+            isSelected: selected,
+            isDisabled: installed || installing
+        ) {
+            state.toggle(pluginId)
         }
     }
 
@@ -327,131 +333,33 @@ struct ChoosePluginsBody: View {
     }
 }
 
-// MARK: - Plugin Pick Card
-
-/// One card in the onboarding plugin grid. Pulled out of
-/// `ChoosePluginsBody` so SwiftUI can diff and re-render a single card
-/// when its selection toggles, instead of walking the whole body.
-private struct PluginPickCard: View {
-    let entry: ChoosePluginsState.VisiblePick
-    let isSelected: Bool
-    let onToggle: () -> Void
-
-    @Environment(\.theme) private var theme
-
-    private var installed: Bool { entry.state.isInstalled }
-    private var installing: Bool { entry.state.isInstalling }
-
-    var body: some View {
-        Button {
-            if !installed { onToggle() }
-        } label: {
-            OnboardingGlassCard(isSelected: isSelected && !installed) {
-                cardContent
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(installed || installing)
-        .opacity(installed ? 0.78 : 1.0)
-    }
-
-    /// Title + accessory share one row INSIDE the right column (not as
-    /// siblings of the icon at the top-level `HStack`). At ~207pt card
-    /// width the previous layout gave the title only ~55pt — enough to
-    /// truncate "Calendar" to "Calen…" and force the "Installed"
-    /// capsule to wrap onto a second line.
-    private var cardContent: some View {
-        HStack(alignment: .top, spacing: 10) {
-            iconBadge
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(LocalizedStringKey(entry.pick.displayName), bundle: .module)
-                        .font(theme.font(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                        .layoutPriority(1)
-                    Spacer(minLength: 4)
-                    accessory
-                }
-                Text(LocalizedStringKey(entry.pick.blurb), bundle: .module)
-                    .font(theme.font(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .lineLimit(2)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 10)
-    }
-
-    private var iconBadge: some View {
-        ZStack {
-            Circle()
-                .fill(theme.accentColor.opacity(0.14))
-                .frame(width: 28, height: 28)
-            Image(systemName: entry.pick.icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.accentColor)
-        }
-        .fixedSize()
-    }
-
-    /// Trailing accessory — install spinner, "Installed" badge, or
-    /// radio glyph. All three branches commit to identical bounding
-    /// boxes (16×16 spinner / fixed-width capsule / 18×18 framed glyph)
-    /// so toggling selection never re-flows the surrounding row.
-    @ViewBuilder
-    private var accessory: some View {
-        if installing {
-            ProgressView()
-                .scaleEffect(0.6)
-                .frame(width: 16, height: 16)
-        } else if installed {
-            Text("Installed", bundle: .module)
-                .font(theme.font(size: 9, weight: .bold))
-                .foregroundColor(theme.successColor)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(theme.successColor.opacity(0.14)))
-        } else {
-            // Single SF Symbol for both states — see comment above.
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(isSelected ? theme.accentColor : theme.primaryBorder)
-                .frame(width: 18, height: 18)
-        }
-    }
-}
-
 // MARK: - CTA
 
+/// Single adaptive CTA: installs the ticked picks, or — when nothing is
+/// selected — turns into "Skip" so the step needs only one centered control
+/// instead of a separate skip link. The skip path still fires the same
+/// `stepSkipped` telemetry via `onSkip`.
 struct ChoosePluginsCTA: View {
     @ObservedObject var state: ChoosePluginsState
     let onComplete: () -> Void
-
-    var body: some View {
-        let willInstall = state.idsToInstall
-        let title: String =
-            willInstall.isEmpty
-            ? L("Continue")
-            : (willInstall.count == 1 ? L("Install 1 Tool") : L("Install \(willInstall.count) Tools"))
-
-        return OnboardingBrandButton(title: title) {
-            state.installAndAdvance(onComplete: onComplete)
-        }
-        .frame(width: OnboardingMetrics.ctaWidthCompact)
-    }
-}
-
-// MARK: - Secondary
-
-struct ChoosePluginsSecondary: View {
     let onSkip: () -> Void
 
     var body: some View {
-        OnboardingTextButton(title: "Skip for now", action: onSkip)
+        let willInstall = state.idsToInstall
+        let isSkip = willInstall.isEmpty
+        let title: String =
+            isSkip
+            ? L("Skip")
+            : (willInstall.count == 1 ? L("Install 1 Tool") : L("Install \(willInstall.count) Tools"))
+
+        return OnboardingBrandButton(title: title) {
+            if isSkip {
+                onSkip()
+            } else {
+                state.installAndAdvance(onComplete: onComplete)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -464,9 +372,9 @@ struct ChoosePluginsSecondary: View {
             return VStack {
                 ChoosePluginsBody(state: state).frame(height: 460)
                 HStack {
-                    ChoosePluginsSecondary(onSkip: {})
                     Spacer()
-                    ChoosePluginsCTA(state: state, onComplete: {})
+                    ChoosePluginsCTA(state: state, onComplete: {}, onSkip: {})
+                    Spacer()
                 }
             }
             .frame(width: OnboardingMetrics.windowWidth, height: 640)
