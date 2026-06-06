@@ -128,7 +128,12 @@ final class ModelPickerItemCache: ObservableObject {
         }
 
         let localModels = await Task.detached(priority: .userInitiated) {
-            ModelManager.discoverLocalModels()
+            let models = ModelManager.discoverLocalModels()
+            // Warm the memoized VLM verdicts while still off the main actor:
+            // `fromMLXModel` below reads `isVLM` on the MainActor, and a cold
+            // cache would otherwise fault one config.json read per model there.
+            for model in models { _ = model.isVLM }
+            return models
         }.value
 
         for model in localModels {
