@@ -505,6 +505,85 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(!decoded.contains("For multiline string values, represent each line break"), "Decoded: \(decoded)")
     }
 
+    @Test func nemotronRequiredToolChoiceCompactsClosedToolHistoryForLaterRequiredToolTurn() async throws {
+        let defaultPath = "/Users/eric/models/NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_NEMOTRON_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "line_count",
+                description: "Count newline-separated text lines.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("text")]),
+                ])
+            )
+        )
+        let finalUser = "Now use line_count on exactly this new text, preserving newlines:\none\ntwo"
+        let tokenIds = try tokenizer.applyChatTemplate(
+            messages: [
+                [
+                    "role": "user",
+                    "content": "Use the line_count tool on exactly this text, preserving newlines:\nalpha\nbeta\ngamma",
+                ],
+                [
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        [
+                            "id": "call_line_count_1",
+                            "type": "function",
+                            "function": [
+                                "name": "line_count",
+                                "arguments": ["text": "alpha\nbeta\ngamma"],
+                            ] as [String: any Sendable],
+                        ] as [String: any Sendable]
+                    ],
+                ] as [String: any Sendable],
+                ["role": "tool", "content": "{\"lines\":3}", "tool_call_id": "call_line_count_1"],
+                [
+                    "role": "user",
+                    "content": "Answer visibly in one short sentence: how many lines were counted? Do not call a tool.",
+                ],
+                ["role": "assistant", "content": "The line_count tool counted 3 lines."],
+                ["role": "user", "content": finalUser],
+            ],
+            tools: [tool.toTokenizerToolSpec()],
+            additionalContext: [
+                "tool_choice": "required",
+                "tool_choice_name": "line_count",
+            ]
+        )
+        let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
+
+        #expect(decoded.contains(finalUser), "Decoded: \(decoded)")
+        #expect(decoded.contains("<tools>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<name>line_count</name>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<required>[\"text\"]</required>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("MUST be a tool call"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
+        #expect(decoded.contains("<function=line_count>"), "Decoded: \(decoded)")
+        #expect(decoded.contains("<parameter=text>"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("alpha\nbeta\ngamma"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("call_line_count_1"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("The line_count tool counted 3 lines."), "Decoded: \(decoded)")
+        #expect(!decoded.contains("{\"lines\":3}"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("<|tool_call>call:line_count"), "Decoded: \(decoded)")
+    }
+
     @Test func gemma3nLocalTokenizerDoesNotInventRequiredToolContractFromFallback() async throws {
         let defaultPath = "/Users/eric/models/mlx-community/gemma-3n-E2B-it-4bit"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA3N_TEST_MODEL"] ?? defaultPath
