@@ -244,9 +244,13 @@ public final class MCPProviderManager: ObservableObject {
 
             if let challenge {
                 // Try one refresh+retry for OAuth providers when we already have tokens.
+                // Off the main actor: the Keychain read blocks on securityd XPC + decrypt.
                 if allowOAuthRetry,
                     provider.authType == .oauth,
-                    let tokens = MCPProviderKeychain.getOAuthTokens(for: providerId),
+                    let tokens = await Task.detached(
+                        priority: .userInitiated,
+                        operation: { MCPProviderKeychain.getOAuthTokens(for: providerId) }
+                    ).value,
                     tokens.refreshToken?.isEmpty == false
                 {
                     do {
