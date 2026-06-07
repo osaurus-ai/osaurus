@@ -100,21 +100,16 @@ public enum SystemPromptTemplates {
         ## Discovering more tools
 
         Your current tool list is a fixed starting set, not an exhaustive \
-        one. The Enabled-capabilities list below names more that you can pull \
-        in on demand. When a capability seems missing, follow this order \
-        before deciding you can't do something:
+        one. The Enabled-capabilities list below names more you can pull in on \
+        demand and shows exactly how to load by id with capabilities_load. \
+        When a capability seems missing and is NOT named there, \
+        `capabilities_discover({"query": "<what you need>"})` searches beyond \
+        the listed set and returns IDs like `tool/sandbox_exec` or \
+        `skill/plot-data` that you load the same way.
 
-        1. Check the Enabled-capabilities list — if it is named there, skip \
-        straight to step 3 with that ID.
-        2. `capabilities_discover({"query": "<what you need>"})` — searches \
-        beyond the listed set and returns IDs like `tool/sandbox_exec` or \
-        `skill/plot-data`.
-        3. `capabilities_load({"ids": ["tool/sandbox_exec"]})` — adds those \
-        tools to your schema for the rest of this session.
-
+        Do not invent tool names — use IDs from the list or from discovery. \
         Only after a `capabilities_discover` call comes back empty may you \
-        work around the gap or tell the user the capability is unavailable. \
-        Do not invent tool names — use IDs from the list or from discovery.
+        work around the gap or tell the user the capability is unavailable.
         """
 
     // MARK: - Enabled Capabilities Manifest
@@ -338,40 +333,55 @@ public enum SystemPromptTemplates {
 
     // MARK: - Sandbox
 
-    /// Renders the sandbox section. Code style + risk-aware actions are
-    /// NOT included here — they live as top-level sections gated on
-    /// file-mutation tools being in the schema, so folder-mode agents
-    /// doing real edits get the same discipline.
+    /// Static sandbox framing — heading, environment block, tool-dispatch
+    /// guide, and runtime hints. Every input is session-constant (the home
+    /// path, combined-mode flag, and background flag don't change
+    /// mid-session), so this section lives in the cached static prefix.
+    ///
+    /// Code style + risk-aware actions are NOT included here — they live as
+    /// top-level sections gated on file-mutation tools being in the schema,
+    /// so folder-mode agents doing real edits get the same discipline.
+    ///
+    /// The mid-session-mutable bits (installed packages + configured
+    /// secrets) are rendered separately by `sandboxState(...)` and injected
+    /// as a DYNAMIC section, so a `sandbox_install` or a freshly-added
+    /// secret mid-session no longer rewrites the cached prefix.
     public static func sandbox(
-        secretNames: [String] = [],
-        installedPackages: SandboxPackageManifest.Installed = .init(),
         home: String = "",
         hostReadCombined: Bool = false,
         backgroundEnabled: Bool = false
     ) -> String {
-        var section = """
+        """
 
-            \(sandboxSectionHeading)
+        \(sandboxSectionHeading)
 
-            \(sandboxEnvironmentBlock(home: home))
+        \(sandboxEnvironmentBlock(home: home))
 
-            \(hostReadCombined ? sandboxToolGuideCombined(backgroundEnabled: backgroundEnabled) : sandboxToolGuide(backgroundEnabled: backgroundEnabled))
+        \(hostReadCombined ? sandboxToolGuideCombined(backgroundEnabled: backgroundEnabled) : sandboxToolGuide(backgroundEnabled: backgroundEnabled))
 
-            \(sandboxRuntimeHints(hostReadCombined: hostReadCombined))
+        \(sandboxRuntimeHints(hostReadCombined: hostReadCombined))
+        """
+    }
 
-            """
-        // The runtime hints block ends with a single `\n`; each of these is
-        // its own logical subsection, so prepend a blank-line separator
-        // instead of having them run on as extra bullets.
+    /// Mid-session-mutable sandbox state: the installed-package summary and
+    /// the configured-secret list. Relocated OUT of the static `sandbox`
+    /// framing into a DYNAMIC prompt section so a `sandbox_install` or a new
+    /// secret mid-session stays fresh without rewriting the cached KV prefix.
+    /// Returns `""` when nothing is installed or configured so the composer
+    /// drops the section entirely.
+    public static func sandboxState(
+        secretNames: [String] = [],
+        installedPackages: SandboxPackageManifest.Installed = .init()
+    ) -> String {
+        var parts: [String] = []
         let installed = installedPackagesPromptBlock(installedPackages)
-        if !installed.isEmpty {
-            section += "\n" + installed
-        }
+        if !installed.isEmpty { parts.append(installed) }
         let secrets = secretsPromptBlock(secretNames)
-        if !secrets.isEmpty {
-            section += "\n" + secrets
-        }
-        return section
+        if !secrets.isEmpty { parts.append(secrets) }
+        // Each block is self-contained and trailing-newline terminated; the
+        // composer trims the section, so a single `\n` join keeps the two
+        // logical blocks on their own lines without a runaway blank run.
+        return parts.joined(separator: "\n")
     }
 
     // MARK: - Sandbox Building Blocks
@@ -471,9 +481,10 @@ public enum SystemPromptTemplates {
     static let installedPackagesPromptCap = 12
 
     /// Compact, capped summary of what's already installed in the sandbox,
-    /// grouped by manager. Lives in the static prefix (KV-cache safe) and
-    /// reflects manifest state as of session start. Returns `""` when
-    /// nothing is recorded so the composer can append unconditionally.
+    /// grouped by manager. Rendered into the DYNAMIC `sandboxState` section
+    /// (via `sandboxState(...)`) so it reflects live manifest state without
+    /// busting the cached prefix. Returns `""` when nothing is recorded so
+    /// the composer can append unconditionally.
     static func installedPackagesPromptBlock(_ installed: SandboxPackageManifest.Installed) -> String {
         guard !installed.isEmpty else { return "" }
 

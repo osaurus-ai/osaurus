@@ -627,7 +627,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
 
         // A plugin skill governs its sibling tools, so auto-load the plugin's
         // whole dynamic tool group (agent-scoped) instead of forcing a
-        // separate `capabilities_load` per tool.
+        // separate `capabilities_load` per tool. Sorted for a deterministic,
+        // KV-stable load order and a predictable cap boundary.
         if let pluginId = skill.pluginId, !pluginId.isEmpty {
             let allowedNames = await grantedToolNamesForCurrentAgent()
             let groupToolNames = await MainActor.run {
@@ -636,7 +637,28 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                     .map(\.name)
                     .filter { allowedNames?.contains($0) ?? true }
             }
-            output += await bufferToolSpecs(named: groupToolNames)
+            .sorted()
+
+            // Size guard: a skill governing a very large plugin would
+            // otherwise dump every sibling tool's schema into the live tool
+            // channel on a single load — unnecessary context the model rarely
+            // needs all of, and a needless bloat of the `<tools>` block. Cap
+            // the auto-load at the same ceiling the enabled-capabilities
+            // manifest uses; the model can pull any remaining tool by id with
+            // `capabilities_load`.
+            let cap = SystemPromptTemplates.enabledManifestToolCap
+            if groupToolNames.count > cap {
+                let loaded = Array(groupToolNames.prefix(cap))
+                let deferred = Array(groupToolNames.dropFirst(cap))
+                output += await bufferToolSpecs(named: loaded)
+                output +=
+                    "\(groupToolNames.count) tools belong to this skill's plugin; "
+                    + "auto-loaded the first \(cap). Load any of the remaining "
+                    + "\(deferred.count) by id with `capabilities_load` "
+                    + "(e.g. `tool/\(deferred.first ?? "")`).\n"
+            } else {
+                output += await bufferToolSpecs(named: groupToolNames)
+            }
         }
         return output
     }

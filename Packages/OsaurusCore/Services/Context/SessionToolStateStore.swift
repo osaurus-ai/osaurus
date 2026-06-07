@@ -51,13 +51,15 @@ actor SessionToolStateStore {
         _ sessionId: String,
         alwaysLoadedNames: LoadedTools?,
         fingerprint: String? = nil,
-        manifest: String? = nil
+        manifest: String? = nil,
+        soul: String? = nil
     ) {
         guard states[sessionId] == nil else { return }
         states[sessionId] = SessionToolState(
             initialAlwaysLoadedNames: alwaysLoadedNames,
             sessionFingerprint: fingerprint,
-            frozenManifest: manifest
+            frozenManifest: manifest,
+            frozenSoul: soul
         )
     }
 

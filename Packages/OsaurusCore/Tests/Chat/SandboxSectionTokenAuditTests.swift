@@ -93,14 +93,17 @@ struct SandboxSectionTokenAuditTests {
     ///
     /// Live numbers (2026-05-05): zero secrets → no block; two secrets
     /// adds ~44 tokens (~32 fixed header/access + ~6 per bullet).
+    /// Adding secrets MUST scale roughly linearly. Secrets now live in the
+    /// dynamic `sandboxState` section (relocated out of the static framing
+    /// for KV-cache stability), so the audit measures that section.
     @Test("secrets block scales near-linearly with secret count")
     func secretsScaleLinearly() {
-        let baseline = TokenEstimator.estimate(SystemPromptTemplates.sandbox(secretNames: []))
+        let baseline = TokenEstimator.estimate(SystemPromptTemplates.sandboxState(secretNames: []))
         let twoSecrets = TokenEstimator.estimate(
-            SystemPromptTemplates.sandbox(secretNames: ["FOO_TOKEN", "BAR_API_KEY"])
+            SystemPromptTemplates.sandboxState(secretNames: ["FOO_TOKEN", "BAR_API_KEY"])
         )
         let fourSecrets = TokenEstimator.estimate(
-            SystemPromptTemplates.sandbox(secretNames: ["A", "B", "C", "D"])
+            SystemPromptTemplates.sandboxState(secretNames: ["A", "B", "C", "D"])
         )
         let twoDelta = twoSecrets - baseline
         let fourDelta = fourSecrets - baseline
@@ -116,24 +119,22 @@ struct SandboxSectionTokenAuditTests {
         )
     }
 
-    /// Pin the blank-line separator between Runtime hints and Configured
-    /// secrets. Without it the secrets block reads as a sixth runtime-hint
-    /// bullet because both render as bulleted text — visually orphaned.
-    @Test("secrets block is separated from runtime hints by a blank line")
-    func secretsBlockHasBlankLineSeparator() {
-        let section = SystemPromptTemplates.sandbox(secretNames: ["FOO_TOKEN"])
-        // Find the runtime-hints terminator and the secrets header. They
-        // must be separated by `\n\n` (blank line), not a single `\n`.
-        guard let hintsEnd = section.range(of: "experiment freely."),
-            let secretsStart = section.range(of: "Configured secrets")
-        else {
-            Issue.record("Section is missing one of the pinned anchors:\n\(section)")
-            return
-        }
-        let between = section[hintsEnd.upperBound ..< secretsStart.lowerBound]
-        #expect(
-            between.contains("\n\n"),
-            "Runtime hints and Configured secrets are not separated by a blank line — secrets reads as a continuation of the hints list. Between: \(String(reflecting: String(between)))"
+    /// The static `sandbox` framing must NOT carry the mutable secret /
+    /// package state — that lives in the dynamic `sandboxState` section so
+    /// adding a secret or installing a package mid-session doesn't rewrite
+    /// the cached prefix. Pin the split so a future refactor can't silently
+    /// fold the mutable bits back into the framing.
+    @Test("static sandbox framing carries no mutable state")
+    func sandboxFramingExcludesMutableState() {
+        let framing = SystemPromptTemplates.sandbox()
+        #expect(!framing.contains("Configured secrets"))
+        #expect(!framing.contains("Already installed"))
+
+        let state = SystemPromptTemplates.sandboxState(
+            secretNames: ["FOO_TOKEN"],
+            installedPackages: .init(pip: ["flask"])
         )
+        #expect(state.contains("Configured secrets"))
+        #expect(state.contains("Already installed"))
     }
 }

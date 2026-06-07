@@ -90,6 +90,7 @@ public struct SystemPromptComposer: Sendable {
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
         frozenManifest: String? = nil,
+        frozenSoul: String? = nil,
         trace: TTFTTrace? = nil
     ) async -> ComposedContext {
         await composeChatContext(
@@ -103,6 +104,7 @@ public struct SystemPromptComposer: Sendable {
                 additionalToolNames: additionalToolNames,
                 frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
                 frozenManifest: frozenManifest,
+                frozenSoul: frozenSoul,
                 trace: trace
             )
         )
@@ -144,6 +146,7 @@ public struct SystemPromptComposer: Sendable {
             additionalToolNames: request.additionalToolNames,
             frozenAlwaysLoadedNames: request.frozenAlwaysLoadedNames,
             frozenManifest: request.frozenManifest,
+            frozenSoul: request.frozenSoul,
             trace: trace
         )
         trace?.mark("compose_context_done")
@@ -227,6 +230,7 @@ public struct SystemPromptComposer: Sendable {
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
         frozenManifest: String? = nil,
+        frozenSoul: String? = nil,
         trace: TTFTTrace? = nil
     ) async -> ComposedContext {
         var comp = composer
@@ -243,6 +247,7 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             agentId: agentId,
             executionMode: executionMode,
+            frozenSoul: frozenSoul,
             trace: trace
         )
         let memorySection = await memoryAsync
@@ -290,7 +295,8 @@ public struct SystemPromptComposer: Sendable {
             cacheHint: manifest.staticPrefixHash(tools: toolset.tools),
             staticPrefix: manifest.staticPrefixContent,
             contextDisable: toolset.contextDisable,
-            enabledManifest: toolset.enabledManifest
+            enabledManifest: toolset.enabledManifest,
+            soul: soulSection
         )
     }
 
@@ -390,14 +396,24 @@ public struct SystemPromptComposer: Sendable {
     /// file is missing/empty. Mirrors `resolveMemory` shape (gate +
     /// trace marks) so a future async-only soul source can slot in
     /// without changing the call-site.
+    ///
+    /// `frozenSoul` mirrors `frozenManifest`: when the session captured a
+    /// turn-1 value it is echoed verbatim so a mid-session `SOUL.md` edit
+    /// can't rewrite the static prefix (the file's own contract says edits
+    /// apply on the next session). `nil` means "read fresh now".
     @MainActor
     private static func resolveSoul(
         snapshot: AgentConfigSnapshot,
         agentId: UUID,
         executionMode: ExecutionMode,
+        frozenSoul: String? = nil,
         trace: TTFTTrace?
     ) async -> String? {
         guard executionMode.usesSandboxTools else { return nil }
+        if let frozenSoul {
+            trace?.set("soulSource", "frozen")
+            return frozenSoul
+        }
         trace?.mark("soul_start")
         let linuxName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
         let cap = soulCap(forModel: snapshot.model)
@@ -574,24 +590,30 @@ public struct SystemPromptComposer: Sendable {
     ///
     ///   1. platform                  (forChat)
     ///   2. persona                   (forChat)
-    ///   3. soul                      static, sandbox-only, gated on non-empty SOUL.md
-    ///   4. modelFamilyGuidance       static, every family (default for .other)
-    ///   5. grounding                 static, gated on tools present
-    ///   6. codeStyle                 static, gated on file-edit tools
-    ///   7. riskAware                 static, gated on file-mutation tools
-    ///   8. agentLoopGuidance         static, gated on loop tools (or small ctx)
-    ///   9. sandbox / folderContext   static, mode-specific, gated on tools on
-    ///  10. capabilityNudge           static, gated on capabilities_discover
-    ///  11. enabledManifest           static, frozen, gated on capabilities_load
+    ///   3. soul                      static, sandbox-only, frozen per session
+    ///   4. agentDB                   static framing, gated on dbEnabled
+    ///   5. modelFamilyGuidance       static, every family (default for .other)
+    ///   6. grounding                 static, gated on tools present
+    ///   7. codeStyle                 static, gated on file-edit tools
+    ///   8. riskAware                 static, gated on file-mutation tools
+    ///   9. agentLoopGuidance         static, gated on loop tools (or small ctx)
+    ///  10. sandbox / folderContext   static framing, mode-specific, gated on tools on
+    ///  11. capabilityNudge           static, gated on capabilities_discover
+    ///  12. enabledManifest           static, frozen, gated on capabilities_load
     ///                                (all enabled tools + plugin skills + standalone skills)
-    ///  12. skillsGovern              static body, paired with enabledManifest
-    ///  13. sandboxUnavailable        dynamic, gated on registrar failure
-    ///  14. pluginCreator             dynamic, backstop
+    ///  13. skillsGovern              static body, paired with enabledManifest
+    ///  14. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
+    ///  15. sandboxState              dynamic, installed packages + secrets (mutate mid-session)
+    ///  16. sandboxUnavailable        dynamic, gated on registrar failure
+    ///  17. pluginCreator             dynamic, backstop
     ///
     /// Statics come before dynamics so the cached prefix
     /// (`PromptManifest.staticPrefixContent`) reaches as far as possible —
     /// every static section above the first dynamic break joins the
-    /// KV-cache reuse window.
+    /// KV-cache reuse window. The `agentDB`/`sandbox` framing is static while
+    /// their mutable state (`agentDBSchema`/`sandboxState`) rides in the
+    /// dynamic block, so schema changes, package installs, and new secrets
+    /// stay fresh turn-to-turn without invalidating the cached prefix.
     ///
     /// Shared between the real send path (`finalizeContext`) and the sync
     /// preview path (`composePreviewContext`) so the welcome-screen budget
@@ -622,6 +644,13 @@ public struct SystemPromptComposer: Sendable {
         let effectiveToolsOff = toolset.effectiveToolsOff
         let resolvedNames = Set(tools.map { $0.function.name })
 
+        // Mid-session-mutable content captured while building the static
+        // framing, but emitted LATER as dynamic sections (after the static
+        // prefix break) so a schema change, package install, or new secret
+        // mid-session stays fresh without rewriting the cached KV prefix.
+        var agentDBSchemaSection: String?
+        var sandboxStateSection: String?
+
         // ── Statics ──────────────────────────────────────────────────
 
         // SOUL: agent-authored identity layer for sandbox mode. Sits
@@ -641,26 +670,31 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Agent DB onboarding (spec §5.5.3) + schema snapshot (§5.5.5).
-        // Gated on `dbEnabled`; rendered before model-family guidance so
-        // it sits as close to the persona as possible (the agent should
-        // read it before any operational guidance). The snapshot read
-        // can fail when the DB couldn't open (rare); fall back to the
-        // "no tables yet" empty state so the prompt is well-formed even
-        // when state is partially broken.
+        // Agent DB onboarding (spec §5.5.3). Gated on `dbEnabled`; rendered
+        // before model-family guidance so it sits as close to the persona as
+        // possible (the agent should read it before any operational
+        // guidance). The onboarding framing is session-constant, so it stays
+        // STATIC.
+        //
+        // The schema snapshot (§5.5.5) is mid-session-mutable — the agent
+        // creates/alters tables as it works — so it is captured here but
+        // emitted as the DYNAMIC `agentDBSchema` section below, keeping the
+        // cached prefix byte-stable across turns. The snapshot read can fail
+        // when the DB couldn't open (rare); fall back to the "no tables yet"
+        // empty state so the prompt is well-formed even when state is
+        // partially broken.
         if !effectiveToolsOff, snapshot.dbEnabled {
-            var dbSection = OnboardingPrompt.block
-            let snapshotText = Self.renderSchemaSnapshot(agentId: agentId)
-            if !snapshotText.isEmpty {
-                dbSection += "\n\n" + snapshotText
-            }
             composer.append(
                 .static(
                     id: "agentDB",
                     label: "Agent DB",
-                    content: dbSection
+                    content: OnboardingPrompt.block
                 )
             )
+            let snapshotText = Self.renderSchemaSnapshot(agentId: agentId)
+            if !snapshotText.isEmpty {
+                agentDBSchemaSection = snapshotText
+            }
         }
 
         // Per-model-family nudge — small, targeted blocks for known model
@@ -764,10 +798,6 @@ public struct SystemPromptComposer: Sendable {
         // ~4K window. `effectiveToolsOff` is session-constant (agent toggle
         // OR size class), so this gate is KV-cache safe.
         if !effectiveToolsOff, executionMode.usesSandboxTools {
-            let secretNames = AgentSecretsKeychain.secretIDs(agentId: agentId)
-            let installedPackages = SandboxPackageManifest.shared.installed(
-                agentId: agentId.uuidString
-            )
             // Derived identically to how the sandbox tools register their
             // home (`SandboxToolRegistrar` -> `BuiltinSandboxTools.register`)
             // so the prompt names the exact path `cwd` validation accepts.
@@ -779,14 +809,27 @@ public struct SystemPromptComposer: Sendable {
                     id: "sandbox",
                     label: "Chat Sandbox",
                     content: SystemPromptTemplates.sandbox(
-                        secretNames: secretNames,
-                        installedPackages: installedPackages,
                         home: sandboxHome,
                         hostReadCombined: executionMode.hostReadContext != nil,
                         backgroundEnabled: snapshot.autonomousConfig?.backgroundProcessEnabled ?? false
                     )
                 )
             )
+            // Mid-session-mutable: installed packages + configured secrets.
+            // Captured here but emitted as the DYNAMIC `sandboxState` section
+            // below so a `sandbox_install` or new secret stays fresh without
+            // rewriting the cached prefix. `""` when nothing is recorded.
+            let secretNames = AgentSecretsKeychain.secretIDs(agentId: agentId)
+            let installedPackages = SandboxPackageManifest.shared.installed(
+                agentId: agentId.uuidString
+            )
+            let state = SystemPromptTemplates.sandboxState(
+                secretNames: secretNames,
+                installedPackages: installedPackages
+            )
+            if !state.isEmpty {
+                sandboxStateSection = state
+            }
             // Combined mode: a read-only host workspace rides alongside
             // the sandbox. Append the read-only workspace section + the
             // two-filesystem block AFTER the sandbox section so the agent
@@ -870,6 +913,31 @@ public struct SystemPromptComposer: Sendable {
         }
 
         // ── Dynamics ─────────────────────────────────────────────────
+
+        // Agent DB schema snapshot + live sandbox state (installed packages
+        // / configured secrets). Both derive from mid-session-mutable state,
+        // so they sit AFTER the static prefix break: they update freely turn
+        // to turn (the model always sees current state) without invalidating
+        // the cached KV prefix. The framing for each lives in its static
+        // counterpart above (`agentDB` / `sandbox`).
+        if let agentDBSchemaSection {
+            composer.append(
+                .dynamic(
+                    id: "agentDBSchema",
+                    label: "Agent DB Schema",
+                    content: agentDBSchemaSection
+                )
+            )
+        }
+        if let sandboxStateSection {
+            composer.append(
+                .dynamic(
+                    id: "sandboxState",
+                    label: "Sandbox State",
+                    content: sandboxStateSection
+                )
+            )
+        }
 
         // Surface a "sandbox unavailable" notice when the agent wants
         // sandbox tools but registration couldn't provide them — otherwise

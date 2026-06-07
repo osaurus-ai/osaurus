@@ -2338,10 +2338,10 @@ final class ChatSession: ObservableObject {
             )
         )
 
-                    // Capture the agent binding for the whole turn so every async
-                    // step inside this Task — model resolution, system prompt
-                    // composition, streaming, tool execution, post-stream
-                    // memory writes — sees a single non-shifting `currentAgentId`.
+        // Capture the agent binding for the whole turn so every async
+        // step inside this Task — model resolution, system prompt
+        // composition, streaming, tool execution, post-stream
+        // memory writes — sees a single non-shifting `currentAgentId`.
         // Historically the binding only wrapped the inline tool exec
         // block below, which meant configure tools dispatched off the
         // streaming pipeline (e.g. from a sandbox plugin running on a
@@ -2433,6 +2433,7 @@ final class ChatSession: ObservableObject {
                         additionalToolNames: cachedSession?.loadedToolNames ?? [],
                         frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
                         frozenManifest: cachedSession?.frozenManifest,
+                        frozenSoul: cachedSession?.frozenSoul,
                         trace: ttftTrace
                     )
                     guard isRunActive(runId) else { return }
@@ -2482,7 +2483,8 @@ final class ChatSession: ObservableObject {
                             sessionStateKey(sid),
                             alwaysLoadedNames: context.alwaysLoadedNames,
                             fingerprint: liveFingerprint,
-                            manifest: context.enabledManifest
+                            manifest: context.enabledManifest,
+                            soul: context.soul
                         )
                     }
 

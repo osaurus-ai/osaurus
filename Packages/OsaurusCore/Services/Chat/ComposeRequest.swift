@@ -28,6 +28,10 @@ struct ComposeRequest: Sendable {
     /// session (mirrors `frozenAlwaysLoadedNames`). `nil` = render fresh;
     /// non-nil = reuse verbatim.
     let frozenManifest: String?
+    /// Turn-1 rendered SOUL.md content echoed back on turn 2+ so a mid-session
+    /// `SOUL.md` edit doesn't rewrite the static prefix (mirrors
+    /// `frozenManifest`). `nil` = read fresh; non-nil = reuse verbatim.
+    let frozenSoul: String?
     let trace: TTFTTrace?
 
     init(
@@ -40,6 +44,7 @@ struct ComposeRequest: Sendable {
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
         frozenManifest: String? = nil,
+        frozenSoul: String? = nil,
         trace: TTFTTrace? = nil
     ) {
         self.agentId = agentId
@@ -51,6 +56,7 @@ struct ComposeRequest: Sendable {
         self.additionalToolNames = additionalToolNames
         self.frozenAlwaysLoadedNames = frozenAlwaysLoadedNames
         self.frozenManifest = frozenManifest
+        self.frozenSoul = frozenSoul
         self.trace = trace
     }
 }

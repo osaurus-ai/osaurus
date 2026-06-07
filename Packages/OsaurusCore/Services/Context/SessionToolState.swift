@@ -40,17 +40,26 @@ struct SessionToolState: Sendable {
     /// (KV-cache reuse). `nil` means "no snapshot yet" — the next compose
     /// renders one fresh.
     var frozenManifest: String?
+    /// Rendered SOUL.md content captured on the FIRST compose. Echoed back on
+    /// turn 2+ via `ComposeRequest.frozenSoul` so a mid-session `SOUL.md`
+    /// edit doesn't rewrite the static prefix — its own contract already says
+    /// "edits apply on the next session", so freezing is semantically correct
+    /// and keeps the cached prefix byte-stable. `nil` means "no snapshot yet"
+    /// (or no SOUL content) — the next compose reads it fresh.
+    var frozenSoul: String?
 
     init(
         loadedToolNames: LoadedTools = [],
         initialAlwaysLoadedNames: LoadedTools? = nil,
         sessionFingerprint: String? = nil,
-        frozenManifest: String? = nil
+        frozenManifest: String? = nil,
+        frozenSoul: String? = nil
     ) {
         self.loadedToolNames = loadedToolNames
         self.initialAlwaysLoadedNames = initialAlwaysLoadedNames
         self.sessionFingerprint = sessionFingerprint
         self.frozenManifest = frozenManifest
+        self.frozenSoul = frozenSoul
     }
 
     /// Canonical fingerprint string for a (mode, toolSelectionMode) pair.

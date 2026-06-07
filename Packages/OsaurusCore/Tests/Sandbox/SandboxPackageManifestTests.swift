@@ -109,16 +109,19 @@ struct SandboxPackageManifestTests {
         #expect(block.contains("+5 more"))
     }
 
-    @Test func sandboxSectionIncludesInstalledLineWhenManifestNonEmpty() {
-        let section = SystemPromptTemplates.sandbox(
+    @Test func sandboxStateIncludesInstalledLineWhenManifestNonEmpty() {
+        let section = SystemPromptTemplates.sandboxState(
             installedPackages: .init(pip: ["flask"])
         )
         #expect(section.contains("Already installed"))
         #expect(section.contains("flask"))
     }
 
-    @Test func sandboxSectionOmitsInstalledLineWhenManifestEmpty() {
-        let section = SystemPromptTemplates.sandbox()
-        #expect(!section.contains("Already installed"))
+    @Test func sandboxStateOmitsInstalledLineWhenManifestEmpty() {
+        // Relocated out of the static `sandbox` framing: the framing never
+        // carries package state now, and an empty manifest yields an empty
+        // `sandboxState` section (dropped by the composer).
+        #expect(!SystemPromptTemplates.sandbox().contains("Already installed"))
+        #expect(SystemPromptTemplates.sandboxState().isEmpty)
     }
 }

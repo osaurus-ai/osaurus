@@ -453,7 +453,8 @@ public final class WatcherManager {
     /// every file under the watched folder, which is slow enough on large
     /// folders to hang the UI when it runs on the main thread.
     private static func captureFingerprint(
-        at url: URL, excluding excluded: Set<URL>
+        at url: URL,
+        excluding excluded: Set<URL>
     ) async -> DirectoryFingerprint? {
         await Task.detached(priority: .userInitiated) {
             try? DirectoryFingerprint.capture(url, excludedSubpaths: excluded)
