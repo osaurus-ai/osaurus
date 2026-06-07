@@ -612,25 +612,36 @@ final class ModelDownloadService: ObservableObject {
             return
         }
 
-        let fm = FileManager.default
+        // Off the main actor: removing a downloaded model unlinks every
+        // weight file in the tree, which blocks for seconds on multi-GB
+        // models. Only the resulting state is published back here.
         let localPath = model.localDirectory.path
-        if fm.fileExists(atPath: localPath) {
-            do {
-                try fm.removeItem(atPath: localPath)
-            } catch {
-                downloadStates[model.id] = .failed(
-                    error: "Could not delete model: \(error.localizedDescription)"
-                )
-                return
-            }
-        }
-
         let cacheDirName = "models--\(model.id.replacingOccurrences(of: "/", with: "--"))"
-        for cacheRoot in Self.hfCacheRoots() {
-            let cacheModelDir = cacheRoot.appendingPathComponent(cacheDirName)
-            if fm.fileExists(atPath: cacheModelDir.path) {
-                try? fm.removeItem(at: cacheModelDir)
+        let cacheRoots = Self.hfCacheRoots()
+        let removalError: (any Error)? = await Task.detached(priority: .userInitiated) {
+            () -> (any Error)? in
+            let fm = FileManager.default
+            if fm.fileExists(atPath: localPath) {
+                do {
+                    try fm.removeItem(atPath: localPath)
+                } catch {
+                    return error
+                }
             }
+            for cacheRoot in cacheRoots {
+                let cacheModelDir = cacheRoot.appendingPathComponent(cacheDirName)
+                if fm.fileExists(atPath: cacheModelDir.path) {
+                    try? fm.removeItem(at: cacheModelDir)
+                }
+            }
+            return nil
+        }.value
+
+        if let removalError {
+            downloadStates[model.id] = .failed(
+                error: "Could not delete model: \(removalError.localizedDescription)"
+            )
+            return
         }
 
         downloadStates[model.id] = .notStarted
