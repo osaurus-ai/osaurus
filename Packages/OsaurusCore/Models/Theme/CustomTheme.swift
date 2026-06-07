@@ -1163,8 +1163,24 @@ public struct CustomTheme: Codable, Equatable, Sendable {
 // MARK: - Color Parsing Extension
 
 extension Color {
+    // Theme color accessors funnel through this initializer from view bodies
+    // on every SwiftUI body evaluation, and each call pays for a CharacterSet
+    // inversion plus a Scanner parse. Themes draw from a small fixed palette,
+    // so parsed colors are memoized by their hex string.
+    private static let themeHexCacheLock = NSLock()
+    private nonisolated(unsafe) static var themeHexCache: [String: Color] = [:]
+
     /// Initialize from hex string with alpha support
     init(themeHex hex: String) {
+        Color.themeHexCacheLock.lock()
+        if let cached = Color.themeHexCache[hex] {
+            Color.themeHexCacheLock.unlock()
+            self = cached
+            return
+        }
+        Color.themeHexCacheLock.unlock()
+
+        let key = hex
         let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         var int: UInt64 = 0
         Scanner(string: hex).scanHexInt64(&int)
@@ -1190,6 +1206,10 @@ extension Color {
             blue: Double(b) / 255,
             opacity: Double(a) / 255
         )
+
+        Color.themeHexCacheLock.lock()
+        Color.themeHexCache[key] = self
+        Color.themeHexCacheLock.unlock()
     }
 
     /// Convert Color to hex string
