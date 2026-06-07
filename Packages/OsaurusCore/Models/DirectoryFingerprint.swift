@@ -165,8 +165,18 @@ public enum DirectoryFingerprintError: Error, LocalizedError {
 // MARK: - SHA256 Hex Extension
 
 extension SHA256Digest {
-    /// Returns the first `byteCount` bytes of the digest as a hex string
+    private static let hexDigits = Array("0123456789abcdef".utf8)
+
+    /// Returns the first `byteCount` bytes of the digest as a hex string.
+    /// Encodes via a digit table -- `String(format:)` parses the format and
+    /// takes a locale lock per byte, far too slow for the per-file hot path.
     func hexPrefix(_ byteCount: Int) -> String {
-        prefix(byteCount).map { String(format: "%02x", $0) }.joined()
+        var chars: [UInt8] = []
+        chars.reserveCapacity(byteCount * 2)
+        for byte in prefix(byteCount) {
+            chars.append(Self.hexDigits[Int(byte >> 4)])
+            chars.append(Self.hexDigits[Int(byte & 0x0F)])
+        }
+        return String(decoding: chars, as: UTF8.self)
     }
 }

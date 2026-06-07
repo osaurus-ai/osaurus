@@ -63,10 +63,10 @@ public final class WatcherManager {
         // Defer watcher startup off the launch-critical path. `.shared` is
         // constructed as a stored property of the App struct, before
         // `applicationDidFinishLaunching`; `startAllEnabledWatchers`
-        // installs FSEvent streams and does synchronous directory
-        // fingerprinting that must not run on the main thread during launch.
+        // installs FSEvent streams and fingerprints the watched folders,
+        // which must not run on the main thread during launch.
         Task { @MainActor [weak self] in
-            self?.startAllEnabledWatchers()
+            await self?.startAllEnabledWatchers()
         }
         print("[Osaurus] WatcherManager initialized with \(watchers.count) watchers")
     }
@@ -267,13 +267,14 @@ public final class WatcherManager {
     // MARK: - FSEvents Management
 
     /// Start monitoring all enabled watchers
-    private func startAllEnabledWatchers() {
-        // Take initial fingerprints for all enabled watchers
+    private func startAllEnabledWatchers() async {
+        // Take initial fingerprints for all enabled watchers before starting
+        // the event stream, so launch-time state stays the convergence anchor
         for watcher in watchers where watcher.isEnabled {
             if let path = resolveWatchPath(for: watcher) {
                 let url = URL(fileURLWithPath: path)
                 let excluded = excludedSubpaths(for: watcher)
-                if let fingerprint = try? DirectoryFingerprint.capture(url, excludedSubpaths: excluded) {
+                if let fingerprint = await Self.captureFingerprint(at: url, excluding: excluded) {
                     lastKnownFingerprints[watcher.id] = fingerprint
                 }
             }
@@ -448,6 +449,17 @@ public final class WatcherManager {
 
     // MARK: - Core Convergence Loop
 
+    /// Capture a directory fingerprint off the main actor. The capture stats
+    /// every file under the watched folder, which is slow enough on large
+    /// folders to hang the UI when it runs on the main thread.
+    private static func captureFingerprint(
+        at url: URL, excluding excluded: Set<URL>
+    ) async -> DirectoryFingerprint? {
+        await Task.detached(priority: .userInitiated) {
+            try? DirectoryFingerprint.capture(url, excludedSubpaths: excluded)
+        }.value
+    }
+
     /// Convergence loop. Repeatedly fingerprints the directory, stores the fingerprint
     /// as lastKnown, dispatches the work, settles, and loops back. Exits when two
     /// consecutive fingerprints match (the directory has stabilized). External changes
@@ -489,17 +501,11 @@ public final class WatcherManager {
         let watchURL = URL(fileURLWithPath: watchPath)
         let excluded = excludedSubpaths(for: watcher)
 
-        // Quick phantom check before creating the task
-        guard let initialFingerprint = try? DirectoryFingerprint.capture(watchURL, excludedSubpaths: excluded) else {
-            print("[Osaurus] [\(watcher.name)] fingerprint capture failed")
-            phases[watcher.id] = .idle
-            return
-        }
-
-        if let known = lastKnownFingerprints[watcher.id], !initialFingerprint.changed(from: known) {
-            phases[watcher.id] = .idle
-            return
-        }
+        // Phantom events are filtered by the convergence check on the loop's
+        // first iteration. Fingerprinting here would stat every file in the
+        // watched folder synchronously on the main thread, hanging the UI on
+        // large folders, so the capture lives inside the task and runs off
+        // the main actor.
 
         let watcherId = watcher.id
 
@@ -526,14 +532,14 @@ public final class WatcherManager {
 
                 if iteration > maxIterations {
                     print("[Osaurus] [\(watcher.name)] hit max iterations (\(maxIterations)), forcing idle")
-                    if let current = try? DirectoryFingerprint.capture(watchURL, excludedSubpaths: excluded) {
+                    if let current = await Self.captureFingerprint(at: watchURL, excluding: excluded) {
                         self.lastKnownFingerprints[watcherId] = current
                     }
                     break
                 }
 
                 // Fingerprint current state
-                guard let fingerprint = try? DirectoryFingerprint.capture(watchURL, excludedSubpaths: excluded) else {
+                guard let fingerprint = await Self.captureFingerprint(at: watchURL, excluding: excluded) else {
                     print("[Osaurus] [\(watcher.name)] fingerprint capture failed (iteration \(iteration))")
                     break
                 }
