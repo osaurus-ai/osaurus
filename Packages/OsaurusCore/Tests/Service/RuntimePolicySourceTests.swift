@@ -542,12 +542,14 @@ struct RuntimePolicySourceTests {
         // bundles, plus the Nemotron-H JANGTQ mmap auto-BF16 load path that
         // keeps TQ tensors raw while promoting non-TQ tensors out of fp16
         // AsType-heavy decode, plus streamed DSV4 request-tool prefix
-        // buffering and the Gemma4 native tool-call parser regression pin.
+        // buffering, the Gemma4 native tool-call parser regression pin,
+        // generation-config suppress_tokens propagation, and seed-boundary
+        // hybrid SSM full-hit restore.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "cbf39a26eee389852f8d5f15e1156d4817eb74dd"
+        let expectedRuntimeHardenedRevision = "31a98ef8b068013549fa85f7a4c2bc17e59c0bbc"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
