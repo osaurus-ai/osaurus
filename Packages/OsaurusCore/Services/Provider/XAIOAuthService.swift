@@ -408,7 +408,7 @@ public enum XAIOAuthService {
         }
         defer { server.stop() }
 
-        guard NSWorkspace.shared.open(url) else {
+        guard await NSWorkspace.shared.openAsync(url) else {
             throw XAIOAuthError.browserOpenFailed
         }
 

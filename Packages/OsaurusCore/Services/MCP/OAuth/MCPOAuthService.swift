@@ -216,7 +216,7 @@ public enum MCPOAuthService {
             resource: canonical
         )
 
-        guard NSWorkspace.shared.open(url) else {
+        guard await NSWorkspace.shared.openAsync(url) else {
             throw MCPOAuthError.browserOpenFailed
         }
 

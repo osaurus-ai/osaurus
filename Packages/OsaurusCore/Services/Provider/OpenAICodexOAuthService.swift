@@ -423,7 +423,7 @@ public enum OpenAICodexOAuthService {
         }
         defer { server.stop() }
 
-        guard NSWorkspace.shared.open(url) else {
+        guard await NSWorkspace.shared.openAsync(url) else {
             throw OpenAICodexOAuthError.browserOpenFailed
         }
 

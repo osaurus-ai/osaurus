@@ -109,7 +109,7 @@ public enum OpenRouterOAuthService {
             state: state
         )
 
-        guard NSWorkspace.shared.open(authURL) else {
+        guard await NSWorkspace.shared.openAsync(authURL) else {
             throw OpenRouterOAuthError.invalidAuthorizationCallback
         }
 
