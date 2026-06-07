@@ -12,7 +12,7 @@
 //  - USE_MOCK_CHAT_SEED — optional UInt64 for reproducible random lengths (default 0xC0FFEE42)
 //
 //  Assistant turns cycle through variants: markdown (code fences, lists), thinking blocks,
-//  tool call groups (with/without results), preflight capability rows, share_artifact cards
+//  tool call groups (with/without results), share_artifact cards
 //  (markdown + file-backed PNG for image card / footer / full-screen testing), etc.
 //
 
@@ -74,7 +74,7 @@
         private static let assistantVariantCount = 14
 
         /// Cycles assistant shapes so `ContentBlock.generateBlocks` hits paragraphs (markdown/code),
-        /// thinking, tool groups, preflight rows, share_artifact (text + PNG on disk), and pending-style tool rows.
+        /// thinking, tool groups, share_artifact (text + PNG on disk), and pending-style tool rows.
         private static func makeAssistantTurn(pairIndex: Int, rng: inout SplitMix64) -> ChatTurn {
             let turn = ChatTurn(role: .assistant, content: "")
             let v = pairIndex % assistantVariantCount
@@ -149,26 +149,9 @@
                 turn.content = "Kicking off a long build; result still streaming in real life — here we leave it nil."
 
             case 5:
-                // preflight capability strip + answer
-                turn.preflightCapabilities = [
-                    PreflightCapabilityItem(
-                        type: .method,
-                        name: "workspace_index",
-                        description: "Semantic index over the repo root."
-                    ),
-                    PreflightCapabilityItem(
-                        type: .tool,
-                        name: "read_file",
-                        description: "Read UTF-8 text from a path."
-                    ),
-                    PreflightCapabilityItem(
-                        type: .skill,
-                        name: "swiftui_layout",
-                        description: "Layout patterns for macOS chat UI."
-                    ),
-                ]
+                // short plan answer
                 turn.content =
-                    "Preflight loaded the above capabilities; answering with a short plan.\n\n1. profile\n2. fix hotspots\n"
+                    "Answering with a short plan.\n\n1. profile\n2. fix hotspots\n"
 
             case 6:
                 // share_artifact enriched result (card UI) + short reply
@@ -223,10 +206,7 @@
                 turn.content = ""
 
             case 10:
-                // preflight + thinking + markdown
-                turn.preflightCapabilities = [
-                    PreflightCapabilityItem(type: .tool, name: "bash", description: "Run shell commands in sandbox.")
-                ]
+                // thinking + markdown
                 turn.thinking = "User asked about GPU; checking thermal notes.\n"
                 turn.content =
                     "> quote: keep frame time under 16ms.\n\n| metric | target |\n| --- | --- |\n| fps | 60 |\n"

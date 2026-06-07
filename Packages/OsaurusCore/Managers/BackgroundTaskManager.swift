@@ -346,7 +346,6 @@ public final class BackgroundTaskManager: ObservableObject {
             await SessionToolStateStore.shared.appendLoadedTools(
                 context.id.uuidString,
                 names: request.requestedToolNames,
-                fallbackPreflight: .empty,
                 fallbackAlwaysLoadedNames: nil
             )
         }

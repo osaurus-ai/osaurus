@@ -6,7 +6,7 @@
 //  `ChatConfigurationStore`, then restores the previous value when the
 //  scope ends. `CoreModelService.generate` reads the identifier off
 //  the store on every call, so the override naturally affects every
-//  preflight call inside the scope without touching inference plumbing.
+//  model call inside the scope without touching inference plumbing.
 //
 //  The CLI accepts a few shorthand forms ("foundation", "auto",
 //  `provider/name`); we expand them here so the runner code stays

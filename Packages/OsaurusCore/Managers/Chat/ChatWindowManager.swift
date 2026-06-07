@@ -656,7 +656,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let closedAgentId = windows[id]?.agentId
         Task {
             if let sid = closedSessionId {
-                PluginHostContext.invalidatePreflightCache(sessionId: sid.uuidString)
+                PluginHostContext.invalidateSessionToolCache(sessionId: sid.uuidString)
             }
             if let aid = closedAgentId {
                 // Drop any 10-second-TTL memory context snapshot so a freshly

@@ -9,7 +9,7 @@
 //  appears (`run`, `diff`, `score`, ...).
 //
 //  Usage:
-//    osaurus-evals run --suite Suites/Preflight [--model foundation] [--filter browser] [--out report.json]
+//    osaurus-evals run --suite Suites/CapabilitySearch [--model foundation] [--filter browser] [--out report.json]
 //
 //  Exit codes:
 //    0  every non-skipped case passed (or no cases ran)
@@ -241,14 +241,6 @@ struct OsaurusEvalsCLI {
                     let expected = caseDef.expect.capabilitySearch?.expectedTools?.anyOf ?? []
                     let accepted = Set(cs.toolHits.filter(\.acceptedByThreshold).map(\.name))
                     matched = expected.filter { accepted.contains($0) }.count
-                case "preflight":
-                    guard let observed = row.observed else {
-                        breaches.append("\(caseId): no preflight snapshot")
-                        continue
-                    }
-                    let expected = caseDef.expect.tools?.mustInclude ?? []
-                    let picked = Set(observed.pickedToolNames)
-                    matched = expected.filter { picked.contains($0) }.count
                 default:
                     continue
                 }
@@ -438,7 +430,7 @@ struct OsaurusEvalsCLI {
         /// happens before the first case can run. `nil` disables it.
         let startupTimeoutSeconds: Double?
         /// Controls native installed-plugin bootstrap. Automatic mode
-        /// loads plugins only for preflight suites; capability-search
+        /// loads plugins only when a suite requires them; capability-search
         /// suites initialize indices without dlopen-ing local plugins.
         let pluginBootstrapPreference: EvalInstalledPluginBootstrapPreference
 
@@ -547,7 +539,7 @@ struct OsaurusEvalsCLI {
 
             FLAGS:
                 --suite <dir>         Required. Directory of *.json eval cases
-                                      (e.g. Suites/Preflight, Suites/CapabilitySearch).
+                                      (e.g. Suites/CapabilitySearch, Suites/CapabilityClaims).
                 --model <id>          Model to route through CoreModelService for
                                       this run. Forms:
                                         auto                — keep current config
@@ -557,10 +549,8 @@ struct OsaurusEvalsCLI {
                                       Default: auto.
                 --filter <substr>     Only run cases whose id contains <substr>.
                 --out <path>          Also write a JSON report to <path>.
-                --verbose, -v         Print per-case diagnostics: the user query,
-                                      the raw LLM response (truncated), and the
-                                      pre-guardrail picks. Use when iterating on
-                                      the preflight prompt.
+                --verbose, -v         Print per-case diagnostics: the user query
+                                      for each case.
                 --threshold <float>   Override the **tools-lane** RRF cutoff
                                       (`minFusedScore`) for this run. The
                                       methods + skills lanes always use their
@@ -603,7 +593,7 @@ struct OsaurusEvalsCLI {
                                       OSAURUS_EVALS_STARTUP_TIMEOUT_SECONDS.
                 --bootstrap-plugins  Force installed native plugin loading
                                       before the suite. Automatic mode loads
-                                      plugins for preflight suites only.
+                                      plugins only when a suite requires them.
                 --no-plugin-bootstrap
                                       Disable installed native plugin loading.
                                       Capability-search suites initialize only
@@ -612,8 +602,8 @@ struct OsaurusEvalsCLI {
                                       cases when no plugin is loaded.
 
             EXAMPLES:
-                osaurus-evals run --suite Suites/Preflight --model foundation
-                osaurus-evals run --suite Suites/Preflight --filter browser --out report.json
+                osaurus-evals run --suite Suites/CapabilitySearch --model foundation
+                osaurus-evals run --suite Suites/CapabilitySearch --filter browser --out report.json
                 osaurus-evals run --suite Suites/CapabilitySearch --threshold 0.25 --report-forensics
                 osaurus-evals run --suite Suites/CapabilitySearch --fail-on-floor
             """

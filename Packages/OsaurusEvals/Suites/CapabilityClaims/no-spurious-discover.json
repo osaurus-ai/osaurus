@@ -1,0 +1,22 @@
+{
+  "id": "capability_claims.no-spurious-discover",
+  "domain": "capability_claims",
+  "label": "capability claims • confirm from manifest without spurious discovery",
+  "query": "Just answer yes or no with a one-line reason: can you open a web page?",
+  "notes": "Guards the launder-the-id regression: the browser capability is named in the static Enabled-capabilities manifest, so a pure yes/no capability question is answerable from grounded context with zero tool calls. The model must NOT run capabilities_discover to re-derive an ID it already has from the manifest, nor call the browser tool to 'prove' it. Confirms the manifest is trusted as the source of truth for listed capabilities. Requires osaurus.browser installed.",
+  "fixtures": {
+    "requirePlugins": ["osaurus.browser"],
+    "enableSkills": ["Osaurus Browser"],
+    "enableTools": ["browser_navigate"]
+  },
+  "expect": {
+    "capabilityClaims": {
+      "rubric": [
+        "Answers that yes, it can open / navigate to a web page.",
+        "Does not deny having a web-browsing capability."
+      ],
+      "mustNotCallTools": ["capabilities_discover", "browser_navigate"],
+      "maxIterations": 3
+    }
+  }
+}

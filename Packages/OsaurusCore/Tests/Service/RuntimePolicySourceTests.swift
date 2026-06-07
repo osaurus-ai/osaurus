@@ -270,11 +270,8 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("Services/Plugin/PluginHostAPI.swift")
 
         #expect(source.contains("let memorySection: String?"))
-        #expect(source.contains("allowPreflight: options.wantsPreflight"))
-        #expect(source.contains("allowPreflight: Bool = true"))
-        #expect(source.contains("query: extractPreflightQuery(from: messages)"))
+        #expect(source.contains("query: extractLatestUserQuery(from: messages)"))
         #expect(source.contains("messages: messages"))
-        #expect(source.contains("cachedPreflight: allowPreflight ? nil : .empty"))
         #expect(source.contains("memorySection: composed.memorySection"))
         #expect(source.contains("SystemPromptComposer.injectMemoryPrefix(ctx.memorySection, into: &messages)"))
     }
@@ -1139,14 +1136,12 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    /// Preflight tool selection is a background prompt-ranking call, not the user's
-    /// answer. It can fall back to the active chat model, but must not apply a
-    /// synthetic reasoning mode; runtime/model defaults remain authoritative unless
-    /// a caller explicitly supplies model options.
-    @Test("Preflight fallback LLM does not force no-think model options")
-    func preflightFallbackLLMDoesNotForceNoThinkOptions() throws {
+    /// Background prompt-ranking calls can fall back to the active chat model,
+    /// but must not apply a synthetic reasoning mode; runtime/model defaults
+    /// remain authoritative unless a caller explicitly supplies model options.
+    @Test("Background fallback LLM does not force no-think model options")
+    func backgroundFallbackLLMDoesNotForceNoThinkOptions() throws {
         let coreModel = try Self.source("Services/Inference/CoreModelService.swift")
-        let preflight = try Self.source("Services/Context/PreflightCapabilitySearch.swift")
         let greeting = try Self.source("Services/Chat/GenerativeGreetingService.swift")
 
         #expect(
@@ -1156,10 +1151,6 @@ struct RuntimePolicySourceTests {
         #expect(
             coreModel.contains("modelOptions: modelOptions"),
             "CoreModelService.generate must thread modelOptions into GenerationParameters before routing to MLX/remote services"
-        )
-        #expect(
-            !preflight.contains("modelOptions: [\"reasoningEffort\": .string(\"no_think\")]"),
-            "PreflightCapabilitySearch.defaultLLM must not force no_think; hidden reasoning-mode fixes belong in runtime/model defaults or explicit caller options"
         )
         #expect(
             !greeting.contains("modelOptions: [\"reasoningEffort\": .string(\"no_think\")]"),
@@ -1182,24 +1173,6 @@ struct RuntimePolicySourceTests {
         #expect(
             !floatingInput.contains("let current = activeModelOptions[id]?.boolValue ?? false"),
             "Thinking chip must not toggle the raw stored bool directly; that reintroduces first-click explicit no-thinking for inverted profiles"
-        )
-    }
-
-    @Test("Preflight logs do not publish raw prompt payloads")
-    func preflightLogsDoNotPublishRawPromptPayloads() throws {
-        let preflight = try Self.source("Services/Context/PreflightCapabilitySearch.swift")
-
-        #expect(
-            !preflight.contains("query, privacy: .public"),
-            "Preflight diagnostics must not publish the raw user query because it can contain prompt text, secrets, or document excerpts"
-        )
-        #expect(
-            preflight.contains("query, privacy: .private(mask: .hash)"),
-            "Preflight can still correlate fallback paths with a private hash instead of logging raw prompt text"
-        )
-        #expect(
-            preflight.contains("trimmed, privacy: .private(mask: .hash)"),
-            "The background LLM response can include prompt-adjacent content and should stay private in logs"
         )
     }
 

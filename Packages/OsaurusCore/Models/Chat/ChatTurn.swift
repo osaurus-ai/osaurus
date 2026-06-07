@@ -222,8 +222,6 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// providers ship args in a single chunk), so the UI never refreshed
     /// mid-stream. A fragment counter makes the throttle predictable.
     var pendingToolArgFragmentCount: Int = 0
-    /// Capabilities selected by preflight search (ephemeral, not persisted)
-    var preflightCapabilities: [PreflightCapabilityItem]? = nil
 
     // MARK: - Generation Benchmarks
 

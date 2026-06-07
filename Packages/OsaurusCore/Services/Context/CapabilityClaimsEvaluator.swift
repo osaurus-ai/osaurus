@@ -3,8 +3,7 @@
 //  osaurus
 //
 //  Public facade that drives a real, multi-turn agent loop for the
-//  OsaurusEvals `capability_claims` domain. Where `PreflightEvaluator`
-//  scores only the tool *picker*, this runs the whole chat path —
+//  OsaurusEvals `capability_claims` domain. It runs the whole chat path —
 //  compose prompt → model call → tool dispatch → drain
 //  `CapabilityLoadBuffer` → re-compose → continue — so eval cases can
 //  assert on what the model SAYS and DOES when asked "do you have X".

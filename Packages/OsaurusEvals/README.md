@@ -19,7 +19,6 @@ Packages/OsaurusEvals/
     ArgumentCoercion/   — ArgumentCoercion.{stringArray,int,bool} pinning
     CapabilityClaims/   — agent-loop "do you have X" behaviour + LLM judge (LLM)
     CapabilitySearch/   — index-only recall measurements (no LLM)
-    Preflight/          — preflight tool-pick cases (LLM)
     PrefixHash/         — KV-cache prefix-hash stability
     RequestValidation/  — RequestValidator.unsupportedSamplerReason
     Schema/             — SchemaValidator.validate pinning
@@ -50,13 +49,13 @@ Or call the CLI directly if you need flags the Makefile doesn't expose:
 
 ```bash
 cd Packages/OsaurusEvals
-swift run osaurus-evals run --suite Suites/Preflight --model foundation
-swift run osaurus-evals run --suite Suites/Preflight --filter browser --out report.json
+swift run osaurus-evals run --suite Suites/CapabilitySearch --model foundation
+swift run osaurus-evals run --suite Suites/CapabilitySearch --filter browser --out report.json
 swift run osaurus-evals run --suite Suites/CapabilitySearch --bootstrap-plugins
 ```
 
-Startup bootstrap is domain-aware. `preflight` suites load installed native plugins
-and rebuild search indices so they mirror the host app. `capability_search`
+Startup bootstrap is domain-aware. Suites that require installed native plugins
+load them and rebuild search indices so they mirror the host app. `capability_search`
 suites initialize only the selected tool / method / skill index lanes without
 loading native plugins; those index-only runs use isolated temporary storage so
 fixtures never touch the user's real encrypted databases. Debug builds also use
@@ -79,7 +78,6 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 
 | Domain | Hits LLM? | Runner branch | Required expectation block |
 |---|---|---|---|
-| `preflight` | yes | `runOne` (default arm) | `expect.tools` |
 | `capability_claims` | yes | `runCapabilityClaimsCase` | `expect.capabilityClaims` |
 | `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
 | `schema` | no | `runSchemaCase` | `expect.schema` |
@@ -89,37 +87,9 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `argument_coercion` | no | `runArgumentCoercionCase` | `expect.argumentCoercion` |
 | `request_validation` | no | `runRequestValidationCase` | `expect.requestValidation` |
 
-The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. `preflight` and `capability_claims` are the LLM-burning domains; keep them off CI.
+The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. `capability_claims` is the LLM-burning domain; keep it off CI.
 
 A case with empty `expect: {}` is a valid smoke test — it records what the runner observed without scoring. Useful while bootstrapping.
-
-### `preflight` domain
-
-```json
-{
-  "id": "preflight.browser.amazon-orders",
-  "domain": "preflight",
-  "label": "browser • amazon orders",
-  "query": "can you help me check my orders on amazon?",
-  "fixtures": {
-    "preflightMode": "balanced",
-    "requirePlugins": ["osaurus.browser"]
-  },
-  "expect": {
-    "tools": {
-      "mustInclude": ["browser_navigate"]
-    }
-  }
-}
-```
-
-Field notes:
-
-- `fixtures.preflightMode` — `off` / `narrow` / `balanced` / `wide`. Default `balanced`.
-- `fixtures.requirePlugins` — plugin ids the case needs locally. Cases with missing plugins are **skipped** (not failed) so an incomplete install doesn't mask real regressions.
-- `expect.tools.mustInclude` / `mustNotInclude` — picked-set assertions, equal-weighted, partial credit.
-
-Note: the `preflight` domain scores only the picker (`expect.tools`). The enabled-capabilities manifest that surfaces a picked plugin's unloaded sibling tools and skills is exercised end-to-end by the `capability_claims` domain (and by `EnabledCapabilitiesManifestTests` in OsaurusCore), not here.
 
 ### `capability_search` domain
 
@@ -191,6 +161,8 @@ Field notes:
 - `expect.capabilityClaims.loadSkillFirst` — `{ skill, beforeTools }` ordering check: a `capabilities_load` carrying `skill/<skill>` must precede the first call to any tool in `beforeTools`.
 - `expect.capabilityClaims.maxIterations` — cap on model round-trips (default 6). A run that hits the cap is flagged in the notes as a possible loop.
 
+The suite covers six scenarios under `Suites/CapabilityClaims/`: `confirm` (confirm an enabled-but-unloaded tool with zero tool calls), `discover` (reach for `capabilities_discover` instead of denying), `honest-absence` (attempt discovery, then honestly report the gap when it comes back empty), `impossible-but-distinct` (surface the real obstacle, not just capability absence), `skill-first` (load the governing skill before the tool group), `by-intent` (recognize a capability asked by intent rather than by name), and `no-spurious-discover` (the launder-the-id regression — confirm a manifest-listed capability without re-running `capabilities_discover`).
+
 The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator.
 
 ### Other domains
@@ -215,7 +187,7 @@ When a case in the floor map's accepted-hit count drops below `minMatches`, the 
 1. Add `Suites/<NewDomain>/` with a few JSON cases.
 2. In `Sources/OsaurusEvalsKit/EvalRunner.swift`, add a `case "<newdomain>":` arm to `runOne(...)`. Keep domain runners as separate top-level functions; merging them into one branch gets messy fast.
 3. If the domain needs a new `expect.<sub>` block, add it to `EvalCase.Expectations` in `Sources/OsaurusEvalsKit/EvalCase.swift` (all sub-blocks are optional so existing cases keep decoding).
-4. If the domain drives an LLM agent loop or a judge, add a public facade in OsaurusCore (mirror `PreflightEvaluator` / `CapabilityClaimsEvaluator`) rather than reaching into internal chat types from the evals package.
+4. If the domain drives an LLM agent loop or a judge, add a public facade in OsaurusCore (mirror `CapabilityClaimsEvaluator`) rather than reaching into internal chat types from the evals package.
 
 ## CI isolation
 

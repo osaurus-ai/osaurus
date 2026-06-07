@@ -7,10 +7,10 @@
 //
 //  The picker is the single source of truth for what reaches the model. A top-level
 //  "Auto-discover" toggle decides whether the model sees the entire enabled set every
-//  turn (Manual) or a per-turn relevant subset chosen by pre-flight search (Auto).
-//  Either way, the per-item Enabled toggles in the table are honored at runtime —
-//  see `PreflightCapabilitySearch.search` and `SystemPromptComposer.compose` for the
-//  wiring.
+//  turn (Manual) or a small always-loaded hot set that it grows on demand via
+//  `capabilities_discover` / `capabilities_load` (Auto). Either way, the per-item
+//  Enabled toggles in the table are honored at runtime — see `CapabilitySearch` and
+//  `SystemPromptComposer.compose` for the wiring.
 //
 
 import SwiftUI
@@ -627,7 +627,7 @@ struct AgentCapabilityManagerView: View {
                     .foregroundColor(theme.primaryText)
                 Text(
                     toolMode == .auto
-                        ? "We'll pick the most relevant ones from your enabled set each turn."
+                        ? "The model starts with a small set and loads more from your enabled capabilities on demand."
                         : "All enabled capabilities are sent to the model every turn.",
                     bundle: .module
                 )

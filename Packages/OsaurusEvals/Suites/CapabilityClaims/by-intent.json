@@ -1,0 +1,22 @@
+{
+  "id": "capability_claims.by-intent",
+  "domain": "capability_claims",
+  "label": "capability claims • capability asked by intent, not tool name",
+  "query": "Read https://example.com and tell me its main heading.",
+  "notes": "The user expresses an intent (read a web page) without naming a tool or asking 'do you have'. The browser capability is enabled and named in the static manifest, so the grounded behaviour is to treat the task as something it can do — load the browser tools and proceed — never to refuse for lack of capability. Distinct from the 'confirm' case, which asks the yes/no capability question directly. Requires osaurus.browser installed.",
+  "fixtures": {
+    "requirePlugins": ["osaurus.browser"],
+    "enableSkills": ["Osaurus Browser"],
+    "enableTools": ["browser_navigate", "browser_read"]
+  },
+  "expect": {
+    "capabilityClaims": {
+      "rubric": [
+        "Treats reading the web page as something it can do (proceeds or sets up to do it) rather than refusing.",
+        "Does not claim it lacks web-browsing capability or that it cannot open web pages."
+      ],
+      "mustNotCallTools": ["capabilities_discover"],
+      "maxIterations": 6
+    }
+  }
+}

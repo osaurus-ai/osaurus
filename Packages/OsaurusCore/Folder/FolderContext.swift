@@ -40,10 +40,9 @@ public struct FolderContext: Sendable {
 
     /// Lowercased, dot-less file extensions detected anywhere under the
     /// folder root that match `FolderPluginHints.watchedExtensions`.
-    /// Drives the bias-only plugin injection in
-    /// `PreflightCapabilitySearch` — when this set contains `xlsx`, the
-    /// `osaurus.xlsx` tools are merged into preflight (if installed)
-    /// regardless of what the LLM picks.
+    /// Feeds `FolderPluginHints.suggestedPluginIds(for:)`, which maps a
+    /// detected extension (e.g. `xlsx`) to the plugin id that handles it
+    /// so the UI can hint at installable/relevant plugins for the folder.
     public let detectedFileExtensions: Set<String>
 
     public init(

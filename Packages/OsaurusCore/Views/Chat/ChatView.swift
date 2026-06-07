@@ -208,7 +208,7 @@ final class ChatSession: ObservableObject {
     private var cachedMemoryTokens: Int = 0
     private let budgetTracker = ContextBudgetTracker()
 
-    /// Per-session preflight + capabilities_load tool kit lives in the
+    /// Per-session always-loaded + capabilities_load tool kit lives in the
     /// process-wide `SessionToolStateStore` so chat sessions and the
     /// HTTP/plugin path share one cache. Keyed by `sessionId.uuidString`.
     private var sessionStateKey: (UUID) -> String { { $0.uuidString } }
@@ -773,9 +773,9 @@ final class ChatSession: ObservableObject {
         // Mirror what `composeChatContext` will emit on the next send so
         // the welcome-screen popover lists the same sections (Agent Loop,
         // Capability Discovery, Skills, model family, …) instead of the
-        // base+sandbox-only stub. Preflight tool delta and Plugin
-        // Companions are query-dependent and stay deferred — the
-        // auto-mode `Tools` row can under-count by that delta on turn 1.
+        // base+sandbox-only stub. Under Design C the schema is a fixed hot
+        // set and the manifest is query-independent, so the preview prices
+        // the static prefix exactly.
         //
         // The preview is cached (recomputed only when a budget input
         // changes — see `refreshContextEstimates`) so typing only
@@ -2319,10 +2319,10 @@ final class ChatSession: ObservableObject {
             )
         )
 
-        // Capture the agent binding for the whole turn so every async
-        // step inside this Task — preflight, model resolution, system
-        // prompt composition, streaming, tool execution, post-stream
-        // memory writes — sees a single non-shifting `currentAgentId`.
+                    // Capture the agent binding for the whole turn so every async
+                    // step inside this Task — model resolution, system prompt
+                    // composition, streaming, tool execution, post-stream
+                    // memory writes — sees a single non-shifting `currentAgentId`.
         // Historically the binding only wrapped the inline tool exec
         // block below, which meant configure tools dispatched off the
         // streaming pipeline (e.g. from a sandbox plugin running on a
@@ -2382,13 +2382,12 @@ final class ChatSession: ObservableObject {
                         return ChatMessage(role: "user", content: t.content)
                     }
 
-                    // Reuse the per-session preflight + capabilities_load union
-                    // on subsequent sends so we skip the LLM-based selection.
+                    // Reuse the per-session always-loaded + capabilities_load
+                    // union on subsequent sends so the schema stays stable.
                     // First, ask the store to drop the cache if the
                     // (executionMode, toolMode) fingerprint flipped since the
-                    // last turn — otherwise stale dynamically-loaded tools or
-                    // an empty manual-mode preflight would leak into the new
-                    // mode's schema.
+                    // last turn — otherwise stale dynamically-loaded tools
+                    // would leak into the new mode's schema.
                     let liveToolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
                     let liveFingerprint = SessionToolState.fingerprint(
                         executionMode: executionMode,
@@ -2412,10 +2411,9 @@ final class ChatSession: ObservableObject {
                         query: trimmed,
                         messages: priorUserMessages,
                         toolsDisabled: chatCfg.disableTools,
-                        cachedPreflight: cachedSession?.initialPreflight,
                         additionalToolNames: cachedSession?.loadedToolNames ?? [],
                         frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
-                        cachedSkillSuggestions: cachedSession?.frozenSkillSuggestions,
+                        frozenManifest: cachedSession?.frozenManifest,
                         trace: ttftTrace
                     )
                     guard isRunActive(runId) else { return }
@@ -2454,30 +2452,19 @@ final class ChatSession: ObservableObject {
                     let isManualTools = liveToolMode == .manual
                     cachedContext = context
 
-                    // Persist the (possibly fresh) preflight + always-loaded
-                    // snapshot back onto the session so the next send reuses
-                    // both — preflight skips the LLM call, the always-loaded
-                    // snapshot freezes the schema against tools that register
-                    // mid-session. Preserves any capabilities_load names
-                    // already accumulated this session. Stamp the live
+                    // Persist the always-loaded snapshot back onto the session
+                    // so the next send freezes the schema against tools that
+                    // register mid-session. Preserves any capabilities_load
+                    // names already accumulated this session. Stamp the live
                     // fingerprint so the invalidation rule above can detect
                     // a flip on the next turn.
                     if let sid = sessionId, cachedSession == nil {
                         await SessionToolStateStore.shared.setInitial(
                             sessionStateKey(sid),
-                            preflight: context.preflight,
                             alwaysLoadedNames: context.alwaysLoadedNames,
                             fingerprint: liveFingerprint,
-                            skillSuggestions: context.skillSuggestions
+                            manifest: context.enabledManifest
                         )
-                    }
-
-                    // Manual mode ignores the preflight in `resolveTools`, so
-                    // surfacing a preflight panel from a stale auto-mode cache
-                    // would lie to the user about which tools the model is
-                    // actually getting. Gate on the live tool mode.
-                    if !isManualTools, !context.preflightItems.isEmpty {
-                        assistantTurn.preflightCapabilities = context.preflightItems
                     }
 
                     budgetTracker.snapshot(context: context)
@@ -2937,16 +2924,13 @@ final class ChatSession: ObservableObject {
                                         toolSpecs = SystemPromptComposer.canonicalToolOrder(toolSpecs)
                                     }
                                     // Persist names into the session's tool union
-                                    // so they survive the next compose call
-                                    // without re-running preflight.
+                                    // so they survive the next compose call.
                                     if let sid = sessionId {
                                         let names = newTools.map { $0.function.name }
-                                        let preflight = context.preflight
                                         let snapshot = context.alwaysLoadedNames
                                         await SessionToolStateStore.shared.appendLoadedTools(
                                             sessionStateKey(sid),
                                             names: names,
-                                            fallbackPreflight: preflight,
                                             fallbackAlwaysLoadedNames: snapshot
                                         )
                                     }

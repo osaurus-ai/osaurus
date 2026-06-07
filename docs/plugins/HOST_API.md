@@ -345,7 +345,7 @@ Schema:
 
 **Agent scoping.** The dispatched task always runs under the agent that invoked the plugin (see the "Agent scoping" note in the [Inference](#inference) section). `agent_address` / `agent_id` are not part of the schema; if either is present they are ignored and a one-shot warning is logged. `session_id` reattach is naturally agent-scoped — a session belonging to a different agent silently misses and a fresh task is created.
 
-**Tool selection.** The optional `tools` array pins specific tool names so the dispatched chat is guaranteed to see them on turn 1 — useful for "the agent must be able to call `reply` to talk back to the user" patterns where you can't rely on the agent's auto-mode preflight to surface them. Names are *additive* on top of the agent's existing selection (auto-mode preflight or manual list); they don't replace it. Allowed names are restricted to:
+**Tool selection.** The optional `tools` array pins specific tool names so the dispatched chat is guaranteed to see them on turn 1 — useful for "the agent must be able to call `reply` to talk back to the user" patterns where you can't rely on the agent loading them on demand. Names are *additive* on top of the agent's existing selection (auto-mode hot set or manual list); they don't replace it. Allowed names are restricted to:
 
 - the calling plugin's own manifest tool ids (the `id` field on each entry in `manifest.capabilities.tools`), and
 - host built-in tool names such as `share_artifact`, `reply`, sandbox tools, etc. — including gated built-ins like `search_memory`, `render_chart`, `speak`, and the scheduler tools, which default off behind their per-agent feature toggles. Pinning a gated built-in here is additive and surfaces it for this dispatch even when the agent's toggle is off.
@@ -362,7 +362,7 @@ Example — a Telegram-style plugin guaranteeing the model can reply:
 }
 ```
 
-The dispatched chat will see `reply` / `reply_typing` / `reply_photo` in its `<tools>` schema on turn 1, on top of whatever the agent's auto-mode preflight picked. See [Example: Telegram bridge plugin](EXAMPLE_TELEGRAM.md) for the full flow.
+The dispatched chat will see `reply` / `reply_typing` / `reply_photo` in its `<tools>` schema on turn 1, on top of the agent's auto-mode hot set. See [Example: Telegram bridge plugin](EXAMPLE_TELEGRAM.md) for the full flow.
 
 Returns `{"id": "<uuid>", "status": "running"}` immediately or an error envelope. Non-blocking.
 

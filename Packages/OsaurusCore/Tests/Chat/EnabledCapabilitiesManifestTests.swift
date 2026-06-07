@@ -42,12 +42,13 @@ struct EnabledCapabilitiesManifestTests {
             SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups)
         )
 
-        #expect(rendered.contains("## Enabled capabilities not yet loaded"))
+        #expect(rendered.contains("## Enabled capabilities"))
+        #expect(!rendered.contains("not yet loaded"))
         #expect(rendered.contains("capabilities_load"))
         #expect(rendered.contains("Worked example"))
         #expect(rendered.contains("<plugin: Osaurus Mail>"))
-        #expect(rendered.contains("  list_messages — List inbox messages"))
-        #expect(rendered.contains("  send_message — Send an email"))
+        #expect(rendered.contains("  tool/list_messages — List inbox messages"))
+        #expect(rendered.contains("  tool/send_message — Send an email"))
     }
 
     @Test("enabled plugin skill renders before its sibling tools")
@@ -62,14 +63,15 @@ struct EnabledCapabilitiesManifestTests {
         let rendered = try #require(
             SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups)
         )
-        let skillIndex = try #require(rendered.range(of: "Osaurus Browser (skill)"))
-        let toolIndex = try #require(rendered.range(of: "browser_navigate —"))
+        #expect(!rendered.contains("(skill)"))
+        let skillIndex = try #require(rendered.range(of: "skill/Osaurus Browser"))
+        let toolIndex = try #require(rendered.range(of: "tool/browser_navigate —"))
         #expect(skillIndex.lowerBound < toolIndex.lowerBound)
     }
 
     @Test("standalone skills render as a skills-only group with the loader intro")
     func standaloneSkillsGroupRenders() throws {
-        // The composer folds query-ranked non-plugin skills into a
+        // The composer enumerates every enabled non-plugin skill into a
         // trailing `Skills (no plugin)` group (tools empty). This is what
         // closes the denial hole for standalone skills, so the renderer
         // must surface each skill name under the grounding intro even with
@@ -87,11 +89,11 @@ struct EnabledCapabilitiesManifestTests {
         let rendered = try #require(
             SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups)
         )
-        #expect(rendered.contains("## Enabled capabilities not yet loaded"))
+        #expect(rendered.contains("## Enabled capabilities"))
         #expect(rendered.contains("capabilities_load"))
         #expect(rendered.contains("<plugin: Skills (no plugin)>"))
-        #expect(rendered.contains("  data-viz (skill) — Render charts inline"))
-        #expect(rendered.contains("  code-review (skill) — Catch obvious smells"))
+        #expect(rendered.contains("  skill/data-viz — Render charts inline"))
+        #expect(rendered.contains("  skill/code-review — Catch obvious smells"))
     }
 
     @Test("compact mode drops per-tool and per-skill descriptions")
@@ -106,10 +108,11 @@ struct EnabledCapabilitiesManifestTests {
         let rendered = try #require(
             SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups, compact: true)
         )
-        #expect(rendered.contains("  list_messages"))
+        #expect(rendered.contains("  tool/list_messages"))
         #expect(!rendered.contains("list_messages — List inbox messages"))
-        #expect(rendered.contains("  Mail Helper (skill)"))
-        #expect(!rendered.contains("Mail Helper (skill) —"))
+        #expect(rendered.contains("  skill/Mail Helper"))
+        #expect(!rendered.contains("Mail Helper — "))
+        #expect(!rendered.contains("(skill)"))
     }
 
     @Test("token cap collapses overflow plugins to a pointer line")
@@ -130,7 +133,7 @@ struct EnabledCapabilitiesManifestTests {
         )
         // The cap-filling plugin renders its tools; the overflow plugin
         // collapses to a +N pointer instead of per-tool lines.
-        #expect(rendered.contains("  tool_0 — d"))
+        #expect(rendered.contains("  tool/tool_0 — d"))
         #expect(rendered.contains("<plugin: LatePlugin>"))
         #expect(rendered.contains("+3 more tool(s) — call capabilities_discover to list them."))
         #expect(!rendered.contains("late_tool_a — d"))

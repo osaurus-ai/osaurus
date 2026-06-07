@@ -85,7 +85,7 @@ public enum SystemPromptTemplates {
 
         - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
         - You can almost always get there: a shell or network tool fetches live/external data, and `capabilities_discover` finds tools you don't have yet. Attempt that before deciding you can't — the absence of a purpose-built tool is not a dead end. Say what you can't do only after genuinely trying, and never invent a tool name or fabricate a value to fill a gap.
-        - A claim about your own capabilities is a factual claim. "I don't have a tool for X" or "I can't do X" must be backed by either the Enabled-capabilities manifest or a `capabilities_discover` call that came back empty. Never by X being absent from your current tool schema. Your loaded tools are a per-turn subset auto-selected by preflight, not the full enabled set.
+        - A claim about your own capabilities is a factual claim. "I don't have a tool for X" or "I can't do X" must be backed by either the Enabled-capabilities manifest or a `capabilities_discover` call that came back empty. Never by X being absent from your current tool schema. Your loaded tools are a fixed subset, not the full enabled set.
         - When the user asks whether you have a tool, whether you can do something, or what you can do: check the manifest first, then `capabilities_discover` if the manifest does not settle it, then answer.
         """
 
@@ -99,17 +99,22 @@ public enum SystemPromptTemplates {
     public static let capabilityDiscoveryNudge = """
         ## Discovering more tools
 
-        Your current tool list was pre-selected for this session from your \
-        request and the contents of your working directory. It is a starting \
-        set, not an exhaustive one. If you need a capability that is not \
-        listed, grow the list in two steps:
+        Your current tool list is a fixed starting set, not an exhaustive \
+        one. The Enabled-capabilities list below names more that you can pull \
+        in on demand. When a capability seems missing, follow this order \
+        before deciding you can't do something:
 
-        1. `capabilities_discover({"query": "<what you need>"})` — returns \
-        IDs like `tool/sandbox_exec` or `skill/plot-data`.
-        2. `capabilities_load({"ids": ["tool/sandbox_exec"]})` — adds \
-        those tools to your schema for the rest of this session.
+        1. Check the Enabled-capabilities list — if it is named there, skip \
+        straight to step 3 with that ID.
+        2. `capabilities_discover({"query": "<what you need>"})` — searches \
+        beyond the listed set and returns IDs like `tool/sandbox_exec` or \
+        `skill/plot-data`.
+        3. `capabilities_load({"ids": ["tool/sandbox_exec"]})` — adds those \
+        tools to your schema for the rest of this session.
 
-        Do not invent tool names — the discovery step is the source of truth.
+        Only after a `capabilities_discover` call comes back empty may you \
+        work around the gap or tell the user the capability is unavailable. \
+        Do not invent tool names — use IDs from the list or from discovery.
         """
 
     // MARK: - Enabled Capabilities Manifest
@@ -155,17 +160,19 @@ public enum SystemPromptTemplates {
     /// **Adjust against your context budget.**
     public static let enabledManifestToolCap = 70
 
-    /// Render the `## Enabled capabilities not yet loaded` manifest from a
-    /// pre-grouped, pre-sorted list. Returns `nil` when there is nothing to
-    /// surface so the caller can skip an empty section.
+    /// Render the `## Enabled capabilities` manifest from a pre-grouped,
+    /// pre-sorted list. Returns `nil` when there is nothing to surface so the
+    /// caller can skip an empty section.
     ///
     /// The manifest is the grounded answer to "do you have X" — it lets a
-    /// model confirm an enabled-but-unloaded capability with zero tool
-    /// calls. Tools past `enabledManifestToolCap` collapse to a per-plugin
-    /// `+N more` pointer the model can expand with `capabilities_discover`.
-    /// `compact` (small-/tiny-context models) drops per-tool descriptions
-    /// but keeps the names, since naming the capability is what stops the
-    /// model from denying it.
+    /// model confirm an enabled capability with zero tool calls. Every line
+    /// begins with its loadable id (`tool/<name>` or `skill/<name>`) so the
+    /// model can pass it straight to `capabilities_load` without a discover.
+    /// Tools past `enabledManifestToolCap` collapse to a per-plugin `+N more`
+    /// pointer the model can expand with `capabilities_discover`. `compact`
+    /// (small-/tiny-context models) drops per-tool descriptions but keeps the
+    /// ids, since naming the capability is what stops the model from denying
+    /// it.
     public static func enabledCapabilitiesManifest(
         groups: [ManifestPluginGroup],
         compact: Bool = false
@@ -179,8 +186,8 @@ public enum SystemPromptTemplates {
             let skillLines = group.skills.map { skill -> String in
                 let desc = skill.description.isEmpty ? "Plugin skill." : skill.description
                 return compact
-                    ? "  \(skill.name) (skill)"
-                    : "  \(skill.name) (skill) — \(desc)"
+                    ? "  skill/\(skill.name)"
+                    : "  skill/\(skill.name) — \(desc)"
             }
 
             let remaining = max(enabledManifestToolCap - renderedToolLines, 0)
@@ -202,7 +209,7 @@ public enum SystemPromptTemplates {
 
             let toolLines = toolsToShow.map { tool -> String in
                 let desc = tool.description.isEmpty ? "(no description)" : tool.description
-                return compact ? "  \(tool.name)" : "  \(tool.name) — \(desc)"
+                return compact ? "  tool/\(tool.name)" : "  tool/\(tool.name) — \(desc)"
             }
 
             var lines = ["<plugin: \(group.pluginDisplay)>"]
@@ -217,18 +224,20 @@ public enum SystemPromptTemplates {
         }
 
         let intro = """
-            ## Enabled capabilities not yet loaded
+            ## Enabled capabilities
 
-            These are enabled and available to you but not in your current tool \
-            schema. They are real. To use one, call capabilities_load with its id \
-            (e.g. `capabilities_load({"ids": ["tool/<name>"]})`). Do not deny \
-            having a capability that appears here.
+            These capabilities are enabled for this session. Each line begins \
+            with its loadable id. Some may already be in your current tool \
+            schema; others must be loaded before use. To load one, call \
+            capabilities_load with its id exactly as shown \
+            (e.g. `capabilities_load({"ids": ["tool/<name>"]})`). They are real \
+            — do not deny having a capability that appears here.
 
             Worked example — User: "You have a list_messages tool." You: check \
-            this manifest. If list_messages is listed, confirm it and call \
-            capabilities_load before using it. Only if it is absent from both \
-            this manifest and an empty capabilities_discover result do you say \
-            it is unavailable.
+            this manifest. If tool/list_messages is listed, confirm it and call \
+            capabilities_load with that id before using it. Only if it is absent \
+            from both this manifest and an empty capabilities_discover result do \
+            you say it is unavailable.
             """
 
         return intro + "\n\n" + blocks.joined(separator: "\n")
@@ -245,8 +254,10 @@ public enum SystemPromptTemplates {
         Some enabled capabilities are skills that teach you how to use a group \
         of related tools. When the manifest shows a skill alongside tools from \
         the same plugin, load the skill first with capabilities_load; it \
-        explains when each tool in that group applies. Then load and call the \
-        tools.
+        explains when each tool in that group applies. Loading the skill also \
+        loads that plugin's whole tool group in the same call, so you can call \
+        the tools directly afterward without a separate capabilities_load per \
+        tool.
         """
 
     // MARK: - Cross-cutting Engineering Discipline

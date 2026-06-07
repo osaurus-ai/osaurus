@@ -3,16 +3,11 @@
 //  osaurus
 //
 //  Public facade over the index-search portion of `CapabilitySearch`.
-//  Companion to `PreflightEvaluator.swift` — same surface shape, same
-//  `@MainActor` constraint, decode-friendly `Codable` result type — but
-//  scoped to the recall layer (no LLM call, no agent state, no tool
-//  picker). Used by the `OsaurusEvals` `capability_search` domain
-//  runner to score raw vs threshold-accepted hits in one pass.
-//
-//  Why a separate type: `PreflightEvaluation` measures the LLM picker;
-//  this measures the BM25 + embedder + RRF + threshold path that feeds
-//  it. A regression in either is hidden by an evaluator that only
-//  watches the other.
+//  Decode-friendly `Codable` result type under an `@MainActor`
+//  constraint, scoped to the recall layer (no LLM call, no agent state).
+//  Used by the `OsaurusEvals` `capability_search` domain runner to score
+//  raw vs threshold-accepted hits in one pass — it measures the BM25 +
+//  embedder + RRF + threshold path that backs `capabilities_discover`.
 //
 
 import Foundation
@@ -240,10 +235,9 @@ public enum CapabilitySearchEvaluator {
 /// Internal protocol unifying the three `*SearchDiagnostic.Hit` types
 /// so `makeEmbeddingOnlyHits` can be written once across the methods
 /// and skills lanes. Mirror of the fileprivate `DiagnosticHit` in
-/// `PreflightCapabilitySearch.swift`; kept separate (and at
-/// module-internal visibility) because `CapabilitySearchEvaluator`
-/// needs the constraint at API boundaries while the env-flag log
-/// block is private to its file.
+/// `CapabilitySearch.swift`; kept separate (and at module-internal
+/// visibility) because `CapabilitySearchEvaluator` needs the constraint
+/// at API boundaries while the env-flag log block is private to its file.
 internal protocol SearchDiagnosticHit {
     var name: String { get }
     var score: Float { get }

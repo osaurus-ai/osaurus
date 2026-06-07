@@ -5,13 +5,14 @@
 //  JSON schema for a single behaviour case. Cases live as small JSON
 //  files under `Suites/<domain>/` so non-Swift contributors can add new
 //  ones with a text editor. Schema design:
-//    - `domain` is the eval family (today: "preflight"). It selects
-//      which runner code-path executes the case.
+//    - `domain` is the eval family (e.g. "capability_search",
+//      "capability_claims", "schema"). It selects which runner
+//      code-path executes the case.
 //    - `fixtures` describes the world the case should run against
-//      (preflight mode, required plugins). The runner uses
-//      `requirePlugins` to skip cases the local install can't satisfy
-//      instead of failing them — a contributor without `osaurus.browser`
-//      should still be able to run the rest of the suite.
+//      (required plugins, seeded methods, enabled skills/tools). The
+//      runner uses `requirePlugins` to skip cases the local install
+//      can't satisfy instead of failing them — a contributor without
+//      `osaurus.browser` should still be able to run the rest of the suite.
 //    - `expect` is what we'd score against. All matchers are optional
 //      so a case can scope to just the components it cares about.
 //
@@ -20,16 +21,16 @@ import Foundation
 import OsaurusCore
 
 public struct EvalCase: Sendable, Codable, Identifiable {
-    /// Unique slug, e.g. `preflight.browser.amazon-orders`. Surfaced in
+    /// Unique slug, e.g. `capability_search.browser-prefix`. Surfaced in
     /// reports for diffing across runs.
     public let id: String
-    /// Selects the runner code path. Exactly one domain is supported
-    /// today (`preflight`); future domains will live under sibling
-    /// directories (`Suites/AgentLoop/`, `Suites/ToolCalling/`, ...).
+    /// Selects the runner code path (`capability_search`,
+    /// `capability_claims`, `schema`, ...). Each domain's cases live
+    /// under a sibling directory (`Suites/CapabilitySearch/`, ...).
     public let domain: String
     /// Optional human label for reports — falls back to `id` when nil.
     public let label: String?
-    /// User message the case sends through preflight.
+    /// User message the case sends through the runner.
     public let query: String
     /// Free-form per-case explanatory text. Echoed into the report's
     /// per-case `notes` array so a reader sees WHY a case is shaped the
@@ -61,11 +62,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     }
 
     public struct Fixtures: Sendable, Codable {
-        /// Preflight aggressiveness for the case. Default `.balanced`
-        /// matches the production default — over-narrow cases should
-        /// opt down explicitly so the picker behaviour they're asserting
-        /// is the same one users see.
-        public let preflightMode: PreflightMode?
         /// Plugin ids the case needs in the local registry. Cases with
         /// missing requirements are SKIPPED in the report (not failed)
         /// so an incomplete local setup doesn't mask real regressions.
@@ -113,14 +109,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let ensureToolsDisabled: [String]?
 
         public init(
-            preflightMode: PreflightMode? = nil,
             requirePlugins: [String]? = nil,
             seedMethods: [SeedMethod]? = nil,
             enableSkills: [String]? = nil,
             enableTools: [String]? = nil,
             ensureToolsDisabled: [String]? = nil
         ) {
-            self.preflightMode = preflightMode
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
             self.enableSkills = enableSkills
@@ -168,29 +162,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         }
     }
 
-    /// Mirror of `OsaurusCore.PreflightSearchMode` decoded from JSON.
-    /// We don't import the OsaurusCore enum directly because we want
-    /// the JSON to use lowercase strings (`"balanced"`) and don't want
-    /// the schema to break if the upstream enum gains cases.
-    public enum PreflightMode: String, Sendable, Codable {
-        case off, narrow, balanced, wide
-    }
-
     /// What we score against. All sub-fields are optional so a case can
     /// scope its assertions narrowly. An empty `Expectations` is valid
-    /// — it acts as a smoke-test that just records what preflight did
-    /// without scoring anything (useful while bootstrapping a new case).
-    ///
-    /// TODO(eval-shape-unification): `tools.mustInclude` (preflight)
-    /// and `capabilitySearch.expectedTools.anyOf` are two different
-    /// shapes for asserting on tool sets across two sibling domains.
-    /// Worth one cleanup pass once both runners have stabilised — pick
-    /// the union (`mustInclude` + `mustNotInclude` + `anyOf` +
-    /// `minMatches`) and have both domains use it. Don't block the
-    /// hybrid PR on this; surfacing the divergence here so the next
-    /// contributor sees it.
+    /// — it acts as a smoke-test that just records the case without
+    /// scoring anything (useful while bootstrapping a new case).
     public struct Expectations: Sendable, Codable {
-        public let tools: ToolExpectations?
         /// Schema-validation expectation for `domain == "schema"` cases.
         /// Lets us pin the SchemaValidator's behaviour against canned
         /// schema/arg pairs — extremely useful for keeping the new
@@ -205,7 +181,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Recall expectation for `domain == "capability_search"` cases.
         /// Drives the index-only path through `CapabilitySearchEvaluator`
         /// — no LLM, fast, deterministic. Used to lock in recall floors
-        /// against the embedder + threshold layer that feeds preflight.
+        /// against the embedder + threshold layer that backs
+        /// `capabilities_discover`.
         public let capabilitySearch: CapabilitySearchExpectations?
         /// Detection expectation for `domain == "sandbox_diagnostics"`
         /// cases. Pins `inlineCodeEscapeHint` — the self-heal hint that
@@ -220,7 +197,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let capabilityClaims: CapabilityClaimsExpectations?
 
         public init(
-            tools: ToolExpectations? = nil,
             schema: SchemaExpectations? = nil,
             toolEnvelope: ToolEnvelopeExpectations? = nil,
             streamingHint: StreamingHintExpectations? = nil,
@@ -231,7 +207,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             sandboxDiagnostics: SandboxDiagnosticsExpectations? = nil,
             capabilityClaims: CapabilityClaimsExpectations? = nil
         ) {
-            self.tools = tools
             self.schema = schema
             self.toolEnvelope = toolEnvelope
             self.streamingHint = streamingHint
@@ -557,20 +532,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.responseFormatType = responseFormatType
             self.expectAccept = expectAccept
             self.expectReasonContains = expectReasonContains
-        }
-    }
-
-    public struct ToolExpectations: Sendable, Codable {
-        /// Tool names that MUST appear in the picked set. Each missing
-        /// name costs a fixed weight (see `Scorers.scoreTools`).
-        public let mustInclude: [String]?
-        /// Tool names that must NOT appear. Each spurious pick fails
-        /// the contract.
-        public let mustNotInclude: [String]?
-
-        public init(mustInclude: [String]? = nil, mustNotInclude: [String]? = nil) {
-            self.mustInclude = mustInclude
-            self.mustNotInclude = mustNotInclude
         }
     }
 

@@ -37,7 +37,6 @@ enum ContentBlockKind: Equatable {
     case userMessage(text: String, attachments: [Attachment])
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
-    case preflightCapabilities(items: [PreflightCapabilityItem])
     /// Generation benchmarks footer for a completed assistant turn.
     /// `unclosedReasoning` is true when vmlx's `GenerateCompletionInfo.unclosedReasoning`
     /// fires — model ended the stream still inside a `<think>` block (trapped
@@ -91,9 +90,6 @@ enum ContentBlockKind: Equatable {
         case let (.pendingToolCall(lName, _, lSize), .pendingToolCall(rName, _, rSize)):
             return lName == rName && lSize == rSize
 
-        case let (.preflightCapabilities(lItems), .preflightCapabilities(rItems)):
-            return lItems == rItems
-
         case let (
             .generationStats(lTtft, lTps, lCount, lUnclosed),
             .generationStats(rTtft, rTps, rCount, rUnclosed)
@@ -132,7 +128,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall, .preflightCapabilities,
+        case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall,
             .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions:
             return .assistant
         case .userMessage: return .user
@@ -254,17 +250,6 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
-    static func preflightCapabilities(turnId: UUID, items: [PreflightCapabilityItem], position: BlockPosition)
-        -> ContentBlock
-    {
-        ContentBlock(
-            id: "preflight-\(turnId.uuidString)",
-            turnId: turnId,
-            kind: .preflightCapabilities(items: items),
-            position: position
-        )
-    }
-
     static func generationStats(
         turnId: UUID,
         ttft: TimeInterval?,
@@ -368,12 +353,6 @@ extension ContentBlock {
                         isFirstInGroup: true,
                         position: .first
                     )
-                )
-            }
-
-            if let capabilities = turn.preflightCapabilities, !capabilities.isEmpty {
-                turnBlocks.append(
-                    .preflightCapabilities(turnId: turn.id, items: capabilities, position: .middle)
                 )
             }
 

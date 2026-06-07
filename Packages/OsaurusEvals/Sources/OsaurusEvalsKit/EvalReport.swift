@@ -33,20 +33,6 @@ public enum EvalCaseOutcome: String, Sendable, Codable {
     }
 }
 
-/// Per-case scoring breakdown. Each component is a `Float` in `[0, 1]`
-/// (component absent → `nil`), plus an aggregate `score`. Cases without
-/// any expectations score `1.0` — pure smoke tests that pass as long
-/// as preflight didn't throw.
-public struct EvalCaseScore: Sendable, Codable {
-    public let aggregate: Float
-    public let tools: Float?
-
-    public init(aggregate: Float, tools: Float?) {
-        self.aggregate = aggregate
-        self.tools = tools
-    }
-}
-
 /// Single-case row in the eval report.
 public struct EvalCaseReport: Sendable, Codable {
     public let id: String
@@ -58,10 +44,6 @@ public struct EvalCaseReport: Sendable, Codable {
     /// to interpret a result.
     public let query: String?
     public let outcome: EvalCaseOutcome
-    public let score: EvalCaseScore?
-    /// Preflight snapshot we ran the scorers against. `nil` for
-    /// `skipped` / `errored` outcomes and for non-`preflight` domains.
-    public let observed: PreflightEvaluation?
     /// Capability-search snapshot for `domain == "capability_search"`
     /// rows. Carries both raw and accepted hits so the
     /// `--report-forensics` CLI flag can compute the H1/H2/H3
@@ -80,8 +62,6 @@ public struct EvalCaseReport: Sendable, Codable {
         domain: String,
         query: String? = nil,
         outcome: EvalCaseOutcome,
-        score: EvalCaseScore?,
-        observed: PreflightEvaluation?,
         capabilitySearch: CapabilitySearchEvaluation? = nil,
         notes: [String],
         modelId: String,
@@ -92,8 +72,6 @@ public struct EvalCaseReport: Sendable, Codable {
         self.domain = domain
         self.query = query
         self.outcome = outcome
-        self.score = score
-        self.observed = observed
         self.capabilitySearch = capabilitySearch
         self.notes = notes
         self.modelId = modelId
@@ -101,8 +79,8 @@ public struct EvalCaseReport: Sendable, Codable {
     }
 
     /// Build an early-exit row (decode failure, unknown domain, missing
-    /// fixture). All scoring fields are nil because we never invoked
-    /// preflight — the `notes` array is the only diagnostic.
+    /// fixture). The `notes` array is the only diagnostic because we
+    /// never ran the case.
     public static func terminal(
         id: String,
         label: String,
@@ -117,8 +95,6 @@ public struct EvalCaseReport: Sendable, Codable {
             domain: domain,
             query: nil,
             outcome: outcome,
-            score: nil,
-            observed: nil,
             capabilitySearch: nil,
             notes: notes,
             modelId: modelId,
@@ -173,9 +149,8 @@ public struct EvalReport: Sendable, Codable {
 
     /// Human-readable table — what the CLI prints to stdout. Compact
     /// enough to scan a 6-case run in a single terminal screen.
-    /// `verbose` adds per-case diagnostics (query + raw response +
-    /// pre-guardrail picks) — use it when iterating on the preflight
-    /// prompt or chasing a specific small-model failure.
+    /// `verbose` adds per-case diagnostics (the case query) — use it
+    /// when chasing a specific failure.
     public func formatHumanReadable(verbose: Bool = false) -> String {
         var lines: [String] = []
         lines.append("Eval report")
@@ -188,51 +163,23 @@ public struct EvalReport: Sendable, Codable {
         )
         lines.append("")
         for row in cases {
-            let scoreStr = row.score.map { String(format: "%.2f", $0.aggregate) } ?? "—"
             let latencyStr = row.latencyMs.map { String(format: "%5.0fms", $0) } ?? "      —"
-            lines.append("[\(row.outcome.badge)] \(row.id)  score=\(scoreStr)  \(latencyStr)")
+            lines.append("[\(row.outcome.badge)] \(row.id)  \(latencyStr)")
             for note in row.notes { lines.append("       · \(note)") }
             if verbose { appendVerboseDiagnostics(for: row, into: &lines) }
         }
         return lines.joined(separator: "\n")
     }
 
-    /// Add per-case diagnostic lines (query + raw LLM response + pre-
-    /// guardrail picks) to `lines`. Pulled out of `formatHumanReadable` so
-    /// the verbose-off code path stays a tight table; call only when
-    /// `verbose == true`.
+    /// Add per-case diagnostic lines (the case query) to `lines`. Pulled
+    /// out of `formatHumanReadable` so the verbose-off code path stays a
+    /// tight table; call only when `verbose == true`.
     private func appendVerboseDiagnostics(
         for row: EvalCaseReport,
         into lines: inout [String]
     ) {
         if let query = row.query {
             lines.append("       · query: \"\(query)\"")
-        }
-        guard let observed = row.observed else { return }
-        // catalogSize == 0 is the operator-friendly tell for "the LLM
-        // was never called because no plugin tools are enabled in this
-        // process". Always show it so a confusing FAIL doesn't read
-        // like a model failure when it's a config issue.
-        lines.append("       · catalogSize: \(observed.catalogSize)")
-        if let llmError = observed.llmError {
-            lines.append("       · llmError: \(llmError)")
-        }
-        if !observed.llmPicks.isEmpty {
-            lines.append("       · llmPicks: [\(observed.llmPicks.joined(separator: ", "))]")
-        }
-        if let raw = observed.rawLLMResponse {
-            // Truncate so a chatty model doesn't blow out the terminal.
-            // 400 chars catches the common shapes (NONE, picks, prose
-            // refusal, malformed list) without scrolling.
-            let snippet = raw.count > 400 ? String(raw.prefix(400)) + "…" : raw
-            // Indent multi-line responses so they read as one block.
-            let indented =
-                snippet
-                .split(separator: "\n", omittingEmptySubsequences: false)
-                .map { "         \($0)" }
-                .joined(separator: "\n")
-            lines.append("       · raw:")
-            lines.append(indented)
         }
     }
 }

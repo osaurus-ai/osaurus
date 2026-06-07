@@ -158,17 +158,10 @@ struct ComposedContext: Sendable {
     let manifest: PromptManifest
     let tools: [Tool]
     let toolTokens: Int
-    let preflightItems: [PreflightCapabilityItem]
-    /// The full preflight result this compose call resolved (either fresh or
-    /// echoed back from the caller's session cache). Callers that maintain a
-    /// per-session `SessionToolState` stash this on first compose so subsequent
-    /// composes can pass it back via `cachedPreflight` and skip the LLM call.
-    let preflight: PreflightResult
     /// Per-turn memory snippet, returned separately so callers can prepend it
     /// to the latest user message instead of mutating the system prompt. Nil
     /// when memory is disabled or empty. Keeping memory out of the system
-    /// prefix is what makes the prompt byte-stable across turns once preflight
-    /// is cached.
+    /// prefix is what makes the prompt byte-stable across turns.
     let memorySection: String?
     /// Snapshot of the always-loaded tool names resolved for this compose.
     /// Callers stash it on `SessionToolState.initialAlwaysLoadedNames` after
@@ -188,9 +181,10 @@ struct ComposedContext: Sendable {
     /// fired" (normal-class model). Callers surface this through
     /// `ContextBreakdown.disable` so the popover can render a notice.
     let contextDisable: ContextDisableInfo?
-    /// Standalone skill teasers this compose resolved. Callers stash this on
-    /// `SessionToolState.frozenSkillSuggestions` on first compose so turn 2+
-    /// can echo it back via `cachedSkillSuggestions`, keeping the dynamic
-    /// instructions tail byte-stable for prompt-cache reuse.
-    var skillSuggestions: [SkillTeaser] = []
+    /// Rendered enabled-capabilities manifest this compose resolved (or nil
+    /// when gated off / empty). Callers stash this on
+    /// `SessionToolState.frozenManifest` on first compose so turn 2+ can echo
+    /// it back via `ComposeRequest.frozenManifest`, keeping the static
+    /// system-prompt prefix byte-identical for KV-cache reuse.
+    var enabledManifest: String? = nil
 }

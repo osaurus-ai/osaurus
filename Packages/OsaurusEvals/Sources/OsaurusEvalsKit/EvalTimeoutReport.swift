@@ -67,8 +67,6 @@ public enum EvalTimeoutReport {
                     domain: testCase.domain,
                     query: testCase.query,
                     outcome: .errored,
-                    score: nil,
-                    observed: nil,
                     capabilitySearch: nil,
                     notes: [note],
                     modelId: modelId,

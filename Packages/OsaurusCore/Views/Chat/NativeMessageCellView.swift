@@ -2,8 +2,7 @@
 //  NativeMessageCellView.swift
 //  osaurus
 //
-//  NSTableCellView subclass — pure AppKit rendering for all block types
-//  (preflight chips: NativePreflightCapabilitiesView).
+//  NSTableCellView subclass — pure AppKit rendering for all block types.
 //
 
 import AppKit
@@ -1164,7 +1163,6 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeTypingView: NativeTypingIndicatorView?
     private var nativeArtifactView: NativeArtifactCardView?
     private var nativeChartView: NativeChartView?
-    private var nativePreflightView: NativePreflightCapabilitiesView?
     private var nativeStatsView: NativeStatsView?
     private var nativeAssistantActionsView: NativeAssistantActionsView?
 
@@ -1318,9 +1316,6 @@ final class NativeMessageCellView: NSTableCellView {
 
         case let .chart(spec):
             configureAsChart(block: block, spec: spec, context: context, sameKind: sameKind)
-
-        case let .preflightCapabilities(items):
-            configureAsPreflight(block: block, items: items, context: context, sameKind: sameKind)
 
         case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning):
             configureAsStats(
@@ -2144,37 +2139,6 @@ final class NativeMessageCellView: NSTableCellView {
         }
     }
 
-    // MARK: - PreflightCapabilities
-
-    private func configureAsPreflight(
-        block: ContentBlock,
-        items: [PreflightCapabilityItem],
-        context: CellRenderingContext,
-        sameKind: Bool
-    ) {
-        if !sameKind || nativePreflightView == nil {
-            removeAllContentViews()
-            let pfv = NativePreflightCapabilitiesView()
-            pfv.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(pfv)
-            NSLayoutConstraint.activate([
-                pfv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-                pfv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-                pfv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            ])
-            nativePreflightView = pfv
-        }
-        guard let pfv = nativePreflightView else { return }
-        pfv.onHeightChanged = { [weak self, weak pfv] in
-            guard let self, let pfv, let id = self.currentBlockId else { return }
-            context.onHeightMeasured?(pfv.measuredContentHeight() + 8, id)
-        }
-        pfv.configure(items: items, theme: context.theme, layoutWidth: context.width)
-        let est = PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: context.width)
-        let h = max(pfv.measuredContentHeight(), est) + 8
-        context.onHeightMeasured?(h, block.id)
-    }
-
     // MARK: - Unsupported (should never appear; zero-height placeholder)
 
     private func configureAsUnsupported(sameKind: Bool) {
@@ -2227,7 +2191,6 @@ final class NativeMessageCellView: NSTableCellView {
         // content — visible as charts bleeding through unrelated rows once
         // the user starts scrolling and recycling kicks in.
         detachIfStillParented(nativeChartView); nativeChartView = nil
-        nativePreflightView?.removeFromSuperview(); nativePreflightView = nil
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
         userMessageContainer?.removeFromSuperview(); userMessageContainer = nil
@@ -2424,7 +2387,7 @@ private func cgColorsEqual(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
 /// Lightweight discriminator used to detect kind changes without comparing full associated values.
 enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, userMessage, pendingToolCall
-    case generationStats, typingIndicator, groupSpacer, sharedArtifact, preflightCapabilities, chart
+    case generationStats, typingIndicator, groupSpacer, sharedArtifact, chart
     case assistantActions, other
 }
 
@@ -2441,7 +2404,6 @@ extension ContentBlockKind {
         case .typingIndicator: return .typingIndicator
         case .groupSpacer: return .groupSpacer
         case .sharedArtifact: return .sharedArtifact
-        case .preflightCapabilities: return .preflightCapabilities
         case .chart: return .chart
         case .assistantActions: return .assistantActions
         }
@@ -2547,9 +2509,6 @@ enum NativeCellHeightEstimator {
         case let .toolCallGroup(calls):
             // each row self-sizes at the node header height + 1pt reserved gap
             return CGFloat(calls.count) * (NativeToolCallRowView.rowHeaderHeight + 1) + 8
-
-        case let .preflightCapabilities(items):
-            return 8 + PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: width)
 
         case let .sharedArtifact(artifact):
             // matches NativeArtifactCardView: inner top 12 + bottom 8 (footerVerticalGap), symmetric gap above/below footer row

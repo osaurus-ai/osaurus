@@ -202,9 +202,8 @@ public actor ToolSearchService {
     /// the in-memory `UUID → toolId` map is empty until the next
     /// `rebuildIndex()` runs. Search calls in that window get hits
     /// from VecturaKit, fail to map them back to tool IDs, and
-    /// return `[]` — which then sends `PreflightCapabilitySearch`
-    /// down the "fall back to full catalog" path that overflows
-    /// Apple Foundation Models' 4K context window.
+    /// return `[]` — which then leaves `capabilities_discover` unable
+    /// to surface installed tools until the index repopulates.
     ///
     /// Cheap: just iterates `ToolDatabase.loadAllEntries()` and
     /// derives the deterministic UUID for each entry. No network,
@@ -330,9 +329,7 @@ public actor ToolSearchService {
     /// score (the missing source contributes 0). Filters to
     /// `fusedScore >= minFusedScore` and truncates to `topK`.
     ///
-    /// Used by the runtime `CapabilitySearch.search` tools-lane and
-    /// by `PreflightCapabilitySearch.rankCatalog` (with
-    /// `minFusedScore: 0.0` — rank-only, no acceptance cutoff).
+    /// Used by the runtime `CapabilitySearch.search` tools-lane.
     public func searchHybrid(
         query: String,
         topK: Int = 10,

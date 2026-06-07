@@ -5900,7 +5900,7 @@ private struct AgentEditorSheet: View {
         let skillCount = draftSkillNames.count
         let modeBlurb =
             draftMode == .auto
-            ? L("Pre-flight picks the most relevant per turn.")
+            ? L("Loaded on demand from your enabled set.")
             : L("All enabled items are sent every turn.")
         return "\(toolCount) tools and \(skillCount) skills enabled · \(modeBlurb)"
     }

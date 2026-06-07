@@ -93,9 +93,8 @@ public actor MethodSearchService {
 
     /// See `ToolSearchService.rehydrateReverseIdMap` for the rationale.
     /// Without this, search returns empty until `rebuildIndex()`
-    /// completes, and callers like `PreflightCapabilitySearch.rankCatalog`
-    /// fall back to over-large catalogs that overflow small-context
-    /// LLMs.
+    /// completes, leaving `capabilities_discover` unable to surface
+    /// installed methods until the index repopulates.
     private func rehydrateReverseIdMap() {
         guard let methods = try? MethodDatabase.shared.loadAllMethods() else { return }
         for method in methods {

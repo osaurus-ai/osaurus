@@ -34,7 +34,6 @@ struct ConfigurationView: View {
     @State private var tempChatContextLength: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
-    @State private var tempPreflightSearchMode: PreflightSearchMode = .balanced
     @State private var tempDisableTools: Bool = true
     @State private var tempMemoryEnabled: Bool = false
     @State private var tempCoreModelProvider: String = ""
@@ -147,7 +146,7 @@ struct ConfigurationView: View {
                                         VStack(alignment: .leading, spacing: 8) {
                                             coreModelPicker
                                             Text(
-                                                "Lightweight model used for memory consolidation and preflight tool selection. If unset, your active chat model is used as a fallback. Note: tools must also be enabled on the active agent — check Agent → Capabilities.",
+                                                "Lightweight model used for memory consolidation and transcription cleanup. If unset, your active chat model is used as a fallback. Note: tools must also be enabled on the active agent — check Agent → Capabilities.",
                                                 bundle: .module
                                             )
                                             .font(.system(size: 11))
@@ -292,8 +291,6 @@ struct ConfigurationView: View {
                             "Top P",
                             "Max Tool Attempts",
                             "Generation",
-                            "Preflight",
-                            "Capability Search",
                             "Memory",
                             "Tools"
                         ) {
@@ -368,25 +365,6 @@ struct ConfigurationView: View {
                                                 "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly.",
                                             isOn: $smoothStreamingEnabled
                                         )
-                                    }
-
-                                    SettingsDivider()
-
-                                    SettingsSubsection(label: "Capability Search") {
-                                        VStack(alignment: .leading, spacing: 10) {
-                                            Picker("", selection: $tempPreflightSearchMode) {
-                                                ForEach(PreflightSearchMode.allCases, id: \.self) { mode in
-                                                    Text(mode.rawValue.capitalized).tag(mode)
-                                                }
-                                            }
-                                            .pickerStyle(.segmented)
-                                            .labelsHidden()
-                                            .disabled(tempDisableTools)
-
-                                            Text(tempPreflightSearchMode.helpText)
-                                                .font(.system(size: 11))
-                                                .foregroundColor(theme.tertiaryText)
-                                        }
                                     }
 
                                     SettingsDivider()
@@ -836,7 +814,6 @@ struct ConfigurationView: View {
         tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
-        tempPreflightSearchMode = chat.preflightSearchMode ?? .balanced
         tempDisableTools = defaultAgent.disableTools
         tempMemoryEnabled = snapshot.memory.enabled
         tempCoreModelProvider = chat.coreModelProvider ?? ""
@@ -884,7 +861,6 @@ struct ConfigurationView: View {
         tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
-        tempPreflightSearchMode = .balanced
         tempDisableTools = true
         tempMemoryEnabled = false
         tempCoreModelProvider = chatDefaults.coreModelProvider ?? ""
@@ -987,7 +963,6 @@ struct ConfigurationView: View {
             defaultModel: existingDefaultModel,
             coreModelProvider: tempCoreModelProvider.isEmpty ? nil : tempCoreModelProvider,
             coreModelName: tempCoreModelName.isEmpty ? nil : tempCoreModelName,
-            preflightSearchMode: tempPreflightSearchMode,
             disableTools: false,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             greetingPersona: {

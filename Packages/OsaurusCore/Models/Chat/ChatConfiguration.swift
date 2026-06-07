@@ -57,9 +57,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var coreModelProvider: String?
     /// Name of the shared core model. Defaults to `"foundation"`
     /// (Apple's on-device Language Model on macOS 26+) so that
-    /// memory consolidation, preflight tool selection, and the
-    /// transcription cleanup path all work out of the box without
-    /// the user needing to configure an API key.
+    /// memory consolidation and the transcription cleanup path all work
+    /// out of the box without the user needing to configure an API key.
     public var coreModelName: String?
 
     /// Full model identifier for routing, or nil when no core model is configured.
@@ -71,12 +70,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         return name
     }
 
-    // MARK: - Preflight Search Settings
-    /// Controls how aggressively pre-flight capability search loads context (nil defaults to .balanced)
-    public var preflightSearchMode: PreflightSearchMode?
-
     // MARK: - Tool Settings
-    /// When true, no tools or preflight context are passed to the model. The raw message is sent
+    /// When true, no tools are passed to the model. The raw message is sent
     /// directly, keeping the prompt stable across turns for maximum KV-cache reuse. Recommended
     /// when osaurus is acting as a plain LLM backend for an external agent.
     public var disableTools: Bool
@@ -105,7 +100,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel: String? = nil,
         coreModelProvider: String? = nil,
         coreModelName: String? = nil,
-        preflightSearchMode: PreflightSearchMode? = nil,
         disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true,
         greetingPersona: String = ""
@@ -120,7 +114,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.defaultModel = defaultModel
         self.coreModelProvider = coreModelProvider
         self.coreModelName = coreModelName
-        self.preflightSearchMode = preflightSearchMode
         self.disableTools = disableTools
         self.enableClipboardMonitoring = enableClipboardMonitoring
         self.greetingPersona = greetingPersona
@@ -138,10 +131,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
         coreModelProvider = try container.decodeIfPresent(String.self, forKey: .coreModelProvider)
         coreModelName = try container.decodeIfPresent(String.self, forKey: .coreModelName)
-        preflightSearchMode = try container.decodeIfPresent(
-            PreflightSearchMode.self,
-            forKey: .preflightSearchMode
-        )
         disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
         // The on/off for AI greetings is now per-agent
@@ -173,7 +162,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             // `AppConfiguration` picks exactly the same value.
             coreModelProvider: nil,
             coreModelName: defaultCoreModelNameIfAvailable,
-            preflightSearchMode: .balanced,
             enableClipboardMonitoring: true,
             // Empty persona = "use built-in playful default". This is the
             // global default voice; the on/off is per-agent. Users opt

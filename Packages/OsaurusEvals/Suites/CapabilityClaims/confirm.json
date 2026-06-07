@@ -3,7 +3,7 @@
   "domain": "capability_claims",
   "label": "capability claims • confirm an enabled-but-unloaded tool",
   "query": "Do you have a tool that can open and navigate web pages?",
-  "notes": "The browser tools are enabled for the agent but preflight loads only a per-turn subset, so on a capability question they may not be in the schema. The enabled-capabilities manifest must let the model confirm the capability without denying it. Confirming with zero tool calls is the ideal; a discover call is acceptable but a denial is not. Requires osaurus.browser installed.",
+  "notes": "The browser tools are enabled for the agent but only the hot set is loaded into the schema, so on a capability question the browser tools may not be present. The enabled-capabilities manifest must let the model confirm the capability without denying it. Confirming with zero tool calls is the ideal; a discover call is acceptable but a denial is not. Requires osaurus.browser installed.",
   "fixtures": {
     "requirePlugins": ["osaurus.browser"],
     "enableSkills": ["Osaurus Browser"],

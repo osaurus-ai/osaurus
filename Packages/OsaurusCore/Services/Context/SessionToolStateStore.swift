@@ -2,9 +2,10 @@
 //  SessionToolStateStore.swift
 //  osaurus
 //
-//  Process-wide store for per-session preflight + always-loaded snapshots.
-//  Replaces a duplicated `[id: SessionToolState]` map that previously lived
-//  inside both `ChatView` (UUID-keyed) and `PluginHostAPI` (String-keyed).
+//  Process-wide store for per-session loaded-tool + always-loaded snapshots
+//  and the frozen enabled-capabilities manifest. Replaces a duplicated
+//  `[id: SessionToolState]` map that previously lived inside both `ChatView`
+//  (UUID-keyed) and `PluginHostAPI` (String-keyed).
 //
 //  Keeping a single store means there is exactly one place to debug "why
 //  didn't this tool show up on turn 2?" and one cache invalidation rule
@@ -14,11 +15,11 @@
 
 import Foundation
 
-/// Per-session record of the initial preflight selection plus every tool the
-/// agent has loaded mid-session via `capabilities_load`. The composer uses
-/// this to skip the LLM-based preflight call after turn 1 and to keep the
-/// rendered system prompt + `<tools>` block byte-stable across turns
-/// (required for KV-cache reuse).
+/// Per-session record of the first-turn always-loaded snapshot, every tool the
+/// agent has loaded mid-session via `capabilities_load`, and the frozen
+/// enabled-capabilities manifest. The composer uses this to keep the rendered
+/// system prompt + `<tools>` block byte-stable across turns (required for
+/// KV-cache reuse).
 actor SessionToolStateStore {
     static let shared = SessionToolStateStore()
 
@@ -41,24 +42,22 @@ actor SessionToolStateStore {
     // MARK: - Writes
 
     /// Initialise a session entry on first send. Caller passes the freshly
-    /// computed preflight + always-loaded snapshot, plus the optional
-    /// (executionMode, toolSelectionMode) fingerprint that captured them
-    /// so a later send can detect a flip and invalidate.
+    /// computed always-loaded snapshot, plus the optional (executionMode,
+    /// toolSelectionMode) fingerprint that captured it so a later send can
+    /// detect a flip and invalidate.
     /// Idempotent: if an entry already exists (e.g. another turn raced
     /// ahead) we leave it alone so the snapshot stays stable.
     func setInitial(
         _ sessionId: String,
-        preflight: PreflightResult,
         alwaysLoadedNames: LoadedTools?,
         fingerprint: String? = nil,
-        skillSuggestions: [SkillTeaser]? = nil
+        manifest: String? = nil
     ) {
         guard states[sessionId] == nil else { return }
         states[sessionId] = SessionToolState(
-            initialPreflight: preflight,
             initialAlwaysLoadedNames: alwaysLoadedNames,
             sessionFingerprint: fingerprint,
-            frozenSkillSuggestions: skillSuggestions
+            frozenManifest: manifest
         )
     }
 
@@ -91,19 +90,17 @@ actor SessionToolStateStore {
 
     /// Append tool names loaded mid-session (via `capabilities_load` /
     /// `sandbox_plugin_register`). Creates the entry if missing — the
-    /// caller supplies a fallback preflight + snapshot so we don't lose
+    /// caller supplies a fallback always-loaded snapshot so we don't lose
     /// schema stability when the load happens before the first compose
     /// captured a snapshot.
     func appendLoadedTools(
         _ sessionId: String,
         names: [String],
-        fallbackPreflight: PreflightResult,
         fallbackAlwaysLoadedNames: LoadedTools?
     ) {
         var entry =
             states[sessionId]
             ?? SessionToolState(
-                initialPreflight: fallbackPreflight,
                 initialAlwaysLoadedNames: fallbackAlwaysLoadedNames
             )
         for name in names { entry.loadedToolNames.insert(name) }

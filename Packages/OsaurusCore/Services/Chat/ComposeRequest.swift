@@ -21,14 +21,13 @@ struct ComposeRequest: Sendable {
     let query: String
     let messages: [ChatMessage]
     let toolsDisabled: Bool
-    let cachedPreflight: PreflightResult?
     let additionalToolNames: LoadedTools
     let frozenAlwaysLoadedNames: LoadedTools?
-    /// Turn-1 skill-suggestion selection echoed back on turn 2+ so the
-    /// query-driven instructions tail stays byte-stable across the session
-    /// (mirrors `cachedPreflight`). `nil` = recompute; non-nil (incl. empty)
-    /// = frozen.
-    let cachedSkillSuggestions: [SkillTeaser]?
+    /// Turn-1 rendered enabled-capabilities manifest echoed back on turn 2+
+    /// so the static system-prompt prefix stays byte-identical across the
+    /// session (mirrors `frozenAlwaysLoadedNames`). `nil` = render fresh;
+    /// non-nil = reuse verbatim.
+    let frozenManifest: String?
     let trace: TTFTTrace?
 
     init(
@@ -38,10 +37,9 @@ struct ComposeRequest: Sendable {
         query: String = "",
         messages: [ChatMessage] = [],
         toolsDisabled: Bool = false,
-        cachedPreflight: PreflightResult? = nil,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
-        cachedSkillSuggestions: [SkillTeaser]? = nil,
+        frozenManifest: String? = nil,
         trace: TTFTTrace? = nil
     ) {
         self.agentId = agentId
@@ -50,10 +48,9 @@ struct ComposeRequest: Sendable {
         self.query = query
         self.messages = messages
         self.toolsDisabled = toolsDisabled
-        self.cachedPreflight = cachedPreflight
         self.additionalToolNames = additionalToolNames
         self.frozenAlwaysLoadedNames = frozenAlwaysLoadedNames
-        self.cachedSkillSuggestions = cachedSkillSuggestions
+        self.frozenManifest = frozenManifest
         self.trace = trace
     }
 }

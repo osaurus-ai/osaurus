@@ -4,8 +4,7 @@
 //
 //  Read-only health probe over the registry-vs-tool-index parity. Used by
 //  the env-flag-gated capability-search trace path and the per-process
-//  cheap-path snapshot gates inside `CapabilitySearch.search` /
-//  `PreflightCapabilitySearch.search`.
+//  cheap-path snapshot gates inside `CapabilitySearch.search`.
 //
 //  Two operating modes — they cost very different amounts:
 //
@@ -141,10 +140,9 @@ public enum CapabilitySearchDiagnostics {
 
     /// Per-call-site one-shot variant. The first invocation per process
     /// for a given `reason` emits a snapshot; subsequent calls are
-    /// dropped. Lets `CapabilitySearch.search` and
-    /// `PreflightCapabilitySearch.search` install cheap snapshot gates
-    /// on the hot path without double-logging when both fire in the
-    /// same session. Reason strings are also the de-dup key — pick
+    /// dropped. Lets `CapabilitySearch.search` install cheap snapshot
+    /// gates on the hot path without double-logging when callers fire in
+    /// the same session. Reason strings are also the de-dup key — pick
     /// stable identifiers (e.g. `"CapabilitySearch.search"`).
     public static func logSnapshotOnce(reason: String, mode: Mode = .cheap) async {
         guard !trippedCallSites.contains(reason) else { return }

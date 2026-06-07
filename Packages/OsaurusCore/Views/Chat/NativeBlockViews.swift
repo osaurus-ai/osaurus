@@ -137,17 +137,14 @@ final class NativeTypingIndicatorView: NSView {
     /// Mutually-exclusive states the typing indicator can advertise on its
     /// inline label. Order of evaluation in `currentLoadingPhase` encodes
     /// priority: sandbox provisioning blocks the rest of the turn, so it
-    /// wins over preflight (which only runs once the model is up), which
-    /// in turn wins over a raw model-load tick.
+    /// wins over a raw model-load tick.
     private enum LoadingPhase {
         case sandbox
-        case preflight
         case modelLoad
 
         var labelText: String {
             switch self {
             case .sandbox: "Sandbox is still loading..."
-            case .preflight: "Searching capabilities..."
             case .modelLoad: "Loading Model..."
             }
         }
@@ -165,7 +162,6 @@ final class NativeTypingIndicatorView: NSView {
 
         let triggers: [AnyPublisher<Void, Never>] = [
             progress.$loadInFlightCount.map { _ in () }.eraseToAnyPublisher(),
-            progress.$isPreflighting.map { _ in () }.eraseToAnyPublisher(),
             sandbox.$status.map { _ in () }.eraseToAnyPublisher(),
             sandbox.$isProvisioning.map { _ in () }.eraseToAnyPublisher(),
             agents.$activeAgentId.map { _ in () }.eraseToAnyPublisher(),
@@ -195,7 +191,6 @@ final class NativeTypingIndicatorView: NSView {
         let sandboxBooting = sandbox.status == .starting || sandbox.isProvisioning
 
         if agentUsesSandbox && sandboxBooting { return .sandbox }
-        if progress.isPreflighting { return .preflight }
         if progress.loadInFlightCount > 0 { return .modelLoad }
         return nil
     }
@@ -407,228 +402,6 @@ final class NativePendingToolCallView: NSView {
             shimmerLabel.centerYAnchor.constraint(equalTo: node.centerYAnchor),
             shimmerLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
         ])
-    }
-}
-
-// MARK: - Preflight row height (NSTableView delegate fast path)
-
-enum PreflightCapabilitiesRowHeight {
-    private static let rowHeight: CGFloat = 22
-    private static let chipSpacing: CGFloat = 4
-    private static let iconSize: CGFloat = 14
-    private static let iconTrailingGap: CGFloat = 6
-
-    static func estimated(items: [PreflightCapabilityItem], tableWidth: CGFloat) -> CGFloat {
-        guard !items.isEmpty else { return 1 }
-        let innerW = max(tableWidth - 32 - iconSize - iconTrailingGap, 40)
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        for item in items {
-            let w = CGFloat(item.name.count) * 7 + 16
-            if x + w > innerW && x > 0 {
-                x = 0
-                y += rowHeight + chipSpacing
-            }
-            x += w + chipSpacing
-        }
-        return y + rowHeight
-    }
-}
-
-// MARK: - Preflight chip cell (vertical centering)
-
-/// default `NSTextFieldCell` baseline layout leaves uneven padding in short fixed-height pills
-private final class PreflightChipTextFieldCell: NSTextFieldCell {
-    override func drawingRect(forBounds rect: NSRect) -> NSRect {
-        guard let font = font else { return super.drawingRect(forBounds: rect) }
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: textColor ?? NSColor.labelColor,
-        ]
-        let s = NSAttributedString(string: stringValue, attributes: attrs)
-        let textH = ceil(
-            s.boundingRect(
-                with: NSSize(width: max(rect.width - 8, 1), height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading]
-            ).height
-        )
-        let y = rect.minY + floor((rect.height - textH) / 2)
-        return NSRect(x: rect.minX + 4, y: y, width: rect.width - 8, height: textH)
-    }
-
-    /// `drawingRect(forBounds:)` alone is not enough: `NSTextFieldCell` still places glyphs on a
-    /// baseline inside that rect (NeXT-era metrics), which reads top-heavy in flipped, short rows.
-    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
-        guard let font = font else {
-            super.drawInterior(withFrame: cellFrame, in: controlView)
-            return
-        }
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = alignment
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: textColor ?? NSColor.labelColor,
-            .paragraphStyle: paragraphStyle,
-        ]
-        let s = NSAttributedString(string: stringValue, attributes: attrs)
-        let r = drawingRect(forBounds: cellFrame)
-        s.draw(with: r, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
-    }
-
-    override init(textCell string: String) {
-        super.init(textCell: string)
-    }
-
-    required init(coder: NSCoder) {
-        super.init(coder: coder)
-    }
-}
-
-// MARK: - NativePreflightCapabilitiesView
-
-/// icon + wrapping monospaced chips; flipped coords + manual frames; no SwiftUI
-final class NativePreflightCapabilitiesView: NSView {
-
-    static let rowHeight: CGFloat = 22
-    private static let chipSpacing: CGFloat = 4
-    private static let iconSize: CGFloat = 14
-    private static let iconTrailingGap: CGFloat = 6
-
-    private let iconView = NSImageView()
-    private var chipFields: [NSTextField] = []
-    private var heightConstraint: NSLayoutConstraint?
-    private var layoutWidthHint: CGFloat = 400
-    private var contentHeight: CGFloat = 0
-
-    var onHeightChanged: (() -> Void)?
-
-    override var isFlipped: Bool { true }
-
-    func measuredContentHeight() -> CGFloat {
-        heightConstraint?.constant ?? contentHeight
-    }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        translatesAutoresizingMaskIntoConstraints = false
-
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        addSubview(iconView)
-
-        let hc = heightAnchor.constraint(equalToConstant: Self.rowHeight)
-        hc.priority = .required
-        hc.isActive = true
-        heightConstraint = hc
-
-        let rowCenter = Self.rowHeight / 2
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            iconView.centerYAnchor.constraint(equalTo: topAnchor, constant: rowCenter),
-            iconView.widthAnchor.constraint(equalToConstant: Self.iconSize),
-            iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func configure(items: [PreflightCapabilityItem], theme: any ThemeProtocol, layoutWidth: CGFloat) {
-        layoutWidthHint = max(layoutWidth, 100)
-
-        let types = Set(items.map(\.type))
-        let iconName: String
-        if types.count == 1, let only = types.first { iconName = only.icon } else { iconName = "sparkles" }
-        iconView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
-        iconView.contentTintColor = NSColor(theme.tertiaryText)
-
-        for f in chipFields { f.removeFromSuperview() }
-        chipFields = []
-
-        guard !items.isEmpty else {
-            iconView.isHidden = true
-            setContentHeight(0)
-            return
-        }
-
-        iconView.isHidden = false
-        for item in items {
-            let f = makeChipField(text: item.name, theme: theme)
-            addSubview(f)
-            chipFields.append(f)
-        }
-        needsLayout = true
-        layoutChips()
-    }
-
-    override func layout() {
-        super.layout()
-        layoutChips()
-    }
-
-    private func setContentHeight(_ h: CGFloat) {
-        guard contentHeight != h else { return }
-        contentHeight = h
-        heightConstraint?.constant = max(h, 0)
-        onHeightChanged?()
-    }
-
-    private func layoutChips() {
-        guard !chipFields.isEmpty else { return }
-        let leftInset = Self.iconSize + Self.iconTrailingGap
-        var cw = bounds.width - leftInset
-        if cw < 1 {
-            let pfvW: CGFloat
-            if let cell = superview, cell.bounds.width > 1 {
-                pfvW = max(cell.bounds.width - 32, 40)
-            } else {
-                pfvW = max(layoutWidthHint - 32, 40)
-            }
-            cw = max(pfvW - leftInset, 1)
-        }
-        guard cw > 0 else { return }
-
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        let rowH = Self.rowHeight
-        let spacing = Self.chipSpacing
-
-        for field in chipFields {
-            let font = field.font ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-            let textW = (field.stringValue as NSString).size(withAttributes: [.font: font]).width
-            let w = max(ceil(textW) + 16, 28)
-            if x + w > cw && x > 0 {
-                x = 0
-                y += rowH + spacing
-            }
-            field.translatesAutoresizingMaskIntoConstraints = false
-            field.frame = CGRect(x: leftInset + x, y: y, width: w, height: rowH)
-            field.isHidden = false
-            x += w + spacing
-        }
-        setContentHeight(y + rowH)
-    }
-
-    private func makeChipField(text: String, theme: any ThemeProtocol) -> NSTextField {
-        let cell = PreflightChipTextFieldCell(textCell: text)
-        cell.font = NSFont.monospacedSystemFont(ofSize: CGFloat(theme.captionSize) - 1, weight: .medium)
-        cell.textColor = NSColor(theme.secondaryText)
-        cell.isEditable = false
-        cell.isBordered = false
-        cell.drawsBackground = true
-        cell.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.4)
-        cell.alignment = .center
-        cell.lineBreakMode = .byTruncatingTail
-        cell.usesSingleLineMode = true
-
-        let label = NSTextField(frame: .zero)
-        label.cell = cell
-        label.wantsLayer = true
-        label.layer?.cornerRadius = 6
-        label.layer?.masksToBounds = true
-        label.layer?.borderWidth = 0.5
-        label.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(0.3).cgColor
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return label
     }
 }
 

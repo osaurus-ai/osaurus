@@ -321,8 +321,8 @@ if let active = activeDispatch(forChat: msg.chat.id) {
 // agent identifiers are ignored and warned-once. This keeps every
 // agent's bot strictly scoped to its own conversations.
 // `tools` pins the names the model is *guaranteed* to see on turn 1.
-// Without this we'd be relying on the agent's auto-mode preflight to
-// surface `reply` & friends from a generic prompt — which is fine in
+// Without this we'd be relying on the agent loading `reply` & friends
+// on demand from a generic prompt — which is fine in
 // practice but not deterministic. Listing them here makes the contract
 // explicit: every dispatched run can talk back to the chat. Names are
 // scope-checked to (this plugin's manifest tools + host built-ins),

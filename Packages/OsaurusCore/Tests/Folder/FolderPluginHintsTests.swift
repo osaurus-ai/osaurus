@@ -2,10 +2,10 @@
 //  FolderPluginHintsTests.swift
 //  osaurus
 //
-//  Pin the extension→plugin lookup contract that drives folder-driven
-//  preflight injection. The pure overload is what production code reaches
-//  for through `suggestedPluginIds(for:)` once `PluginManager.shared.plugins`
-//  has been collapsed into a Set, so testing the pure form is enough to
+//  Pin the extension→plugin lookup contract behind `FolderPluginHints`.
+//  The pure overload is what production code reaches for through
+//  `suggestedPluginIds(for:)` once `PluginManager.shared.plugins` has
+//  been collapsed into a Set, so testing the pure form is enough to
 //  cover the table semantics + bias-only filter.
 //
 

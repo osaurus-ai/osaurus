@@ -87,26 +87,23 @@ public struct EvalBootstrapPlan: Sendable, Equatable {
         switch preference {
         case .force:
             return EvalBootstrapPlan(loadInstalledPlugins: true, searchIndexScope: .empty)
-        case .disabled:
+        // `automatic` and `disabled` resolve identically: no current domain
+        // needs installed native plugins loaded by default, so both just
+        // bring up whatever search-index lanes the selected cases require.
+        // Pass `--bootstrap-plugins` (`.force`) to opt into plugin loading.
+        case .automatic, .disabled:
             return EvalBootstrapPlan(
                 loadInstalledPlugins: false,
                 searchIndexScope: suite.searchIndexBootstrapScopeWithoutPluginBootstrap(filter: filter)
-            )
-        case .automatic:
-            let needsPreflight = suite.containsCase(domain: "preflight", filter: filter)
-            return EvalBootstrapPlan(
-                loadInstalledPlugins: needsPreflight,
-                searchIndexScope: needsPreflight
-                    ? .empty
-                    : suite.searchIndexBootstrapScopeWithoutPluginBootstrap(filter: filter)
             )
         }
     }
 }
 
 /// Runs the selected bootstrap plan. Full plugin bootstrap delegates to
-/// `PreflightEvaluator` so the eval CLI mirrors the host app for preflight
-/// suites; index-only bootstrap deliberately avoids native plugin loading.
+/// `EvalHostBootstrap` so the eval CLI mirrors the host app when a run
+/// forces plugin loading; index-only bootstrap deliberately avoids native
+/// plugin loading.
 @MainActor
 public enum EvalBootstrap {
     /// Capability-search is an index-only eval lane, so automatic
@@ -138,7 +135,7 @@ public enum EvalBootstrap {
 
     public static func run(_ plan: EvalBootstrapPlan) async {
         if plan.loadInstalledPlugins {
-            await PreflightEvaluator.loadInstalledPlugins()
+            await EvalHostBootstrap.loadInstalledPlugins()
             return
         }
 
@@ -171,17 +168,6 @@ public enum EvalBootstrap {
 }
 
 public extension EvalSuite {
-    /// Domain presence after applying the same substring filter the CLI applies
-    /// to case execution. Bootstrap should match the cases that will actually run.
-    func containsCase(domain: String, filter: String?) -> Bool {
-        if let filter {
-            return cases.contains { $0.domain == domain && $0.id.contains(filter) }
-        }
-        return cases.contains { testCase in
-            testCase.domain == domain
-        }
-    }
-
     /// Search indices are only useful for cases that will reach the search
     /// evaluator. Without plugin bootstrap, plugin-required cases skip before
     /// searching, so a filtered run of those cases should not block on index IO.
@@ -201,13 +187,6 @@ public extension EvalSuite {
         var needsSkills = false
 
         for testCase in selectedCases(filter: filter) {
-            if testCase.domain == "preflight" {
-                needsTools = true
-                needsMethods = true
-                needsSkills = true
-                continue
-            }
-
             guard testCase.domain == "capability_search" else { continue }
             guard testCase.fixtures.requirePlugins?.isEmpty ?? true else { continue }
 

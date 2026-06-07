@@ -3,8 +3,7 @@
 //  osaurusTests
 //
 //  Validates the `SessionToolState` contract used by ChatWindowState to
-//  memoize per-session preflight selections + capabilities_load additions
-//  across composes.
+//  memoize per-session `capabilities_load` additions across composes.
 //
 
 import Foundation
@@ -18,9 +17,7 @@ struct SessionPreflightCacheTests {
 
     @Test
     func sessionToolState_loadedNamesAreAdditive() {
-        var state = SessionToolState(
-            initialPreflight: PreflightResult(toolSpecs: [], items: [])
-        )
+        var state = SessionToolState()
         #expect(state.loadedToolNames.isEmpty)
 
         state.loadedToolNames.insert("pdf_extract")
@@ -31,16 +28,14 @@ struct SessionPreflightCacheTests {
     }
 
     @Test
-    func resolveTools_includesAdditionalToolNamesEvenWithEmptyPreflight() async {
+    func resolveTools_includesAdditionalToolNames() async {
         await withSessionPreflightAgent { agentId in
 
-            // Empty preflight (mirrors a cached session that captured "no LLM
-            // additions") should still inflate to include the agent's
-            // capabilities_load union.
+            // The agent's `capabilities_load` union must inflate the
+            // resolved schema even when no folder/sandbox tools are present.
             let tools = SystemPromptComposer.resolveTools(
                 agentId: agentId,
                 executionMode: .none,
-                preflight: PreflightResult(toolSpecs: [], items: []),
                 additionalToolNames: ["search_memory"]
             )
             let names = tools.map { $0.function.name }
@@ -49,33 +44,26 @@ struct SessionPreflightCacheTests {
     }
 
     @Test
-    func composeChatContext_doesNotRunFreshPreflightWhenCached() async {
+    func composeChatContext_keepsUnloadedToolsOutOfSchema() async {
         await withSessionPreflightAgent { agentId in
 
-            // Seed cache with a known PreflightResult that includes a specific
-            // tool we can fingerprint in the rendered output.
+            // search_memory must be registered in this environment for the
+            // assertion to be meaningful; otherwise skip.
             let memorySpec = ToolRegistry.shared.specs(forTools: ["search_memory"]).first
-            guard let memorySpec else {
-                // search_memory isn't registered in this test environment — skip
-                // (the property under test is exercised by other tests anyway).
-                return
-            }
-            let cached = PreflightResult(toolSpecs: [memorySpec], items: [])
+            guard memorySpec != nil else { return }
 
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
-                query: "this query would normally trigger a fresh LLM preflight",
-                cachedPreflight: cached
+                query: "this query mentions memory but nothing is loaded yet"
             )
 
-            // The cached preflight must echo back through ComposedContext.preflight
-            // so the caller can re-stash it.
-            let cachedNames = Set(ctx.preflight.toolSpecs.map { $0.function.name })
-            #expect(cachedNames == ["search_memory"])
-            // And the resolved tool union must contain the cached preflight tool.
+            // Design C: the tools array is the fixed hot set plus
+            // `capabilities_load` picks. A tool the agent has NOT loaded
+            // must stay out of the schema — capability breadth lives in the
+            // static manifest instead.
             let resolvedNames = ctx.tools.map { $0.function.name }
-            #expect(resolvedNames.contains("search_memory"))
+            #expect(!resolvedNames.contains("search_memory"))
         }
     }
 

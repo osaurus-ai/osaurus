@@ -87,10 +87,9 @@ public struct SystemPromptComposer: Sendable {
         query: String = "",
         messages: [ChatMessage] = [],
         toolsDisabled: Bool = false,
-        cachedPreflight: PreflightResult? = nil,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
-        cachedSkillSuggestions: [SkillTeaser]? = nil,
+        frozenManifest: String? = nil,
         trace: TTFTTrace? = nil
     ) async -> ComposedContext {
         await composeChatContext(
@@ -101,10 +100,9 @@ public struct SystemPromptComposer: Sendable {
                 query: query,
                 messages: messages,
                 toolsDisabled: toolsDisabled,
-                cachedPreflight: cachedPreflight,
                 additionalToolNames: additionalToolNames,
                 frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
-                cachedSkillSuggestions: cachedSkillSuggestions,
+                frozenManifest: frozenManifest,
                 trace: trace
             )
         )
@@ -114,12 +112,10 @@ public struct SystemPromptComposer: Sendable {
     /// so optional bits (trace, frozen snapshot, mid-session loaded
     /// names) stay grouped instead of trailing the signature.
     ///
-    /// `request.query` seeds preflight capability search. If empty, the
-    /// most recent `"user"` message in `request.messages` is used so
-    /// retries / regenerations still drive preflight. Pass
-    /// `cachedPreflight` from a per-session `SessionToolState` to skip
-    /// the LLM call after turn 1. Pass `additionalToolNames` so tools
-    /// the agent loaded mid-session via `capabilities_load` survive
+    /// `request.query` is the effective user query (for memory recall and
+    /// the trivial-input fast path). If empty, the most recent `"user"`
+    /// message in `request.messages` is used. Pass `additionalToolNames` so
+    /// tools the agent loaded mid-session via `capabilities_load` survive
     /// across subsequent composes.
     @MainActor
     static func composeChatContext(_ request: ComposeRequest) async -> ComposedContext {
@@ -143,21 +139,21 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             agentId: request.agentId,
             executionMode: request.executionMode,
-            query: resolvePreflightQuery(query: request.query, messages: request.messages),
+            query: resolveEffectiveQuery(query: request.query, messages: request.messages),
             messages: request.messages,
-            cachedPreflight: request.cachedPreflight,
             additionalToolNames: request.additionalToolNames,
             frozenAlwaysLoadedNames: request.frozenAlwaysLoadedNames,
-            cachedSkillSuggestions: request.cachedSkillSuggestions,
+            frozenManifest: request.frozenManifest,
             trace: trace
         )
         trace?.mark("compose_context_done")
         return result
     }
 
-    /// Derive the effective preflight query: prefer the explicit `query`, else
+    /// Derive the effective user query: prefer the explicit `query`, else
     /// the most recent user message text. Returns "" if neither is available.
-    static func resolvePreflightQuery(query: String, messages: [ChatMessage]) -> String {
+    /// Feeds memory recall and the trivial-input fast path.
+    static func resolveEffectiveQuery(query: String, messages: [ChatMessage]) -> String {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return trimmed }
         for msg in messages.reversed() where msg.role == "user" {
@@ -171,13 +167,33 @@ public struct SystemPromptComposer: Sendable {
     }
 
     /// Greetings and acknowledgements are high-volume "no work yet" turns.
-    /// Skipping preflight and dynamic capability prose for these keeps TTFT
-    /// tied to the answer, not to a tool-selection LLM call the user did not
-    /// ask for. Empty queries are not classified as trivial because preview
-    /// and cache-parity composes intentionally use `""` as "unknown next
-    /// input" rather than as a user greeting.
-    static func isTrivialPreflightQuery(_ query: String) -> Bool {
-        PreflightCapabilitySearch.isTrivialUserInput(query)
+    /// Skipping dynamic capability prose and the tool schema for these keeps
+    /// TTFT tied to the answer the user actually asked for. Empty queries are
+    /// not classified as trivial because preview and cache-parity composes
+    /// intentionally use `""` as "unknown next input" rather than as a user
+    /// greeting.
+    static func isTrivialUserQuery(_ query: String) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 32 else { return false }
+
+        let keptScalars = trimmed.lowercased().unicodeScalars.map { scalar -> Character in
+            if CharacterSet.alphanumerics.contains(scalar)
+                || CharacterSet.whitespacesAndNewlines.contains(scalar)
+            {
+                return Character(String(scalar))
+            }
+            return " "
+        }
+        let normalized = String(keptScalars)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        let trivialInputs: Set<String> = [
+            "hi", "hello", "hey", "yo", "hiya", "howdy",
+            "good morning", "good afternoon", "good evening",
+            "thanks", "thank you", "thx", "ty",
+            "ok", "okay", "cool", "nice", "great",
+        ]
+        return trivialInputs.contains(normalized)
     }
 
     /// The agent-loop cheat sheet is expensive and only becomes valuable
@@ -192,14 +208,14 @@ public struct SystemPromptComposer: Sendable {
         }
     }
 
-    /// Shared pipeline: assemble memory (returned separately) + preflight +
-    /// skills + resolve tools + build ComposedContext.
+    /// Shared pipeline: assemble memory (returned separately) + resolve
+    /// tools + build ComposedContext.
     ///
     /// Memory is intentionally NOT appended into the system prompt. It is
     /// surfaced on `ComposedContext.memorySection` so callers prepend it to
     /// the latest user message — that keeps the system prompt byte-stable
-    /// across turns once preflight is cached, which lets the MLX paged KV
-    /// cache reuse the entire conversation prefix.
+    /// across turns, which lets the MLX paged KV cache reuse the entire
+    /// conversation prefix.
     @MainActor
     private static func finalizeContext(
         composer: SystemPromptComposer,
@@ -208,10 +224,9 @@ public struct SystemPromptComposer: Sendable {
         executionMode: ExecutionMode,
         query: String,
         messages: [ChatMessage],
-        cachedPreflight: PreflightResult? = nil,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
-        cachedSkillSuggestions: [SkillTeaser]? = nil,
+        frozenManifest: String? = nil,
         trace: TTFTTrace? = nil
     ) async -> ComposedContext {
         var comp = composer
@@ -238,10 +253,9 @@ public struct SystemPromptComposer: Sendable {
             executionMode: executionMode,
             query: query,
             messages: messages,
-            cachedPreflight: cachedPreflight,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
-            cachedSkillSuggestions: cachedSkillSuggestions,
+            frozenManifest: frozenManifest,
             trace: trace
         )
         appendGatedSections(
@@ -266,20 +280,17 @@ public struct SystemPromptComposer: Sendable {
         let rendered = comp.render()
         trace?.set("systemPromptChars", rendered.count)
         trace?.set("toolCount", toolset.tools.count)
-        trace?.set("preflightItems", toolset.preflight.items.count)
         return ComposedContext(
             prompt: rendered,
             manifest: manifest,
             tools: toolset.tools,
             toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: toolset.tools),
-            preflightItems: toolset.preflight.items,
-            preflight: toolset.preflight,
             memorySection: memorySection,
             alwaysLoadedNames: toolset.alwaysLoadedNames,
             cacheHint: manifest.staticPrefixHash(tools: toolset.tools),
             staticPrefix: manifest.staticPrefixContent,
             contextDisable: toolset.contextDisable,
-            skillSuggestions: toolset.skillSuggestions
+            enabledManifest: toolset.enabledManifest
         )
     }
 
@@ -405,8 +416,8 @@ public struct SystemPromptComposer: Sendable {
     }
 
     /// Assemble every tool-axis decision for the request: size-class
-    /// auto-disable, preflight (cached or fresh), final tool set,
-    /// always-loaded snapshot, and standalone-skill teasers.
+    /// auto-disable, final tool set, always-loaded snapshot, and the frozen
+    /// enabled-capabilities manifest.
     @MainActor
     private static func resolveToolset(
         snapshot: AgentConfigSnapshot,
@@ -414,10 +425,9 @@ public struct SystemPromptComposer: Sendable {
         executionMode: ExecutionMode,
         query: String,
         messages: [ChatMessage],
-        cachedPreflight: PreflightResult?,
         additionalToolNames: LoadedTools,
         frozenAlwaysLoadedNames: LoadedTools?,
-        cachedSkillSuggestions: [SkillTeaser]? = nil,
+        frozenManifest: String? = nil,
         trace: TTFTTrace?
     ) async -> ResolvedToolset {
         // Auto-disable for small-context models (Foundation et al.).
@@ -438,23 +448,13 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("contextSizeClass", String(describing: window.sizeClass))
         }
 
-        let isTrivialInput = isTrivialPreflightQuery(query)
-        let preflight = await resolvePreflight(
-            snapshot: snapshot,
-            agentId: agentId,
-            query: query,
-            isTrivialInput: isTrivialInput,
-            effectiveToolsOff: effectiveToolsOff,
-            cachedPreflight: cachedPreflight,
-            trace: trace
-        )
+        let isTrivialInput = isTrivialUserQuery(query)
 
         trace?.mark("resolve_tools_start")
         let resolvedTools = resolveTools(
             snapshot: snapshot,
             executionMode: executionMode,
             toolsDisabled: effectiveToolsOff,
-            preflight: preflight,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames
         )
@@ -463,7 +463,6 @@ public struct SystemPromptComposer: Sendable {
             isTrivialInput: isTrivialInput,
             executionMode: executionMode,
             messages: messages,
-            cachedPreflight: cachedPreflight,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
             resolvedTools: resolvedTools
@@ -483,21 +482,18 @@ public struct SystemPromptComposer: Sendable {
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames
         )
 
-        let skillSuggestions = await resolveSkillSuggestions(
+        let enabledManifest = resolveEnabledManifest(
             snapshot: snapshot,
+            agentId: agentId,
             tools: tools,
-            query: query,
-            additionalToolNames: additionalToolNames,
             effectiveToolsOff: effectiveToolsOff,
-            isTrivialInput: isTrivialInput,
-            cachedSkillSuggestions: cachedSkillSuggestions,
+            frozenManifest: frozenManifest,
             trace: trace
         )
 
         return ResolvedToolset(
-            preflight: preflight,
             tools: tools,
-            skillSuggestions: skillSuggestions,
+            enabledManifest: enabledManifest,
             alwaysLoadedNames: alwaysLoadedNames,
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
@@ -508,14 +504,13 @@ public struct SystemPromptComposer: Sendable {
     }
 
     /// Keep #1161's greeting-only fast path to the clean first-turn shape.
-    /// Cached preflight, frozen baselines, loaded tools, execution modes, or
-    /// prior messages all mean the user is already in a task context where an
-    /// acknowledgement like "ok" may still need loop/discovery tools.
+    /// Frozen baselines, loaded tools, execution modes, or prior messages all
+    /// mean the user is already in a task context where an acknowledgement
+    /// like "ok" may still need loop/discovery tools.
     private static func shouldSuppressTrivialToolSchema(
         isTrivialInput: Bool,
         executionMode: ExecutionMode,
         messages: [ChatMessage],
-        cachedPreflight: PreflightResult?,
         additionalToolNames: LoadedTools,
         frozenAlwaysLoadedNames: LoadedTools?,
         resolvedTools: [Tool]
@@ -523,100 +518,54 @@ public struct SystemPromptComposer: Sendable {
         guard isTrivialInput, !resolvedTools.isEmpty else { return false }
         guard case .none = executionMode else { return false }
         return messages.isEmpty
-            && cachedPreflight == nil
             && additionalToolNames.isEmpty
             && frozenAlwaysLoadedNames == nil
     }
 
-    /// Pick the preflight to use this turn: cached (skip the LLM call),
-    /// fresh (auto-mode + tools on + non-empty query), or `.empty`.
+    /// Render the complete enabled-capabilities manifest section for this
+    /// session, frozen at session start. Returns the rendered section body
+    /// (tools + plugin skills + standalone skills) or `nil` when the section
+    /// is gated off or has no content.
+    ///
+    /// The manifest is a static prefix section, so this is gated only on
+    /// session-constant facts — auto mode, tools enabled, and
+    /// `capabilities_load` present in the schema (the section tells the model
+    /// to call it to use a listed capability). The deliberately-dropped
+    /// trivial-input gate keeps the static prefix byte-identical across
+    /// turns. A non-`nil` `frozenManifest` is reused verbatim so turn 2+
+    /// never recompute or reorder; `nil` means "freeze fresh now".
     @MainActor
-    private static func resolvePreflight(
+    private static func resolveEnabledManifest(
         snapshot: AgentConfigSnapshot,
         agentId: UUID,
-        query: String,
-        isTrivialInput: Bool,
-        effectiveToolsOff: Bool,
-        cachedPreflight: PreflightResult?,
-        trace: TTFTTrace?
-    ) async -> PreflightResult {
-        // Default agent gets a fixed 8-tool baseline; any preflight
-        // picks would be stripped by `resolveTools` anyway, so the
-        // LLM selector call would burn tokens for no schema effect.
-        if agentId == Agent.defaultId {
-            trace?.set("preflightSource", "default_agent_skipped")
-            return .empty
-        }
-        if let cachedPreflight {
-            trace?.set("preflightSource", "cached")
-            return cachedPreflight
-        }
-        guard !isTrivialInput else {
-            trace?.set("preflightSource", "trivial")
-            return .empty
-        }
-        guard !effectiveToolsOff, snapshot.toolMode == .auto, !query.isEmpty else {
-            trace?.set("preflightSource", "skipped")
-            return .empty
-        }
-        let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
-        trace?.mark("preflight_search_start")
-        // `snapshot.model` is forwarded as the chat-model fallback for
-        // the preflight LLM call — see GitHub issue #823.
-        let result = await PreflightCapabilitySearch.search(
-            query: query,
-            mode: mode,
-            agentId: agentId,
-            model: snapshot.model
-        )
-        trace?.mark("preflight_search_done")
-        trace?.set("preflightSource", "fresh")
-        return result
-    }
-
-    /// Standalone (non-plugin) skill teasers derived from the user query.
-    /// Same gates as preflight (auto mode + tools on + non-empty query)
-    /// plus `capabilities_load` in the schema so the loader nudge is
-    /// actionable. Skills already loaded mid-session are filtered out so
-    /// the model doesn't see the same name twice. The result is folded into
-    /// the enabled-capabilities manifest as its trailing "Skills (no
-    /// plugin)" group — there is no longer a separate suggestions section.
-    @MainActor
-    private static func resolveSkillSuggestions(
-        snapshot: AgentConfigSnapshot,
         tools: [Tool],
-        query: String,
-        additionalToolNames: LoadedTools,
         effectiveToolsOff: Bool,
-        isTrivialInput: Bool,
-        cachedSkillSuggestions: [SkillTeaser]? = nil,
+        frozenManifest: String? = nil,
         trace: TTFTTrace?
-    ) async -> [SkillTeaser] {
-        guard snapshot.toolMode == .auto, !effectiveToolsOff, !query.isEmpty,
-            !isTrivialInput,
+    ) -> String? {
+        guard snapshot.toolMode == .auto, !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_load" })
-        else { return [] }
-        // Turn 2+: reuse the frozen turn-1 selection so the dynamic
-        // instructions tail stays byte-stable across the session (prompt
-        // cache). `nil` means "no frozen value yet" → derive fresh below.
-        if let cachedSkillSuggestions {
-            trace?.set("skillSuggestions", String(cachedSkillSuggestions.count))
-            trace?.set("skillSuggestionsSource", "frozen")
-            return cachedSkillSuggestions
+        else { return nil }
+        if let frozenManifest {
+            trace?.set("enabledManifestSource", "frozen")
+            return frozenManifest
         }
-        let alreadySurfaced = Set(additionalToolNames)
-        trace?.mark("skill_suggestions_start")
-        let teasers = await SkillSuggestions.deriveSkillSuggestions(
-            query: query,
-            alreadyLoadedSkillNames: alreadySurfaced
+        let groups = deriveEnabledManifest(agentId: agentId)
+        let sizeClass = ContextSizeResolver.resolve(modelId: snapshot.model).sizeClass
+        let section = SystemPromptTemplates.enabledCapabilitiesManifest(
+            groups: groups,
+            compact: sizeClass != .normal
         )
-        trace?.mark("skill_suggestions_done")
-        trace?.set("skillSuggestions", String(teasers.count))
-        return teasers
+        if let section {
+            let toolCount = groups.reduce(0) { $0 + $1.tools.count }
+            trace?.set("enabledManifest", String(toolCount))
+            trace?.set("enabledManifestSource", "fresh")
+        }
+        return section
     }
 
     /// Append every gated "deterministic" prompt section given the
-    /// resolved tool set + preflight.
+    /// resolved tool set.
     ///
     /// Order is deliberate — cross-cutting rules first, harness second,
     /// mode-specific capability third, recovery path last, dynamics
@@ -633,10 +582,10 @@ public struct SystemPromptComposer: Sendable {
     ///   8. agentLoopGuidance         static, gated on loop tools (or small ctx)
     ///   9. sandbox / folderContext   static, mode-specific, gated on tools on
     ///  10. capabilityNudge           static, gated on capabilities_discover
-    ///  11. sandboxUnavailable        dynamic, gated on registrar failure
-    ///  12. enabledManifest           dynamic, gated on capabilities_load
-    ///                                (tools + plugin skills + standalone skills)
-    ///  13. skillsGovern              static body, paired with enabledManifest
+    ///  11. enabledManifest           static, frozen, gated on capabilities_load
+    ///                                (all enabled tools + plugin skills + standalone skills)
+    ///  12. skillsGovern              static body, paired with enabledManifest
+    ///  13. sandboxUnavailable        dynamic, gated on registrar failure
     ///  14. pluginCreator             dynamic, backstop
     ///
     /// Statics come before dynamics so the cached prefix
@@ -670,7 +619,6 @@ public struct SystemPromptComposer: Sendable {
         trace: TTFTTrace? = nil
     ) {
         let tools = toolset.tools
-        let preflight = toolset.preflight
         let effectiveToolsOff = toolset.effectiveToolsOff
         let resolvedNames = Set(tools.map { $0.function.name })
 
@@ -887,6 +835,40 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // Enabled-capabilities manifest: the grounded answer to "do you
+        // have X". The schema only carries a fixed hot subset of the agent's
+        // enabled tools; without this block a small model looks at its
+        // schema, sees nothing, and (correctly-by-instruction) denies having
+        // a capability that is actually enabled. We inject the COMPLETE
+        // enabled set — every tool + plugin skill grouped by plugin, plus a
+        // trailing standalone-skills group — so capability questions (about
+        // tools AND skills) are answerable from grounded context with zero
+        // tool calls. This is the single grounded enumeration: it subsumes
+        // the old "Plugin Companions" and "Skill Suggestions" sections.
+        //
+        // The string is rendered+frozen in `resolveEnabledManifest` and
+        // injected as a STATIC section (paired with `skillsGovern`) so it
+        // joins the cached KV prefix and stays byte-stable across turns —
+        // the manifest no longer shrinks as the agent loads tools. It is the
+        // last static section, so it must precede every dynamic block below
+        // (the static prefix ends at the first dynamic section).
+        if let manifestSection = toolset.enabledManifest, !manifestSection.isEmpty {
+            composer.append(
+                .static(
+                    id: "enabledManifest",
+                    label: "Enabled Capabilities",
+                    content: manifestSection
+                )
+            )
+            composer.append(
+                .static(
+                    id: "skillsGovern",
+                    label: "Skills That Govern Tool Groups",
+                    content: SystemPromptTemplates.skillsGovernToolGroups
+                )
+            )
+        }
+
         // ── Dynamics ─────────────────────────────────────────────────
 
         // Surface a "sandbox unavailable" notice when the agent wants
@@ -904,52 +886,6 @@ public struct SystemPromptComposer: Sendable {
                 )
             )
             trace?.set("sandboxUnavailable", reason.kind.rawValue)
-        }
-
-        // Enabled-capabilities manifest: the grounded answer to "do you
-        // have X". Preflight loads only a per-turn subset of the agent's
-        // enabled tools into the schema; without this block a small model
-        // looks at its schema, sees nothing, and (correctly-by-instruction)
-        // denies having a capability that is actually enabled. We inject
-        // the set difference `enabled - loaded` — tools + plugin skills
-        // grouped by plugin, plus the query-ranked standalone skills as a
-        // trailing group — so capability questions (about tools AND skills)
-        // are answerable from grounded context with zero tool calls. This is
-        // the single grounded enumeration: it subsumes the old "Plugin
-        // Companions" section and the separate "Skill Suggestions" section.
-        // Gated on auto-mode + `capabilities_load` in the schema (the
-        // section tells the model to call it to use a listed capability).
-        if toolset.capabilityPromptSectionsEnabled,
-            snapshot.toolMode == .auto,
-            !effectiveToolsOff,
-            tools.contains(where: { $0.function.name == "capabilities_load" })
-        {
-            let manifestGroups = deriveEnabledManifest(
-                agentId: agentId,
-                loadedToolNames: resolvedNames,
-                standaloneSkills: toolset.skillSuggestions
-            )
-            if let manifestSection = SystemPromptTemplates.enabledCapabilitiesManifest(
-                groups: manifestGroups,
-                compact: toolset.sizeClass != .normal
-            ) {
-                composer.append(
-                    .dynamic(
-                        id: "enabledManifest",
-                        label: "Enabled Capabilities",
-                        content: manifestSection
-                    )
-                )
-                composer.append(
-                    .dynamic(
-                        id: "skillsGovern",
-                        label: "Skills That Govern Tool Groups",
-                        content: SystemPromptTemplates.skillsGovernToolGroups
-                    )
-                )
-                let toolCount = manifestGroups.reduce(0) { $0 + $1.tools.count }
-                trace?.set("enabledManifest", String(toolCount))
-            }
         }
 
         // Plugin-creator backstop: only inject when the agent literally
@@ -975,7 +911,11 @@ public struct SystemPromptComposer: Sendable {
             sandboxAvailable: executionMode.usesSandboxTools || snapshot.autonomousEnabled,
             canCreatePlugins: snapshot.canCreatePlugins,
             dynamicCatalogIsEmpty: ToolRegistry.shared.dynamicCatalogIsEmpty(),
-            hasResolvedDynamicTools: hasDynamicTools(snapshot: snapshot, preflight: preflight),
+            hasResolvedDynamicTools: hasDynamicTools(
+                snapshot: snapshot,
+                resolvedToolNames: resolvedNames,
+                alwaysLoadedNames: toolset.alwaysLoadedNames
+            ),
             skillEnabled: pluginCreatorSkill?.enabled ?? false
         )
         if toolset.capabilityPromptSectionsEnabled,
@@ -996,41 +936,46 @@ public struct SystemPromptComposer: Sendable {
         }
     }
 
-    /// Build the `enabled - loaded` capability manifest for this turn,
-    /// grouped by plugin and sorted so the plugins that contributed a
-    /// loaded tool this turn render first (most relevant, least likely to
-    /// be collapsed by the token cap). Reads the agent's enabled tool +
-    /// skill allowlists and the live registry — MUST run on the main actor.
+    /// Build the **complete** enabled-capabilities manifest: every tool and
+    /// skill the agent has enabled, regardless of what landed in this turn's
+    /// tool schema. Reads the agent's enabled tool + skill allowlists and the
+    /// live registry — MUST run on the main actor.
     ///
-    /// Tools: the agent's enabled dynamic tools minus the ones already in
-    /// this turn's schema. Skills: the agent's enabled *plugin* skills
-    /// (those with a `pluginId`) minus none — skills never enter the tool
-    /// schema, so a plugin skill is always "not loaded" in the schema sense
-    /// and is what the "Skills that govern tool groups" rule binds to.
+    /// This is a static enumeration, not a per-turn delta. Under Design C the
+    /// rendered string is frozen at session start and injected as a static
+    /// prefix section, so it must NOT depend on the loaded tool subset or the
+    /// user query — both of those vary per turn and would bust the prefix
+    /// KV-cache. The model reaches every listed capability via
+    /// `capabilities_load`; the manifest is purely the grounded answer to
+    /// "do you have X".
     ///
-    /// `standaloneSkills` are the query-ranked, turn-1-frozen non-plugin
-    /// skills (from `resolveSkillSuggestions`). They render as a trailing
-    /// "Skills (no plugin)" group so the manifest is the single grounded
-    /// enumeration of every enabled-but-unloaded capability — closing the
-    /// denial hole where a standalone skill that didn't embed-match the
-    /// query had no grounded mention anywhere. Order is preserved (already
-    /// relevance-sorted by the caller); they are NOT re-sorted alphabetically.
+    /// Contents:
+    /// - **Tools**: all enabled dynamic tools, grouped by plugin.
+    /// - **Plugin skills**: enabled skills carrying a `pluginId`, in their
+    ///   plugin group (skills never enter the tool schema, so they are what
+    ///   the "Skills that govern tool groups" rule binds to).
+    /// - **Standalone skills**: enabled skills with no `pluginId`, enumerated
+    ///   directly from `SkillManager` into a trailing "Skills (no plugin)"
+    ///   group — no embedding search, no query ranking.
+    ///
+    /// Order is deterministic for byte-stable rendering: plugin groups sorted
+    /// by stable group id, tools/skills alphabetical within a group, and the
+    /// standalone group always last. Usage-frequency ordering is a documented
+    /// future hook, intentionally not built here.
     @MainActor
     private static func deriveEnabledManifest(
-        agentId: UUID,
-        loadedToolNames: Set<String>,
-        standaloneSkills: [SkillTeaser]
+        agentId: UUID
     ) -> [SystemPromptTemplates.ManifestPluginGroup] {
         let allowedTools = AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
         let allowedSkills = AgentManager.shared.effectiveEnabledSkillNames(for: agentId).map(Set.init)
 
         // Tools: live dynamic catalog is already enabled-filtered; intersect
-        // with the agent allowlist (nil = legacy global) and drop anything
-        // already in the schema this turn.
+        // with the agent allowlist (nil = legacy global). The complete set —
+        // no enabled-minus-loaded subtraction, so the manifest stays constant
+        // as the agent loads tools mid-session.
         var toolsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
         for entry in ToolRegistry.shared.listDynamicTools() {
             guard allowedTools?.contains(entry.name) ?? true,
-                !loadedToolNames.contains(entry.name),
                 let group = ToolRegistry.shared.groupName(for: entry.name),
                 !group.isEmpty
             else { continue }
@@ -1039,38 +984,31 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Plugin skills (pluginId != nil) that the agent has enabled.
+        // Plugin skills (pluginId != nil) that the agent has enabled, plus
+        // standalone skills (pluginId == nil) collected for the trailing
+        // synthetic group. Both come straight from `SkillManager` — no search.
         var skillsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
+        var standaloneCaps: [SystemPromptTemplates.ManifestCapability] = []
         for skill in SkillManager.shared.skills {
             guard skill.enabled,
-                let pluginId = skill.pluginId, !pluginId.isEmpty,
                 allowedSkills?.contains(skill.name) ?? true
             else { continue }
-            skillsByGroup[pluginId, default: []].append(
-                .init(name: skill.name, description: skill.description)
+            let cap = SystemPromptTemplates.ManifestCapability(
+                name: skill.name,
+                description: skill.description
             )
+            if let pluginId = skill.pluginId, !pluginId.isEmpty {
+                skillsByGroup[pluginId, default: []].append(cap)
+            } else {
+                standaloneCaps.append(cap)
+            }
         }
 
+        // Deterministic order: group ids alphabetical, tools/skills
+        // alphabetical within a group — no relevance reordering (there is no
+        // per-turn loaded set to rank against under the static manifest).
         let allGroupIds = Set(toolsByGroup.keys).union(skillsByGroup.keys)
-
-        // Relevance: a plugin that put a tool in this turn's schema is the
-        // most likely to be asked about, so it sorts first (and survives
-        // the token cap). The rest sort alphabetically for deterministic,
-        // KV-cache-stable rendering.
-        let relevantGroups = Set(
-            loadedToolNames.compactMap { ToolRegistry.shared.groupName(for: $0) }
-        )
-
-        // Sort group ids first (relevant-this-turn before the alphabetical
-        // tail), then map to rendered groups — keeps the relevance decision
-        // on the stable id, not the display string.
-        let orderedIds = allGroupIds.sorted { lhs, rhs in
-            let lRel = relevantGroups.contains(lhs)
-            let rRel = relevantGroups.contains(rhs)
-            if lRel != rRel { return lRel }
-            return lhs < rhs
-        }
-
+        let orderedIds = allGroupIds.sorted()
         var groups = orderedIds.map { groupId in
             SystemPromptTemplates.ManifestPluginGroup(
                 pluginDisplay: pluginDisplayName(for: groupId),
@@ -1079,17 +1017,13 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Trailing synthetic group for standalone (non-plugin) skills. Order
-        // is the caller's relevance ranking — not alphabetical — so the
-        // best query matches survive first if the section is ever trimmed.
-        let standaloneCaps = standaloneSkills.map {
-            SystemPromptTemplates.ManifestCapability(name: $0.name, description: $0.description)
-        }
+        // Trailing synthetic group for standalone (non-plugin) skills,
+        // alphabetical for byte-stable rendering.
         if !standaloneCaps.isEmpty {
             groups.append(
                 SystemPromptTemplates.ManifestPluginGroup(
                     pluginDisplay: "Skills (no plugin)",
-                    skills: standaloneCaps,
+                    skills: standaloneCaps.sorted { $0.name < $1.name },
                     tools: []
                 )
             )
@@ -1127,7 +1061,7 @@ public struct SystemPromptComposer: Sendable {
 
     /// Compress first-turn always-loaded specs by keeping the callable name,
     /// a one-line description, and the JSON shape without verbose property
-    /// descriptions. Full schemas still enter via manual picks, preflight, or
+    /// descriptions. Full schemas still enter via manual picks or
     /// `capabilities_load`; this only shrinks the baseline every chat pays
     /// before the user has asked for a concrete capability.
     /// Internal (not private) so the bootstrap-compaction invariants can be
@@ -1329,15 +1263,13 @@ public struct SystemPromptComposer: Sendable {
 
     /// Synchronous preview compose for the welcome-screen Context Budget
     /// popover. Mirrors `composeChatContext` so the popover lists the same
-    /// sections the next send will emit, with two intentional gaps:
+    /// sections the next send will emit. Under Design C the schema is a fixed
+    /// hot set and the enabled-capabilities manifest is query-independent, so
+    /// there is no longer a per-turn preflight/skill-search delta to miss —
+    /// the preview prices the static prefix exactly.
     ///
-    /// - **preflight tool delta**: needs a non-empty user query and an
-    ///   LLM call, so auto-mode `Tools` under-counts on turn 1.
-    /// - **`skillSuggestions`**: derived from a query embedding search,
-    ///   always empty here (no user query to match against).
-    ///
-    /// Memory is also out of scope (it's prepended to the user message,
-    /// not the system prompt) — callers feed the per-turn estimate to
+    /// Memory is out of scope (it's prepended to the user message, not the
+    /// system prompt) — callers feed the per-turn estimate to
     /// `ContextBreakdown.from` separately, which surfaces the `Memory` row.
     @MainActor
     static func composePreviewContext(
@@ -1385,8 +1317,6 @@ public struct SystemPromptComposer: Sendable {
             manifest: manifest,
             tools: toolset.tools,
             toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: toolset.tools),
-            preflightItems: [],
-            preflight: .empty,
             memorySection: nil,
             alwaysLoadedNames: toolset.alwaysLoadedNames,
             cacheHint: manifest.staticPrefixHash(tools: toolset.tools),
@@ -1395,9 +1325,8 @@ public struct SystemPromptComposer: Sendable {
         )
     }
 
-    /// Sync companion to `resolveToolset` for the preview path. Skips
-    /// preflight (LLM call), skill suggestions (also async), and always
-    /// passes nil for the freeze snapshot — the popover prices what
+    /// Sync companion to `resolveToolset` for the preview path. Always passes
+    /// nil for the freeze snapshot — the popover prices what
     /// `composeChatContext(query: "")` would emit, not a mid-session
     /// freeze.
     @MainActor
@@ -1424,10 +1353,20 @@ public struct SystemPromptComposer: Sendable {
             executionMode: executionMode,
             frozenAlwaysLoadedNames: nil
         )
-        return ResolvedToolset(
-            preflight: .empty,
+        // Static manifest is query-independent, so the preview can render the
+        // exact section the next real send will emit — keeping the budget
+        // popover honest about the enabled-capabilities cost.
+        let enabledManifest = resolveEnabledManifest(
+            snapshot: snapshot,
+            agentId: snapshot.agentId,
             tools: tools,
-            skillSuggestions: [],
+            effectiveToolsOff: effectiveToolsOff,
+            frozenManifest: nil,
+            trace: nil
+        )
+        return ResolvedToolset(
+            tools: tools,
+            enabledManifest: enabledManifest,
             alwaysLoadedNames: alwaysLoadedNames,
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
@@ -1506,7 +1445,6 @@ public struct SystemPromptComposer: Sendable {
         let tools = toolset.tools
         let toolSource = resolveToolSource(
             toolMode: snapshot.toolMode,
-            preflight: toolset.preflight,
             effectiveToolsOff: toolset.effectiveToolsOff
         )
         let sandboxStatus = String(describing: SandboxManager.State.shared.status)
@@ -1535,16 +1473,15 @@ public struct SystemPromptComposer: Sendable {
         trace?.set("toolLoaded", additionalToolNames.count)
     }
 
-    /// Where this turn's tool list came from. Order matters: `disabled`
-    /// trumps everything; preflight trumps manual when both are populated
-    /// (preflight is auto-mode-only); manual trumps the always-loaded fallback.
+    /// Where this turn's tool list came from. `disabled` trumps everything;
+    /// manual trumps the always-loaded fallback. (Under Design C the auto-mode
+    /// schema is always the fixed always-loaded hot set plus `capabilities_load`
+    /// picks — there is no per-turn preflight source.)
     private static func resolveToolSource(
         toolMode: ToolSelectionMode,
-        preflight: PreflightResult,
         effectiveToolsOff: Bool
     ) -> String {
         if effectiveToolsOff { return "disabled" }
-        if !preflight.toolSpecs.isEmpty { return "preflight" }
         return toolMode == .manual ? "manual" : "alwaysLoaded"
     }
 
@@ -1588,22 +1525,27 @@ public struct SystemPromptComposer: Sendable {
     }
 
     /// Did the current request resolve any dynamic (non-always-loaded,
-    /// non-sandbox-builtin) tool via preflight or manual selection? Used by
-    /// `finalizeContext` to decide whether to inject the plugin-creator
-    /// fallback skill.
+    /// non-sandbox-builtin) tool? Used by `finalizeContext` to decide whether
+    /// to inject the plugin-creator fallback skill.
+    ///
+    /// In manual mode the user's explicit picks are the dynamic surface. In
+    /// auto mode (Design C) the schema is the always-loaded hot set plus any
+    /// `capabilities_load` picks, so dynamic tools are exactly the resolved
+    /// names that fall outside the always-loaded snapshot.
     private static func hasDynamicTools(
         snapshot: AgentConfigSnapshot,
-        preflight: PreflightResult
+        resolvedToolNames: Set<String>,
+        alwaysLoadedNames: LoadedTools
     ) -> Bool {
         switch snapshot.toolMode {
         case .auto:
-            return !preflight.toolSpecs.isEmpty
+            return !resolvedToolNames.subtracting(alwaysLoadedNames).isEmpty
         case .manual:
             return !(snapshot.manualToolNames?.isEmpty ?? true)
         }
     }
 
-    /// Resolve the full tool set for a request: built-in + preflight/manual,
+    /// Resolve the full tool set for a request: built-in + manual picks,
     /// plus any tools the agent has loaded mid-session via `capabilities_load`,
     /// deduped, then sorted into a stable canonical order.
     ///
@@ -1626,7 +1568,6 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID,
         executionMode: ExecutionMode,
         toolsDisabled: Bool = false,
-        preflight: PreflightResult = .empty,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil
     ) -> [Tool] {
@@ -1638,7 +1579,6 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             executionMode: executionMode,
             toolsDisabled: toolsDisabled,
-            preflight: preflight,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames
         )
@@ -1649,7 +1589,6 @@ public struct SystemPromptComposer: Sendable {
         snapshot: AgentConfigSnapshot,
         executionMode: ExecutionMode,
         toolsDisabled: Bool = false,
-        preflight: PreflightResult = .empty,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil
     ) -> [Tool] {
@@ -1698,19 +1637,20 @@ public struct SystemPromptComposer: Sendable {
         // active. Per-agent gated built-ins (render_chart, speak,
         // search_memory, scheduler trio) and `db_*` enter the baseline here
         // but are stripped below unless the agent opts in. The first-turn baseline
-        // uses compact schema skeletons; manual picks, preflight, and
-        // `capabilities_load` replace those skeletons with full specs when
-        // a task proves it needs the heavier argument contract.
+        // uses compact schema skeletons; manual picks and `capabilities_load`
+        // replace those skeletons with full specs when a task proves it needs
+        // the heavier argument contract.
         let baseline = filtered(ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode))
             .map(compactBootstrapSpec)
         add(baseline)
 
-        if isManual {
-            if let manualNames = snapshot.manualToolNames {
-                add(ToolRegistry.shared.specs(forTools: manualNames), replacingExisting: true)
-            }
-        } else {
-            add(preflight.toolSpecs, replacingExisting: true)
+        // Design C: the auto-mode schema is the fixed hot set above plus
+        // `capabilities_load` picks (`additionalToolNames`, below). There is
+        // no per-turn preflight injection — capability breadth is grounded in
+        // the static manifest instead. Manual mode still honours the user's
+        // explicit selection.
+        if isManual, let manualNames = snapshot.manualToolNames {
+            add(ToolRegistry.shared.specs(forTools: manualNames), replacingExisting: true)
         }
 
         if !additionalToolNames.isEmpty {
@@ -1736,12 +1676,10 @@ public struct SystemPromptComposer: Sendable {
         //     curates the list, so the baseline built-ins they see stay
         //     (db_* included — consistency with the other gated built-ins).
         //   - In auto mode, a tool pulled in via `additionalToolNames`
-        //     (a `capabilities_load`) or selected by preflight for this
-        //     task survives — both are deliberate "I want this" signals.
-        //     The gate only trims the default baseline, not explicit picks.
+        //     (a `capabilities_load`) survives — a deliberate "I want this"
+        //     signal. The gate only trims the default baseline, not picks.
         if !isManual {
-            var keep = additionalToolNames
-            keep.formUnion(preflight.toolSpecs.map { $0.function.name })
+            let keep = additionalToolNames
             if !snapshot.dbEnabled {
                 for name in agentDBToolNames where !keep.contains(name) {
                     byName.removeValue(forKey: name)

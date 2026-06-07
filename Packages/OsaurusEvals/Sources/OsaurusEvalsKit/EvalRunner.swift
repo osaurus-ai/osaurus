@@ -6,10 +6,10 @@
 //  case sequentially (avoids tripping the CoreModelService circuit
 //  breaker), and assembles an `EvalReport`.
 //
-//  Cases run on the main actor — `PreflightEvaluator.evaluate` is
-//  main-actor-isolated because the underlying registry / agent /
-//  plugin manager state is. Sequencing keeps the state guarantees
-//  simple and matches how preflight runs in the actual chat path.
+//  Cases run on the main actor — the capability-search / claims
+//  evaluators are main-actor-isolated because the underlying registry /
+//  agent / plugin manager state is. Sequencing keeps the state guarantees
+//  simple and matches how the chat path resolves capabilities.
 //
 
 import Foundation
@@ -41,11 +41,11 @@ public enum EvalRunner {
     ) async -> EvalReport {
         if bootstrapMode == .loadInstalledPlugins {
             // The CLI is its own process — it has to scan + dlopen every
-            // installed plugin manually before preflight can see plugin
-            // tools (the host app does this in AppDelegate). Without it
-            // every `requirePlugins` case skips with "missing plugins" no
+            // installed plugin manually before capability search can see
+            // plugin tools (the host app does this in AppDelegate). Without
+            // it every `requirePlugins` case skips with "missing plugins" no
             // matter what's actually installed on disk.
-            await PreflightEvaluator.loadInstalledPlugins()
+            await EvalHostBootstrap.loadInstalledPlugins()
         }
 
         let modelLabel = ModelOverride.describe(model)
@@ -85,7 +85,7 @@ public enum EvalRunner {
 
     /// Prepends `testCase.notes` (if any) to the report row's `notes`
     /// array as `note: <text>`. Centralised here so each per-domain
-    /// runner branch (preflight, schema, capability_search, …) doesn't
+    /// runner branch (schema, capability_search, capability_claims, …) doesn't
     /// have to remember to forward the case-level field. Used today
     /// for tracking-only cases like `capability_search.shell-execution`
     /// where the case file documents WHY it stays red.
@@ -100,8 +100,6 @@ public enum EvalRunner {
             domain: row.domain,
             query: row.query,
             outcome: row.outcome,
-            score: row.score,
-            observed: row.observed,
             capabilitySearch: row.capabilitySearch,
             notes: ["note: \(extra)"] + row.notes,
             modelId: row.modelId,
@@ -119,8 +117,6 @@ public enum EvalRunner {
         let label = testCase.label ?? testCase.id
 
         switch testCase.domain {
-        case "preflight":
-            break  // fall through to the existing preflight body below
         case "schema":
             return runSchemaCase(testCase, modelId: modelId)
         case "tool_envelope":
@@ -168,56 +164,6 @@ public enum EvalRunner {
                 modelId: modelId
             )
         }
-
-        // Skip cases whose required plugins aren't installed locally.
-        // We check before calling preflight so the LLM doesn't burn
-        // a generation just to reveal a fixture mismatch.
-        if let required = testCase.fixtures.requirePlugins, !required.isEmpty {
-            let installed = PreflightEvaluator.installedPluginIds()
-            let missing = required.filter { !installed.contains($0) }
-            if !missing.isEmpty {
-                return .terminal(
-                    id: testCase.id,
-                    label: label,
-                    domain: testCase.domain,
-                    outcome: .skipped,
-                    notes: ["missing plugins: \(missing.joined(separator: ", "))"],
-                    modelId: modelId
-                )
-            }
-        }
-
-        // `EvalCase.PreflightMode` mirrors `PreflightSearchMode` raw
-        // values 1:1 (off / narrow / balanced / wide); the rawValue
-        // bridge keeps the enums decoupled without a hand-rolled
-        // mapping function.
-        let mode =
-            PreflightSearchMode(
-                rawValue: (testCase.fixtures.preflightMode ?? .balanced).rawValue
-            ) ?? .balanced
-        let observed = await PreflightEvaluator.evaluate(query: testCase.query, mode: mode)
-
-        let toolResult = Scorers.scoreTools(observed: observed, expectation: testCase.expect.tools)
-        let aggregate = Scorers.aggregate(tools: toolResult?.score)
-        let score = EvalCaseScore(
-            aggregate: aggregate,
-            tools: toolResult?.score
-        )
-        let notes = toolResult?.notes ?? []
-        let outcome: EvalCaseOutcome = aggregate >= 1.0 ? .passed : .failed
-
-        return EvalCaseReport(
-            id: testCase.id,
-            label: label,
-            domain: testCase.domain,
-            query: testCase.query,
-            outcome: outcome,
-            score: score,
-            observed: observed,
-            notes: notes,
-            modelId: modelId,
-            latencyMs: observed.latencyMs
-        )
     }
 
     // MARK: - Schema domain
@@ -727,7 +673,7 @@ public enum EvalRunner {
         }
 
         if let required = testCase.fixtures.requirePlugins, !required.isEmpty {
-            let installed = PreflightEvaluator.installedPluginIds()
+            let installed = EvalHostBootstrap.installedPluginIds()
             let missing = required.filter { !installed.contains($0) }
             if !missing.isEmpty {
                 return .terminal(
@@ -816,8 +762,6 @@ public enum EvalRunner {
             domain: testCase.domain,
             query: testCase.query,
             outcome: passed ? .passed : .failed,
-            score: nil,
-            observed: nil,
             capabilitySearch: observed,
             notes: notes,
             modelId: modelId,
@@ -858,7 +802,7 @@ public enum EvalRunner {
     /// Agent-loop evaluator for `domain == "capability_claims"`. Runs
     /// the real multi-turn chat loop via `CapabilityClaimsEvaluator`,
     /// then scores deterministic transcript assertions plus an LLM-judge
-    /// rubric. Off-CI (token cost), like `preflight`.
+    /// rubric. Off-CI (token cost).
     ///
     /// Fixture setup mirrors `capability_search`: `requirePlugins` skips,
     /// `enableSkills` / `enableTools` grant capabilities for the run
@@ -881,7 +825,7 @@ public enum EvalRunner {
         }
 
         if let required = testCase.fixtures.requirePlugins, !required.isEmpty {
-            let installed = PreflightEvaluator.installedPluginIds()
+            let installed = EvalHostBootstrap.installedPluginIds()
             let missing = required.filter { !installed.contains($0) }
             if !missing.isEmpty {
                 return .terminal(
@@ -962,8 +906,6 @@ public enum EvalRunner {
                 domain: testCase.domain,
                 query: testCase.query,
                 outcome: .errored,
-                score: nil,
-                observed: nil,
                 notes: ["agent loop error: \(err)"],
                 modelId: modelId,
                 latencyMs: elapsed
@@ -1030,8 +972,6 @@ public enum EvalRunner {
             domain: testCase.domain,
             query: testCase.query,
             outcome: passed ? .passed : .failed,
-            score: nil,
-            observed: nil,
             notes: notes,
             modelId: modelId,
             latencyMs: elapsed

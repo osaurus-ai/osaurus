@@ -24,10 +24,10 @@
 //    7. agentLoopGuidance         static, gated on prior loop-tool use
 //    8. sandbox / folderContext   static, mode-specific
 //    9. capabilityNudge           static, gated on capabilities_discover
-//   10. sandboxUnavailable        dynamic
-//   11. enabledManifest           dynamic (enabled-but-unloaded tools +
+//   10. enabledManifest           static, frozen (all enabled tools +
 //                                  plugin skills + standalone skills)
-//   12. skillsGovern              dynamic (paired with enabledManifest)
+//   11. skillsGovern              static (paired with enabledManifest)
+//   12. sandboxUnavailable        dynamic
 //   13. pluginCreator             dynamic
 //
 
@@ -102,8 +102,7 @@ struct PromptSectionOrderingTests {
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
-                model: "google/gemma-3-12b-it",
-                cachedPreflight: .empty
+                model: "google/gemma-3-12b-it"
             )
             assertOrderedPrefix(
                 [
@@ -141,8 +140,7 @@ struct PromptSectionOrderingTests {
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agent.id,
                 executionMode: .sandbox(hostRead: nil),
-                model: "gpt-5",
-                cachedPreflight: .empty
+                model: "gpt-5"
             )
             assertOrderedPrefix(
                 [
@@ -194,8 +192,7 @@ struct PromptSectionOrderingTests {
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agent.id,
                 executionMode: .hostFolder(folderCtx),
-                model: "gpt-5",
-                cachedPreflight: .empty
+                model: "gpt-5"
             )
             assertOrderedPrefix(
                 [
@@ -238,8 +235,7 @@ struct PromptSectionOrderingTests {
                 agentId: agentId,
                 executionMode: .none,
                 model: "google/gemma-3-12b-it",
-                messages: messages,
-                cachedPreflight: .empty
+                messages: messages
             )
             assertOrderedPrefix(
                 [
@@ -265,8 +261,7 @@ struct PromptSectionOrderingTests {
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
-                model: "google/gemma-3-12b-it",
-                cachedPreflight: .empty
+                model: "google/gemma-3-12b-it"
             )
             var seenDynamic = false
             for section in ctx.manifest.sections {
@@ -292,8 +287,7 @@ struct PromptSectionOrderingTests {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
-                executionMode: .none,
-                cachedPreflight: .empty
+                executionMode: .none
             )
             let ids = sectionIds(ctx)
             #expect(ids.contains("codeStyle") == false)
@@ -313,16 +307,14 @@ struct PromptSectionOrderingTests {
             let on = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
-                model: "gpt-5",
-                cachedPreflight: .empty
+                model: "gpt-5"
             )
             #expect(sectionIds(on).contains("grounding"))
 
             let tiny = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
-                model: "foundation",
-                cachedPreflight: .empty
+                model: "foundation"
             )
             #expect(sectionIds(tiny).contains("grounding") == false)
             // Tiny stays minimal — tools-off cascades to every gated section.
@@ -345,8 +337,7 @@ struct PromptSectionOrderingTests {
             let turn1 = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
-                model: "gpt-5",
-                cachedPreflight: .empty
+                model: "gpt-5"
             )
             let loopMessages = [
                 ChatMessage(
@@ -369,8 +360,7 @@ struct PromptSectionOrderingTests {
                 agentId: agentId,
                 executionMode: .none,
                 model: "gpt-5",
-                messages: loopMessages,
-                cachedPreflight: .empty
+                messages: loopMessages
             )
             let s1 = Set(sectionIds(turn1))
             let s2 = Set(sectionIds(turn2))
@@ -383,6 +373,62 @@ struct PromptSectionOrderingTests {
                 #expect(s1.contains(id))
                 #expect(s2.contains(id))
             }
+        }
+    }
+
+    // MARK: - Byte-identical prefix across a mid-session capabilities_load
+
+    /// Design C's core prefix-cache prerequisite: the static system prompt is
+    /// byte-identical across turn 1 and a later turn within the same session,
+    /// even when (a) the user query changes and (b) the agent has loaded a new
+    /// tool mid-session via `capabilities_load`. The enabled-capabilities
+    /// manifest is frozen at session start (threaded back via `frozenManifest`)
+    /// so it no longer shrinks as tools load — keeping `staticPrefix` constant
+    /// so vmlx can reuse the cached KV prefix.
+    @Test("kv-safety: system prompt + static prefix byte-identical across a capabilities_load turn")
+    func kvSafety_promptByteIdenticalAcrossLoad() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let turn1 = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "gpt-5",
+                query: "summarize this project for me"
+            )
+
+            // Steady-state follow-up: same frozen baselines, no new tool.
+            // Both the system prompt and the tools array must be byte-stable.
+            let steady = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "gpt-5",
+                query: "now refactor the networking layer",
+                frozenAlwaysLoadedNames: turn1.alwaysLoadedNames,
+                frozenManifest: turn1.enabledManifest
+            )
+            #expect(steady.prompt == turn1.prompt)
+            #expect(steady.staticPrefix == turn1.staticPrefix)
+            #expect(steady.tools.map(\.function.name) == turn1.tools.map(\.function.name))
+
+            // Post-`capabilities_load` turn: a tool the agent loaded
+            // mid-session enters the schema. The tools array legitimately
+            // grows, but the system prompt (and its static prefix) must NOT
+            // change — the frozen manifest does not shrink.
+            let afterLoad = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "gpt-5",
+                query: "and render a chart of the results",
+                additionalToolNames: ["render_chart"],
+                frozenAlwaysLoadedNames: turn1.alwaysLoadedNames,
+                frozenManifest: turn1.enabledManifest
+            )
+            #expect(afterLoad.prompt == turn1.prompt)
+            #expect(afterLoad.staticPrefix == turn1.staticPrefix)
+            // The loaded tool joined the schema (proves the load is real, so
+            // the byte-identical prompt above is a genuine freeze, not a no-op).
+            #expect(afterLoad.tools.contains { $0.function.name == "render_chart" })
+            let beforeNames = Set(turn1.tools.map(\.function.name))
+            #expect(beforeNames.isSubset(of: Set(afterLoad.tools.map(\.function.name))))
         }
     }
 }

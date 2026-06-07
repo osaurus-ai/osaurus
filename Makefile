@@ -146,7 +146,7 @@ bench: bench-ingest bench-run
 # see Packages/OsaurusEvals/README.md for the full --model grammar.
 
 EVALS_ROOT := Packages/OsaurusEvals/Suites
-EVALS_SUITE ?= $(EVALS_ROOT)/Preflight
+EVALS_SUITE ?= $(EVALS_ROOT)/CapabilitySearch
 EVALS_OUT ?= build/evals.json
 EVALS_OUT_DIR ?= build/evals
 # Auto-discovered list of every subdirectory under Suites/. Adding a new

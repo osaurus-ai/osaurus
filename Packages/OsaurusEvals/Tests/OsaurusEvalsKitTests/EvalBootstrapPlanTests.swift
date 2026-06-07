@@ -80,23 +80,6 @@ struct EvalBootstrapPlanTests {
         )
     }
 
-    @Test func preflightLoadsPluginsInAutomaticMode() {
-        let suite = makeSuite(
-            cases: [
-                makeCase(
-                    id: "preflight.browser.amazon-orders",
-                    domain: "preflight",
-                    requirePlugins: ["osaurus.browser"]
-                )
-            ]
-        )
-
-        let plan = EvalBootstrapPlan.make(suite: suite, filter: nil, preference: .automatic)
-
-        #expect(plan == EvalBootstrapPlan(loadInstalledPlugins: true, initializeSearchIndices: false))
-        #expect(!plan.usesIsolatedSearchStorage)
-    }
-
     @Test func pureDataSuitesSkipStartupBootstrap() {
         let suite = makeSuite(cases: [makeCase(id: "schema.minimum-bound", domain: "schema")])
 
@@ -109,7 +92,11 @@ struct EvalBootstrapPlanTests {
     @Test func filterControlsAutomaticBootstrapPlan() {
         let suite = makeSuite(
             cases: [
-                makeCase(id: "preflight.browser", domain: "preflight"),
+                makeCase(
+                    id: "capability_search.browser-prefix",
+                    domain: "capability_search",
+                    requirePlugins: ["osaurus.browser"]
+                ),
                 makeCase(id: "schema.minimum-bound", domain: "schema"),
             ]
         )

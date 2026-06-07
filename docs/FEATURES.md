@@ -19,7 +19,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
 | Claude Plugin Import             | Stable    | "Plugins"          | CLAUDE_PLUGINS.md             | Services/GitHubSkillService.swift, Services/Skill/ClaudePluginInstaller.swift, Services/Skill/ClaudePluginManifestStore.swift, Services/Skill/ClaudePluginVariableExpander.swift, Services/Plugin/InstalledClaudePluginsAggregator.swift, Views/Plugin/GitHubImportSheet.swift, Views/Plugin/ClaudePluginCard.swift, Views/Plugin/ClaudePluginDetailView.swift, Views/Plugin/ClaudePluginUserConfigSheet.swift |
 | Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
-| Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/PreflightCapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
+| Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/CapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
 | Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
 | Privacy Filter                   | Experimental | "Key Features"  | PRIVACY_FILTER.md             | PrivacyFilter/Core/PrivacyFilterPipeline.swift, PrivacyFilter/Core/PrivacyFilterEngine.swift, PrivacyFilter/Core/RegexEntityDetector.swift, PrivacyFilter/Store/PrivacyFilterStore.swift, PrivacyFilter/Views/PrivacyView.swift, PrivacyFilter/Views/RedactionReviewSheet.swift, Services/Provider/WireTransportProbe.swift, Views/Chat/RedactionHighlighter.swift, Views/Chat/RedactionHoverController.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
@@ -105,7 +105,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── MethodService (Method CRUD and scoring)                         │
 │  │   └── MethodSearchService (RAG-based method search)                   │
 │  ├── Context                                                             │
-│  │   ├── PreflightCapabilitySearch (Automated pre-flight RAG search)     │
+│  │   ├── CapabilitySearch (Index search for capabilities_discover)       │
 │  │   ├── ToolSearchService (RAG-based tool search)                       │
 │  │   └── ToolIndexService (Tool registry sync and indexing)              │
 │  ├── Scheduling                                                          │
@@ -869,7 +869,7 @@ See [docs/plugins/README.md](plugins/README.md) for the full reference.
 - **Reference Files** — Attach text files loaded into skill context
 - **Asset Files** — Support files for skills
 - **Categories** — Organize skills by type
-- **Automated Selection** — Skills are automatically selected via RAG-based preflight search
+- **Automated Discovery** — Skills are listed in the enabled-capabilities manifest and loaded on demand via `capabilities_discover` / `capabilities_load`
 
 **Skill Properties:**
 
@@ -987,31 +987,17 @@ Each time a method is used, a `MethodEvent` is recorded (`loaded`, `succeeded`, 
 
 ### Context Management
 
-**Purpose:** Automatically select and inject relevant capabilities (methods, tools, and skills) into each agent session via RAG search.
+**Purpose:** Give the agent a complete, statically-ordered view of every enabled capability (methods, tools, and skills) and let it load the ones it needs on demand.
 
-Context management replaces manual per-agent tool and skill configuration with a fully automated system. Before each agent loop, a preflight RAG search runs across all indexed methods, tools, and skills, injecting relevant context and tool definitions based on the user's query.
+Context management replaces manual per-turn tool selection with a static, session-frozen design. The system prompt carries an enabled-capabilities manifest that lists every capability the agent is allowed to use; only a fixed "hot set" of tools is loaded into the schema up front. The agent pulls in additional capabilities mid-session with `capabilities_discover` / `capabilities_load`. The manifest and hot set are frozen at session start so the static prompt prefix stays byte-stable across turns (KV-cache reuse), and there is no per-turn LLM picker.
 
 **Components:**
 
-- `Services/Context/PreflightCapabilitySearch.swift` — Pre-flight RAG search orchestrator
 - `Services/Tool/ToolSearchService.swift` — VecturaKit hybrid search over tools
 - `Services/Tool/ToolIndexService.swift` — Syncs ToolRegistry into searchable index
+- `Services/Context/CapabilitySearch.swift` — Index-search backend for `capabilities_discover`
 - `Storage/ToolDatabase.swift` — SQLite storage for tool index
 - `Tools/CapabilityTools.swift` — Runtime capability search and load tools
-
-**Preflight Search Modes:**
-
-| Mode        | Methods | Tools | Skills | Use Case                              |
-| ----------- | ------- | ----- | ------ | ------------------------------------- |
-| `off`       | 0       | 0     | 0      | Disable automatic selection           |
-| `narrow`    | 1       | 2     | 1      | Minimal context, fastest responses    |
-| `balanced`  | 3       | 5     | 2      | Default — good coverage, moderate cost|
-| `wide`      | 5       | 8     | 4      | Maximum coverage, larger prompts      |
-
-The preflight search produces a `PreflightResult` containing:
-
-- **Tool specs** — Tool definitions merged into the active tool set (direct matches + tools cascaded from matched methods)
-- **Context snippet** — Markdown-formatted method bodies and skill instructions injected into the system prompt
 
 **Runtime Capability Tools:**
 

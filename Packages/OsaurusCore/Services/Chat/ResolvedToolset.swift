@@ -3,11 +3,11 @@
 //  osaurus
 //
 //  Bundle of every tool-axis decision the composer makes for a single
-//  request: which tools landed in the schema, what the preflight returned,
-//  which always-loaded names made it through the freeze filter, which
-//  standalone-skill teasers were derived, plus the context-window auto-
-//  disable verdict (kept here because the size-class flag drives both
-//  `effectiveToolsOff` and the final `ComposedContext.contextDisable`).
+//  request: which tools landed in the schema, which always-loaded names made
+//  it through the freeze filter, the frozen enabled-capabilities manifest,
+//  plus the context-window auto-disable verdict (kept here because the
+//  size-class flag drives both `effectiveToolsOff` and the final
+//  `ComposedContext.contextDisable`).
 //
 //  Replaces the previous "thread 8 named values down through helpers"
 //  pattern. Once `resolveToolset` returns one of these, every downstream
@@ -18,18 +18,17 @@ import Foundation
 
 struct ResolvedToolset: Sendable {
 
-    /// Preflight result this turn used (fresh, cached, or `.empty`).
-    let preflight: PreflightResult
-
     /// Final tool schema delivered to the model, sorted into canonical
     /// order (loop tools → sandbox built-ins → capability discovery →
     /// alphabetical). Empty when `effectiveToolsOff` is true.
     let tools: [Tool]
 
-    /// Standalone (non-plugin) skill teasers derived from the user query,
-    /// folded into the enabled-capabilities manifest's trailing "Skills (no
-    /// plugin)" group. Already filtered to skip skills loaded mid-session.
-    let skillSuggestions: [SkillTeaser]
+    /// Rendered enabled-capabilities manifest section for this session, or
+    /// `nil` when the section is gated off / empty. Frozen at session start
+    /// and injected as a static prefix section, so it is query- and
+    /// loaded-subset-independent (byte-stable across turns). Callers stash it
+    /// on the per-session state and echo it back via `frozenManifest`.
+    let enabledManifest: String?
 
     /// Always-loaded names this turn shipped, intersected against the
     /// frozen snapshot when one was supplied. Callers stash this on

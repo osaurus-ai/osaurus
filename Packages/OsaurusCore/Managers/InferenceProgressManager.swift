@@ -35,10 +35,6 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// because the underlying `@Published` storage is annotated.
     @MainActor var isLoadingModel: Bool { loadInFlightCount > 0 }
 
-    /// True while preflight capability search is running.
-    /// The UI shows "Searching capabilities..." during this phase.
-    @MainActor @Published var isPreflighting: Bool = false
-
     /// Non-nil while a prefill is in progress.  Set to the prompt token count
     /// just before `prepareAndGenerate` is called; cleared as soon as the first
     /// generated token arrives (or on error / cancellation).
@@ -99,15 +95,5 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
         Task { @MainActor in
             self.loadInFlightCount = max(0, self.loadInFlightCount - 1)
         }
-    }
-
-    /// Signal that preflight search has started.
-    func preflightWillStartAsync() {
-        Task { @MainActor in self.isPreflighting = true }
-    }
-
-    /// Signal that preflight search has finished.
-    func preflightDidFinishAsync() {
-        Task { @MainActor in self.isPreflighting = false }
     }
 }

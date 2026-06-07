@@ -4,8 +4,8 @@
 //
 //  Loads a directory of `*.json` eval cases. Stays a thin wrapper
 //  around `JSONDecoder` so contributors can drop a new case file in
-//  `Suites/Preflight/` and the runner picks it up automatically — no
-//  Swift edit, no test target rebuild.
+//  `Suites/CapabilitySearch/` and the runner picks it up automatically
+//  — no Swift edit, no test target rebuild.
 //
 
 import Foundation

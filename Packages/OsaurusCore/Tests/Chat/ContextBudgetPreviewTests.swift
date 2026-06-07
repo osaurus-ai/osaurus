@@ -4,9 +4,10 @@
 //
 //  Pin the welcome-screen Context Budget popover contract:
 //  `SystemPromptComposer.composePreviewContext` must list every section
-//  the next `composeChatContext(query: "")` will produce, except for the
-//  query-dependent deltas (preflight tool delta + the manifest's
-//  standalone-skill group) which the budget UI cannot price ahead of time.
+//  the next `composeChatContext(query: "")` will produce. Under Design C the
+//  schema is a fixed hot set and the enabled-capabilities manifest is
+//  query-independent, so the preview prices the static prefix exactly — there
+//  is no longer a per-turn preflight/skill-search delta the UI must omit.
 //
 //  Why this matters: before this preview parity, the popover hid 6+
 //  sections (`Agent Loop`, `Capability Discovery`, `Skills`,
@@ -114,7 +115,6 @@ struct ContextBudgetPreviewTests {
             #expect(preview.tools.isEmpty)
             #expect(preview.toolTokens == 0)
             #expect(preview.memorySection == nil)
-            #expect(preview.preflightItems.isEmpty)
         }
     }
 
@@ -162,8 +162,8 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// Manual mode opts out of the LLM preflight call, but it still
-    /// includes the capability discovery tools in the schema. The prompt
+    /// Manual mode still includes the capability discovery tools in the
+    /// schema. The prompt
     /// must explain those tools whenever they are callable; otherwise the
     /// model sees an opaque `capabilities_discover` function and #789-style
     /// "search is enabled but never found" failures are hard to diagnose.
@@ -219,9 +219,9 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// A greeting should not run preflight, carry dynamic discovery prompt
-    /// text, or enter the local tool-template path. Keep the always-loaded
-    /// baseline frozen separately so turn 2 can grow into real work.
+    /// A greeting should not carry dynamic discovery prompt text or enter
+    /// the local tool-template path. Keep the always-loaded baseline frozen
+    /// separately so turn 2 can grow into real work.
     @Test("compose: trivial greeting suppresses tool schema and dynamic prompt sections")
     func trivialGreeting_suppressesToolSchemaAndDynamicPromptSections() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
@@ -231,8 +231,7 @@ struct ContextBudgetPreviewTests {
                 query: "hi!"
             )
             let ids = sectionIds(context)
-            #expect(SystemPromptComposer.isTrivialPreflightQuery("hi!"))
-            #expect(context.preflightItems.isEmpty)
+            #expect(SystemPromptComposer.isTrivialUserQuery("hi!"))
             #expect(ids.contains("capabilityNudge") == false)
             #expect(ids.contains("pluginCreator") == false)
             #expect(ids.contains("agentLoopGuidance") == false)
@@ -257,7 +256,6 @@ struct ContextBudgetPreviewTests {
                 agentId: agentId,
                 executionMode: .none,
                 query: "summarize this project",
-                cachedPreflight: greeting.preflight,
                 frozenAlwaysLoadedNames: greeting.alwaysLoadedNames
             )
 
@@ -283,11 +281,10 @@ struct ContextBudgetPreviewTests {
                 executionMode: .none,
                 query: "ok",
                 messages: [ChatMessage(role: "user", content: "summarize this project")],
-                cachedPreflight: .empty,
                 frozenAlwaysLoadedNames: frozen
             )
 
-            #expect(SystemPromptComposer.isTrivialPreflightQuery("ok"))
+            #expect(SystemPromptComposer.isTrivialUserQuery("ok"))
             #expect(context.tools.contains { $0.function.name == "capabilities_load" })
             #expect(context.tools.contains { $0.function.name == "capabilities_discover" })
             #expect(context.toolTokens > 0)
@@ -318,8 +315,7 @@ struct ContextBudgetPreviewTests {
                 agentId: agentId,
                 executionMode: .none,
                 query: "continue",
-                messages: messages,
-                cachedPreflight: .empty
+                messages: messages
             )
             #expect(sectionIds(context).contains("agentLoopGuidance"))
         }
@@ -401,8 +397,7 @@ struct ContextBudgetPreviewTests {
             let real = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
-                query: "",
-                cachedPreflight: .empty
+                query: ""
             )
 
             #expect(sectionIds(preview).contains("skills") == false)
@@ -413,17 +408,13 @@ struct ContextBudgetPreviewTests {
     // MARK: - Parity with composeChatContext(query: "")
 
     /// The single most important guarantee: a sync preview compose
-    /// matches an async send-time compose with an empty query +
-    /// empty preflight, so the welcome-screen popover never lies
-    /// about what the model will actually see on the next send.
-    /// Differences are limited to:
-    ///   - the `enabledManifest`'s trailing standalone-skills group is
-    ///     query-dependent, but an empty query yields no embedding matches
-    ///     in either path, so the section content matches here.
-    ///   - `memorySection` body: send path may attach memory text;
-    ///     the preview surfaces tokens through `cachedMemoryTokens`
-    ///     instead, so we compare manifests with `memory` filtered
-    ///     out (not present in either path's section list anyway).
+    /// matches an async send-time compose with an empty query, so the
+    /// welcome-screen popover never lies
+    /// about what the model will actually see on the next send. Under
+    /// Design C the manifest is query-independent, so the only remaining
+    /// gap is `memorySection` body (the send path may attach memory text;
+    /// the preview surfaces tokens through `cachedMemoryTokens` instead),
+    /// which is not part of either path's section list anyway.
     @Test("parity: composePreviewContext == composeChatContext(query: '') sections")
     func parity_previewMatchesEmptyQueryCompose() async {
         await withAgent(memoryDisabled: true, toolSelectionMode: .auto) { agentId in
@@ -436,8 +427,7 @@ struct ContextBudgetPreviewTests {
                 agentId: agentId,
                 executionMode: .none,
                 model: "gpt-5",
-                query: "",
-                cachedPreflight: .empty
+                query: ""
             )
 
             let previewIds = sectionIds(preview)
@@ -445,7 +435,7 @@ struct ContextBudgetPreviewTests {
             #expect(previewIds == realIds)
 
             // Tools row matches too — both go through the same
-            // `resolveTools` baseline (no preflight, no manual picks).
+            // `resolveTools` baseline (hot set, no manual picks).
             #expect(preview.toolTokens == real.toolTokens)
             #expect(
                 preview.tools.map(\.function.name).sorted()
@@ -469,8 +459,7 @@ struct ContextBudgetPreviewTests {
             let real = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
-                query: "",
-                cachedPreflight: .empty
+                query: ""
             )
 
             #expect(sectionIds(preview) == ["platform", "persona"])
@@ -564,8 +553,7 @@ struct ContextBudgetPreviewTests {
                 agentId: agentId,
                 executionMode: .none,
                 model: "foundation",
-                query: "",
-                cachedPreflight: .empty
+                query: ""
             )
             #expect(preview.contextDisable == real.contextDisable)
         }

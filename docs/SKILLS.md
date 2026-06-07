@@ -188,53 +188,42 @@ Add context files that are automatically loaded when the skill is active:
 
 ---
 
-## Automated Capability Selection
+## Automated Capability Discovery
 
-Osaurus uses a RAG-based system to automatically select and inject relevant skills into each conversation. No manual configuration is needed -- the right skills are loaded based on what you're asking about.
+Osaurus gives the agent a complete, statically-ordered view of every enabled capability and lets it load the ones it needs on demand. No manual per-turn configuration is needed -- the right skills surface as the conversation evolves.
 
 ### How It Works
 
-Before each agent loop, a **preflight capability search** runs across all indexed skills (as well as methods and tools). The search uses hybrid BM25 + vector matching to find capabilities relevant to your query, then injects matching skill instructions directly into the system prompt.
-
-### Search Modes
-
-You can control how aggressively the system searches for capabilities:
-
-| Mode        | Skills Loaded | Description                               |
-| ----------- | ------------- | ----------------------------------------- |
-| `off`       | 0             | Disable automatic selection               |
-| `narrow`    | 1             | Minimal context, fastest responses        |
-| `balanced`  | 2             | Default — good coverage, moderate cost    |
-| `wide`      | 4             | Maximum coverage, larger prompts          |
+Each agent session's system prompt carries an **enabled-capabilities manifest** that lists every skill (as well as methods and tools) the agent is allowed to use. The manifest is frozen at session start so the static prompt prefix stays byte-stable across turns. Skill instructions themselves are not all injected up front — the agent pulls in the ones it needs at runtime via `capabilities_discover` / `capabilities_load`, which use hybrid BM25 + vector matching over the indexed catalog.
 
 ### Runtime Discovery
 
-During a conversation, the AI can also discover and load additional capabilities on demand:
+During a conversation, the AI discovers and loads capabilities on demand:
 
 1. **`capabilities_discover`** — Searches all indexed methods, tools, and skills in parallel
 2. **`capabilities_load`** — Loads a specific capability into the active session
 
-This means the AI starts with automatically selected skills and can dynamically expand its capabilities as the conversation evolves.
+The AI starts with the manifest plus a fixed "hot set" of always-loaded tools, then dynamically expands its capabilities as the conversation evolves.
 
 ### Why This Matters
 
-- **Zero configuration** — Skills are selected based on relevance, not manual toggles
-- **Better focus** — Only relevant skills are loaded, keeping context lean
+- **Zero configuration** — Capabilities are listed in the manifest, not toggled by hand
+- **Better focus** — Only loaded capabilities ride in the schema, keeping context lean
 - **Adaptive** — The AI can discover additional skills mid-conversation if the topic shifts
-- **Works with Methods** — Learned workflows (methods) are searched alongside skills, so the AI benefits from past experience
+- **Cache-friendly** — Freezing the manifest keeps the static prompt prefix stable for KV-cache reuse
+- **Works with Methods** — Learned workflows (methods) are searchable alongside skills, so the AI benefits from past experience
 
 ---
 
 ## Agent Integration
 
-Skills are available to all agents automatically. The RAG-based preflight search selects relevant skills for each query regardless of which agent is active.
+Skills are available to all agents automatically. The enabled-capabilities manifest lists relevant skills for each agent, and `capabilities_discover` reaches the full catalog regardless of which agent is active.
 
 **How it works with agents:**
 
 - Each agent's system prompt guides its behavior and specialization
-- When you send a message, the preflight search finds skills relevant to your query
-- Matching skill instructions are injected into the agent's context
-- The agent can discover additional skills at runtime via `capabilities_discover`
+- The enabled-capabilities manifest tells the agent which skills it can use
+- The agent loads skill instructions on demand via `capabilities_discover` / `capabilities_load`
 
 No per-agent skill configuration is needed. The system automatically matches the right skills to the right tasks.
 

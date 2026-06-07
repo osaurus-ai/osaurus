@@ -437,13 +437,11 @@ struct PluginDispatchToolStorePopulationTests {
         await SessionToolStateStore.shared.appendLoadedTools(
             id.uuidString,
             names: ["share_artifact"],
-            fallbackPreflight: .empty,
             fallbackAlwaysLoadedNames: nil
         )
         await SessionToolStateStore.shared.appendLoadedTools(
             id.uuidString,
             names: ["search_memory"],
-            fallbackPreflight: .empty,
             fallbackAlwaysLoadedNames: nil
         )
         let names = await SessionToolStateStore.shared.get(id.uuidString)?.loadedToolNames ?? []

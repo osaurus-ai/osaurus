@@ -298,7 +298,7 @@ For visibility, every response carries a `prefix_hash` field — a stable hash o
 { "prefix_hash": "a1b2c3d4e5f67890..." }
 ```
 
-`prefix_hash` is informational only — passing it back to the server has no effect. Keep `session_id` stable per conversation so chat history and preflight bookkeeping group correctly; cache reuse itself does not depend on it.
+`prefix_hash` is informational only — passing it back to the server has no effect. Keep `session_id` stable per conversation so chat history and session tool bookkeeping group correctly; cache reuse itself does not depend on it.
 
 ### Chat Templates
 

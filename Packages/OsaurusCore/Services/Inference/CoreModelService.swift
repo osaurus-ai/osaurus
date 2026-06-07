@@ -4,7 +4,7 @@
 //
 //  Shared actor for lightweight Core Model inference calls.
 //  Routes through ModelServiceRouter with retry, timeout, and circuit breaker.
-//  Used by MemoryService, PreflightCapabilitySearch, and other subsystems
+//  Used by MemoryService and other subsystems
 //  that need one-shot LLM generation via the user-configured core model.
 //
 
