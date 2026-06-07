@@ -2345,11 +2345,19 @@ extension FloatingInputCard {
 
         case .file(let url):
             if DocumentParser.isImageFile(url: url) {
-                if let data = try? Data(contentsOf: url),
-                    let nsImage = NSImage(data: data),
-                    let pngData = nsImage.pngData()
-                {
-                    withAnimation(theme.springAnimation()) {
+                let animation = theme.springAnimation()
+                Task { @MainActor in
+                    // The image decode and PNG re-encode block for seconds
+                    // on a large file, so they run off the main actor.
+                    let pngData = await Task.detached(priority: .userInitiated) {
+                        () -> Data? in
+                        guard let data = try? Data(contentsOf: url),
+                            let nsImage = NSImage(data: data)
+                        else { return nil }
+                        return nsImage.pngData()
+                    }.value
+                    guard let pngData else { return }
+                    withAnimation(animation) {
                         pendingAttachments.append(.image(pngData))
                         clipboardService.markAsRead()
                     }
@@ -2708,11 +2716,21 @@ extension FloatingInputCard {
                 )
                 return
             }
-            if let data = try? Data(contentsOf: url), data.count <= maxImageSize,
-                let nsImage = NSImage(data: data),
-                let pngData = nsImage.pngData()
-            {
-                appendAttachment(.image(pngData))
+            let sizeLimit = maxImageSize
+            Task { @MainActor in
+                // The image decode and PNG re-encode block for seconds on a
+                // large file, so they run off the main actor and only the
+                // finished bytes are attached here.
+                let pngData = await Task.detached(priority: .userInitiated) {
+                    () -> Data? in
+                    guard let data = try? Data(contentsOf: url), data.count <= sizeLimit,
+                        let nsImage = NSImage(data: data)
+                    else { return nil }
+                    return nsImage.pngData()
+                }.value
+                if let pngData {
+                    appendAttachment(.image(pngData))
+                }
             }
             return
         }
@@ -2814,12 +2832,13 @@ extension FloatingInputCard {
                 handled = true
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
                     guard let data = data, error == nil, data.count <= maxImageSize else { return }
+                    // Decode and re-encode on the provider's background queue;
+                    // only the finished bytes hop to the main thread.
+                    guard let nsImage = NSImage(data: data),
+                        let pngData = nsImage.pngData()
+                    else { return }
                     DispatchQueue.main.async {
-                        if let nsImage = NSImage(data: data),
-                            let pngData = nsImage.pngData()
-                        {
-                            appendAttachment(.image(pngData))
-                        }
+                        appendAttachment(.image(pngData))
                     }
                 }
             } else if cap.supportsAudio,
@@ -3260,11 +3279,20 @@ class PasteMonitorView: NSView {
             return true
         }
 
-        if let imageData = pasteboard.data(forType: .tiff),
-            let nsImage = NSImage(data: imageData),
-            let pngData = nsImage.pngData()
-        {
-            onImagePaste?(pngData)
+        if let imageData = pasteboard.data(forType: .tiff) {
+            // Consume the event now and convert asynchronously: the decode
+            // and PNG re-encode of a large pasted image block for seconds,
+            // so they run off the main actor.
+            Task { @MainActor [weak self] in
+                let pngData = await Task.detached(priority: .userInitiated) {
+                    () -> Data? in
+                    guard let nsImage = NSImage(data: imageData) else { return nil }
+                    return nsImage.pngData()
+                }.value
+                if let pngData {
+                    self?.onImagePaste?(pngData)
+                }
+            }
             return true
         }
 
@@ -3278,12 +3306,23 @@ class PasteMonitorView: NSView {
                 url.isFileURL
             else { continue }
             if let uti = try? url.resourceValues(forKeys: [.typeIdentifierKey]).typeIdentifier,
-                UTType(uti)?.conforms(to: .image) == true,
-                let data = try? Data(contentsOf: url),
-                let nsImage = NSImage(data: data),
-                let pngData = nsImage.pngData()
+                UTType(uti)?.conforms(to: .image) == true
             {
-                onImagePaste?(pngData)
+                // Consume the event now and convert asynchronously: reading
+                // and re-encoding a large image file blocks for seconds, so
+                // it runs off the main actor.
+                Task { @MainActor [weak self] in
+                    let pngData = await Task.detached(priority: .userInitiated) {
+                        () -> Data? in
+                        guard let data = try? Data(contentsOf: url),
+                            let nsImage = NSImage(data: data)
+                        else { return nil }
+                        return nsImage.pngData()
+                    }.value
+                    if let pngData {
+                        self?.onImagePaste?(pngData)
+                    }
+                }
                 return true
             }
         }
