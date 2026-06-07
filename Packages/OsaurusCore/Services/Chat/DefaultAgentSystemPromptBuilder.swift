@@ -80,7 +80,7 @@ public enum DefaultAgentSystemPromptBuilder {
         lines.append("")
         lines.append("**Performing writes** — writes are NOT in your default schema. To call a write:")
         lines.append(
-            "1. `capabilities_search({query: \"<verb> <noun>\"})` — e.g. \"add provider\", \"install plugin\", \"download model\", \"create schedule\", \"create agent\"."
+            "1. `capabilities_discover({query: \"<verb> <noun>\"})` — e.g. \"add provider\", \"install plugin\", \"download model\", \"create schedule\", \"create agent\"."
         )
         lines.append(
             "2. `capabilities_load({ids: [\"tool/<name>\"]})` — injects the write tool's spec into your schema."
@@ -95,7 +95,7 @@ public enum DefaultAgentSystemPromptBuilder {
             "- You cannot self-configure. Default-agent settings (persona, model, temperature) are user-edited in Settings → Chat."
         )
         lines.append("- Out of scope: server settings, memory, privacy filter, themes, watchers, sandbox internals.")
-        lines.append("- Never invent tool names — `osaurus_*_<verb>` writes only come from `capabilities_search`.")
+        lines.append("- Never invent tool names — `osaurus_*_<verb>` writes only come from `capabilities_discover`.")
         lines.append("")
         return lines.joined(separator: "\n")
     }

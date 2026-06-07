@@ -2,7 +2,7 @@
 //  CapabilitiesSearchDefaultAgentScopeTests.swift
 //  OsaurusCoreTests
 //
-//  Default-agent scoping for `capabilities_search` and the
+//  Default-agent scoping for `capabilities_discover` and the
 //  composer-level preflight gate that complements it:
 //
 //   * Search results from the default agent never carry method/skill
@@ -23,7 +23,7 @@ struct CapabilitiesSearchDefaultAgentScopeTests {
 
     @Test
     func defaultAgent_searchReturnsOnlyConfigureWrites() async throws {
-        let tool = CapabilitiesSearchTool()
+        let tool = CapabilitiesDiscoverTool()
         let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
             try await tool.execute(
                 argumentsJSON: "{\"queries\": [\"add provider\", \"download model\"]}"

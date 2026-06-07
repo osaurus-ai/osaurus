@@ -3,7 +3,7 @@
 //
 //  Regression: the unconditional `platformIdentity` and `defaultPersona`
 //  blocks in `SystemPromptTemplates` must NOT name any chat-layer-intercepted
-//  tools (`todo`, `complete`, `share_artifact`, `clarify`, `capabilities_search`)
+//  tools (`todo`, `complete`, `share_artifact`, `clarify`, `capabilities_discover`)
 //  or sandbox / folder tools. Naming them in the always-on system prompt
 //  caused MiniMax M2.7 Small JANGTQ (and other low-bit MoE models) to fall
 //  into a recitation loop on chats where those tools weren't actually in
@@ -33,7 +33,7 @@ struct SystemPromptDefaultIdentityTests {
         "complete",
         "clarify",
         "share_artifact",
-        "capabilities_search",
+        "capabilities_discover",
         "capabilities_load",
         "sandbox_read_file",
         "sandbox_edit_file",
@@ -121,15 +121,15 @@ struct SystemPromptDefaultIdentityTests {
     }
 
     /// Same sanity for the capability-discovery nudge — still names
-    /// `capabilities_search` / `capabilities_load` because that block is
-    /// gated on `capabilities_search` actually being in the tools[] array.
-    @Test("capabilityDiscoveryNudge still names capabilities_search / capabilities_load")
+    /// `capabilities_discover` / `capabilities_load` because that block is
+    /// gated on `capabilities_discover` actually being in the tools[] array.
+    @Test("capabilityDiscoveryNudge still names capabilities_discover / capabilities_load")
     func capabilityNudgeStillCarriesTheNames() {
         let block = SystemPromptTemplates.capabilityDiscoveryNudge
-        #expect(block.contains("capabilities_search"))
+        #expect(block.contains("capabilities_discover"))
         #expect(block.contains("capabilities_load"))
-        #expect(block.contains(#"capabilities_search({"query": "<what you need>"})"#))
-        #expect(!block.contains(#"capabilities_search({"queries": "#))
+        #expect(block.contains(#"capabilities_discover({"query": "<what you need>"})"#))
+        #expect(!block.contains(#"capabilities_discover({"queries": "#))
     }
 }
 

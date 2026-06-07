@@ -10,18 +10,6 @@
   "expect": {
     "tools": {
       "mustInclude": ["browser_navigate"]
-    },
-    "companions": {
-      "skills": ["Osaurus Browser"],
-      "siblings": {
-        "minOverlap": 2,
-        "candidates": [
-          "browser_open_login",
-          "browser_do",
-          "browser_console_messages",
-          "browser_screenshot"
-        ]
-      }
     }
   }
 }

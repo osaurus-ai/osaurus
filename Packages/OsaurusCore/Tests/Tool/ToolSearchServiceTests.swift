@@ -162,7 +162,7 @@ struct ToolSearchServiceTests {
             )
             #expect(
                 results.tools.contains { $0.entry.name == fixture.name },
-                "capabilities_search must expose an indexed, enabled tool even while the embedding index is unavailable"
+                "capabilities_discover must expose an indexed, enabled tool even while the embedding index is unavailable"
             )
         }
     }
@@ -204,7 +204,7 @@ struct ToolSearchServiceTests {
             )
             #expect(
                 capabilityResults.tools.contains { $0.entry.name == fixture.name },
-                "capabilities_search must still expose live registered tools when encrypted ToolDatabase is closed"
+                "capabilities_discover must still expose live registered tools when encrypted ToolDatabase is closed"
             )
 
             let compactIndex = try? await ToolIndexService.shared.buildCompactIndex()

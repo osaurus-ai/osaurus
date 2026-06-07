@@ -4,7 +4,7 @@
 //
 //  Selects dynamic tools to inject before the agent loop starts.
 //  Uses a single LLM call to pick relevant tools from the full catalog.
-//  Methods and skills remain accessible via capabilities_search / capabilities_load.
+//  Methods and skills remain accessible via capabilities_discover / capabilities_load.
 //
 
 import Foundation
@@ -84,25 +84,15 @@ struct PreflightCapabilityItem: Equatable, Sendable {
 struct PreflightResult: Sendable {
     let toolSpecs: [Tool]
     let items: [PreflightCapabilityItem]
-    /// Phase-2 "teaser" capabilities the model can pull in via
-    /// `capabilities_load`. Derived from `toolSpecs` by grouping picks back
-    /// to their plugin and surfacing the plugin's enabled sibling tools and
-    /// bundled skill. Empty when no pick belongs to a plugin or the plugin
-    /// has no other enabled tools / skill. Cached on `SessionToolState` so
-    /// the rendered "Plugin Companions" prompt section is byte-stable
-    /// across turns (KV-cache friendly).
-    let companions: [PluginCompanion]
 
     static let empty = PreflightResult(toolSpecs: [], items: [])
 
     init(
         toolSpecs: [Tool],
-        items: [PreflightCapabilityItem],
-        companions: [PluginCompanion] = []
+        items: [PreflightCapabilityItem]
     ) {
         self.toolSpecs = toolSpecs
         self.items = items
-        self.companions = companions
     }
 }
 
@@ -202,7 +192,7 @@ struct SessionToolState: Sendable {
     }
 }
 
-// MARK: - Capability Search (used by capabilities_search tool)
+// MARK: - Capability Search (used by capabilities_discover tool)
 
 struct CapabilitySearchResults {
     let methods: [MethodSearchResult]
@@ -270,7 +260,7 @@ enum CapabilitySearch {
     /// `searchWithDiagnostic` for methods + skills) and emits a single
     /// multi-line `Logger.notice` block per call with per-component
     /// BM25 + embed scores. Doubles the embed cost of
-    /// `capabilities_search` while set — only flip it during a manual
+    /// `capabilities_discover` while set — only flip it during a manual
     /// recall repro.
     private static let debugTraceEnvVar = "OSAURUS_DEBUG_CAPABILITY_SEARCH"
 
@@ -663,7 +653,8 @@ enum PreflightCapabilitySearch {
         // `.xlsx`), bypassing the LLM cap and the embedding guardrail and
         // bloating every later request. Ranking confines injection to tools
         // that actually serve this turn; the rest stay reachable via
-        // `capabilities_load` (they're listed as plugin companions).
+        // `capabilities_load` (they're listed in the enabled-capabilities
+        // manifest).
         let folderSuggestedNames = await rankFolderInjection(
             query: query,
             candidates: folderCandidateNames
@@ -725,9 +716,9 @@ enum PreflightCapabilitySearch {
         // let a semantically-unrelated tool through — e.g. a workspace that
         // happens to hold a `.xlsx` injecting spreadsheet tools for a
         // "what's the weather?" query. The cosine floor drops those
-        // egregious mismatches so an irrelevant plugin's tools (and its
-        // companion section) never pollute the schema. Skipped when empty so
-        // we don't pay an embed call for nothing.
+        // egregious mismatches so an irrelevant plugin's tools never pollute
+        // the schema. Skipped when empty so we don't pay an embed call for
+        // nothing.
         let folderGuardedNames: [String]
         if folderSuggestedNames.isEmpty {
             folderGuardedNames = []
@@ -751,8 +742,7 @@ enum PreflightCapabilitySearch {
 
         let result = await buildPreflightResult(
             selectedNames: selectedNames,
-            nameToDesc: nameToDesc,
-            query: query
+            nameToDesc: nameToDesc
         )
         return (result, diagnostic)
     }
@@ -819,7 +809,7 @@ enum PreflightCapabilitySearch {
 
     /// Rank `candidates` (a plugin's folder-matched tools) by relevance to the
     /// query and keep the top `folderInjectionCap`. Reuses the same hybrid
-    /// search + `minimumFusedScore` floor as `capabilities_search`, restricted
+    /// search + `minimumFusedScore` floor as `capabilities_discover`, restricted
     /// to the candidate set, so a vague/unrelated query injects few or no tools
     /// while a matching one surfaces the right entry points. Returns `[]` when
     /// there are no candidates or none clear the relevance floor (e.g. the
@@ -858,35 +848,24 @@ enum PreflightCapabilitySearch {
     }
 
     /// Resolve `selectedNames` to a fully-populated `PreflightResult` —
-    /// `Tool` specs + capability items + plugin companions. Single
-    /// MainActor hop; pulled out of `searchWithDiagnostic` so the LLM
-    /// path and the folder-only path share the same construction code.
+    /// `Tool` specs + capability items. Single MainActor hop; pulled out of
+    /// `searchWithDiagnostic` so the LLM path and the folder-only path share
+    /// the same construction code.
     private static func buildPreflightResult(
         selectedNames: [String],
-        nameToDesc: [String: String],
-        query: String
+        nameToDesc: [String: String]
     ) async -> PreflightResult {
-        let (toolSpecs, items, companions) = await MainActor.run {
+        let (toolSpecs, items) = await MainActor.run {
             let specs = ToolRegistry.shared.specs(forTools: selectedNames)
             let items = selectedNames.compactMap { name -> PreflightCapabilityItem? in
                 guard let desc = nameToDesc[name] else { return nil }
                 return .init(type: .tool, name: name, description: desc)
             }
-            // Phase 2: derive plugin companions (sibling tools + plugin
-            // skill) for any pick that belongs to a plugin/provider. The
-            // model pulls these in on demand via `capabilities_load`,
-            // so they don't inflate the schema this turn.
-            let companions = PreflightCompanions.derive(
-                selectedNames: selectedNames,
-                query: query
-            )
-            return (specs, items, companions)
+            return (specs, items)
         }
 
-        logger.info(
-            "Pre-flight loaded \(toolSpecs.count) tools, \(companions.count) companion plugin(s)"
-        )
-        return PreflightResult(toolSpecs: toolSpecs, items: items, companions: companions)
+        logger.info("Pre-flight loaded \(toolSpecs.count) tools")
+        return PreflightResult(toolSpecs: toolSpecs, items: items)
     }
 
     /// Pre-rank `catalog` by embedding similarity to the query and keep
@@ -898,7 +877,7 @@ enum PreflightCapabilitySearch {
     /// sees the prompt.
     ///
     /// Implementation reuses `ToolSearchService` (already maintained
-    /// for the `capabilities_search` tool path) so we don't pay a
+    /// for the `capabilities_discover` tool path) so we don't pay a
     /// second embed cost per call. Threshold zero so the LLM is the
     /// floor — embedding rank gates *order*, not *eligibility*.
     /// Returns the full catalog when:

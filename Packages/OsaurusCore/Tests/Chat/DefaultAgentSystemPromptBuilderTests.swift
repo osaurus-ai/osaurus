@@ -58,9 +58,9 @@ struct DefaultAgentSystemPromptBuilderTests {
         )
         // The default-agent's "I can't see the write tool" recovery
         // loop depends on these three sentences being present so the
-        // model knows to call capabilities_search → capabilities_load
+        // model knows to call capabilities_discover → capabilities_load
         // → write tool rather than fabricate a name.
-        #expect(rendered.contains("capabilities_search"))
+        #expect(rendered.contains("capabilities_discover"))
         #expect(rendered.contains("capabilities_load"))
         #expect(rendered.contains("Performing writes"))
     }

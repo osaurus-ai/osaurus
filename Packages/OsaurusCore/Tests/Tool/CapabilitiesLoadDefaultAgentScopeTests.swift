@@ -32,7 +32,7 @@ struct CapabilitiesLoadDefaultAgentScopeTests {
             try await tool.execute(argumentsJSON: "{\"ids\": [\"tool/sandbox_exec\"]}")
         }
         // The router stops the load and surfaces a hint pointing the
-        // model back to the read tools / capabilities_search.
+        // model back to the read tools / capabilities_discover.
         #expect(result.contains("Default agent can only load configuration write tools"))
 
         // The buffer must not contain the rejected tool.

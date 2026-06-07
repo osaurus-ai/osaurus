@@ -79,12 +79,12 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
             } else {
                 if providerCount == 0 {
                     suggestions.append(
-                        "No cloud providers configured — search 'add provider' via capabilities_search."
+                        "No cloud providers configured — search 'add provider' via capabilities_discover."
                     )
                 }
                 if installedModels.isEmpty {
                     suggestions.append(
-                        "No local models installed — search 'download model' via capabilities_search."
+                        "No local models installed — search 'download model' via capabilities_discover."
                     )
                 }
             }

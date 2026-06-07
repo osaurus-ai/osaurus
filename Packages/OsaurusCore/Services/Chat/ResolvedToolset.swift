@@ -26,9 +26,9 @@ struct ResolvedToolset: Sendable {
     /// alphabetical). Empty when `effectiveToolsOff` is true.
     let tools: [Tool]
 
-    /// Standalone (non-plugin) skill teasers derived from the user
-    /// query. Already filtered to skip skills surfaced via plugin
-    /// companions or already loaded mid-session.
+    /// Standalone (non-plugin) skill teasers derived from the user query,
+    /// folded into the enabled-capabilities manifest's trailing "Skills (no
+    /// plugin)" group. Already filtered to skip skills loaded mid-session.
     let skillSuggestions: [SkillTeaser]
 
     /// Always-loaded names this turn shipped, intersected against the

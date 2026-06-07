@@ -40,12 +40,10 @@ public enum EvalCaseOutcome: String, Sendable, Codable {
 public struct EvalCaseScore: Sendable, Codable {
     public let aggregate: Float
     public let tools: Float?
-    public let companions: Float?
 
-    public init(aggregate: Float, tools: Float?, companions: Float?) {
+    public init(aggregate: Float, tools: Float?) {
         self.aggregate = aggregate
         self.tools = tools
-        self.companions = companions
     }
 }
 
@@ -200,9 +198,9 @@ public struct EvalReport: Sendable, Codable {
     }
 
     /// Add per-case diagnostic lines (query + raw LLM response + pre-
-    /// guardrail picks + companion count) to `lines`. Pulled out of
-    /// `formatHumanReadable` so the verbose-off code path stays a tight
-    /// table; call only when `verbose == true`.
+    /// guardrail picks) to `lines`. Pulled out of `formatHumanReadable` so
+    /// the verbose-off code path stays a tight table; call only when
+    /// `verbose == true`.
     private func appendVerboseDiagnostics(
         for row: EvalCaseReport,
         into lines: inout [String]
@@ -235,9 +233,6 @@ public struct EvalReport: Sendable, Codable {
                 .joined(separator: "\n")
             lines.append("       · raw:")
             lines.append(indented)
-        }
-        if !observed.companions.isEmpty {
-            lines.append("       · companions: \(observed.companions.count)")
         }
     }
 }

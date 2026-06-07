@@ -698,7 +698,7 @@ struct SwiftTransformersTokenizerLoaderTests {
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
         #expect(decoded.contains("Create a file named osaurus_live_probe.txt"), "Decoded: \(decoded)")
-        #expect(decoded.contains("capabilities_search"), "Decoded: \(decoded)")
+        #expect(decoded.contains("capabilities_discover"), "Decoded: \(decoded)")
     }
 
     @Test func loaderNormalizesRawGemmaSensitiveToolSchemas() throws {
@@ -1208,7 +1208,7 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
     }
 
-    @Test func downloadedFamilyTokenizersRenderCapabilitiesSearchToolSurface() async throws {
+    @Test func downloadedFamilyTokenizersRenderCapabilitiesDiscoverToolSurface() async throws {
         let rows = [
             LocalTokenizerRow(
                 family: "gemma4",
@@ -1307,7 +1307,7 @@ struct SwiftTransformersTokenizerLoaderTests {
             ),
         ]
 
-        let tool = CapabilitiesSearchTool().asOpenAITool().toTokenizerToolSpec()
+        let tool = CapabilitiesDiscoverTool().asOpenAITool().toTokenizerToolSpec()
         let availableRows = rows.filter(\.hasTokenizer)
         var renderedFamilies: Set<String> = []
 
@@ -1328,7 +1328,7 @@ struct SwiftTransformersTokenizerLoaderTests {
 
             #expect(!decoded.isEmpty, "\(row.label) rendered an empty prompt")
             #expect(
-                decoded.contains("capabilities_search"),
+                decoded.contains("capabilities_discover"),
                 "\(row.label) must render the Osaurus tool surface. Decoded: \(decoded)"
             )
             #expect(

@@ -496,7 +496,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
 
         ### 1. Check if tools already exist
 
-        Use `capabilities_search` first. If matching tools exist, use them instead.
+        Use `capabilities_discover` first. If matching tools exist, use them instead.
 
         ### 2. Check and prompt for secrets
 

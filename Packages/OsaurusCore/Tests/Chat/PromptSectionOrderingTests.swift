@@ -23,10 +23,11 @@
 //    6. riskAware                 static, gated on file-mutation tools
 //    7. agentLoopGuidance         static, gated on prior loop-tool use
 //    8. sandbox / folderContext   static, mode-specific
-//    9. capabilityNudge           static, gated on capabilities_search
+//    9. capabilityNudge           static, gated on capabilities_discover
 //   10. sandboxUnavailable        dynamic
-//   11. pluginCompanions          dynamic
-//   12. skillSuggestions          dynamic
+//   11. enabledManifest           dynamic (enabled-but-unloaded tools +
+//                                  plugin skills + standalone skills)
+//   12. skillsGovern              dynamic (paired with enabledManifest)
 //   13. pluginCreator             dynamic
 //
 

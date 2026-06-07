@@ -146,7 +146,7 @@ struct ConfigurationDomainRegistryTests {
             "osaurus_status",
             "osaurus_list",
             "osaurus_describe",
-            "capabilities_search",
+            "capabilities_discover",
             "capabilities_load",
             "todo",
             "complete",

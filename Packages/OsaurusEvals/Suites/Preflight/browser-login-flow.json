@@ -10,9 +10,6 @@
   "expect": {
     "tools": {
       "mustInclude": ["browser_open_login"]
-    },
-    "companions": {
-      "skills": ["Osaurus Browser"]
     }
   }
 }

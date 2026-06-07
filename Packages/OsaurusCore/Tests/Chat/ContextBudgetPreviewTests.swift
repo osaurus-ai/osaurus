@@ -5,8 +5,8 @@
 //  Pin the welcome-screen Context Budget popover contract:
 //  `SystemPromptComposer.composePreviewContext` must list every section
 //  the next `composeChatContext(query: "")` will produce, except for the
-//  two query-dependent ones (preflight tool delta + plugin companions)
-//  which the budget UI explicitly cannot price ahead of time.
+//  query-dependent deltas (preflight tool delta + the manifest's
+//  standalone-skill group) which the budget UI cannot price ahead of time.
 //
 //  Why this matters: before this preview parity, the popover hid 6+
 //  sections (`Agent Loop`, `Capability Discovery`, `Skills`,
@@ -158,14 +158,14 @@ struct ContextBudgetPreviewTests {
             // Tools row is non-zero (always-loaded baseline JSON schemas).
             #expect(preview.toolTokens > 0)
             #expect(preview.tools.contains { $0.function.name == "todo" })
-            #expect(preview.tools.contains { $0.function.name == "capabilities_search" })
+            #expect(preview.tools.contains { $0.function.name == "capabilities_discover" })
         }
     }
 
     /// Manual mode opts out of the LLM preflight call, but it still
     /// includes the capability discovery tools in the schema. The prompt
     /// must explain those tools whenever they are callable; otherwise the
-    /// model sees an opaque `capabilities_search` function and #789-style
+    /// model sees an opaque `capabilities_discover` function and #789-style
     /// "search is enabled but never found" failures are hard to diagnose.
     /// Loop guidance is separately deferred until a loop tool has been used.
     @Test("preview: manual mode defers agent loop and keeps capability nudge")
@@ -264,7 +264,7 @@ struct ContextBudgetPreviewTests {
             #expect(greeting.tools.isEmpty)
             #expect(greeting.alwaysLoadedNames.contains("capabilities_load"))
             #expect(followUp.tools.contains { $0.function.name == "capabilities_load" })
-            #expect(followUp.tools.contains { $0.function.name == "capabilities_search" })
+            #expect(followUp.tools.contains { $0.function.name == "capabilities_discover" })
             #expect(followUp.toolTokens > 0)
         }
     }
@@ -289,7 +289,7 @@ struct ContextBudgetPreviewTests {
 
             #expect(SystemPromptComposer.isTrivialPreflightQuery("ok"))
             #expect(context.tools.contains { $0.function.name == "capabilities_load" })
-            #expect(context.tools.contains { $0.function.name == "capabilities_search" })
+            #expect(context.tools.contains { $0.function.name == "capabilities_discover" })
             #expect(context.toolTokens > 0)
         }
     }
@@ -379,7 +379,7 @@ struct ContextBudgetPreviewTests {
     // MARK: - Skills are load-on-demand only
 
     /// Regression for the 55k-token Skills bloat: skills MUST be
-    /// discovered via `capabilities_search` and pulled in via
+    /// discovered via `capabilities_discover` and pulled in via
     /// `capabilities_load`, never auto-injected into the system prompt
     /// at compose time. Both compose paths must omit the `skills`
     /// section regardless of the agent's enabled-skills allowlist.
@@ -417,8 +417,9 @@ struct ContextBudgetPreviewTests {
     /// empty preflight, so the welcome-screen popover never lies
     /// about what the model will actually see on the next send.
     /// Differences are limited to:
-    ///   - `pluginCompanions`: query-dependent, never present here
-    ///     (preflight is empty).
+    ///   - the `enabledManifest`'s trailing standalone-skills group is
+    ///     query-dependent, but an empty query yields no embedding matches
+    ///     in either path, so the section content matches here.
     ///   - `memorySection` body: send path may attach memory text;
     ///     the preview surfaces tokens through `cachedMemoryTokens`
     ///     instead, so we compare manifests with `memory` filtered
@@ -439,8 +440,8 @@ struct ContextBudgetPreviewTests {
                 cachedPreflight: .empty
             )
 
-            let previewIds = sectionIds(preview).filter { $0 != "pluginCompanions" }
-            let realIds = real.manifest.sections.map(\.id).filter { $0 != "pluginCompanions" }
+            let previewIds = sectionIds(preview)
+            let realIds = real.manifest.sections.map(\.id)
             #expect(previewIds == realIds)
 
             // Tools row matches too — both go through the same

@@ -95,7 +95,7 @@ struct HTTPHandlerChatStreamingTests {
                 name: "HTTPStrictContext-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "DO-NOT-INJECT-HTTP-CONTEXT",
                 agentAddress: "http-strict-\(UUID().uuidString)",
-                manualToolNames: ["capabilities_search"]
+                manualToolNames: ["capabilities_discover"]
             )
             AgentManager.shared.add(agent)
 

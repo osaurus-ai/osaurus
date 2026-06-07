@@ -71,11 +71,11 @@ struct AgentCapabilityRowBuilderTests {
     }
 
     @Test func builtInToolBucketsToBuiltInGroup() {
-        // `capabilities_search` is registered as a built-in by
+        // `capabilities_discover` is registered as a built-in by
         // `ToolRegistry.registerBuiltInTools()` at singleton init.
         // It's also referenced from `CapabilityToolsTests`, so its name
         // is an established test fixture.
-        let tool = makeToolEntry(name: "capabilities_search")
+        let tool = makeToolEntry(name: "capabilities_discover")
         let source = CapabilityRowBuilder.source(forTool: tool, pluginNameById: [:])
 
         #expect(source == .builtIn)
@@ -195,7 +195,7 @@ struct AgentCapabilityRowBuilderTests {
     /// the group anyway just creates the misleading "looks toggleable but
     /// isn't" state that motivated hiding it.
     @Test func informationalGroupIsHiddenFromRows() {
-        let builtInTool = makeToolEntry(name: "capabilities_search")
+        let builtInTool = makeToolEntry(name: "capabilities_discover")
         let unclassifiedTool = makeToolEntry(name: "agent_capability_tests_unclassified_xyz")
 
         let input = CapabilityRowBuilder.Input(

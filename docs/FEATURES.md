@@ -979,7 +979,7 @@ recencyWeight = 1.0 / (1.0 + daysSinceUsed / 30.0)
 
 Each time a method is used, a `MethodEvent` is recorded (`loaded`, `succeeded`, `failed`), and the score is recalculated.
 
-**Agent Tools:** Methods are loaded by the agent indirectly via `capabilities_search` / `capabilities_load` (loading a method auto-loads its referenced tools and skills). The dedicated `methods_save` / `methods_report` tools were removed from the schema — recording method outcomes is now an internal observation, not an agent-facing concern.
+**Agent Tools:** Methods are loaded by the agent indirectly via `capabilities_discover` / `capabilities_load` (loading a method auto-loads its referenced tools and skills). The dedicated `methods_save` / `methods_report` tools were removed from the schema — recording method outcomes is now an internal observation, not an agent-facing concern.
 
 **Storage:** `~/.osaurus/methods/methods.db` (SQLite with WAL mode)
 
@@ -1019,7 +1019,7 @@ For on-demand discovery during a session, agents can use:
 
 | Tool                  | Description                                                       |
 | --------------------- | ----------------------------------------------------------------- |
-| `capabilities_search` | Search methods, tools, and skills across all indexes in parallel  |
+| `capabilities_discover` | Search methods, tools, and skills across all indexes in parallel  |
 | `capabilities_load`   | Load a capability by ID into the active session (hot-loads tools) |
 
 When `capabilities_load` is called, new tool specs are queued in a `CapabilityLoadBuffer` and drained into the active tool set after each invocation, allowing the agent to dynamically expand its capabilities mid-session.

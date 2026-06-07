@@ -2,7 +2,7 @@
 //  CapabilityToolsTests.swift
 //  osaurus
 //
-//  Tests for capabilities_search, capabilities_load, and CapabilityLoadBuffer.
+//  Tests for capabilities_discover, capabilities_load, and CapabilityLoadBuffer.
 //
 
 import Foundation
@@ -44,20 +44,20 @@ struct CapabilityLoadBufferTests {
     }
 }
 
-// MARK: - CapabilitiesSearchTool
+// MARK: - CapabilitiesDiscoverTool
 
 @Suite(.serialized)
-struct CapabilitiesSearchToolTests {
+struct CapabilitiesDiscoverToolTests {
 
     @Test func rejectsEmptyQueries() async throws {
-        let tool = CapabilitiesSearchTool()
+        let tool = CapabilitiesDiscoverTool()
         let result = try await tool.execute(argumentsJSON: "{\"queries\": []}")
         #expect(ToolEnvelope.isError(result))
         #expect(result.contains("queries"))
     }
 
     @Test func rejectsMissingQueries() async throws {
-        let tool = CapabilitiesSearchTool()
+        let tool = CapabilitiesDiscoverTool()
         let result = try await tool.execute(argumentsJSON: "{}")
         #expect(ToolEnvelope.isError(result))
         #expect(result.contains("queries"))
@@ -66,7 +66,7 @@ struct CapabilitiesSearchToolTests {
     @Test @MainActor
     func registryAcceptsLegacySingularQueryAlias() async throws {
         let result = try await ToolRegistry.shared.execute(
-            name: "capabilities_search",
+            name: "capabilities_discover",
             argumentsJSON: "{\"query\": \"zzz_capability_alias_probe_\(UUID().uuidString)\"}"
         )
         #expect(!ToolEnvelope.isError(result))
@@ -74,7 +74,7 @@ struct CapabilitiesSearchToolTests {
     }
 
     @Test func capabilitiesSearchSchemaIsGemmaRenderable() throws {
-        let spec = CapabilitiesSearchTool().asOpenAITool().toTokenizerToolSpec()
+        let spec = CapabilitiesDiscoverTool().asOpenAITool().toTokenizerToolSpec()
         let fn = try #require(spec["function"] as? [String: any Sendable])
         let parameters = try #require(fn["parameters"] as? [String: any Sendable])
         let properties = try #require(parameters["properties"] as? [String: any Sendable])
@@ -91,7 +91,7 @@ struct CapabilitiesSearchToolTests {
     @Test @MainActor
     func registryAcceptsStringifiedQueriesFromSmallModels() async throws {
         let result = try await ToolRegistry.shared.execute(
-            name: "capabilities_search",
+            name: "capabilities_discover",
             argumentsJSON:
                 "{\"queries\": \"[<|\\\"|>zzz_capability_string_probe_\(UUID().uuidString)<|\\\"|>]\"}"
         )
@@ -100,7 +100,7 @@ struct CapabilitiesSearchToolTests {
     }
 
     @Test func returnsNoMatchMessage() async throws {
-        let tool = CapabilitiesSearchTool()
+        let tool = CapabilitiesDiscoverTool()
         let result = try await tool.execute(
             argumentsJSON: "{\"queries\": [\"zzz_completely_nonexistent_capability_xyz\"]}"
         )
@@ -200,7 +200,7 @@ struct CapabilitiesSearchToolTests {
                 #expect(diagnostic.filteredByAllowlist.count == 1)
                 #expect(diagnostic.filteredByAllowlist.contains(denied.name))
 
-                let tool = CapabilitiesSearchTool(agentId: agent.id)
+                let tool = CapabilitiesDiscoverTool(agentId: agent.id)
                 let result = try await tool.execute(
                     argumentsJSON: "{\"queries\": [\"current headline web search\"]}"
                 )
@@ -209,14 +209,14 @@ struct CapabilitiesSearchToolTests {
 
                 AgentManager.shared.setActiveAgent(agent.id)
                 defer { AgentManager.shared.setActiveAgent(Agent.defaultId) }
-                let unscopedTool = CapabilitiesSearchTool()
+                let unscopedTool = CapabilitiesDiscoverTool()
                 let unscopedResult = try await unscopedTool.execute(
                     argumentsJSON: "{\"queries\": [\"current headline web search\"]}"
                 )
                 #expect(unscopedResult.contains(allowed.name))
                 #expect(
                     unscopedResult.contains(denied.name),
-                    "Direct capabilities_search calls without explicit/task-local agent context must keep global-enabled results"
+                    "Direct capabilities_discover calls without explicit/task-local agent context must keep global-enabled results"
                 )
 
                 _ = await AgentManager.shared.delete(id: agent.id)
@@ -296,18 +296,18 @@ struct CapabilitiesLoadToolTests {
 
     @Test func toolLoadBuffersSpec() async throws {
         await MainActor.run {
-            ToolRegistry.shared.setEnabled(true, for: "capabilities_search")
+            ToolRegistry.shared.setEnabled(true, for: "capabilities_discover")
         }
 
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(
-            argumentsJSON: "{\"ids\": [\"tool/capabilities_search\"]}"
+            argumentsJSON: "{\"ids\": [\"tool/capabilities_discover\"]}"
         )
 
         #expect(result.contains("loaded") || result.contains("available"))
 
         let buffered = await CapabilityLoadBuffer.shared.drain()
-        #expect(buffered.contains(where: { $0.function.name == "capabilities_search" }))
+        #expect(buffered.contains(where: { $0.function.name == "capabilities_discover" }))
     }
 
     @Test @MainActor

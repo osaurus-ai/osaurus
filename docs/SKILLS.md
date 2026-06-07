@@ -211,7 +211,7 @@ You can control how aggressively the system searches for capabilities:
 
 During a conversation, the AI can also discover and load additional capabilities on demand:
 
-1. **`capabilities_search`** — Searches all indexed methods, tools, and skills in parallel
+1. **`capabilities_discover`** — Searches all indexed methods, tools, and skills in parallel
 2. **`capabilities_load`** — Loads a specific capability into the active session
 
 This means the AI starts with automatically selected skills and can dynamically expand its capabilities as the conversation evolves.
@@ -234,7 +234,7 @@ Skills are available to all agents automatically. The RAG-based preflight search
 - Each agent's system prompt guides its behavior and specialization
 - When you send a message, the preflight search finds skills relevant to your query
 - Matching skill instructions are injected into the agent's context
-- The agent can discover additional skills at runtime via `capabilities_search`
+- The agent can discover additional skills at runtime via `capabilities_discover`
 
 No per-agent skill configuration is needed. The system automatically matches the right skills to the right tasks.
 

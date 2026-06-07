@@ -141,6 +141,8 @@ public enum EvalRunner {
                 modelId: modelId,
                 cliThresholdOverride: thresholdOverride
             )
+        case "capability_claims":
+            return await runCapabilityClaimsCase(testCase, modelId: modelId)
         case "tools", "streaming", "contract":
             // Scaffolded domains — runner implementation lives in a
             // follow-up so cases can be authored against the format
@@ -196,20 +198,12 @@ public enum EvalRunner {
         let observed = await PreflightEvaluator.evaluate(query: testCase.query, mode: mode)
 
         let toolResult = Scorers.scoreTools(observed: observed, expectation: testCase.expect.tools)
-        let companionResult = Scorers.scoreCompanions(
-            observed: observed,
-            expectation: testCase.expect.companions
-        )
-        let aggregate = Scorers.aggregate(
-            tools: toolResult?.score,
-            companions: companionResult?.score
-        )
+        let aggregate = Scorers.aggregate(tools: toolResult?.score)
         let score = EvalCaseScore(
             aggregate: aggregate,
-            tools: toolResult?.score,
-            companions: companionResult?.score
+            tools: toolResult?.score
         )
-        let notes = (toolResult?.notes ?? []) + (companionResult?.notes ?? [])
+        let notes = toolResult?.notes ?? []
         let outcome: EvalCaseOutcome = aggregate >= 1.0 ? .passed : .failed
 
         return EvalCaseReport(
@@ -857,6 +851,245 @@ public enum EvalRunner {
             false,
             "\(kind) under floor: matched \(hits.count)/\(matcher.minMatches) of [\(matcher.anyOf.joined(separator: ","))]"
         )
+    }
+
+    // MARK: - Capability claims domain
+
+    /// Agent-loop evaluator for `domain == "capability_claims"`. Runs
+    /// the real multi-turn chat loop via `CapabilityClaimsEvaluator`,
+    /// then scores deterministic transcript assertions plus an LLM-judge
+    /// rubric. Off-CI (token cost), like `preflight`.
+    ///
+    /// Fixture setup mirrors `capability_search`: `requirePlugins` skips,
+    /// `enableSkills` / `enableTools` grant capabilities for the run
+    /// window and restore afterwards. `ensureToolsDisabled` skips the
+    /// case when a tool that must be absent is actually enabled, since
+    /// the runner can't safely disable globally-enabled tools.
+    private static func runCapabilityClaimsCase(
+        _ testCase: EvalCase,
+        modelId: String
+    ) async -> EvalCaseReport {
+        let label = testCase.label ?? testCase.id
+
+        guard let exp = testCase.expect.capabilityClaims else {
+            return Self.errored(
+                testCase,
+                label: label,
+                modelId: modelId,
+                note: "missing `expect.capabilityClaims`"
+            )
+        }
+
+        if let required = testCase.fixtures.requirePlugins, !required.isEmpty {
+            let installed = PreflightEvaluator.installedPluginIds()
+            let missing = required.filter { !installed.contains($0) }
+            if !missing.isEmpty {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: ["missing plugins: \(missing.joined(separator: ", "))"],
+                    modelId: modelId
+                )
+            }
+        }
+
+        let resolvedAgentId = AgentManager.shared.activeAgent.id
+
+        // Skip rather than mutate global state when a must-be-absent tool
+        // is actually enabled.
+        if let mustBeAbsent = testCase.fixtures.ensureToolsDisabled, !mustBeAbsent.isEmpty {
+            let enabled = AgentManager.shared.effectiveEnabledToolNames(for: resolvedAgentId)
+            // nil = legacy global-enabled mode: everything is reachable,
+            // so a "must be absent" tool cannot be guaranteed absent.
+            let present: [String]
+            if let enabled {
+                present = mustBeAbsent.filter { enabled.contains($0) }
+            } else {
+                present = mustBeAbsent
+            }
+            if !present.isEmpty {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: [
+                        "ensureToolsDisabled not satisfiable — enabled: "
+                            + present.joined(separator: ", ")
+                    ],
+                    modelId: modelId
+                )
+            }
+        }
+
+        let priorSkillState = await applyEnableSkills(testCase.fixtures.enableSkills)
+        let priorToolGrant = await applyEnableTools(
+            testCase.fixtures.enableTools,
+            agentId: resolvedAgentId
+        )
+
+        let judgeModel = ProcessInfo.processInfo.environment["JUDGE_MODEL"]
+        let started = Date()
+        let transcript = await CapabilityClaimsEvaluator.run(
+            query: testCase.query,
+            agentId: resolvedAgentId,
+            maxIterations: exp.maxIterations ?? 6
+        )
+
+        var verdicts: [CapabilityClaimsJudgement] = []
+        if transcript.error == nil, !exp.rubric.isEmpty {
+            verdicts = await CapabilityClaimsEvaluator.judge(
+                finalText: transcript.finalText,
+                conditions: exp.rubric,
+                model: judgeModel
+            )
+        }
+        let elapsed = Date().timeIntervalSince(started) * 1000
+
+        await restoreToolGrant(priorToolGrant, agentId: resolvedAgentId)
+        await restoreSkillEnabledState(priorSkillState)
+
+        // Score.
+        var notes: [String] = []
+        var passed = true
+
+        if let err = transcript.error {
+            return EvalCaseReport(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                query: testCase.query,
+                outcome: .errored,
+                score: nil,
+                observed: nil,
+                notes: ["agent loop error: \(err)"],
+                modelId: modelId,
+                latencyMs: elapsed
+            )
+        }
+
+        let calledNames = transcript.toolCalls.map(\.name)
+        let calledSet = Set(calledNames)
+
+        if let must = exp.mustCallTools {
+            let missing = must.filter { !calledSet.contains($0) }
+            if missing.isEmpty {
+                notes.append("mustCallTools ok: [\(must.joined(separator: ","))]")
+            } else {
+                passed = false
+                notes.append("mustCallTools missing: [\(missing.joined(separator: ","))]")
+            }
+        }
+        if let mustNot = exp.mustNotCallTools {
+            let offenders = mustNot.filter { calledSet.contains($0) }
+            if offenders.isEmpty {
+                notes.append("mustNotCallTools ok")
+            } else {
+                passed = false
+                notes.append("mustNotCallTools called: [\(offenders.joined(separator: ","))]")
+            }
+        }
+        if let matcher = exp.loadSkillFirst {
+            let result = scoreSkillFirst(matcher: matcher, transcript: transcript)
+            passed = passed && result.passed
+            notes.append(result.note)
+        }
+
+        // LLM-judge rubric — every condition must pass.
+        for (index, verdict) in verdicts.enumerated() {
+            let condition = index < exp.rubric.count ? exp.rubric[index] : "(condition \(index))"
+            if verdict.pass {
+                notes.append("judge ok: \(condition)")
+            } else {
+                passed = false
+                notes.append("judge FAIL: \(condition) — \(verdict.reason)")
+            }
+        }
+        if !exp.rubric.isEmpty && verdicts.count != exp.rubric.count {
+            passed = false
+            notes.append(
+                "judge produced \(verdicts.count) verdicts for \(exp.rubric.count) conditions"
+            )
+        }
+
+        if transcript.hitIterationCap {
+            notes.append("warning: hit iteration cap (\(transcript.iterations)) — possible loop")
+        }
+        notes.append(
+            "summary: toolCalls=[\(calledNames.joined(separator: ","))] "
+                + "loaded=[\(transcript.loadedToolNames.joined(separator: ","))] "
+                + "iters=\(transcript.iterations)"
+        )
+        notes.append("final: \(transcript.finalText.replacingOccurrences(of: "\n", with: " "))")
+
+        return EvalCaseReport(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            query: testCase.query,
+            outcome: passed ? .passed : .failed,
+            score: nil,
+            observed: nil,
+            notes: notes,
+            modelId: modelId,
+            latencyMs: elapsed
+        )
+    }
+
+    /// Score the skill-first ordering: the first `capabilities_load`
+    /// call carrying `skill/<skill>` must occur before the first call to
+    /// any tool in `beforeTools`. If no gated tool ran, the ordering is
+    /// vacuously satisfied (nothing to gate).
+    private static func scoreSkillFirst(
+        matcher: EvalCase.CapabilityClaimsExpectations.SkillFirstMatcher,
+        transcript: CapabilityClaimsTranscript
+    ) -> (passed: Bool, note: String) {
+        let gated = Set(matcher.beforeTools)
+        let firstGatedIndex = transcript.toolCalls.firstIndex { gated.contains($0.name) }
+        guard let gatedIndex = firstGatedIndex else {
+            return (true, "skill-first vacuous: no gated tool called")
+        }
+        let skillLoadIndex = transcript.toolCalls.firstIndex { call in
+            call.name == "capabilities_load"
+                && (call.arguments.contains("skill/\(matcher.skill)")
+                    || call.arguments.contains(matcher.skill))
+        }
+        guard let loadIndex = skillLoadIndex, loadIndex < gatedIndex else {
+            return (
+                false,
+                "skill-first FAIL: gated tool ran before loading skill '\(matcher.skill)'"
+            )
+        }
+        return (true, "skill-first ok: loaded '\(matcher.skill)' before gated tool")
+    }
+
+    /// Grant `names` to the agent for a case run. Returns the prior
+    /// allowlist to restore, or nil when no mutation was needed (legacy
+    /// global mode, or every name already enabled). Snapshot/restore
+    /// mirrors `applyEnableSkills`.
+    private static func applyEnableTools(
+        _ names: [String]?,
+        agentId: UUID
+    ) async -> [String]? {
+        guard let names, !names.isEmpty else { return nil }
+        // nil = legacy global-enabled mode: the names are already
+        // reachable, so there's nothing to grant or restore.
+        guard let prior = AgentManager.shared.effectiveEnabledToolNames(for: agentId) else {
+            return nil
+        }
+        let priorSet = Set(prior)
+        let missing = names.filter { !priorSet.contains($0) }
+        if missing.isEmpty { return nil }
+        AgentManager.shared.updateEnabledToolNames(Array(priorSet.union(names)), for: agentId)
+        return prior
+    }
+
+    /// Restore the allowlist snapshot taken by `applyEnableTools`.
+    private static func restoreToolGrant(_ prior: [String]?, agentId: UUID) async {
+        guard let prior else { return }
+        AgentManager.shared.updateEnabledToolNames(prior, for: agentId)
     }
 
     // MARK: - Capability search fixture seeding

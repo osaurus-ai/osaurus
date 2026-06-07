@@ -486,7 +486,6 @@ public struct SystemPromptComposer: Sendable {
         let skillSuggestions = await resolveSkillSuggestions(
             snapshot: snapshot,
             tools: tools,
-            preflight: preflight,
             query: query,
             additionalToolNames: additionalToolNames,
             effectiveToolsOff: effectiveToolsOff,
@@ -578,14 +577,14 @@ public struct SystemPromptComposer: Sendable {
     /// Standalone (non-plugin) skill teasers derived from the user query.
     /// Same gates as preflight (auto mode + tools on + non-empty query)
     /// plus `capabilities_load` in the schema so the loader nudge is
-    /// actionable. Skills already surfaced via plugin companions or
-    /// already loaded mid-session are filtered out so the model doesn't
-    /// see the same name twice.
+    /// actionable. Skills already loaded mid-session are filtered out so
+    /// the model doesn't see the same name twice. The result is folded into
+    /// the enabled-capabilities manifest as its trailing "Skills (no
+    /// plugin)" group — there is no longer a separate suggestions section.
     @MainActor
     private static func resolveSkillSuggestions(
         snapshot: AgentConfigSnapshot,
         tools: [Tool],
-        preflight: PreflightResult,
         query: String,
         additionalToolNames: LoadedTools,
         effectiveToolsOff: Bool,
@@ -605,10 +604,9 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("skillSuggestionsSource", "frozen")
             return cachedSkillSuggestions
         }
-        let alreadySurfaced = Set(preflight.companions.compactMap(\.skill?.name))
-            .union(additionalToolNames)
+        let alreadySurfaced = Set(additionalToolNames)
         trace?.mark("skill_suggestions_start")
-        let teasers = await PreflightCompanions.deriveSkillSuggestions(
+        let teasers = await SkillSuggestions.deriveSkillSuggestions(
             query: query,
             alreadyLoadedSkillNames: alreadySurfaced
         )
@@ -634,10 +632,11 @@ public struct SystemPromptComposer: Sendable {
     ///   7. riskAware                 static, gated on file-mutation tools
     ///   8. agentLoopGuidance         static, gated on loop tools (or small ctx)
     ///   9. sandbox / folderContext   static, mode-specific, gated on tools on
-    ///  10. capabilityNudge           static, gated on capabilities_search
+    ///  10. capabilityNudge           static, gated on capabilities_discover
     ///  11. sandboxUnavailable        dynamic, gated on registrar failure
-    ///  12. pluginCompanions          dynamic, gated on preflight result
-    ///  13. skillSuggestions          dynamic, gated on preflight result
+    ///  12. enabledManifest           dynamic, gated on capabilities_load
+    ///                                (tools + plugin skills + standalone skills)
+    ///  13. skillsGovern              static body, paired with enabledManifest
     ///  14. pluginCreator             dynamic, backstop
     ///
     /// Statics come before dynamics so the cached prefix
@@ -651,7 +650,7 @@ public struct SystemPromptComposer: Sendable {
     /// the dynamic ones it can't price ahead of time.
     ///
     /// Skills are intentionally NOT injected here — they're discovered via
-    /// `capabilities_search` and pulled in via `capabilities_load` instead.
+    /// `capabilities_discover` and pulled in via `capabilities_load` instead.
     /// Surfacing every enabled skill in the system prompt routinely blew
     /// the budget on small-context models (55k+ tokens with reference
     /// inlining); the loader path keeps the schema small and lets the
@@ -740,7 +739,7 @@ public struct SystemPromptComposer: Sendable {
         // persona's "answer from your own knowledge" clause) — both the
         // tools-off flag and the resolved schema are session-constant, so
         // this stays KV-cache safe. Tool-name-free on purpose (see the
-        // template doc) so it's safe even when `capabilities_search` isn't
+        // template doc) so it's safe even when `capabilities_discover` isn't
         // in the schema.
         if !effectiveToolsOff, !resolvedNames.isEmpty {
             composer.append(
@@ -871,13 +870,13 @@ public struct SystemPromptComposer: Sendable {
         // Capability-discovery nudge: explain how to recover when the
         // current tool kit is incomplete. The gate follows the actual
         // schema, not the mode label: manual-mode agents still carry
-        // `capabilities_search` / `capabilities_load` as pragmatic
+        // `capabilities_discover` / `capabilities_load` as pragmatic
         // always-loaded tools. Trivial first turns suppress this prompt
         // section through `capabilityPromptSectionsEnabled` without hiding
         // the callable discovery tools themselves.
         if toolset.capabilityPromptSectionsEnabled,
             !effectiveToolsOff,
-            tools.contains(where: { $0.function.name == "capabilities_search" })
+            tools.contains(where: { $0.function.name == "capabilities_discover" })
         {
             composer.append(
                 .static(
@@ -907,55 +906,50 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("sandboxUnavailable", reason.kind.rawValue)
         }
 
-        // Plugin Companions: when preflight picked a tool from a plugin,
-        // surface the plugin's *other* enabled tools and bundled skill as
-        // a compact teaser. The model uses `capabilities_load` to pull
-        // them in on demand — so the schema stays small this turn but
-        // the model knows what's reachable. Gated on auto-mode (preflight
-        // only runs in auto) and on the presence of `capabilities_load`
-        // (the section instructs the model to call it). Rendering itself
-        // skips when `companions` is empty, so this just decides whether
-        // to even ask for a section.
+        // Enabled-capabilities manifest: the grounded answer to "do you
+        // have X". Preflight loads only a per-turn subset of the agent's
+        // enabled tools into the schema; without this block a small model
+        // looks at its schema, sees nothing, and (correctly-by-instruction)
+        // denies having a capability that is actually enabled. We inject
+        // the set difference `enabled - loaded` — tools + plugin skills
+        // grouped by plugin, plus the query-ranked standalone skills as a
+        // trailing group — so capability questions (about tools AND skills)
+        // are answerable from grounded context with zero tool calls. This is
+        // the single grounded enumeration: it subsumes the old "Plugin
+        // Companions" section and the separate "Skill Suggestions" section.
+        // Gated on auto-mode + `capabilities_load` in the schema (the
+        // section tells the model to call it to use a listed capability).
         if toolset.capabilityPromptSectionsEnabled,
             snapshot.toolMode == .auto,
             !effectiveToolsOff,
-            !preflight.companions.isEmpty,
-            tools.contains(where: { $0.function.name == "capabilities_load" }),
-            let companionsSection = PreflightCompanions.render(
-                preflight.companions,
+            tools.contains(where: { $0.function.name == "capabilities_load" })
+        {
+            let manifestGroups = deriveEnabledManifest(
+                agentId: agentId,
+                loadedToolNames: resolvedNames,
+                standaloneSkills: toolset.skillSuggestions
+            )
+            if let manifestSection = SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: manifestGroups,
                 compact: toolset.sizeClass != .normal
-            )
-        {
-            composer.append(
-                .dynamic(
-                    id: "pluginCompanions",
-                    label: "Plugin Companions",
-                    content: companionsSection
+            ) {
+                composer.append(
+                    .dynamic(
+                        id: "enabledManifest",
+                        label: "Enabled Capabilities",
+                        content: manifestSection
+                    )
                 )
-            )
-            trace?.set("pluginCompanions", String(preflight.companions.count))
-        }
-
-        // Skill Suggestions: standalone (non-plugin) skills whose body
-        // semantically matches the user's query. Like `pluginCompanions`,
-        // this is a teaser-only block — the full instructions stay in
-        // `SkillManager` and the model pulls them via `capabilities_load`.
-        // Caller already gated on `auto` + tools-on + non-empty query +
-        // `capabilities_load` presence, so we just check non-empty and
-        // append. Skipping on `effectiveToolsOff` here is belt-and-braces
-        // for the preview composer which doesn't pre-gate.
-        if toolset.capabilityPromptSectionsEnabled,
-            !effectiveToolsOff,
-            !toolset.skillSuggestions.isEmpty,
-            let suggestionsSection = PreflightCompanions.renderSkillSuggestions(toolset.skillSuggestions)
-        {
-            composer.append(
-                .dynamic(
-                    id: "skillSuggestions",
-                    label: "Skill Suggestions",
-                    content: suggestionsSection
+                composer.append(
+                    .dynamic(
+                        id: "skillsGovern",
+                        label: "Skills That Govern Tool Groups",
+                        content: SystemPromptTemplates.skillsGovernToolGroups
+                    )
                 )
-            )
+                let toolCount = manifestGroups.reduce(0) { $0 + $1.tools.count }
+                trace?.set("enabledManifest", String(toolCount))
+            }
         }
 
         // Plugin-creator backstop: only inject when the agent literally
@@ -1002,6 +996,121 @@ public struct SystemPromptComposer: Sendable {
         }
     }
 
+    /// Build the `enabled - loaded` capability manifest for this turn,
+    /// grouped by plugin and sorted so the plugins that contributed a
+    /// loaded tool this turn render first (most relevant, least likely to
+    /// be collapsed by the token cap). Reads the agent's enabled tool +
+    /// skill allowlists and the live registry — MUST run on the main actor.
+    ///
+    /// Tools: the agent's enabled dynamic tools minus the ones already in
+    /// this turn's schema. Skills: the agent's enabled *plugin* skills
+    /// (those with a `pluginId`) minus none — skills never enter the tool
+    /// schema, so a plugin skill is always "not loaded" in the schema sense
+    /// and is what the "Skills that govern tool groups" rule binds to.
+    ///
+    /// `standaloneSkills` are the query-ranked, turn-1-frozen non-plugin
+    /// skills (from `resolveSkillSuggestions`). They render as a trailing
+    /// "Skills (no plugin)" group so the manifest is the single grounded
+    /// enumeration of every enabled-but-unloaded capability — closing the
+    /// denial hole where a standalone skill that didn't embed-match the
+    /// query had no grounded mention anywhere. Order is preserved (already
+    /// relevance-sorted by the caller); they are NOT re-sorted alphabetically.
+    @MainActor
+    private static func deriveEnabledManifest(
+        agentId: UUID,
+        loadedToolNames: Set<String>,
+        standaloneSkills: [SkillTeaser]
+    ) -> [SystemPromptTemplates.ManifestPluginGroup] {
+        let allowedTools = AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
+        let allowedSkills = AgentManager.shared.effectiveEnabledSkillNames(for: agentId).map(Set.init)
+
+        // Tools: live dynamic catalog is already enabled-filtered; intersect
+        // with the agent allowlist (nil = legacy global) and drop anything
+        // already in the schema this turn.
+        var toolsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
+        for entry in ToolRegistry.shared.listDynamicTools() {
+            guard allowedTools?.contains(entry.name) ?? true,
+                !loadedToolNames.contains(entry.name),
+                let group = ToolRegistry.shared.groupName(for: entry.name),
+                !group.isEmpty
+            else { continue }
+            toolsByGroup[group, default: []].append(
+                .init(name: entry.name, description: entry.description)
+            )
+        }
+
+        // Plugin skills (pluginId != nil) that the agent has enabled.
+        var skillsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
+        for skill in SkillManager.shared.skills {
+            guard skill.enabled,
+                let pluginId = skill.pluginId, !pluginId.isEmpty,
+                allowedSkills?.contains(skill.name) ?? true
+            else { continue }
+            skillsByGroup[pluginId, default: []].append(
+                .init(name: skill.name, description: skill.description)
+            )
+        }
+
+        let allGroupIds = Set(toolsByGroup.keys).union(skillsByGroup.keys)
+
+        // Relevance: a plugin that put a tool in this turn's schema is the
+        // most likely to be asked about, so it sorts first (and survives
+        // the token cap). The rest sort alphabetically for deterministic,
+        // KV-cache-stable rendering.
+        let relevantGroups = Set(
+            loadedToolNames.compactMap { ToolRegistry.shared.groupName(for: $0) }
+        )
+
+        // Sort group ids first (relevant-this-turn before the alphabetical
+        // tail), then map to rendered groups — keeps the relevance decision
+        // on the stable id, not the display string.
+        let orderedIds = allGroupIds.sorted { lhs, rhs in
+            let lRel = relevantGroups.contains(lhs)
+            let rRel = relevantGroups.contains(rhs)
+            if lRel != rRel { return lRel }
+            return lhs < rhs
+        }
+
+        var groups = orderedIds.map { groupId in
+            SystemPromptTemplates.ManifestPluginGroup(
+                pluginDisplay: pluginDisplayName(for: groupId),
+                skills: (skillsByGroup[groupId] ?? []).sorted { $0.name < $1.name },
+                tools: (toolsByGroup[groupId] ?? []).sorted { $0.name < $1.name }
+            )
+        }
+
+        // Trailing synthetic group for standalone (non-plugin) skills. Order
+        // is the caller's relevance ranking — not alphabetical — so the
+        // best query matches survive first if the section is ever trimmed.
+        let standaloneCaps = standaloneSkills.map {
+            SystemPromptTemplates.ManifestCapability(name: $0.name, description: $0.description)
+        }
+        if !standaloneCaps.isEmpty {
+            groups.append(
+                SystemPromptTemplates.ManifestPluginGroup(
+                    pluginDisplay: "Skills (no plugin)",
+                    skills: standaloneCaps,
+                    tools: []
+                )
+            )
+        }
+        return groups
+    }
+
+    /// Friendly plugin name for the manifest. Native plugins carry a
+    /// `name` in their manifest; MCP / sandbox-plugin groups don't, so we
+    /// fall back to the raw group id.
+    @MainActor
+    private static func pluginDisplayName(for pluginId: String) -> String {
+        if let loaded = PluginManager.shared.loadedPlugin(for: pluginId),
+            let display = loaded.plugin.manifest.name,
+            !display.isEmpty
+        {
+            return display
+        }
+        return pluginId
+    }
+
     /// Tools that drive the chat-layer agent loop — `agentLoopGuidance`
     /// fires when any one of these resolves into the schema.
     static let agentLoopToolNames: Set<String> = [
@@ -1013,7 +1122,7 @@ public struct SystemPromptComposer: Sendable {
     /// their argument contracts must stay explicit even while the rest of the
     /// always-loaded surface ships as a compact schema skeleton.
     private static let fullBootstrapToolNames: Set<String> = [
-        "capabilities_search", "capabilities_load",
+        "capabilities_discover", "capabilities_load",
     ]
 
     /// Compress first-turn always-loaded specs by keeping the callable name,
@@ -1224,7 +1333,8 @@ public struct SystemPromptComposer: Sendable {
     ///
     /// - **preflight tool delta**: needs a non-empty user query and an
     ///   LLM call, so auto-mode `Tools` under-counts on turn 1.
-    /// - **`pluginCompanions`**: derived from preflight, always empty here.
+    /// - **`skillSuggestions`**: derived from a query embedding search,
+    ///   always empty here (no user query to match against).
     ///
     /// Memory is also out of scope (it's prepended to the user message,
     /// not the system prompt) — callers feed the per-turn estimate to
@@ -1682,7 +1792,7 @@ public struct SystemPromptComposer: Sendable {
     ///      sequence stable across sends regardless of what plugins or MCP
     ///      providers register later (KV-cache reuse).
     ///   1. Built-in sandbox tools (alphabetical).
-    ///   2. Capability discovery tools (`capabilities_search`, then
+    ///   2. Capability discovery tools (`capabilities_discover`, then
     ///      `capabilities_load`) in fixed order so the discovery tool sits
     ///      ahead of the loader in the model's view.
     ///   3. Everything else, alphabetical.
@@ -1694,7 +1804,7 @@ public struct SystemPromptComposer: Sendable {
                 .enumerated().map { ($1, $0) }
         )
         let capabilityIndex = Dictionary(
-            uniqueKeysWithValues: ["capabilities_search", "capabilities_load"]
+            uniqueKeysWithValues: ["capabilities_discover", "capabilities_load"]
                 .enumerated().map { ($1, $0) }
         )
 

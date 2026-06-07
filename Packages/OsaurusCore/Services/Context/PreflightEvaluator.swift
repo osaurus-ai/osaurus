@@ -4,9 +4,9 @@
 //
 //  Public facade over `PreflightCapabilitySearch` for off-process callers
 //  (the OsaurusEvals package, future scoreboards, etc.). Keeps the
-//  internal `PreflightResult` / `Tool` / `PluginCompanion` types
-//  encapsulated and exposes a stable, decode-friendly surface that won't
-//  shift if the internal pipeline rearranges itself.
+//  internal `PreflightResult` / `Tool` types encapsulated and exposes a
+//  stable, decode-friendly surface that won't shift if the internal
+//  pipeline rearranges itself.
 //
 
 import Foundation
@@ -20,14 +20,10 @@ import Foundation
 public struct PreflightEvaluation: Sendable, Codable {
     /// Tool names the LLM picked, in the canonical order resolved by
     /// `PreflightCapabilitySearch`. Includes only dynamic-tool picks —
-    /// always-loaded tools (capabilities_search, etc.) are not counted
+    /// always-loaded tools (capabilities_discover, etc.) are not counted
     /// here because the evaluator's job is to score the picker, not
     /// the schema baseline.
     public let pickedToolNames: [String]
-    /// One entry per plugin that contributed at least one pick. Mirrors
-    /// the "Plugin Companions" prompt section the model would actually
-    /// see, so eval cases can assert on the exact teaser shape.
-    public let companions: [Companion]
     /// Wall-clock duration of `PreflightCapabilitySearch.search`. Used
     /// for trend tracking; not part of pass/fail by default.
     public let latencyMs: Double
@@ -56,26 +52,6 @@ public struct PreflightEvaluation: Sendable, Codable {
     /// evals distinguish "model said NONE" from "bridge timed out /
     /// circuit-breaker open / network failed".
     public let llmError: String?
-
-    public struct Companion: Sendable, Codable {
-        public let pluginId: String
-        public let pluginDisplay: String
-        /// `nil` when the plugin ships no enabled skill.
-        public let skillName: String?
-        /// Sibling tools surfaced as `tool/<name>` lines in the teaser.
-        /// Already deduped against `pickedToolNames`, ordered, and
-        /// capped at `PreflightCompanions.maxSiblingTools`.
-        public let siblingToolNames: [String]
-
-        /// Internal-to-public converter so `PreflightEvaluator.evaluate`
-        /// can map a `PluginCompanion` straight to an eval-shaped row.
-        init(_ source: PluginCompanion) {
-            self.pluginId = source.pluginId
-            self.pluginDisplay = source.pluginDisplay
-            self.skillName = source.skill?.name
-            self.siblingToolNames = source.siblingTools.map(\.name)
-        }
-    }
 }
 
 // MARK: - Evaluator
@@ -112,7 +88,6 @@ public enum PreflightEvaluator {
 
         return PreflightEvaluation(
             pickedToolNames: result.toolSpecs.map { $0.function.name },
-            companions: result.companions.map(PreflightEvaluation.Companion.init(_:)),
             latencyMs: elapsed,
             rawLLMResponse: diagnostic?.rawResponse,
             rawLLMSystemPrompt: diagnostic?.systemPrompt,

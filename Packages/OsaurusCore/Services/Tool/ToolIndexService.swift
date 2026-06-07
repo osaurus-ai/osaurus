@@ -26,7 +26,7 @@ public actor ToolIndexService {
                 let builtIn = ToolRegistry.shared.builtInToolNames
                 // Exclude capability infrastructure tools and runtime-managed tools from the
                 // search index, but allow user-facing built-in tools (e.g. search_*) to be
-                // indexed so capabilities_search can discover them.
+                // indexed so capabilities_discover can discover them.
                 let excluded = ToolRegistry.capabilityToolNames
                     .union(ToolRegistry.shared.runtimeManagedToolNames)
                 return (all, sandbox, mcp, builtIn, excluded)

@@ -26,7 +26,7 @@ struct ConfigurationDomain: Sendable {
     let displayName: String
 
     /// One-line "what does this domain do?" summary (<100 chars).
-    /// Indexed by `capabilities_search` and rendered in the
+    /// Indexed by `capabilities_discover` and rendered in the
     /// default-agent system prompt addendum.
     let summary: String
 
@@ -35,7 +35,7 @@ struct ConfigurationDomain: Sendable {
     let menuHint: String
 
     /// User-language phrases that boost BM25 / embedding ranking on
-    /// `capabilities_search`. Not surfaced to the LLM as text.
+    /// `capabilities_discover`. Not surfaced to the LLM as text.
     let searchKeywords: [String]
 
     /// 2–3 typical user phrases per write verb, indexed alongside

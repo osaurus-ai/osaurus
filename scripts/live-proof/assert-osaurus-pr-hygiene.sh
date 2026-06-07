@@ -229,7 +229,7 @@ require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenize
   'DSV4 canonical template path must render assistant tool history as a DSML block' \
   "DSV4 canonical tokenizer path preserves DSML tool history"
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenizerLoaderTests.swift" \
-  'downloadedFamilyTokenizersRenderCapabilitiesSearchToolSurface' \
+  'downloadedFamilyTokenizersRenderCapabilitiesDiscoverToolSurface' \
   "downloaded model tokenizer matrix renders capability discovery surface"
 require_text "$ROOT/Packages/OsaurusCore/Tests/Service/SwiftTransformersTokenizerLoaderTests.swift" \
   'Gemma 4 31B JANG_4M candidate' \
@@ -239,7 +239,7 @@ require_text "$ROOT/Packages/OsaurusCore/Tests/Tool/ToolSearchServiceTests.swift
   "capability search falls back to registry when encrypted storage is closed"
 require_text "$ROOT/Packages/OsaurusCore/Tests/Tool/CapabilityToolsTests.swift" \
   'capabilitiesSearchSchemaIsGemmaRenderable' \
-  "capabilities_search schema remains Gemma-renderable"
+  "capabilities_discover schema remains Gemma-renderable"
 require_text "$ROOT/Packages/OsaurusCore/Models/Configuration/ModelMediaCapabilities.swift" \
   '"qwen3_6", "qwen3_6_moe"' \
   "Qwen3.6 config-based media detection preserves video-capable model types"

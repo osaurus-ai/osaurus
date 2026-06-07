@@ -64,13 +64,13 @@ require_text "$PREVIEW_TESTS" 'toolsOn_dsv4Model_includesModelFamilyGuidance' \
 
 echo "--- capability search and load compatibility ---"
 require_text "$CAPABILITY_TESTS" 'capabilitiesSearchSchemaIsGemmaRenderable' \
-  "capabilities_search schema is Gemma-renderable"
+  "capabilities_discover schema is Gemma-renderable"
 require_text "$CAPABILITY_TESTS" 'registryAcceptsLegacySingularQueryAlias' \
-  "capabilities_search accepts singular query alias"
+  "capabilities_discover accepts singular query alias"
 require_text "$CAPABILITY_TESTS" 'registryAcceptsStringifiedQueriesFromSmallModels' \
-  "capabilities_search accepts stringified query arrays"
+  "capabilities_discover accepts stringified query arrays"
 require_text "$CAPABILITY_TESTS" 'searchFiltersDynamicToolsOutsideAgentGrant' \
-  "capabilities_search enforces agent grants for dynamic tools"
+  "capabilities_discover enforces agent grants for dynamic tools"
 require_text "$CAPABILITY_TESTS" 'toolLoadBuffersSpec' \
   "capabilities_load buffers loaded tool specs"
 require_text "$SEARCH_TESTS" 'capabilitySearchAcceptsGrantedBM25OnlyToolWhenEmbeddingIndexUnavailable' \
@@ -101,8 +101,8 @@ require_text "$GUIDANCE" 'dsv4' "DSV4 markers are present"
 require_text "$GUIDANCE" 'gemma' "Gemma markers are present"
 
 echo "--- downloaded tokenizer family tool surface ---"
-require_text "$TOKENIZER_TESTS" 'downloadedFamilyTokenizersRenderCapabilitiesSearchToolSurface' \
-  "downloaded tokenizer matrix renders capabilities_search"
+require_text "$TOKENIZER_TESTS" 'downloadedFamilyTokenizersRenderCapabilitiesDiscoverToolSurface' \
+  "downloaded tokenizer matrix renders capabilities_discover"
 require_text "$TOKENIZER_TESTS" 'Gemma 4 26B JANG_4M CRACK' "Gemma 4 26B primary row"
 require_text "$TOKENIZER_TESTS" 'Gemma 4 26B finished 4bit' "Gemma 4 26B finished row"
 require_text "$TOKENIZER_TESTS" 'Gemma 4 31B JANG_4M candidate' "Gemma 4 31B candidate row"
@@ -118,8 +118,8 @@ require_text "$TOKENIZER_TESTS" 'DeepSeek V4 Flash JANGTQ-K' "DSV4 JANGTQ-K row"
 require_text "$TOKENIZER_TESTS" 'DeepSeek V4 Flash JANGTQ2' "DSV4 JANGTQ2 row"
 require_text "$TOKENIZER_TESTS" 'upper filter' \
   "tokenizer matrix rejects Gemma upper-filter template regressions"
-require_text "$TOKENIZER_TESTS" 'capabilities_search' \
-  "tokenizer matrix checks capabilities_search renders in prompts"
+require_text "$TOKENIZER_TESTS" 'capabilities_discover' \
+  "tokenizer matrix checks capabilities_discover renders in prompts"
 
 active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -i 'codesign( |$)|notarytool|/usr/bin/security( |$)' | rg -v 'rg -i|assert-model-tool-capability-surfaces' || true)"
 if [[ -n "$active" ]]; then

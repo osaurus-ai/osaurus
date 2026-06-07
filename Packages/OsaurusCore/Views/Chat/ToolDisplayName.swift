@@ -154,7 +154,7 @@ enum ToolDisplayName {
         "git_commit": ToolLabel(L("Committing changes"), L("Committed changes")),
 
         // General built-ins
-        "capabilities_search": ToolLabel(L("Searching capabilities"), L("Searched capabilities")),
+        "capabilities_discover": ToolLabel(L("Searching capabilities"), L("Searched capabilities")),
         "capabilities_load": ToolLabel(L("Loading capabilities"), L("Loaded capabilities")),
         "search_memory": ToolLabel(L("Searching memory"), L("Searched memory")),
         "render_chart": ToolLabel(L("Rendering a chart"), L("Rendered a chart")),

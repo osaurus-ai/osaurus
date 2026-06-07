@@ -86,8 +86,8 @@ struct SystemPromptComposerToolResolutionTests {
                 executionMode: .none,
                 preflight: preflight
             )
-            // Built-ins like capabilities_search must be present in auto mode.
-            #expect(tools.contains { $0.function.name == "capabilities_search" })
+            // Built-ins like capabilities_discover must be present in auto mode.
+            #expect(tools.contains { $0.function.name == "capabilities_discover" })
         }
     }
 
@@ -110,7 +110,7 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(names.contains("complete"))
             #expect(names.contains("clarify"))
             #expect(names.contains("share_artifact"))
-            #expect(names.contains("capabilities_search"))
+            #expect(names.contains("capabilities_discover"))
             #expect(names.contains("capabilities_load"))
             #expect(names.contains("search_memory"))
         }
@@ -149,7 +149,7 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(names.contains("todo"))
                 #expect(names.contains("share_artifact"))
                 #expect(names.contains("sandbox_exec"))
-                #expect(names.contains("capabilities_search"))
+                #expect(names.contains("capabilities_discover"))
             }
         }
     }
@@ -541,7 +541,7 @@ struct SystemPromptComposerToolResolutionTests {
 
                 // Sandbox built-ins must come first, capability tools next.
                 if let firstSandbox = aNames.firstIndex(where: { $0.hasPrefix("sandbox_") }),
-                    let firstCapability = aNames.firstIndex(of: "capabilities_search")
+                    let firstCapability = aNames.firstIndex(of: "capabilities_discover")
                 {
                     #expect(firstSandbox < firstCapability)
                 }

@@ -1,0 +1,22 @@
+{
+  "id": "capability_claims.discover",
+  "domain": "capability_claims",
+  "label": "capability claims • discover before answering",
+  "query": "I need to automate filling out a form on a website and clicking submit. Can you do that?",
+  "notes": "The capability exists behind the browser plugin but is unlikely to be fully described for this phrasing in the manifest alone, so the grounded path is to run capabilities_discover (and ideally capabilities_load) rather than denying. Scores that the model reaches for discovery instead of answering from schema absence. Requires osaurus.browser installed.",
+  "fixtures": {
+    "requirePlugins": ["osaurus.browser"],
+    "enableSkills": ["Osaurus Browser"],
+    "enableTools": ["browser_navigate", "browser_do"]
+  },
+  "expect": {
+    "capabilityClaims": {
+      "rubric": [
+        "Indicates it can help automate the web form task rather than refusing outright.",
+        "Does not deny the capability solely because a tool was not initially in its schema."
+      ],
+      "mustCallTools": ["capabilities_discover"],
+      "maxIterations": 6
+    }
+  }
+}
