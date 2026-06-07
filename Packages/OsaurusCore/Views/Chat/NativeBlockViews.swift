@@ -693,6 +693,9 @@ final class NativeMarkdownTableView: NSView {
 
     // [row][col]; row 0 is headers
     private var cellFields: [[CellTextView]] = []
+    // Source text currently rendered in each cell, used to skip re-rendering
+    // unchanged cells when the grid reconfigures during streaming
+    private var cellTexts: [[String]] = []
     private let separator = NSBox()
 
     /// Called after the grid re-measures and its height changes.
@@ -728,12 +731,19 @@ final class NativeMarkdownTableView: NSView {
         let themeChanged = fingerprint != lastThemeFingerprint
         guard contentChanged || widthChanged || themeChanged else { return }
 
+        // Width only affects rendered text when it crosses a typography scale
+        // step; otherwise a width change is purely a relayout.
+        let scaleChanged =
+            Typography.scale(for: max(width, 1)) != Typography.scale(for: max(lastWidth, 1))
+
         self.headers = headers
         self.rows = rows
         lastWidth = width
         lastThemeFingerprint = fingerprint
 
-        rebuildCells(theme: theme)
+        if contentChanged || themeChanged || scaleChanged {
+            updateCells(theme: theme, rerenderAll: themeChanged || scaleChanged)
+        }
         relayout(width: width)
     }
 
@@ -750,42 +760,72 @@ final class NativeMarkdownTableView: NSView {
 
     // MARK: - Private: Cell Construction
 
-    private func rebuildCells(theme: any ThemeProtocol) {
-        for row in cellFields { for cell in row { cell.removeFromSuperview() } }
-        cellFields.removeAll()
-
+    /// Reconcile the cell grid against the current headers/rows in place.
+    /// A streaming table reconfigures once per delta, and tearing down and
+    /// recreating every NSTextView each time hangs the UI on large tables,
+    /// so existing cells are reused and only changed text is re-rendered.
+    private func updateCells(theme: any ThemeProtocol, rerenderAll: Bool) {
         let columnCount = max(headers.count, rows.map(\.count).max() ?? 0)
+
+        // A column-count change invalidates per-cell reuse; start over.
+        if columnCount == 0 || cellFields.first?.count != columnCount {
+            for row in cellFields { for cell in row { cell.removeFromSuperview() } }
+            cellFields.removeAll()
+            cellTexts.removeAll()
+        }
         guard columnCount > 0 else { return }
 
         let scale = Typography.scale(for: max(lastWidth, 1))
         let bodyFontSize = CGFloat(theme.bodySize) * scale
 
-        // Header row
-        let headerCells: [CellTextView] = (0 ..< columnCount).map { i in
-            let text = i < headers.count ? headers[i] : ""
-            return makeCellField(
-                text: text,
-                weight: .semibold,
-                fontSize: bodyFontSize,
-                theme: theme
-            )
-        }
-        cellFields.append(headerCells)
-        for cell in headerCells { addSubview(cell) }
-
-        // Body rows
+        // Target grid; row 0 is headers
+        var grid: [[String]] = [(0 ..< columnCount).map { $0 < headers.count ? headers[$0] : "" }]
         for row in rows {
-            let cells: [CellTextView] = (0 ..< columnCount).map { i in
-                let text = i < row.count ? row[i] : ""
-                return makeCellField(
-                    text: text,
-                    weight: .regular,
-                    fontSize: bodyFontSize,
-                    theme: theme
-                )
+            grid.append((0 ..< columnCount).map { $0 < row.count ? row[$0] : "" })
+        }
+
+        // Drop rows that no longer exist
+        while cellFields.count > grid.count {
+            for cell in cellFields.removeLast() { cell.removeFromSuperview() }
+            cellTexts.removeLast()
+        }
+
+        for (rowIdx, rowTexts) in grid.enumerated() {
+            let weight: NSFont.Weight = rowIdx == 0 ? .semibold : .regular
+            if rowIdx < cellFields.count {
+                // Existing row: re-render only the cells whose text changed
+                for (colIdx, text) in rowTexts.enumerated() {
+                    let cell = cellFields[rowIdx][colIdx]
+                    if rerenderAll {
+                        cell.selectedTextAttributes = [
+                            .backgroundColor: NSColor(theme.selectionColor)
+                        ]
+                        cell.insertionPointColor = NSColor(theme.cursorColor)
+                    }
+                    guard rerenderAll || cellTexts[rowIdx][colIdx] != text else { continue }
+                    let attr = renderCellAttributedString(
+                        text: text,
+                        weight: weight,
+                        fontSize: bodyFontSize,
+                        theme: theme
+                    )
+                    cell.textStorage?.setAttributedString(attr)
+                    cellTexts[rowIdx][colIdx] = text
+                }
+            } else {
+                // New row appended by the stream
+                let cells = rowTexts.map { text in
+                    makeCellField(
+                        text: text,
+                        weight: weight,
+                        fontSize: bodyFontSize,
+                        theme: theme
+                    )
+                }
+                cellFields.append(cells)
+                cellTexts.append(rowTexts)
+                for cell in cells { addSubview(cell) }
             }
-            cellFields.append(cells)
-            for cell in cells { addSubview(cell) }
         }
     }
 
@@ -899,12 +939,17 @@ final class NativeMarkdownTableView: NSView {
             var x: CGFloat = 0
             let rowH = rowHeights[rowIdx]
             for (colIdx, field) in row.enumerated() {
-                field.frame = NSRect(
+                let frame = NSRect(
                     x: x,
                     y: y,
                     width: columnWidth,
                     height: rowH
                 )
+                // Setting an NSTextView's frame kicks off ruler and inspector
+                // bar updates even when nothing moved, so skip no-op writes.
+                if field.frame != frame {
+                    field.frame = frame
+                }
                 x += columnWidth
                 if colIdx < row.count - 1 { x += columnGap }
             }
