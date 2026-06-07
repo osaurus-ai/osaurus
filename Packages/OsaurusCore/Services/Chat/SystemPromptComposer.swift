@@ -572,7 +572,7 @@ public struct SystemPromptComposer: Sendable {
             groups: groups,
             compact: sizeClass != .normal
         )
-        if let section {
+        if section != nil {
             let toolCount = groups.reduce(0) { $0 + $1.tools.count }
             trace?.set("enabledManifest", String(toolCount))
             trace?.set("enabledManifestSource", "fresh")
