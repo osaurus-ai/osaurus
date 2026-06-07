@@ -1,0 +1,38 @@
+name: Deploy Sparkle Appcast
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to publish (e.g. 0.19.13)"
+        required: true
+        type: string
+      channel:
+        description: "Sparkle channel"
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - beta
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-appcast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ inputs.version }}
+      SPARKLE_CHANNEL: ${{ inputs.channel }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Generate and Deploy Sparkle Appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PUBLIC_REPO: ${{ github.repository }}
+        run: bash scripts/release/generate_and_deploy_appcast.sh

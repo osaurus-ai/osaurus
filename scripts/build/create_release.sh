@@ -35,13 +35,25 @@ else
   echo "::warning::${DSYM_ZIP} not found — release will ship without dSYMs."
 fi
 
-gh release create "${VERSION}" \
-  "${RELEASE_ASSETS[@]}" \
-  --repo "${PUBLIC_REPO}" \
-  --notes-file RELEASE_NOTES.md \
-  "${RELEASE_FLAGS[@]}"
+if gh release view "${VERSION}" --repo "${PUBLIC_REPO}" >/dev/null 2>&1; then
+  echo "Release ${VERSION} already exists; refreshing notes and re-uploading assets."
+  gh release edit "${VERSION}" \
+    --repo "${PUBLIC_REPO}" \
+    --notes-file RELEASE_NOTES.md \
+    "${RELEASE_FLAGS[@]}"
+  gh release upload "${VERSION}" \
+    "${RELEASE_ASSETS[@]}" \
+    --repo "${PUBLIC_REPO}" \
+    --clobber
+else
+  gh release create "${VERSION}" \
+    "${RELEASE_ASSETS[@]}" \
+    --repo "${PUBLIC_REPO}" \
+    --notes-file RELEASE_NOTES.md \
+    "${RELEASE_FLAGS[@]}"
+fi
 
-echo "✅ Release created successfully"
+echo "✅ Release published successfully"
 if [ "$IS_BETA" = "true" ]; then
   echo "🧪 Beta release URL: https://github.com/${PUBLIC_REPO}/releases/tag/${VERSION}"
 else
