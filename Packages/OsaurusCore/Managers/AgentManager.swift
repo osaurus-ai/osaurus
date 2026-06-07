@@ -945,19 +945,45 @@ extension AgentManager {
     // MARK: - Known capability registry snapshot
 
     /// Diff `live` against the persisted snapshot at `key`. Newly discovered
-    /// names are passed to `grow`; the snapshot is then refreshed to `live`.
-    /// A missing snapshot (first observation) seeds without growing, which is
-    /// what protects already-disabled capabilities on the upgrade path.
+    /// names are passed to `grow`; the snapshot is then advanced per
+    /// `diffKnownCapabilities`.
     private func growNewlyDiscoveredCapabilities(
         live: Set<String>,
         key: String,
         grow: (Set<String>) -> Void
     ) {
-        if let known = loadKnownNames(forKey: key) {
-            let newlyDiscovered = live.subtracting(known)
-            if !newlyDiscovered.isEmpty { grow(newlyDiscovered) }
+        let result = Self.diffKnownCapabilities(
+            known: loadKnownNames(forKey: key),
+            live: live
+        )
+        if !result.toGrow.isEmpty { grow(result.toGrow) }
+        saveKnownNames(result.merged, forKey: key)
+    }
+
+    /// Pure transform behind `growNewlyDiscoveredCapabilities` — the
+    /// regression seam for the "disabled capabilities come back on restart"
+    /// bug. Returns which `live` names are newly discovered (and should be
+    /// grown into seeded agents) plus the snapshot to persist.
+    ///
+    /// - A missing snapshot (`known == nil`, first observation) seeds without
+    ///   growing, which protects already-disabled capabilities on the upgrade
+    ///   path.
+    /// - The merged snapshot is monotonic — we union, never replace. At startup
+    ///   plugins register incrementally and each fires `.toolsListChanged` with
+    ///   only a *partial* `live` set. Replacing the snapshot with a partial set
+    ///   would drop the not-yet-loaded names, so when the rest of the plugins
+    ///   finish loading their tools would look "newly discovered" and get
+    ///   auto-grown back into agents the user had explicitly disabled them on.
+    ///   Keeping every name we've ever seen means a disabled capability never
+    ///   looks new again.
+    static func diffKnownCapabilities(
+        known: Set<String>?,
+        live: Set<String>
+    ) -> (toGrow: Set<String>, merged: Set<String>) {
+        guard let known else {
+            return (toGrow: [], merged: live)
         }
-        saveKnownNames(live, forKey: key)
+        return (toGrow: live.subtracting(known), merged: known.union(live))
     }
 
     /// Stored as a sorted `[String]` in `UserDefaults.standard` so the
