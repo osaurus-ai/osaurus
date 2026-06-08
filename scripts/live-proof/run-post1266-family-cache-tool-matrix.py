@@ -69,8 +69,11 @@ TOOL_SCHEMA = [
 # Tool-call proofs must not fail just because a reasoning-capable family
 # spends tokens restating the requested schema before emitting the protocol
 # block. This is a harness cap only; production/API defaults stay model-owned.
-REQUIRED_TOOL_MAX_TOKENS = 768
-VISIBLE_ANSWER_MAX_TOKENS = 160
+REQUIRED_TOOL_MAX_TOKENS = 1536
+# Reasoning-capable families can spend nearly the whole small cap in hidden
+# reasoning before emitting the visible answer. Keep this high enough that the
+# harness tests visible-answer behavior instead of clipping a correct decode.
+VISIBLE_ANSWER_MAX_TOKENS = 320
 
 
 def now_slug() -> str:
