@@ -19,10 +19,12 @@ import SwiftUI
 /// drop-off point even when the user bails partway through.
 @MainActor
 final class WelcomeState: ObservableObject {
-    /// Opt-IN, so it defaults OFF. The parent reads this on the "Get Started"
-    /// CTA and, when on, calls `TelemetryService.setEnabled(true)` to flush
-    /// the buffered funnel and send everything that follows live.
-    @Published var shareUsageData: Bool = false
+    /// Opt-OUT, so it defaults ON (consistent with crash reporting). The
+    /// parent reads this on the "Get Started" CTA and, when on, calls
+    /// `TelemetryService.setEnabled(true)` to flush the buffered funnel and
+    /// send everything that follows live; unchecking it leaves telemetry
+    /// undecided so `finishOnboarding` finalizes a decline.
+    @Published var shareUsageData: Bool = true
 }
 
 // MARK: - Welcome Body
@@ -61,16 +63,26 @@ struct WelcomeUsageOptIn: View {
 
     @Environment(\.theme) private var theme
 
+    /// Drives the info popover. Local view state (not in `WelcomeState`) so it
+    /// resets cleanly with the view and never outlives the step transition.
+    @State private var showInfo = false
+
     var body: some View {
+        HStack(spacing: 6) {
+            toggleButton
+            infoButton
+        }
+    }
+
+    /// The checkbox + label that toggles the opt-in.
+    private var toggleButton: some View {
         Button {
             state.shareUsageData.toggle()
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: state.shareUsageData ? "checkmark.square.fill" : "square")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(
-                        state.shareUsageData ? theme.accentColor : theme.tertiaryText
-                    )
+                    .foregroundColor(state.shareUsageData ? theme.accentColor : theme.tertiaryText)
                 Text("Share anonymous usage data to help improve Osaurus", bundle: .module)
                     .font(theme.font(size: 12))
                     .foregroundColor(theme.secondaryText)
@@ -79,6 +91,40 @@ struct WelcomeUsageOptIn: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(state.shareUsageData ? [.isSelected] : [])
+    }
+
+    /// A separate button (outside `toggleButton`) so tapping it opens the
+    /// explainer popover without flipping the opt-in.
+    private var infoButton: some View {
+        Button {
+            showInfo.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.system(size: 12))
+                .foregroundColor(showInfo ? theme.accentColor : theme.tertiaryText)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Why we collect anonymous usage data", bundle: .module))
+        .popover(isPresented: $showInfo, arrowEdge: .bottom) {
+            infoPopover
+        }
+    }
+
+    private var infoPopover: some View {
+        Text(
+            "We collect anonymous, aggregated usage data to learn which features are used so we can improve Osaurus. It's completely anonymous and never includes your chats, prompts, files, or keys. You can turn this off anytime in Settings.",
+            bundle: .module
+        )
+        .font(theme.font(size: 12))
+        .foregroundColor(theme.primaryText)
+        .fixedSize(horizontal: false, vertical: true)
+        .multilineTextAlignment(.leading)
+        .padding(14)
+        .frame(width: 280)
+        // Fill an explicit themed surface so the text never renders dark-on-dark
+        // against the system popover material.
+        .background(theme.secondaryBackground)
     }
 }
 

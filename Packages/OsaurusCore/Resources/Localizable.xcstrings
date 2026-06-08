@@ -51761,6 +51761,22 @@
         }
       }
     },
+    "We collect anonymous, aggregated usage data to learn which features are used so we can improve Osaurus. It's completely anonymous and never includes your chats, prompts, files, or keys. You can turn this off anytime in Settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wir erfassen anonyme, aggregierte Nutzungsdaten, um zu erfahren, welche Funktionen genutzt werden, damit wir Osaurus verbessern können. Sie sind vollständig anonym und enthalten niemals deine Chats, Eingaben, Dateien oder Schlüssel. Du kannst dies jederzeit in den Einstellungen deaktivieren."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我们收集匿名的聚合使用数据，以了解哪些功能被使用，从而改进 Osaurus。这些数据完全匿名，绝不会包含你的聊天、提示词、文件或密钥。你可以随时在“设置”中关闭此功能。"
+          }
+        }
+      }
+    },
     "We couldn't estimate memory needs for this model." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -52232,6 +52248,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "谁可以调用您的API以及调用的频率。"
+          }
+        }
+      }
+    },
+    "Why we collect anonymous usage data" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Warum wir anonyme Nutzungsdaten erfassen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我们为何收集匿名使用数据"
           }
         }
       }
