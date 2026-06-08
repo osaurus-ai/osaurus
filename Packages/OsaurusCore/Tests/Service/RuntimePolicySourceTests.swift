@@ -2385,7 +2385,12 @@ struct RuntimePolicySourceTests {
     @Test("Sentry inference breadcrumbs expose token count without prompt-content filtering")
     func sentryInferenceBreadcrumbsExposeTokenCountWithoutPromptFilter() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+        let crashReporting = try Self.source("Services/CrashReportingService.swift")
 
+        #expect(
+            crashReporting.contains("guard SentrySDK.isEnabled else { return }"),
+            "Breadcrumb recording must no-op before Sentry starts; otherwise keychain-free/dev runs log SDK-disabled breadcrumb errors."
+        )
         #expect(adapter.contains("input_tokens=\\(prepared.promptTokens.count)"))
         #expect(
             !adapter.contains("message: \"begin model=\\(modelName) promptTokens="),

@@ -145,6 +145,7 @@ public final class CrashReportingService {
     /// annotate without hopping to the main actor, which can deadlock when the main thread is
     /// busy. A no-op when crash reporting isn't running (Sentry drops breadcrumbs with no SDK).
     public nonisolated static func recordBreadcrumb(category: String, message: String) {
+        guard SentrySDK.isEnabled else { return }
         let crumb = Breadcrumb(level: .info, category: category)
         crumb.message = message
         SentrySDK.addBreadcrumb(crumb)
