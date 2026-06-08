@@ -457,6 +457,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         //    `settingsCommand` and AppKit won't auto-present the
         //    placeholder again.
         let presentOnboarding = OnboardingService.shared.shouldShowOnboarding
+        let userInitiatedLaunch = isUserInitiatedLaunch(notification)
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
 
@@ -475,8 +476,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // Headless live-proof launches only need the local HTTP server.
             } else if presentOnboarding {
                 showOnboardingWindow()
-            } else {
+            } else if userInitiatedLaunch {
                 presentInitialWindow()
+            } else {
+                log.info("Non-default launch — skipping default chat window")
             }
 
             if keychainDisabledTestMode && !keychainDisabledUIPresentationMode {
@@ -678,6 +681,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// Deployment target is macOS 15, so we use the post-macOS-14
     /// `activate(options:)` API directly (the legacy
     /// `.activateIgnoringOtherApps` flag was deprecated in 14).
+    /// Whether the user opened the app directly, versus macOS launching us to
+    /// service something specific. `NSApplicationLaunchIsDefaultLaunchKey` is
+    /// `false` for App Intent, deeplink/URL, notification-action, and
+    /// state-restoration launches; those flows present their own window (e.g. a
+    /// background-task "View Chat" toast), so we must not also pop an empty chat.
+    private func isUserInitiatedLaunch(_ notification: Notification) -> Bool {
+        (notification.userInfo?["NSApplicationLaunchIsDefaultLaunchKey"] as? Bool) ?? true
+    }
+
     @MainActor
     private func presentInitialWindow() {
         NSApp.unhide(nil)
