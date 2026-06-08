@@ -168,6 +168,8 @@ Document attachments keep structure where the file format exposes it: CSV/TSV ta
 
 **Voice** -- On-device transcription via FluidAudio on Apple's Neural Engine. Voice input in chat, VAD mode with wake-word activation, and a global hotkey to transcribe into any app. No audio leaves your Mac. See [Voice Input Guide](docs/VOICE_INPUT.md).
 
+**Shortcuts, Spotlight & Siri** -- Osaurus ships App Intents, so "Ask Osaurus" and "Run Osaurus Agent" are available system-wide the moment you install -- no setup. Ask the built-in agent and get the reply inline, or kick off a custom agent in the background. See [App Intents Guide](docs/APP_INTENTS.md).
+
 **Developer Tools** -- Server explorer, MCP tool inspector, inference monitoring, plugin debugging. See [Developer Tools Guide](docs/DEVELOPER_TOOLS.md). For the inference scheduler, model leases, continuous-batching engine, and feature flags that tune them, see [Inference Runtime](docs/INFERENCE_RUNTIME.md).
 
 ## Telemetry
