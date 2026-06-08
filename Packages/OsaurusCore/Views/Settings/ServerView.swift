@@ -545,18 +545,26 @@ private struct AccessKeysSection: View {
         isGeneratingKey = true
         keyGenError = nil
 
-        do {
-            let result = try APIKeyManager.shared.generate(label: label, expiration: newKeyExpiration)
-            generatedKey = result.fullKey
-            showingKeyGenerator = false
-            newKeyLabel = ""
-            reloadAccessKeys()
-            restartServerForKeyChange()
-        } catch {
-            keyGenError = error.localizedDescription
-        }
+        let expiration = newKeyExpiration
+        Task {
+            do {
+                // Generation reads the master key and writes metadata to the
+                // keychain, both of which block on the security daemon over
+                // XPC. Run it off the main actor so the UI stays responsive.
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try APIKeyManager.shared.generate(label: label, expiration: expiration)
+                }.value
+                generatedKey = result.fullKey
+                showingKeyGenerator = false
+                newKeyLabel = ""
+                reloadAccessKeys()
+                restartServerForKeyChange()
+            } catch {
+                keyGenError = error.localizedDescription
+            }
 
-        isGeneratingKey = false
+            isGeneratingKey = false
+        }
     }
 
     private func restartServerForKeyChange() {
