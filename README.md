@@ -176,8 +176,6 @@ Document attachments keep structure where the file format exposes it: CSV/TSV ta
 
 Osaurus collects **anonymous, aggregated usage analytics** via [Aptabase](https://aptabase.com), an [open-source](https://github.com/aptabase/aptabase), privacy-first analytics project. We collect this only to understand broad user trends and preferences (how the app is used and where people run into friction) so we can make it better. It **never** includes your chats, prompts, files, model outputs, or keys. There are no accounts or device profiles, so events aren't tied to you.
 
-It's **consent-gated and opt-in**: nothing leaves your Mac unless you turn it on. Funnel events recorded during onboarding stay buffered locally and are transmitted *only* if you opt in. You can change your choice anytime in **Settings → Privacy → Share Anonymous Usage Data**.
-
 For the exact, exhaustive list of every event and property we capture — and an explicit list of what we never collect — see [Telemetry & KPIs](docs/TELEMETRY.md).
 
 ### Crash reporting
@@ -196,6 +194,7 @@ Telemetry is **off by default in source builds**: with no key, the SDK is never 
      SENTRY_SLASH = /
      SENTRY_DSN = https:$(SENTRY_SLASH)$(SENTRY_SLASH)yourPublicKey@o123.ingest.sentry.io/456
      ```
+
 2. In Xcode, add `Secrets.xcconfig` to the project (**no** target membership), then under **Project → Info → Configurations → Debug → osaurus** set "Based on Configuration File" to **Secrets**.
 3. Clean build (⇧⌘K) and relaunch.
 

@@ -12,20 +12,20 @@ project. Crash reporting (Sentry) is a **separate, independent** switch and is
 documented in the [README](../README.md#crash-reporting); it is not covered
 here.
 
-## The one rule: opt-in, off by default
+## Defaults & consent
 
-Nothing leaves your Mac unless you explicitly turn analytics on.
+Analytics are on by default and opt-out, with one switch to turn them off.
 
-- **Off by default.** New users decide on the final onboarding step. The
-  toggle starts OFF.
-- **Buffered before you decide.** Events that occur before you make a choice
-  are held in memory only (bounded). If you never opt in, they are dropped
-  when the app quits — they are never written to disk and never sent.
-- **Change your mind anytime** in **Settings → Privacy → Share Anonymous Usage
-  Data**. Turning it off stops all sending immediately.
-- **Source builds are silent.** With no Aptabase key configured (the default
-  for contributor builds), the SDK is never initialized and every event is a
-  no-op.
+- **On by default.** The first onboarding step shows a pre-checked "Share
+  anonymous usage data" box; uncheck it to decline. An info button next to it
+  explains what's collected and where to turn it off.
+- **Nothing leaves before you confirm.** The handful of events from launch up
+  to the welcome step are held in memory (bounded), never on disk. Continuing
+  with the box checked sends them; unchecking drops them.
+- **Off anytime** in **Settings → Privacy → Share Anonymous Usage Data**.
+  Sending stops immediately.
+- **Silent in source builds.** With no Aptabase key (the contributor default),
+  the SDK never initializes and every event is a no-op.
 
 See [`TelemetryService`](../Packages/OsaurusCore/Services/TelemetryService.swift)
 for the consent gate and buffering, and

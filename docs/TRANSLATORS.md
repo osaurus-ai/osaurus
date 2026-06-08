@@ -63,12 +63,12 @@ python3 scripts/i18n/leaderboard.py --min-coverage 15
 
 <!-- LEADERBOARD:START -->
 
-_Last generated 2026-06-05 15:17 UTC by `scripts/i18n/leaderboard.py`. Coverage is the share of the app's translatable strings a contributor has translated; a language is listed at ≥10% coverage._
+_Last generated 2026-06-08 13:18 UTC by `scripts/i18n/leaderboard.py`. Coverage is the share of the app's translatable strings a contributor has translated; a language is listed at ≥10% coverage._
 
 | Contributor | Languages (coverage) | PRs |
 | ----------- | -------------------- | --- |
-| [@jiajun-dev](https://github.com/jiajun-dev) (zhuangjiajun) | Simplified Chinese (`zh-Hans`) 33% | [#857](https://github.com/osaurus-ai/osaurus/pull/857) |
-| [@HolliOnRoad](https://github.com/HolliOnRoad) | German (`de`) 32% | [#785](https://github.com/osaurus-ai/osaurus/pull/785) [#837](https://github.com/osaurus-ai/osaurus/pull/837) |
-| [@ftzahao](https://github.com/ftzahao) (师梦豪) | Simplified Chinese (`zh-Hans`) 10% | [#1354](https://github.com/osaurus-ai/osaurus/pull/1354) |
+| [@jiajun-dev](https://github.com/jiajun-dev) (zhuangjiajun) | Simplified Chinese (`zh-Hans`) 30% | [#857](https://github.com/osaurus-ai/osaurus/pull/857) |
+| [@HolliOnRoad](https://github.com/HolliOnRoad) | German (`de`) 27% | [#785](https://github.com/osaurus-ai/osaurus/pull/785) [#837](https://github.com/osaurus-ai/osaurus/pull/837) |
+| [@ftzahao](https://github.com/ftzahao) (师梦豪) | Simplified Chinese (`zh-Hans`) 26%, German (`de`) 11% | [#1354](https://github.com/osaurus-ai/osaurus/pull/1354) [#1373](https://github.com/osaurus-ai/osaurus/pull/1373) [#1380](https://github.com/osaurus-ai/osaurus/pull/1380) [#1414](https://github.com/osaurus-ai/osaurus/pull/1414) |
 
 <!-- LEADERBOARD:END -->
