@@ -42,11 +42,12 @@ enum OnboardingTelemetry {
     /// step's CTA) from an early close (X button); `lastStep` is the step
     /// they were on when they left — the early-close drop-off point.
     ///
-    /// Note: because consent is the last step and events only send once
-    /// consent is granted, a `closeButton` completion is only ever *sent*
-    /// when the user reached consent and then granted it — earlier X-outs
-    /// leave consent undecided and are dropped. The event still carries the
-    /// distinction for the consent-page-reached case.
+    /// Note: usage consent is now decided on the *first* (Welcome) step. If
+    /// the user opted in there, this event — including a `closeButton`
+    /// drop-off at any later step — is sent live, which is the whole point of
+    /// moving the opt-in up front. If they never opted in, consent stays
+    /// undecided and the event is buffered, then dropped when
+    /// `finishOnboarding` finalizes the decline.
     static func completed(
         lastStep: OnboardingStep,
         via: Completion,

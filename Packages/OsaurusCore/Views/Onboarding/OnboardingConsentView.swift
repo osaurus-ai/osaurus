@@ -2,21 +2,17 @@
 //  OnboardingConsentView.swift
 //  osaurus
 //
-//  Final onboarding step — ask permission for two independent diagnostics.
+//  Final onboarding step — ask permission to send crash reports.
 //
-//  This is intentionally the *last* step: the whole point of usage analytics
-//  is to find where people drop out of onboarding, so the funnel events fire
-//  as the user moves through the earlier steps. `TelemetryService` buffers
-//  those events in memory and only sends them once the user makes a choice
-//  here — granting flushes the buffer, declining discards it. A user who
-//  X-es out before reaching this screen never consents, so nothing is sent.
+//  Usage analytics consent now lives on the *Welcome* step (the first
+//  screen): `TelemetryService` buffers the onboarding funnel in memory, and
+//  opting in up front is what lets us flush that buffer and capture the
+//  drop-off point even when someone bails partway through. This screen is
+//  therefore crash-reporting only.
 //
-//  Two switches, deliberately different defaults:
-//    • Usage data (Aptabase) is opt-IN — defaults OFF. Funnel/usage analytics
-//      only flow if the user turns it on.
-//    • Crash reports (Sentry) is opt-OUT — defaults ON. Crashes carry no PII,
-//      so reporting on by default maximises the signal that fixes real bugs;
-//      one tap turns it off.
+//  Crash reports (Sentry) are opt-OUT — the switch defaults ON. Crashes carry
+//  no PII, so reporting on by default maximises the signal that fixes real
+//  bugs; one tap turns it off.
 //
 
 import SwiftUI
@@ -25,11 +21,6 @@ import SwiftUI
 
 @MainActor
 final class ConsentState: ObservableObject {
-    /// Whether the user agrees to share anonymous usage analytics. Opt-in, so
-    /// it defaults OFF (see the file header). The parent reads this on the
-    /// final CTA and forwards it to `TelemetryService.setEnabled(_:)`.
-    @Published var shareUsageData: Bool = false
-
     /// Whether the user agrees to send crash reports. Opt-out, so it defaults
     /// ON. The parent forwards it to `CrashReportingService.setEnabled(_:)`.
     @Published var shareCrashReports: Bool = true
@@ -45,17 +36,12 @@ struct ConsentBody: View {
     var body: some View {
         OnboardingTwoColumnBody(
             illustrationAsset: "osaurus-data",
-            leftHeadline: "Help shape Osaurus",
+            leftHeadline: "Help us squash bugs",
             leftBody:
-                "Osaurus is brand new. Knowing which steps trip people up, which features get used, and when something crashes is how we make it better for everyone.",
-            subtitle: "Anonymous, and yours to control right here."
+                "If Osaurus crashes, an anonymous report shows us what went wrong so we can fix it.",
+            subtitle: "No chats, prompts, files, or keys are ever included."
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                toggleCard(
-                    icon: "chart.bar.xaxis",
-                    title: "Share anonymous usage data",
-                    isOn: $state.shareUsageData
-                )
                 toggleCard(
                     icon: "ant",
                     title: "Send crash reports",

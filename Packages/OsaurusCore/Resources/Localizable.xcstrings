@@ -4418,6 +4418,7 @@
       }
     },
     "Anonymous, and yours to control right here." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -15448,6 +15449,22 @@
         }
       }
     },
+    "If Osaurus crashes, an anonymous report shows us what went wrong so we can fix it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wenn Osaurus abstürzt, zeigt uns ein anonymer Bericht, was schiefgelaufen ist, damit wir es beheben können."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如果 Osaurus 崩溃了，一份匿名报告会告诉我们出了什么问题，以便我们修复。"
+          }
+        }
+      }
+    },
     "every %@" : {
       "localizations" : {
         "de" : {
@@ -18063,6 +18080,22 @@
         }
       }
     },
+    "Share anonymous usage data to help improve Osaurus" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anonyme Nutzungsdaten teilen, um Osaurus zu verbessern"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分享匿名使用数据以帮助改进 Osaurus"
+          }
+        }
+      }
+    },
     "Help me add a cloud AI provider." : {
       "localizations" : {
         "de" : {
@@ -18144,6 +18177,7 @@
       }
     },
     "Help shape Osaurus" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -18155,6 +18189,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "一起完善 Osaurus"
+          }
+        }
+      }
+    },
+    "Help us squash bugs" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hilf uns, Fehler auszumerzen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "帮我们消灭 bug"
           }
         }
       }
@@ -24707,6 +24757,22 @@
         }
       }
     },
+    "No chats, prompts, files, or keys are ever included." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chats, Eingaben, Dateien und Schlüssel sind niemals enthalten."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "绝不会包含任何聊天记录、提示词、文件或密钥。"
+          }
+        }
+      }
+    },
     "No checklist items parsed." : {
       "localizations" : {
         "de" : {
@@ -27496,6 +27562,7 @@
       }
     },
     "Osaurus is brand new. Knowing which steps trip people up, which features get used, and when something crashes is how we make it better for everyone." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -39022,6 +39089,7 @@
       }
     },
     "Share anonymous usage data" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

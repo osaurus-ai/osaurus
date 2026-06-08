@@ -48,6 +48,7 @@ public struct OnboardingView: View {
     /// Guards the one-shot `onboarding_started` + first `stepViewed` emit.
     @State private var didTrackStart = false
 
+    @StateObject private var welcomeState = WelcomeState()
     @StateObject private var createAgentState = CreateAgentState()
     @StateObject private var configureAIState = ConfigureAIState()
     @StateObject private var identityState = IdentityState()
@@ -188,7 +189,7 @@ public struct OnboardingView: View {
     private var stepBody: some View {
         switch currentStep {
         case .welcome:
-            WelcomeBody()
+            WelcomeBody(state: welcomeState)
         case .createAgent:
             CreateAgentBody(state: createAgentState)
         case .configureAI:
@@ -214,7 +215,20 @@ public struct OnboardingView: View {
             // the action row by stretching it to fill the available width.
             HStack {
                 Spacer(minLength: 0)
-                WelcomeCTA(onContinue: { advance(to: .createAgent) })
+                WelcomeCTA(onContinue: {
+                    // Commit the usage opt-in here (not on toggle) so the whole
+                    // funnel from this point on is captured even if the user
+                    // bails before the final step. Granting flushes the events
+                    // buffered so far (app_launched, onboarding_started, the
+                    // first step view) and sends everything after live. Leaving
+                    // it unchecked keeps telemetry undecided — still buffering,
+                    // still nothing sent — and `finishOnboarding` records the
+                    // decline at the end.
+                    if welcomeState.shareUsageData {
+                        TelemetryService.shared.setEnabled(true)
+                    }
+                    advance(to: .createAgent)
+                })
                 Spacer(minLength: 0)
             }
         case .createAgent:
@@ -279,12 +293,10 @@ public struct OnboardingView: View {
             HStack {
                 Spacer(minLength: 0)
                 ConsentCTA(onFinish: {
-                    // Record both consent choices *before* finishing. For usage
-                    // data, granting flushes the funnel events buffered during
-                    // onboarding and declining drops them; `finishOnboarding` then
-                    // fires `onboarding_completed`, sent or dropped per that choice.
-                    // Crash reporting is independent (opt-out) and applied here too.
-                    TelemetryService.shared.setEnabled(consentState.shareUsageData)
+                    // Crash reporting (opt-out) is committed here. Usage
+                    // analytics consent was already decided back on the Welcome
+                    // step; `finishOnboarding` finalizes a decline if the user
+                    // never opted in there.
                     CrashReportingService.shared.setEnabled(consentState.shareCrashReports)
                     finishOnboarding(via: .finishButton)
                 })
@@ -325,9 +337,9 @@ public struct OnboardingView: View {
         case .walkthrough:
             EmptyView()
         case .consent:
-            // No skip — the toggle (default on) is the choice, and the CTA
-            // commits it. Closing via the X leaves consent undecided, so
-            // nothing is sent.
+            // No skip — the crash-reports toggle (default on) is the choice,
+            // and the CTA commits it. Usage analytics was already decided on
+            // the Welcome step.
             EmptyView()
         }
     }
@@ -455,6 +467,15 @@ public struct OnboardingView: View {
         // step's CTA) is a real completion, `closeButton` at an earlier step
         // is the drop-off point.
         OnboardingTelemetry.completed(lastStep: currentStep, via: via)
+
+        // If the user never opted into usage analytics on the Welcome step,
+        // telemetry is still `undecided` here. Finalize that as a decline so
+        // the post-launch upgrade prompt (`maybePromptForTelemetryConsent`)
+        // never re-asks a user who just chose not to opt in. Opted-in users
+        // are already `granted`, so this no-ops for them.
+        if TelemetryService.shared.needsConsentDecision {
+            TelemetryService.shared.setEnabled(false)
+        }
 
         // If the user created an agent in step 2, drop them into chat
         // with that agent already selected — otherwise the freshly

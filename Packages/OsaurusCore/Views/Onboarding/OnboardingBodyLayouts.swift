@@ -312,29 +312,43 @@ struct OnboardingIllustrationLeftColumn: View {
 ///    `Spacer().layoutPriority(...)`; layout-priority Spacers collapse
 ///    to their minimum length under a `ScrollView`'s unbounded
 ///    vertical proposal.
-struct OnboardingHeroBody: View {
+struct OnboardingHeroBody<Footer: View>: View {
     let illustrationAsset: String?
     let headline: LocalizedStringKey?
     let subtitle: LocalizedStringKey?
+    /// Optional content rendered centered beneath the subtitle (e.g. the
+    /// Welcome step's usage opt-in checkbox). Defaults to `EmptyView`, so
+    /// existing hero callers (Walkthrough) render exactly as before.
+    let footer: Footer
 
     @Environment(\.theme) private var theme
 
     init(
         illustrationAsset: String?,
         headline: LocalizedStringKey? = nil,
-        subtitle: LocalizedStringKey? = nil
+        subtitle: LocalizedStringKey? = nil,
+        @ViewBuilder footer: () -> Footer
     ) {
         self.illustrationAsset = illustrationAsset
         self.headline = headline
         self.subtitle = subtitle
+        self.footer = footer()
     }
 
     var body: some View {
-        heroStack
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, OnboardingMetrics.heroBodyHorizontalPadding)
-            .padding(.vertical, OnboardingMetrics.heroBodyVerticalPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        // The hero (illustration + copy) stays vertically centered, while the
+        // optional `footer` is pushed to the bottom of the body slot so it
+        // sits close to the CTA. With the default `EmptyView` footer this
+        // collapses to a plain centered hero (Walkthrough is unaffected).
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            heroStack
+            Spacer(minLength: 0)
+            footer
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, OnboardingMetrics.heroBodyHorizontalPadding)
+        .padding(.vertical, OnboardingMetrics.heroBodyVerticalPadding)
     }
 
     private var heroStack: some View {
@@ -385,6 +399,26 @@ struct OnboardingHeroBody: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: OnboardingMetrics.heroIllustrationMaxHeight)
+    }
+}
+
+// MARK: - Hero Body — footerless convenience
+
+extension OnboardingHeroBody where Footer == EmptyView {
+    /// Convenience initializer for hero steps with no footer content
+    /// (Walkthrough's internal pages). Keeps the call sites unchanged from
+    /// before `footer` was introduced.
+    init(
+        illustrationAsset: String?,
+        headline: LocalizedStringKey? = nil,
+        subtitle: LocalizedStringKey? = nil
+    ) {
+        self.init(
+            illustrationAsset: illustrationAsset,
+            headline: headline,
+            subtitle: subtitle,
+            footer: { EmptyView() }
+        )
     }
 }
 
