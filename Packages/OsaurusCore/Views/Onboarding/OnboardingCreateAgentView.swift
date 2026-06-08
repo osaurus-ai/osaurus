@@ -65,6 +65,24 @@ final class CreateAgentState: ObservableObject {
         }
     }
 
+    /// Curated pool of playful names for the "randomize" affordance on the
+    /// name badge. These are proper nouns, so they're set directly into
+    /// `name` and never run through `LocalizedStringKey`.
+    static let funNames = [
+        "Rexford", "Spike", "Nibbles", "Pebbles", "Tito",
+        "Stompy", "Pip", "Biscuit", "Magnus", "Coco",
+        "Dino", "Bruno", "Sunny", "Fern", "Bramble", "Ziggy",
+    ]
+
+    /// Picks a fun name distinct from the current one. Marks the name as
+    /// user-edited so a later archetype switch doesn't clobber it (mirrors
+    /// the guard in `selectArchetype`).
+    func randomizeName() {
+        let pool = Self.funNames.filter { $0 != trimmedName }
+        name = pool.randomElement() ?? Self.funNames[0]
+        nameUserEdited = true
+    }
+
     /// Persists the agent and returns whether save succeeded. The caller is
     /// responsible for advancing the flow afterwards.
     ///
@@ -104,6 +122,11 @@ struct CreateAgentBody: View {
 
     @Environment(\.theme) private var theme
     @FocusState private var nameFocused: Bool
+    /// Width the name field is pinned to, measured from a hidden copy of the
+    /// displayed text. Pinning the field stops AppKit's field editor from
+    /// nudging the intrinsic width when focus toggles, which (combined with
+    /// the badge-wide focus animation) read as a small jiggle.
+    @State private var nameFieldWidth: CGFloat = 0
 
     /// The selected dino's signature color — themes the hero glow, avatar
     /// tints, and selection rings so the whole screen reacts in color.
@@ -123,6 +146,10 @@ struct CreateAgentBody: View {
         static let swatchDiameter: CGFloat = 56
         static let swatchCell: CGFloat = 66
         static let swatchSpacing: CGFloat = 12
+
+        /// Slack added to the measured name width so the caret at the end of
+        /// the text isn't clipped while the field stays focus-stable.
+        static let nameCaretAllowance: CGFloat = 4
 
         // Vertical rhythm between the centered content groups.
         static let heroToBadge: CGFloat = 16
@@ -162,6 +189,8 @@ struct CreateAgentBody: View {
         .padding(.horizontal, OnboardingMetrics.rightColumnHorizontalPadding)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { nameFocused = false }
     }
 
     // MARK: - Hero dino
@@ -203,31 +232,43 @@ struct CreateAgentBody: View {
     // MARK: - Editable name badge
 
     /// The name, surfaced as the prominent capsule badge under the hero. The
-    /// archetype icon on the leading edge keeps the role glanceable while the
-    /// text stays editable; a faint pencil hints that it's tappable.
+    /// archetype icon on the leading edge doubles as a "randomize" button that
+    /// rolls a fun dino name; the text stays editable and a faint pencil hints
+    /// at that.
     private var nameBadge: some View {
         HStack(spacing: 8) {
-            Image(systemName: state.selectedTemplate.icon)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(selectedColor)
-
-            TextField(
-                text: $state.name,
-                prompt: Text(LocalizedStringKey(state.selectedTemplate.defaultName), bundle: .module)
-            ) {
-                Text(LocalizedStringKey(state.selectedTemplate.defaultName), bundle: .module)
-            }
-            .textFieldStyle(.plain)
-            .font(theme.font(size: 19, weight: .bold))
-            .foregroundColor(theme.primaryText)
-            .multilineTextAlignment(.center)
-            .fixedSize()
-            .focused($nameFocused)
-            .onChange(of: state.name) { _, newValue in
-                if newValue != state.selectedTemplate.defaultName {
-                    state.nameUserEdited = true
+            Button {
+                withAnimation(theme.animationQuick()) {
+                    state.randomizeName()
                 }
+            } label: {
+                Image(systemName: state.selectedTemplate.icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(selectedColor)
+                    .contentShape(Circle())
             }
+            .buttonStyle(.plain)
+            .help(Text("Pick a random name", bundle: .module))
+
+            ZStack {
+                nameWidthDriver.hidden()
+
+                TextField(text: $state.name, prompt: defaultNameText) { defaultNameText }
+                    .textFieldStyle(.plain)
+                    .font(theme.font(size: 19, weight: .bold))
+                    .foregroundColor(theme.primaryText)
+                    .multilineTextAlignment(.center)
+                    // Pin to the measured text width (+ caret room) so focusing
+                    // never changes the field's footprint.
+                    .frame(width: nameFieldWidth + Layout.nameCaretAllowance)
+                    .focused($nameFocused)
+                    .onChange(of: state.name) { _, newValue in
+                        if newValue != state.selectedTemplate.defaultName {
+                            state.nameUserEdited = true
+                        }
+                    }
+            }
+            .onPreferenceChange(NameWidthKey.self) { nameFieldWidth = $0 }
 
             Image(systemName: "pencil")
                 .font(.system(size: 12, weight: .semibold))
@@ -249,6 +290,27 @@ struct CreateAgentBody: View {
         .animation(theme.animationQuick(), value: selectedColor)
         .contentShape(Capsule())
         .onTapGesture { nameFocused = true }
+    }
+
+    /// The archetype's localized default name. Shared by the field's prompt
+    /// and the width driver so the empty field is sized to the hint it shows.
+    private var defaultNameText: Text {
+        Text(LocalizedStringKey(state.selectedTemplate.defaultName), bundle: .module)
+    }
+
+    /// Invisible mirror of the field's displayed text, styled identically, used
+    /// purely to measure the width the editable field should be pinned to. When
+    /// the user has typed a name we measure that; otherwise we measure the
+    /// archetype's default (the prompt) so the empty field matches its hint.
+    private var nameWidthDriver: some View {
+        (state.trimmedName.isEmpty ? defaultNameText : Text(state.name))
+            .font(theme.font(size: 19, weight: .bold))
+            .fixedSize()
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: NameWidthKey.self, value: proxy.size.width)
+                }
+            )
     }
 
     // MARK: - Role description preview
@@ -386,6 +448,17 @@ struct CreateAgentBody: View {
         Text(LocalizedStringKey(key), bundle: .module)
             .font(theme.font(size: 12, weight: .semibold))
             .foregroundColor(theme.tertiaryText)
+    }
+}
+
+// MARK: - Name Field Width Measurement
+
+/// Carries the measured width of the hidden name mirror up to `CreateAgentBody`
+/// so the editable field can be pinned to a focus-stable width.
+private struct NameWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
