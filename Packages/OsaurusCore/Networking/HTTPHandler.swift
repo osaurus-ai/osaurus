@@ -700,9 +700,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "ssm_companion_hits": 0,
                 "ssm_companion_misses": 0,
                 "ssm_companion_rederives": 0,
-                "zaya_cca_companion_hits": 0,
-                "zaya_cca_companion_misses": 0,
-                "zaya_cca_companion_rederives": 0,
+                "zaya_cca_disk_payload_hits": 0,
+                "zaya_cca_disk_payload_misses": 0,
+                "zaya_cca_disk_payload_stores": 0,
             ]
 
             let models: [[String: Any]] = cached.map { summary in
@@ -802,6 +802,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let hasSSMCompanion = companionKinds.contains("companion=ssm")
                 let hasZayaCCACompanion =
                     (summary.cacheTopology?.zayaCCALayerCount ?? 0) > 0
+                if hasZayaCCACompanion, let diskStats = stats.diskStats {
+                    row["zaya_cca_disk_payload_restore"] = [
+                        "hits": diskStats.hits,
+                        "misses": diskStats.misses,
+                        "stores": diskStats.stores,
+                        "embedded_state": true,
+                    ] as [String: Any]
+                    aggregate["zaya_cca_disk_payload_hits", default: 0] += diskStats.hits
+                    aggregate["zaya_cca_disk_payload_misses", default: 0] += diskStats.misses
+                    aggregate["zaya_cca_disk_payload_stores", default: 0] += diskStats.stores
+                }
                 row["companion_cache"] = [
                     "hits": ssm.hits,
                     "misses": ssm.misses,
@@ -815,13 +826,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         "rederives": ssm.reDerives,
                     ]
                 }
-                if hasZayaCCACompanion {
-                    row["zaya_cca_companion_cache"] = [
-                        "hits": ssm.hits,
-                        "misses": ssm.misses,
-                        "rederives": ssm.reDerives,
-                    ]
-                }
                 aggregate["companion_hits", default: 0] += ssm.hits
                 aggregate["companion_misses", default: 0] += ssm.misses
                 aggregate["companion_rederives", default: 0] += ssm.reDerives
@@ -829,11 +833,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     aggregate["ssm_companion_hits", default: 0] += ssm.hits
                     aggregate["ssm_companion_misses", default: 0] += ssm.misses
                     aggregate["ssm_companion_rederives", default: 0] += ssm.reDerives
-                }
-                if hasZayaCCACompanion {
-                    aggregate["zaya_cca_companion_hits", default: 0] += ssm.hits
-                    aggregate["zaya_cca_companion_misses", default: 0] += ssm.misses
-                    aggregate["zaya_cca_companion_rederives", default: 0] += ssm.reDerives
                 }
                 return row
             }

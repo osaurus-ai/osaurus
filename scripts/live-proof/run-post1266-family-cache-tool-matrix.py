@@ -193,7 +193,7 @@ def cache_counters(stats: dict[str, Any], model: str) -> dict[str, int]:
         paged = row.get("paged_cache") or {}
         companion = row.get("companion_cache") or {}
         ssm = row.get("ssm_companion_cache") or {}
-        zaya = row.get("zaya_cca_companion_cache") or {}
+        zaya = row.get("zaya_cca_disk_payload_restore") or {}
         return {
             "disk_l2_hits": int(block.get("hits") or 0),
             "disk_l2_misses": int(block.get("misses") or 0),
@@ -208,9 +208,9 @@ def cache_counters(stats: dict[str, Any], model: str) -> dict[str, int]:
             "ssm_companion_hits": int(ssm.get("hits") or 0),
             "ssm_companion_misses": int(ssm.get("misses") or 0),
             "ssm_companion_rederives": int(ssm.get("rederives") or 0),
-            "zaya_cca_companion_hits": int(zaya.get("hits") or 0),
-            "zaya_cca_companion_misses": int(zaya.get("misses") or 0),
-            "zaya_cca_companion_rederives": int(zaya.get("rederives") or 0),
+            "zaya_cca_disk_payload_hits": int(zaya.get("hits") or 0),
+            "zaya_cca_disk_payload_misses": int(zaya.get("misses") or 0),
+            "zaya_cca_disk_payload_stores": int(zaya.get("stores") or 0),
         }
     return {
         "disk_l2_hits": 0,
@@ -226,9 +226,9 @@ def cache_counters(stats: dict[str, Any], model: str) -> dict[str, int]:
         "ssm_companion_hits": 0,
         "ssm_companion_misses": 0,
         "ssm_companion_rederives": 0,
-        "zaya_cca_companion_hits": 0,
-        "zaya_cca_companion_misses": 0,
-        "zaya_cca_companion_rederives": 0,
+        "zaya_cca_disk_payload_hits": 0,
+        "zaya_cca_disk_payload_misses": 0,
+        "zaya_cca_disk_payload_stores": 0,
     }
 
 
@@ -261,8 +261,8 @@ def cache_boundaries_for_topology(family: str, delta: dict[str, int], topology: 
         )
     )
     if family == "zaya" or zaya_layers > 0:
-        if delta.get("zaya_cca_companion_hits", 0) <= 0:
-            boundaries.append("ZAYA CCA companion hit was not proven")
+        if delta.get("zaya_cca_disk_payload_hits", 0) <= 0:
+            boundaries.append("ZAYA CCA disk payload restore was not proven")
     if ssm_required:
         if delta.get("ssm_companion_hits", 0) <= 0 and delta.get("companion_hits", 0) <= 0:
             boundaries.append("SSM companion hit was not proven")
@@ -383,7 +383,7 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
     summary["cache_topology"] = topology
     summary["cache_hit_proven"] = any(
         delta.get(k, 0) > 0
-        for k in ("disk_l2_hits", "paged_hits", "prefix_hits", "companion_hits", "ssm_companion_hits", "zaya_cca_companion_hits")
+        for k in ("disk_l2_hits", "paged_hits", "prefix_hits", "companion_hits", "ssm_companion_hits", "zaya_cca_disk_payload_hits")
     )
     summary["cache_store_or_miss_seen"] = any(
         delta.get(k, 0) > 0
@@ -396,8 +396,8 @@ def run_model(base_url: str, model: str, out_dir: Path, timeout: float) -> dict[
             "companion_rederives",
             "ssm_companion_misses",
             "ssm_companion_rederives",
-            "zaya_cca_companion_misses",
-            "zaya_cca_companion_rederives",
+            "zaya_cca_disk_payload_misses",
+            "zaya_cca_disk_payload_stores",
         )
     )
     if not summary["cache_hit_proven"]:

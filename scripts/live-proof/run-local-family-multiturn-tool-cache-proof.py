@@ -151,7 +151,7 @@ def cache_evidence_checks(
     companion = companion if isinstance(companion, dict) else {}
     ssm = entry.get("ssm_companion_cache") if isinstance(entry, dict) else None
     ssm = ssm if isinstance(ssm, dict) else {}
-    zaya = entry.get("zaya_cca_companion_cache") if isinstance(entry, dict) else None
+    zaya = entry.get("zaya_cca_disk_payload_restore") if isinstance(entry, dict) else None
     zaya = zaya if isinstance(zaya, dict) else {}
 
     checks: dict[str, bool] = {}
@@ -175,11 +175,11 @@ def cache_evidence_checks(
                 or topology.get("requires_ssm_companion_state") is True
                 or topology.get("zaya_cca_layer_count", 0) > 0
             )
-        elif name == "zaya_cca_companion_cache":
-            checks["cache_evidence_zaya_cca_companion_cache"] = (
+        elif name == "zaya_cca_disk_payload_restore":
+            checks["cache_evidence_zaya_cca_disk_payload_restore"] = (
                 bool(zaya)
                 or topology.get("zaya_cca_layer_count", 0) > 0
-                or "companion=zaya_cca" in (companion.get("kinds") or [])
+                or "companion=zaya-cca" in (companion.get("kinds") or [])
             )
         elif name == "hybrid_pool_layer_count":
             checks["cache_evidence_hybrid_pool_layer_count"] = topology.get("hybrid_pool_layer_count", 0) > 0
@@ -204,7 +204,7 @@ def flatten_cache_counters(entry: dict[str, Any]) -> dict[str, int]:
     add("paged", entry.get("paged_cache"))
     add("companion", entry.get("companion_cache"))
     add("ssm_companion", entry.get("ssm_companion_cache"))
-    add("zaya_cca_companion", entry.get("zaya_cca_companion_cache"))
+    add("zaya_cca_disk_payload", entry.get("zaya_cca_disk_payload_restore"))
     topology = entry.get("cache_topology")
     if isinstance(topology, dict):
         for key, raw in topology.items():

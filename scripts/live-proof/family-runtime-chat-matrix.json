@@ -4,18 +4,18 @@
     "model": "zaya1-vl-8b-jangtq4",
     "family": "zaya",
     "topology": "zaya-cca-vl",
-    "required_cache_evidence": ["zaya_cca_companion_cache", "disk_l2_hits", "requires_disk_backed_restore"],
+    "required_cache_evidence": ["zaya_cca_disk_payload_restore", "disk_l2_hits", "requires_disk_backed_restore"],
     "priority": "required",
-    "notes": "CCA companion/pooling and VL path; TurboQuant KV is not a substitute."
+    "notes": "CCA disk-payload restore/pooling and VL path; TurboQuant KV is not a substitute."
   },
   {
     "id": "zaya-text-jangtq4",
     "model": "zaya1-8b-jangtq4",
     "family": "zaya",
     "topology": "zaya-cca",
-    "required_cache_evidence": ["zaya_cca_companion_cache", "disk_l2_hits", "requires_disk_backed_restore"],
+    "required_cache_evidence": ["zaya_cca_disk_payload_restore", "disk_l2_hits", "requires_disk_backed_restore"],
     "priority": "required",
-    "notes": "Text CCA companion and disk restore proof."
+    "notes": "Text CCA disk-payload and disk restore proof."
   },
   {
     "id": "ling-jangtq2",
