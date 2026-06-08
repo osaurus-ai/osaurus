@@ -67,4 +67,30 @@ struct ErrorBodyShapeTests {
         // to the original raw string.
         #expect(error["message"] as? String == raw)
     }
+
+    @Test func loadRefusalMapsToResourceErrorNotInternalError() {
+        let error = ModelRuntime.LoadRefusedError(
+            modelName: "deepseek-v4-flash-jangtq2",
+            message: "Not enough memory to load deepseek-v4-flash-jangtq2"
+        )
+
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 503)
+        #expect(HTTPHandler.openAIErrorType(for: error) == "insufficient_resources")
+        #expect(HTTPHandler.openResponsesErrorCode(for: error) == "insufficient_resources")
+        #expect(HTTPHandler.anthropicErrorType(for: error) == "overloaded_error")
+        #expect(HTTPHandler.ollamaErrorType(for: error) == "insufficient_resources")
+    }
+
+    @Test func runtimePolicyStillMapsToBadRequest() {
+        let error = MLXService.RuntimePolicyError(
+            modelName: "gemma",
+            issues: ["unsupported sampler"]
+        )
+
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 400)
+        #expect(HTTPHandler.openAIErrorType(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.openResponsesErrorCode(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.anthropicErrorType(for: error) == "invalid_request_error")
+        #expect(HTTPHandler.ollamaErrorType(for: error) == "invalid_request_error")
+    }
 }

@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import NIOHTTP1
 
 extension HTTPHandler {
 
@@ -42,6 +43,56 @@ extension HTTPHandler {
             return
                 #"{"error":{"type":"error","code":"\#(code)","message":"\#(escaped)"}}"#
         }
+    }
+
+    static func localRuntimeHTTPStatus(for error: Error) -> HTTPResponseStatus {
+        if error is ModelRuntime.LoadRefusedError {
+            return .serviceUnavailable
+        }
+        if error is MLXService.RuntimePolicyError {
+            return .badRequest
+        }
+        return .internalServerError
+    }
+
+    static func openAIErrorType(for error: Error) -> String {
+        if error is ModelRuntime.LoadRefusedError {
+            return "insufficient_resources"
+        }
+        if error is MLXService.RuntimePolicyError {
+            return "invalid_request_error"
+        }
+        return "internal_error"
+    }
+
+    static func anthropicErrorType(for error: Error) -> String {
+        if error is ModelRuntime.LoadRefusedError {
+            return "overloaded_error"
+        }
+        if error is MLXService.RuntimePolicyError {
+            return "invalid_request_error"
+        }
+        return "api_error"
+    }
+
+    static func openResponsesErrorCode(for error: Error) -> String {
+        if error is ModelRuntime.LoadRefusedError {
+            return "insufficient_resources"
+        }
+        if error is MLXService.RuntimePolicyError {
+            return "invalid_request_error"
+        }
+        return "api_error"
+    }
+
+    static func ollamaErrorType(for error: Error) -> String {
+        if error is ModelRuntime.LoadRefusedError {
+            return "insufficient_resources"
+        }
+        if error is MLXService.RuntimePolicyError {
+            return "invalid_request_error"
+        }
+        return "internal_error"
     }
 
     /// Minimal JSON string escape. We deliberately do NOT pull in
