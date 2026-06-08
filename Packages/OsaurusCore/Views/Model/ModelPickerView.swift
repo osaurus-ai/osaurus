@@ -156,6 +156,15 @@ struct ModelPickerView: View {
             // refresh remote model lists on open so newly-added/removed
             // models surface
             await RemoteProviderManager.shared.refreshConnectedProviders()
+
+            // Drop external models (HF cache, LM Studio) the user deleted on
+            // disk while the app stayed running — the picker cache is built
+            // once and only rebuilds on `.localModelsChanged`, which this
+            // posts when something went missing. Cheap existence check; no-op
+            // when nothing changed. Runs last since it's the lowest priority.
+            await Task.detached(priority: .utility) {
+                ExternalModelLocator.pruneMissing()
+            }.value
         }
         .onDisappear {
             searchDebounceTask?.cancel()

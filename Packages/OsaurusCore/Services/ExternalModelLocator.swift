@@ -197,6 +197,60 @@ enum ExternalModelLocator {
         }
     }
 
+    /// Drop registry entries whose bundle no longer exists on disk — e.g. the
+    /// user deleted an external model's files directly in Finder. Cheap: just
+    /// a `config.json` existence check per entry (no directory walk), so it's
+    /// safe to call whenever a model list is about to be shown. Persists the
+    /// trimmed manifest and posts `.localModelsChanged` if anything was
+    /// removed, which rebuilds the picker cache and refreshes the Models grid.
+    ///
+    /// This exists because the in-memory `registry` (and the manifest) are
+    /// loaded once and only fully re-derived by `rescan()` at launch. Closing
+    /// and reopening the window reuses the cached registry, so a model deleted
+    /// out from under us would otherwise linger in the UI until the next quit.
+    @discardableResult
+    static func pruneMissing() -> Bool {
+        // Snapshot under the lock, then do the `fileExists` probes UNLOCKED.
+        // Holding the lock across filesystem I/O would block any concurrent
+        // (possibly main-thread) `models()` / `path(forId:)` caller for the
+        // duration of the scan — the same reason `path` and `rescan` keep
+        // their I/O outside the lock. Callers must still invoke this off the
+        // main thread.
+        lock.lock()
+        let snapshot = loadedLocked()
+        lock.unlock()
+
+        let fm = FileManager.default
+        var missing: [String: String] = [:]  // key -> probed bundlePath
+        for (key, entry) in snapshot {
+            let configPath = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
+                .appendingPathComponent("config.json").path
+            if !fm.fileExists(atPath: configPath) {
+                missing[key] = entry.bundlePath
+            }
+        }
+        guard !missing.isEmpty else { return false }
+
+        // Re-acquire briefly to apply. Only drop the exact entry we probed:
+        // a concurrent `rescan()` may have re-registered the id at a new,
+        // still-valid path while we were probing, and that must survive.
+        lock.lock()
+        var map = loadedLocked()
+        var removed = false
+        for (key, probedPath) in missing where map[key]?.bundlePath == probedPath {
+            map.removeValue(forKey: key)
+            removed = true
+        }
+        if removed { registry = map }
+        lock.unlock()
+
+        if removed {
+            persist(map)
+            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+        }
+        return removed
+    }
+
     // MARK: - Rescan
 
     /// Re-scan the enabled external roots, update the registry, persist the
