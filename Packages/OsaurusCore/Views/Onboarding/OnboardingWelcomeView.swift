@@ -12,8 +12,8 @@ import SwiftUI
 // MARK: - State
 
 /// Welcome step state. Holds the anonymous-usage opt-in so the choice made
-/// via the checkbox in `WelcomeBody` survives the slide transition and can be
-/// read by the parent's "Get Started" CTA. Moving usage consent here (the
+/// via the `WelcomeUsageOptIn` checkbox survives the slide transition and can
+/// be read by the parent's "Get Started" CTA. Moving usage consent here (the
 /// *first* step) is deliberate: `TelemetryService` buffers the onboarding
 /// funnel until a decision is made, so opting in up front lets us capture the
 /// drop-off point even when the user bails partway through.
@@ -34,24 +34,34 @@ struct WelcomeBody: View {
     @State private var visible = false
 
     var body: some View {
+        // The usage opt-in lives in the chrome footer caption slot (rendered by
+        // `OnboardingView`, see `WelcomeUsageOptIn`) so it sits directly above
+        // the CTA — consistent with the caption on the "Meet your dino" step.
         OnboardingHeroBody(
             illustrationAsset: "osaurus-main",
             headline: "Own your AI.",
             subtitle:
                 "Runs on your Mac. Your chats, files, and keys stay with you. No account, no cloud required."
-        ) {
-            usageOptIn
-        }
+        )
         .opacity(visible ? 1 : 0)
         .scaleEffect(visible ? 1 : 0.98)
         .animation(.easeOut(duration: 0.5), value: visible)
         .onAppearAfter(0.05) { visible = true }
     }
+}
 
-    /// Subtle opt-in rendered as a custom checkbox row. The native
-    /// `.checkbox` toggle style was nearly invisible on the light hero, so we
-    /// draw our own SF Symbol box with theme colors for reliable contrast.
-    private var usageOptIn: some View {
+// MARK: - Usage Opt-In
+
+/// The anonymous-usage opt-in, surfaced in the footer caption slot just above
+/// the "Get Started" CTA. Rendered as a custom checkbox row because the native
+/// `.checkbox` toggle style was nearly invisible on the light hero — we draw
+/// our own SF Symbol box with theme colors for reliable contrast.
+struct WelcomeUsageOptIn: View {
+    @ObservedObject var state: WelcomeState
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
         Button {
             state.shareUsageData.toggle()
         } label: {
@@ -88,9 +98,11 @@ struct WelcomeCTA: View {
 #if DEBUG
     struct OnboardingWelcomeView_Previews: PreviewProvider {
         static var previews: some View {
-            VStack(spacing: 12) {
-                WelcomeBody(state: WelcomeState())
+            let state = WelcomeState()
+            return VStack(spacing: 12) {
+                WelcomeBody(state: state)
                     .frame(height: 420)
+                WelcomeUsageOptIn(state: state)
                 WelcomeCTA(onContinue: {})
             }
             .frame(width: OnboardingMetrics.windowWidth, height: 540)

@@ -133,9 +133,24 @@ public struct OnboardingView: View {
     @ViewBuilder
     private var footerCaptionSlot: some View {
         ZStack {
-            stepFooterCaptionText
+            stepFooterCaption
                 .id(currentStep)
                 .transition(slideTransition)
+        }
+    }
+
+    /// Per-step footer caption content, rendered directly above the CTA. Most
+    /// steps surface a plain text caption; the Welcome step instead surfaces
+    /// the usage opt-in checkbox here (rather than at the bottom of its body)
+    /// so it sits the same distance above the CTA as the other captions.
+    @ViewBuilder
+    private var stepFooterCaption: some View {
+        switch currentStep {
+        case .welcome:
+            WelcomeUsageOptIn(state: welcomeState)
+                .padding(.bottom, OnboardingMetrics.footerCaptionToCTA)
+        default:
+            stepFooterCaptionText
         }
     }
 
