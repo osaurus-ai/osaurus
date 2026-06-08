@@ -516,6 +516,27 @@ public struct RemoteProviderConfiguration: Codable, Sendable {
             providers[index].enabled = enabled
         }
     }
+
+    /// Reorder `providers` to match the sequence of `orderedIds`. Unknown and
+    /// duplicate IDs are ignored; any providers omitted from `orderedIds` keep
+    /// their current relative position after the requested ones, so a partial
+    /// list never drops providers.
+    public mutating func reorder(orderedIds: [UUID]) {
+        var byId: [UUID: RemoteProvider] = [:]
+        for provider in providers where byId[provider.id] == nil {
+            byId[provider.id] = provider
+        }
+        var seen = Set<UUID>()
+        var reordered: [RemoteProvider] = []
+        for id in orderedIds {
+            guard let provider = byId[id], seen.insert(id).inserted else { continue }
+            reordered.append(provider)
+        }
+        for provider in providers where seen.insert(provider.id).inserted {
+            reordered.append(provider)
+        }
+        providers = reordered
+    }
 }
 
 // MARK: - Remote Provider Configuration Store
