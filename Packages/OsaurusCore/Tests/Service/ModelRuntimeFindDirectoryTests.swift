@@ -322,7 +322,7 @@ struct ModelRuntimeFindDirectoryTests {
         try writeConfig(modelType: "deepseek_v4", routedExperts: 256, at: dir)
         try writeJangConfig(weightFormat: "affine", at: dir)
 
-        #expect(throws: Error.self) {
+        #expect(throws: MLXService.RuntimePolicyError.self) {
             try ModelRuntime.validateUnsupportedPlainDSV4AffineJANG(
                 at: dir,
                 name: "DeepSeek-V4-Flash-JANG"

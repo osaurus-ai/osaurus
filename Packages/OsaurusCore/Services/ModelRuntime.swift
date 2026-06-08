@@ -3025,12 +3025,10 @@ public actor ModelRuntime {
 
         guard isAffine, (routedExperts ?? 0) >= 128 else { return }
 
-        throw NSError(
-            domain: "ModelRuntime",
-            code: 5,
-            userInfo: [
-                NSLocalizedDescriptionKey:
-                    "Model '\(name)' is a plain affine DeepSeek V4 Flash JANG bundle. "
+        throw MLXService.RuntimePolicyError(
+            modelName: name,
+            issues: [
+                "Model '\(name)' is a plain affine DeepSeek V4 Flash JANG bundle. "
                     + "That path is not production-supported in this Osaurus build because "
                     + "it loads through the generic SwitchGLU route and can consume very high "
                     + "memory while decoding at unusable speed. Use the JANGTQ2 or JANGTQ-K "
