@@ -381,3 +381,55 @@ ZAYA CCA repeat-cache artifact:
   promote it to release-ready from these rows, and do not hide the failure with
   sampler overrides, prompt coercion, forced reasoning/tool tags, or parser
   repair.
+
+### 2026-06-07 23:39 PDT Nemotron Ultra PR #1411 compiled-decode boundary fix
+
+- Osaurus PR branch: `codex/vmlx-nemotron-runtime-pin`, head
+  `b7121367f5b8e33fdd0eb5f655392fd1e8db0bf2`.
+- Source fix: `MLXBatchAdapter.shouldEnableCompiledBatchDecode` now refuses
+  B=1 compiled batch decode for `ModelRuntime.isKnownHybridModel` families.
+  This covers Nemotron-H / Qwen3.5-style hybrid SSM or linear-attention rows
+  without changing dense/full-KV solo defaults.
+- Focused source proof passed:
+  `MLXBatchAdapterTests/compiledBatchDecodeDisabledForKnownUnsafeSoloModels`.
+- No-sign app:
+  `/private/tmp/osaurus-vmlx-pin-integration/build/DerivedData-nemotron-nosign-b7121367/Build/Products/Release/osaurus.app`.
+- Build proof:
+  `/tmp/osaurus-nemotron-nosign-build-b7121367-20260607-232638.log`;
+  `** BUILD SUCCEEDED **`, ad-hoc signature, no keychain signing prompt.
+- Private-file boundary: `AGENTS.md` is local skip-worktree in the active
+  worktrees, and this PR commit did not modify or stage `AGENTS.md` or
+  `.agents/`.
+- Cold artifact:
+  `/tmp/osaurus-nemotron-ultra-live-b7121367-20260607-233409`.
+  - Model: `nvidia-nemotron-3-ultra-550b-a55b-jangtq_1l`.
+  - Turn 1 required `line_count`: exact args `red\ngreen\nblue`,
+    `finish_reason=tool_calls`, no visible content, no reasoning/protocol leak.
+  - Turn 2 after tool result: clean visible answer `3 lines were counted.`,
+    no tool call, no protocol leak, `finish_reason=stop`.
+  - Turn 3 required `line_count` after tool history: exact args `one\ntwo`,
+    `finish_reason=tool_calls`, no visible content, no protocol leak.
+  - Topology: 60 layers, 12 KV layers, 48 Mamba layers,
+    `requires_ssm_companion_state=true`, `companion=ssm`,
+    disk-backed restore required, TurboQuant KV 0.
+  - Cold cache movement: `disk_l2_misses +5`, `disk_l2_stores +4`,
+    `disk_l2_hits +0`; cold row is behavior-pass/topology-pass but not
+    disk-hit-promoted.
+- Warm artifact:
+  `/tmp/osaurus-nemotron-ultra-live-warm-b7121367-20260607-233559`.
+  - Full harness result: `passed=true`.
+  - Tool/parser checks all passed again: turn 1 and turn 3 exact structured
+    `line_count` calls, no visible content, no reasoning/protocol leak.
+  - Turn 2 after tool result: clean visible answer `There are 3 lines.`,
+    no tool call, no protocol leak, `finish_reason=stop`.
+  - Warm hybrid cache proof passed: `disk_l2_hits +3`,
+    `ssm_companion_hits +3`, `companion_hits +3`,
+    `ssm_companion_rederives +0`.
+  - Token rates were still low in this short tool row: turn 2 `6` completion
+    tokens in `16.25s`, about `0.37 tok/s`; this row proves correctness/cache,
+    not the direct vMLX sustained decode target.
+- Status: Nemotron Ultra JANGTQ_1L is now behavior-pass, parser-pass,
+  topology-pass, and warm hybrid SSM cache-hit-pass on the `b7121367` no-sign
+  Osaurus PR app path. Speed remains separately tracked by direct vMLX
+  sustained rows; do not claim an Osaurus UI speed promotion from this short
+  tool-cache harness alone.
