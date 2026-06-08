@@ -542,14 +542,16 @@ struct RuntimePolicySourceTests {
         // buffering, the Gemma4 native tool-call parser regression pin,
         // generation-config suppress_tokens propagation, seed-boundary
         // hybrid SSM full-hit restore, Nemotron-H Mamba cache-offset and
-        // SSM dtype parity, and the stacked Nemotron JANGTQ scored
+        // SSM dtype parity, the stacked Nemotron JANGTQ scored
         // down-projection kernel kept opt-in after live Ultra rows showed it
-        // regresses the default decode path.
+        // regresses the default decode path, and the Gemma native tool-call
+        // parser/cache hardening plus LFM/ZAYA cache proof pins carried by
+        // the current vMLX runtime branch.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "4b61e498a05f7c90c76a0fff01355aebaa525056"
+        let expectedRuntimeHardenedRevision = "a0eab48e251fe33566f0ee399fa013afbf9d4c27"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
