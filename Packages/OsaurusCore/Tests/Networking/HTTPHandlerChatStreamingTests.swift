@@ -823,6 +823,92 @@ struct HTTPHandlerChatStreamingTests {
         }
     }
 
+    // MARK: - Built-in agent loopback exposure (App Intents surface)
+
+    /// Loopback callers (no auth, same machine) may reach the built-in Default
+    /// agent via `/agents/{id}/run` so the App Intents "Ask Osaurus" surface
+    /// can drive it. The request must pass the built-in guard rather than
+    /// returning a `built_in_agent_not_exposable` envelope.
+    @Test func builtInAgentRun_overLoopback_bypassesGuard() async throws {
+        struct EchoEngine: ChatEngineProtocol {
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                AsyncThrowingStream { continuation in
+                    continuation.yield("OK-BUILTIN")
+                    continuation.finish()
+                }
+            }
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        let server = try await startTestServer(with: EchoEngine(), trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(
+                string:
+                    "http://\(server.host):\(server.port)/agents/\(Agent.defaultId.uuidString)/run"
+            )!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.disablePersistenceForTests()
+        request.httpBody = #"""
+            {"model":"fake","stream":true,"messages":[{"role":"user","content":"hi"}]}
+            """#.data(using: .utf8)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        // Headers are flushed as 200 once the guard is cleared and streaming
+        // begins, so a passing guard yields 200 (never the 403 envelope).
+        #expect(status == 200)
+        #expect(!body.contains("built_in_agent_not_exposable"))
+    }
+
+    /// Non-loopback (remote) callers remain blocked from the built-in agent
+    /// even with a valid API key.
+    @Test func builtInAgentRun_remote_isRejected() async throws {
+        struct UnusedEngine: ChatEngineProtocol {
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > { fatalError("not used") }
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        // trustLoopback: false makes `isLoopbackConnection` return false, so the
+        // 127.0.0.1 test client is treated as a remote caller.
+        let server = try await startTestServer(with: UnusedEngine(), trustLoopback: false)
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(
+                string:
+                    "http://\(server.host):\(server.port)/agents/\(Agent.defaultId.uuidString)/run"
+            )!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = #"""
+            {"model":"fake","stream":true,"messages":[{"role":"user","content":"hi"}]}
+            """#.data(using: .utf8)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 403)
+        #expect(body.contains("built_in_agent_not_exposable"))
+    }
+
     // MARK: - Anthropic streaming (`/messages?stream=true`)
 
     @Test func anthropic_sse_emits_thinking_delta_for_reasoning_sentinel() async throws {
@@ -1271,7 +1357,10 @@ private struct TestServer {
 }
 
 @discardableResult
-private func startTestServer(with engine: ChatEngineProtocol) async throws -> TestServer {
+private func startTestServer(
+    with engine: ChatEngineProtocol,
+    trustLoopback: Bool = false
+) async throws -> TestServer {
     let lease = await HTTPServerTestLock.shared.acquire()
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     do {
@@ -1286,7 +1375,7 @@ private func startTestServer(with engine: ChatEngineProtocol) async throws -> Te
                             apiKeyValidator: TestAuth.validator,
                             eventLoop: channel.eventLoop,
                             chatEngine: engine,
-                            trustLoopback: false
+                            trustLoopback: trustLoopback
                         )
                     )
                 }

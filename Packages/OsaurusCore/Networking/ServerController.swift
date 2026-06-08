@@ -91,6 +91,18 @@ final class ServerController: ObservableObject {
         isLaunchComplete = true
     }
 
+    /// Brings the embedded HTTP server up on the live controller instance if it
+    /// is not already running. Used by the App Intents surface to provide a
+    /// fast, headless server-up path before issuing a localhost request. No-op
+    /// when no controller has been wired (e.g. the app has not finished
+    /// launching), in which case callers fall back to retry-with-backoff.
+    static func ensureRunning() async {
+        guard let controller = ServerControllerHolder.shared.controller else { return }
+        if !controller.isRunning {
+            await controller.startServer()
+        }
+    }
+
     /// Starts the server with current configuration
     func startServer() async {
         guard !isRunning else { return }

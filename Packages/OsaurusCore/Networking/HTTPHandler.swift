@@ -3181,10 +3181,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         // Built-in agents (the Default agent) are not reachable from any
-        // external surface — they exist only inside the in-app Chat. Reject
+        // remote surface — they exist only inside the in-app Chat. Reject
         // before any enrichment so secrets / system prompts / memory writes
-        // for built-ins are unreachable from HTTP.
-        if let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run") {
+        // for built-ins are unreachable from remote HTTP.
+        //
+        // Loopback callers are trusted (same machine, no auth) and are allowed
+        // to reach the built-in agent so the App Intents "Ask Osaurus" surface
+        // can drive the in-app default agent. This exposes the built-in agent's
+        // persona/memory/tools to any localhost process, which is acceptable
+        // under the existing no-auth-loopback model.
+        if !isLoopbackConnection(context),
+            let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run")
+        {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -3632,6 +3640,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
         let agentIdentifier = String(components[1])
 
+        // Loopback callers (same machine, no auth) are allowed to dispatch to
+        // the built-in agent so App Intents "Run Osaurus Agent" / "Ask Osaurus"
+        // can drive it as a detached background task. Remote callers remain
+        // blocked from the built-in agent.
+        let isLoopback = isLoopbackConnection(context)
+
         runRequestTask(priority: .userInitiated) {
             // Resolve identifier: try UUID first, then crypto address
             guard let agentId = await MainActor.run(body: { AgentManager.shared.resolveAgentId(agentIdentifier) })
@@ -3650,10 +3664,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
-            if let rejection = Agent.rejectBuiltInForExternalSurface(
-                agentId,
-                source: "http/agents/dispatch"
-            ) {
+            if !isLoopback,
+                let rejection = Agent.rejectBuiltInForExternalSurface(
+                    agentId,
+                    source: "http/agents/dispatch"
+                )
+            {
                 let bodyJSON =
                     #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
                 hop {
