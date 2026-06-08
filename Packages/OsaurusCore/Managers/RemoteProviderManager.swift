@@ -189,6 +189,15 @@ public final class RemoteProviderManager: ObservableObject {
         notifyStatusChanged()
     }
 
+    /// Reorder providers to match `orderedIds` and persist. Omitted IDs keep
+    /// their relative position after the requested ones, so a partial list never
+    /// drops providers. Connection state is untouched — only display order moves.
+    public func reorder(orderedIds: [UUID]) {
+        configuration.reorder(orderedIds: orderedIds)
+        RemoteProviderConfigurationStore.save(configuration)
+        notifyStatusChanged()
+    }
+
     // MARK: - Connection Management
 
     /// Connect to a provider (fetch models and create service)

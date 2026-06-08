@@ -389,8 +389,19 @@ final class PluginManager {
             // already exercised the misalignment-prone host call
             // pattern, so this fan-out preserves perf without giving
             // up the crash-loop guard.
-            for agent in agents {
-                deliverInitialConfig(to: loaded, agentId: agent.id)
+            //
+            // Resolve and deliver the per-agent config off the main
+            // actor: the secret reads behind it round-trip to the
+            // authentication daemon over blocking XPC, which can stall
+            // the main thread for seconds at launch. The plugin's
+            // `on_config_changed` already runs on its own serial queue,
+            // so nothing on this path needs the main thread.
+            let agentIds = agents.map(\.id)
+            Task.detached(priority: .userInitiated) { [weak self] in
+                guard let self else { return }
+                for agentId in agentIds {
+                    self.deliverInitialConfig(to: loaded, agentId: agentId)
+                }
             }
 
             if !loaded.routes.isEmpty {
@@ -431,7 +442,7 @@ final class PluginManager {
     /// crash-looping the host. Runtime callers (agent added,
     /// PluginConfigView save) leave `sync == false` to keep the existing
     /// fire-and-forget semantics.
-    private func deliverInitialConfig(
+    nonisolated private func deliverInitialConfig(
         to loaded: LoadedPlugin,
         agentId: UUID,
         sync: Bool = false,
@@ -603,8 +614,16 @@ final class PluginManager {
         status: AgentRelayStatus?,
         force: Bool
     ) {
-        for loaded in plugins {
-            deliverInitialConfig(to: loaded, agentId: agentId, force: force)
+        // Resolve and deliver each plugin's config off the main actor;
+        // the secret reads behind it block on authentication-daemon XPC
+        // and must not stall the main thread when an agent is added or a
+        // relay reconnects.
+        let loadedPlugins = plugins
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            for loaded in loadedPlugins {
+                self.deliverInitialConfig(to: loaded, agentId: agentId, force: force)
+            }
         }
         guard case .connected(let url) = status else { return }
         for loaded in plugins where !loaded.routes.isEmpty {
