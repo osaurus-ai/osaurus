@@ -9,19 +9,19 @@
 import AppIntents
 import OsaurusCore
 
-/// Ask the built-in Osaurus agent and return its reply.
+/// Ask the currently active Osaurus agent and return its reply.
 ///
 /// This awaits the streaming `/agents/{id}/run` result. A short ask completes
 /// well within the intent time budget; an ask that triggers heavy tool use can
 /// exceed it (the run is connection-bound and would be cancelled).
 struct AskOsaurusIntent: AppIntent {
     static let title: LocalizedStringResource = "Ask Osaurus"
-    static let description = IntentDescription("Ask the default Osaurus agent.")
+    static let description = IntentDescription("Ask the active Osaurus agent.")
 
     @Parameter(title: "Prompt") var prompt: String
 
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-        let id = try await OsaurusLocalClient.shared.defaultAgentID()
+        let id = await OsaurusLocalClient.shared.activeAgentID()
         let reply = try await OsaurusLocalClient.shared.runAgent(id: id, prompt: prompt)
         return .result(value: reply, dialog: "\(reply)")
     }

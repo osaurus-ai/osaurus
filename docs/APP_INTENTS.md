@@ -15,7 +15,7 @@ Two app shortcuts are available the moment Osaurus is installed — no setup:
 
 | Shortcut | Intent | Behavior |
 |----------|--------|----------|
-| **Ask Osaurus** | `AskOsaurusIntent` | Sends a prompt to the built-in "Osaurus" agent and returns/speaks the reply. Awaits the result. |
+| **Ask Osaurus** | `AskOsaurusIntent` | Sends a prompt to the **currently active** agent (`AgentManager.activeAgentId`) and returns/speaks the reply. Awaits the result. |
 | **Run Osaurus Agent** | `RunAgentIntent` | Starts one of your custom agents in the background (fire-and-confirm). Progress and results surface in Osaurus's own Work Mode and toasts. |
 
 Example phrases (each must contain the app name):
@@ -38,7 +38,7 @@ flowchart TD
     siri["Shortcuts / Spotlight / Siri"] --> intent["AskOsaurusIntent / RunAgentIntent (main app target)"]
     intent --> ensure["ensure server up in-process (ServerController.ensureRunning)"]
     ensure --> client["OsaurusLocalClient over 127.0.0.1:port"]
-    client -->|"Ask: await reply"| run["POST /agents/{builtInId}/run (SSE to [DONE])"]
+    client -->|"Ask: await reply"| run["POST /agents/{activeId}/run (SSE to [DONE])"]
     client -->|"Run: fire-and-confirm"| dispatch["POST /agents/{id}/dispatch (202)"]
     query["AgentQuery.suggestedEntities"] -->|"reads disk"| store["AgentStore.loadAll, filter custom"]
 ```
@@ -71,7 +71,7 @@ group and no shared snapshot file — the live source of truth is read directly.
 
 | Intent | Endpoint | Why |
 |--------|----------|-----|
-| Ask Osaurus | `POST /agents/{id}/run` | The full agent loop (persona, memory, skills, tools). Streams SSE; the client reads to the `[DONE]` frame and concatenates `choices[].delta.content`. Short asks finish well within the intent time budget. |
+| Ask Osaurus | `POST /agents/{activeId}/run` | The full agent loop (persona, memory, skills, tools) on the currently active agent. Streams SSE; the client reads to the `[DONE]` frame and concatenates `choices[].delta.content`. Short asks finish well within the intent time budget. |
 | Run Osaurus Agent | `POST /agents/{id}/dispatch` | A **detached** background run that survives the client disconnecting. Returns `202` immediately with a `poll_url`; the run continues in the app. |
 
 `POST /agents/{id}/run` is a streaming, **connection-bound** loop (capped at 30
@@ -83,9 +83,9 @@ for a short "ask" but wrong for a long, tool-heavy run — which is exactly why
 
 `AgentQuery` reads `AgentStore.loadAll()` on the main actor and filters to
 **custom** agents (mirroring `GET /agents`, which also omits built-ins). The
-built-in "Osaurus" agent is intentionally excluded from the picker because it
-is covered by the dedicated "Ask Osaurus" shortcut. `AgentQuery` also conforms
-to `EntityStringQuery` so Siri and Spotlight can match agents by name.
+built-in "Osaurus" agent is intentionally excluded from the picker — "Ask
+Osaurus" targets the active agent instead. `AgentQuery` also conforms to
+`EntityStringQuery` so Siri and Spotlight can match agents by name.
 
 Because picker population reads from disk, it works even when the server isn't
 running.
@@ -106,12 +106,14 @@ menu-bar app to handle them, and the server is brought up headlessly.
 
 ### The built-in agent over loopback
 
-By default the built-in agent is **blocked on all HTTP surfaces**
-(`BuiltInAgentGuard` → `403 built_in_agent_not_exposable`) so its persona,
-memory, and tools are reachable only from the in-app Chat. To let "Ask Osaurus"
-drive it, the guard is **relaxed for loopback callers only** on
-`/agents/{id}/run` and `/agents/{id}/dispatch` (see `HTTPHandler.swift`). Remote
-callers remain blocked.
+"Ask Osaurus" follows the active agent, which **defaults to the built-in
+"Osaurus" agent** until the user selects a different one. By default the
+built-in agent is **blocked on all HTTP surfaces** (`BuiltInAgentGuard` →
+`403 built_in_agent_not_exposable`) so its persona, memory, and tools are
+reachable only from the in-app Chat. So that "Ask Osaurus" works when the
+built-in is the active agent, the guard is **relaxed for loopback callers only**
+on `/agents/{id}/run` and `/agents/{id}/dispatch` (see `HTTPHandler.swift`).
+Remote callers remain blocked.
 
 > Security note: this exposes the built-in agent to any process on `localhost`
 > without authentication, consistent with Osaurus's existing no-auth-loopback

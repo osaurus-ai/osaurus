@@ -47,9 +47,13 @@ public final class OsaurusLocalClient: Sendable {
 
     // MARK: - Agent resolution
 
-    /// The built-in ("Osaurus") agent id. "Ask Osaurus" targets this agent.
-    public func defaultAgentID() async throws -> String {
-        Agent.defaultId.uuidString
+    /// The currently active agent's id. "Ask Osaurus" targets whatever agent
+    /// the user has selected in the app (`AgentManager.activeAgentId`), which is
+    /// restored from persistence on launch. This may resolve to the built-in
+    /// "Osaurus" agent when that is the active one — which is why the run/dispatch
+    /// endpoints relax their built-in guard for loopback callers.
+    public func activeAgentID() async -> String {
+        await MainActor.run { AgentManager.shared.activeAgentId.uuidString }
     }
 
     // MARK: - Execution
