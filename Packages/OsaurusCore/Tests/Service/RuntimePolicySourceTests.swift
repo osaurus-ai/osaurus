@@ -546,12 +546,14 @@ struct RuntimePolicySourceTests {
         // down-projection kernel kept opt-in after live Ultra rows showed it
         // regresses the default decode path, and the Gemma native tool-call
         // parser/cache hardening plus LFM/ZAYA cache proof pins carried by
-        // the current vMLX runtime branch.
+        // the current vMLX runtime branch, including stale ZAYA tool-template
+        // shim detection so tagged but non-choice-aware local templates do not
+        // bypass required-tool handling.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "a0eab48e251fe33566f0ee399fa013afbf9d4c27"
+        let expectedRuntimeHardenedRevision = "6ab63e457deee944d39fa86ea3431dca3067953f"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
