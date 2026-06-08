@@ -71,6 +71,9 @@ struct ModelDetailView: View, Identifiable {
     @State private var isRepairing = false
     @State private var repairResult: Bool?
 
+    /// Transient "copied" feedback for the external-model path copy button
+    @State private var didCopyPath = false
+
     /// Normalized model ID for API usage
     private var apiModelId: String {
         let last = model.id.split(separator: "/").last.map(String.init) ?? model.name
@@ -854,42 +857,71 @@ struct ModelDetailView: View, Identifiable {
 
     private var completedFooter: some View {
         HStack(spacing: 12) {
-            Button(action: {
-                Task { await modelManager.deleteModel(model) }
-                dismiss()
-            }) {
-                Text("Delete Model", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.errorColor)
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            Button(action: {
-                repairResult = nil
-                isRepairing = true
-                Task {
-                    await repairModel()
-                    isRepairing = false
-                }
-            }) {
-                HStack(spacing: 4) {
-                    if isRepairing {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle())
-                            .scaleEffect(0.5)
-                            .frame(width: 12, height: 12)
-                    } else if let result = repairResult {
-                        Image(systemName: result ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(result ? theme.successColor : theme.errorColor)
+            if isExternalModel {
+                // Externally-discovered models (Hugging Face cache, LM Studio)
+                // aren't owned by Osaurus, so in-app delete can't remove their
+                // files — it only forgets them until the next rescan re-adds
+                // them. Offer "Reveal in Finder" instead so users can delete
+                // these unrecognized models manually.
+                Button(action: revealModelInFinder) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 12))
+                        Text("Reveal in Finder", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
                     }
-                    Text("Repair", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                    .foregroundColor(theme.accentColor)
                 }
+                .buttonStyle(PlainButtonStyle())
+
+                Button(action: copyModelPath) {
+                    HStack(spacing: 4) {
+                        Image(systemName: didCopyPath ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 12))
+                        Text(didCopyPath ? "Copied!" : "Copy Path", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(didCopyPath ? theme.successColor : theme.secondaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+            } else {
+                Button(action: {
+                    Task { await modelManager.deleteModel(model) }
+                    dismiss()
+                }) {
+                    Text("Delete Model", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.errorColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Button(action: {
+                    repairResult = nil
+                    isRepairing = true
+                    Task {
+                        await repairModel()
+                        isRepairing = false
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        if isRepairing {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle())
+                                .scaleEffect(0.5)
+                                .frame(width: 12, height: 12)
+                        } else if let result = repairResult {
+                            Image(systemName: result ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .font(.system(size: 11))
+                                .foregroundColor(result ? theme.successColor : theme.errorColor)
+                        }
+                        Text("Repair", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isRepairing)
             }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(isRepairing)
 
             Spacer()
 
@@ -905,6 +937,32 @@ struct ModelDetailView: View, Identifiable {
                     )
             }
             .buttonStyle(PlainButtonStyle())
+        }
+    }
+
+    /// True for models discovered outside Osaurus (Hugging Face cache, LM
+    /// Studio). Their files live in another app's directory, so Osaurus
+    /// offers "Reveal in Finder" rather than an in-app delete.
+    private var isExternalModel: Bool {
+        model.externalSource != nil || model.bundleDirectory != nil
+    }
+
+    /// Selects the model's on-disk bundle in Finder so the user can inspect
+    /// or delete it manually.
+    private func revealModelInFinder() {
+        NSWorkspace.shared.activateFileViewerSelecting([model.localDirectory])
+    }
+
+    /// Copies the model's on-disk path to the pasteboard, with brief
+    /// "Copied!" feedback on the button.
+    private func copyModelPath() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(model.localDirectory.path, forType: .string)
+
+        withAnimation(.easeInOut(duration: 0.15)) { didCopyPath = true }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            withAnimation(.easeInOut(duration: 0.15)) { didCopyPath = false }
         }
     }
 
