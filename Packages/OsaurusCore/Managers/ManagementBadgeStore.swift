@@ -135,7 +135,6 @@ public final class ManagementBadgeStore: ObservableObject {
     /// task so the recompute itself never blocks the main thread.
     private func recompute() {
         var counts: [ManagementTab: Int] = [:]
-        counts[.models] = ModelManager.shared.availableModels.filter { $0.isDownloaded }.count
         counts[.providers] =
             RemoteProviderManager.shared.providerStates.values.filter(\.isConnected).count
         counts[.plugins] = PluginRepositoryService.shared.plugins.filter { $0.isInstalled }.count
@@ -152,6 +151,9 @@ public final class ManagementBadgeStore: ObservableObject {
         // Preserve previously-known values for the metrics we'll refresh
         // off-MainActor; otherwise the badge would flicker to 0 every
         // recompute until the background task completes.
+        if let prior = snapshot.counts[.models] {
+            counts[.models] = prior
+        }
         if let prior = snapshot.counts[.memory] {
             counts[.memory] = prior
         }
@@ -173,17 +175,22 @@ public final class ManagementBadgeStore: ObservableObject {
         }
 
         // Background metrics. SQLite must not run on the main thread from a
-        // SwiftUI body, so we hoist it here. Do not probe identity/Keychain
-        // from this path; startup badge freshness is less important than
-        // avoiding password prompts while local chat boots.
+        // SwiftUI body, so we hoist it here. The models count is also
+        // resolved here: `isDownloaded` walks the model directory on a cache
+        // miss, so doing it inline would block the main thread. Do not probe
+        // identity/Keychain from this path; startup badge freshness is less
+        // important than avoiding password prompts while local chat boots.
+        let models = ModelManager.shared.availableModels
         Task.detached(priority: .utility) { [weak self] in
+            let downloadedModels = models.filter { $0.isDownloaded }.count
             let pinned = (try? MemoryDatabase.shared.pinnedFactStats()) ?? 0
-            await self?.applyBackgroundBadges(pinnedFacts: pinned)
+            await self?.applyBackgroundBadges(downloadedModels: downloadedModels, pinnedFacts: pinned)
         }
     }
 
-    private func applyBackgroundBadges(pinnedFacts: Int) {
+    private func applyBackgroundBadges(downloadedModels: Int, pinnedFacts: Int) {
         var counts = snapshot.counts
+        counts[.models] = downloadedModels
         counts[.memory] = pinnedFacts
 
         let next = Snapshot(counts: counts, highlights: snapshot.highlights)
