@@ -2,8 +2,8 @@
 //  OnboardingChoosePluginsView.swift
 //  osaurus
 //
-//  Onboarding step 6 — pick a few starter tools (browser, spreadsheet,
-//  slides, …) before landing in the walkthrough. The list is curated
+//  Onboarding step 6 — pick a few starter tools (browser, macOS control,
+//  file access, …) before landing in the walkthrough. The list is curated
 //  locally in `ChoosePluginsState.curated`; we filter against the live
 //  `PluginRepositoryService` so any pick missing from the remote
 //  catalog just doesn't show up.
@@ -51,9 +51,9 @@ final class ChoosePluginsState: ObservableObject {
     /// remote catalog (`PluginRepositoryService.shared.plugins`) are
     /// surfaced; everything else is silently dropped.
     ///
-    /// Skew is intentionally work-focused (browser + spreadsheets +
-    /// slides) for the default-on picks so the first-run agent can
-    /// actually do something useful out of the box.
+    /// The browser is the only default-on pick so the first-run agent can
+    /// do something useful out of the box without pre-enabling tools that
+    /// need extra system permissions (macOS Use, Calendar, Messages, …).
     static let curated: [OnboardingPluginPick] = [
         OnboardingPluginPick(
             pluginId: "osaurus.browser",
@@ -63,17 +63,10 @@ final class ChoosePluginsState: ObservableObject {
             isDefaultOn: true
         ),
         OnboardingPluginPick(
-            pluginId: "osaurus.xlsx",
-            displayName: "Excel",
-            blurb: "Read and build Excel spreadsheets.",
-            icon: "tablecells.fill",
-            isDefaultOn: true
-        ),
-        OnboardingPluginPick(
-            pluginId: "osaurus.pptx",
-            displayName: "PowerPoint",
-            blurb: "Build PowerPoint decks from scratch.",
-            icon: "rectangle.on.rectangle.angled",
+            pluginId: "osaurus.macos-use",
+            displayName: "macOS Use",
+            blurb: "Control Mac apps by clicking and typing.",
+            icon: "macwindow",
             isDefaultOn: false
         ),
         OnboardingPluginPick(

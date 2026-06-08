@@ -6994,6 +6994,7 @@
       }
     },
     "Build PowerPoint decks from scratch." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -33011,6 +33012,7 @@
       }
     },
     "Read and build Excel spreadsheets." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
