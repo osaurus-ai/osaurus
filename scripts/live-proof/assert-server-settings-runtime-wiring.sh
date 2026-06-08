@@ -110,7 +110,7 @@ require_text "$STORE" 'enableSSMReDerive: true' \
   "migration defaults SSM rederive on"
 require_text "$STORE" 'normalized\.mtp\.mode = \.auto' \
   "persisted old MTP-off defaults repair to auto"
-require_text "$STORE" 'updated\.genTopP = settings\.generation\.topP\.map\(Float\.init\)\n            \?\? ServerConfiguration\.default\.genTopP' \
+require_text "$STORE" 'updated\.genTopP =\n            settings\.generation\.topP\.map\(Float\.init\)\n            \?\? ServerConfiguration\.default\.genTopP' \
   "blank runtime top-p clears stale legacy top-p"
 
 echo "--- runtime consumption ---"
