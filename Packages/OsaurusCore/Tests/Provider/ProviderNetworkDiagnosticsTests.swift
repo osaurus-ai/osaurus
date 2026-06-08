@@ -27,8 +27,8 @@ struct ProviderNetworkDiagnosticsTests {
 
         let auth = row("auth", in: report)
         #expect(auth.severity == .blocked)
-        #expect(auth.value == "ChatGPT sign-in required")
-        #expect(report.pasteboardText.contains("ChatGPT sign-in required"))
+        #expect(auth.value == L("ChatGPT sign-in required"))
+        #expect(report.pasteboardText.contains(L("ChatGPT sign-in required")))
         #expect(!report.pasteboardText.contains("secret-token"))
     }
 
@@ -47,8 +47,8 @@ struct ProviderNetworkDiagnosticsTests {
 
         let auth = row("auth", in: report)
         #expect(auth.severity == .blocked)
-        #expect(auth.value == "xAI sign-in required")
-        #expect(report.pasteboardText.contains("xAI sign-in required"))
+        #expect(auth.value == L("xAI sign-in required"))
+        #expect(report.pasteboardText.contains(L("xAI sign-in required")))
         #expect(!report.pasteboardText.contains("secret-token"))
     }
 
@@ -72,8 +72,9 @@ struct ProviderNetworkDiagnosticsTests {
             oauthTokensPresent: false
         )
 
-        #expect(row("models", in: report).value == "Fallback available")
-        #expect(row("models", in: report).detail?.contains("Manual IDs") == true)
+        #expect(row("models", in: report).value == L("Fallback available"))
+        // "/models" appears in the detail text across all localizations.
+        #expect(row("models", in: report).detail?.contains("/models") == true)
         #expect(row("format", in: report).detail?.contains("response_format=json_schema") == true)
     }
 
@@ -98,7 +99,7 @@ struct ProviderNetworkDiagnosticsTests {
             oauthTokensPresent: false
         )
 
-        #expect(row("proxy", in: report).value == "Ignored")
+        #expect(row("proxy", in: report).value == L("Ignored"))
         #expect(row("proxy", in: report).severity == .warning)
     }
 
@@ -123,7 +124,7 @@ struct ProviderNetworkDiagnosticsTests {
 
         #expect(row("transport", in: report).value == "Stdio host")
         #expect(row("transport", in: report).severity == .warning)
-        #expect(row("proxy", in: report).value == "Not used for stdio")
+        #expect(row("proxy", in: report).value == L("Not used for stdio"))
         #expect(row("repro", in: report).detail?.contains("listTools") == true)
     }
 

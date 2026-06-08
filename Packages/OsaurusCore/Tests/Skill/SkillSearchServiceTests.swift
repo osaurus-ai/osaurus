@@ -18,7 +18,7 @@ struct SkillSearchServiceTests {
             query: "sandbox plugin creator integration tools",
             threshold: 0.25
         )
-        #expect(results.contains { $0.skill.name == "Sandbox Plugin Creator" })
+        #expect(results.contains { $0.skill.name == L("Sandbox Plugin Creator") })
     }
 
     @Test func indexSkillDoesNotCrashWhenUninitialized() async {

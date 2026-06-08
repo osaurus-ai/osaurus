@@ -37,7 +37,7 @@ struct StructuredDocumentAttachmentMetadataTests {
         #expect(attachment.structuredDocumentMetadata?.formatId == "csv")
         #expect(attachment.structuredDocumentMetadata?.representationFormatId == "csv")
         #expect(attachment.businessDocumentSummary?.kind == .table)
-        #expect(attachment.businessDocumentSummary?.chipDetailLabel == "Table - 42 bytes")
+        #expect(attachment.businessDocumentSummary?.chipDetailLabel == "Table - \(Self.formattedBytes(42))")
     }
 
     @Test func metadataSurvivesCodableRoundTrip() throws {
@@ -88,7 +88,7 @@ struct StructuredDocumentAttachmentMetadataTests {
         let summary = attachment.businessDocumentSummary
         #expect(summary?.kind == .workbook)
         #expect(summary?.isStructured == false)
-        #expect(summary?.chipDetailLabel == "Workbook - 2 KB")
+        #expect(summary?.chipDetailLabel == "Workbook - \(Self.formattedBytes(2_048))")
         #expect(attachment.fileIcon == "tablecells")
     }
 
@@ -124,7 +124,10 @@ struct StructuredDocumentAttachmentMetadataTests {
         #expect(metadata?.hasActiveContent == true)
         #expect(metadata?.structureSummary?.sheetCount == 1)
         #expect(metadata?.structureSummary?.tableCount == 1)
-        #expect(attachment.businessDocumentSummary?.chipDetailLabel == "Workbook - 1 sheet - Review - 4 KB")
+        #expect(
+            attachment.businessDocumentSummary?.chipDetailLabel
+                == "Workbook - 1 sheet - Review - \(Self.formattedBytes(4_096))"
+        )
     }
 
     @Test func parseAllAttachesMetadataFromRegistryAdapter() throws {
@@ -155,6 +158,10 @@ struct StructuredDocumentAttachmentMetadataTests {
             .appendingPathComponent("osaurus-structured-attachment-\(UUID().uuidString).\(ext)")
         try content.write(to: url, atomically: true, encoding: .utf8)
         return url
+    }
+
+    private static func formattedBytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
     }
 
     private static func sampleStructuredDocument(

@@ -217,31 +217,31 @@ struct BackgroundTaskStatusTests {
     @Test func runningIsActive() {
         let status = BackgroundTaskStatus.running
         #expect(status.isActive == true)
-        #expect(status.displayName == "Running")
+        #expect(status.displayName == L("Running"))
     }
 
     @Test func awaitingClarificationIsActive() {
         let status = BackgroundTaskStatus.awaitingClarification
         #expect(status.isActive == true)
-        #expect(status.displayName == "Waiting")
+        #expect(status.displayName == L("Waiting"))
     }
 
     @Test func completedSuccessIsNotActive() {
         let status = BackgroundTaskStatus.completed(success: true, summary: "Done")
         #expect(status.isActive == false)
-        #expect(status.displayName == "Completed")
+        #expect(status.displayName == L("Completed"))
     }
 
     @Test func completedFailureIsNotActive() {
         let status = BackgroundTaskStatus.completed(success: false, summary: "Error")
         #expect(status.isActive == false)
-        #expect(status.displayName == "Failed")
+        #expect(status.displayName == L("Failed"))
     }
 
     @Test func cancelledIsNotActive() {
         let status = BackgroundTaskStatus.cancelled
         #expect(status.isActive == false)
-        #expect(status.displayName == "Cancelled")
+        #expect(status.displayName == L("Cancelled"))
     }
 
     @Test func iconNames() {

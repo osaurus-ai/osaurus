@@ -120,7 +120,7 @@ struct PostScrubInvariantTests {
             categoryCounts: [.phone: 2]
         )
         #expect(msg.contains("2"))
-        #expect(msg.lowercased().contains("phone"))
+        #expect(msg.lowercased().contains(L("privacy.category.phone").lowercased()))
     }
 
     /// Two categories — the formatter joins them with a localized
@@ -131,8 +131,8 @@ struct PostScrubInvariantTests {
         let msg = PrivacyFilterPipelineError.formatScrubLeaked(
             categoryCounts: [.phone: 1, .email: 1]
         )
-        #expect(msg.lowercased().contains("phone"))
-        #expect(msg.lowercased().contains("email"))
+        #expect(msg.lowercased().contains(L("privacy.category.phone").lowercased()))
+        #expect(msg.lowercased().contains(L("privacy.category.email").lowercased()))
     }
 
     /// Whatever the categories, the value of a leaked entity never

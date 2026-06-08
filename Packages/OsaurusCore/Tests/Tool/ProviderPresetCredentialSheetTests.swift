@@ -116,7 +116,7 @@ struct ProviderPresetCredentialSheetTests {
         // so that contract stays honest.
         let entry = ProviderCredentialInstructionsCatalog.entry(for: .ollama)
         #expect(entry.storageAuthType == .none)
-        #expect(entry.keyFormatHint?.contains("blank") == true)
+        #expect(entry.keyFormatHint?.isEmpty == false)
     }
 
     @Test

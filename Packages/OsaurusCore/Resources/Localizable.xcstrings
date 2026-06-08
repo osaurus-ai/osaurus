@@ -28319,7 +28319,20 @@
       }
     },
     "No providers to reorder." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Anbieter zum Neubeschaffen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可重新排序的供应商。"
+          }
+        }
+      }
     },
     "No Remote Providers" : {
       "localizations" : {
@@ -37921,10 +37934,36 @@
       }
     },
     "Reorder providers" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anbieter neu bestellen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新排序供应商"
+          }
+        }
+      }
     },
     "Reorder Providers" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anbieter neu bestellen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新排序供应商"
+          }
+        }
+      }
     },
     "Repair" : {
       "localizations" : {

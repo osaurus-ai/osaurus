@@ -89,7 +89,7 @@ struct ModelDownloadServiceStorageTests {
             freeBytes: 500_000_000
         )
         guard let message else { Issue.record("expected refusal"); return }
-        #expect(message.contains(" GB") || message.contains(" MB"))
+        #expect(message.contains("GB") || message.contains("MB"))
         #expect(!message.contains("5000000000"))
     }
 
