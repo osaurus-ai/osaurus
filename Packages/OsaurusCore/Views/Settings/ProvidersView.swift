@@ -459,11 +459,11 @@ private struct ProviderCard: View {
             }
         }
         .themedAlert(
-            "Delete Provider?",
+            L("Delete Provider?"),
             isPresented: $showDeleteConfirm,
-            message: "This will remove the provider and all its tools. This cannot be undone.",
-            primaryButton: .destructive("Delete") { onDelete() },
-            secondaryButton: .cancel("Cancel")
+            message: L("This will remove the provider and all its tools. This cannot be undone."),
+            primaryButton: .destructive(L("Delete")) { onDelete() },
+            secondaryButton: .cancel(L("Cancel"))
         )
     }
 
@@ -505,7 +505,7 @@ private struct ProviderCard: View {
             return provider.url
         case .stdio:
             if provider.command.isEmpty {
-                return "stdio (command not set)"
+                return L("stdio (command not set)")
             }
             let args = ShellArgs.join(provider.args)
             return args.isEmpty ? provider.command : "\(provider.command) \(args)"
@@ -717,15 +717,15 @@ private struct ProviderCard: View {
                 if provider.transport == .http {
                     settingItem(
                         icon: "bolt.fill",
-                        label: "Streaming",
-                        value: provider.streamingEnabled ? "On" : "Off"
+                        label: L("Streaming"),
+                        value: provider.streamingEnabled ? L("On") : L("Off")
                     )
                 }
-                settingItem(icon: "clock", label: "Timeout", value: "\(Int(provider.toolCallTimeout))s")
+                settingItem(icon: "clock", label: L("Timeout"), value: L("\(Int(provider.toolCallTimeout))s"))
                 settingItem(
                     icon: "arrow.clockwise",
-                    label: "Auto-connect",
-                    value: provider.autoConnect ? "Yes" : "No"
+                    label: L("Auto-connect"),
+                    value: provider.autoConnect ? L("Yes") : L("No")
                 )
             }
 
@@ -2025,7 +2025,7 @@ private struct ProviderEditSheet: View {
                     }
                 }) {
                     HStack {
-                        Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
+                        Text(showAdvanced ? L("Hide advanced settings") : L("Show advanced settings"))
                             .font(.system(size: 13))
                             .foregroundColor(themeManager.currentTheme.accentColor)
                         Spacer()

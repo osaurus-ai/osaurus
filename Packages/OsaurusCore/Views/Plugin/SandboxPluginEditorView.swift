@@ -80,7 +80,7 @@ private extension SandboxPluginEditorView {
     var editorHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(isNew ? "Create Plugin" : "Edit Plugin")
+                Text(isNew ? L("Create Plugin") : L("Edit Plugin"))
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
@@ -95,8 +95,8 @@ private extension SandboxPluginEditorView {
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            editorTextField("Plugin Name", text: $plugin.name, fontSize: 14, weight: .medium, radius: 8)
-            editorTextField("Short description", text: $plugin.description, fontSize: 13, radius: 6)
+            editorTextField(L("Plugin Name"), text: $plugin.name, fontSize: 14, weight: .medium, radius: 8)
+            editorTextField(L("Short description"), text: $plugin.description, fontSize: 13, radius: 6)
         }
         .padding(16)
     }
@@ -123,7 +123,12 @@ private extension SandboxPluginEditorView {
                 Button(action: savePlugin) {
                     HStack(spacing: 4) {
                         if showSaveConfirmation { Image(systemName: "checkmark") }
-                        Text(showSaveConfirmation ? "Saved!" : (isNew ? "Create Plugin" : "Save Changes"))
+                        Text(
+                            LocalizedStringKey(
+                                showSaveConfirmation ? "Saved!" : (isNew ? "Create Plugin" : "Save Changes")
+                            ),
+                            bundle: .module
+                        )
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -140,18 +145,18 @@ private extension SandboxPluginEditorView {
 private extension SandboxPluginEditorView {
 
     var identitySection: some View {
-        editorSection("Identity") {
+        editorSection(L("Identity")) {
             labeledField("Author") {
-                editorTextField("Author name", text: optionalBinding(\SandboxPlugin.author))
+                editorTextField(L("Author name"), text: optionalBinding(\SandboxPlugin.author))
             }
-            labeledField("Source") {
-                editorTextField("URL or repository", text: optionalBinding(\SandboxPlugin.source))
+            labeledField(L("Source")) {
+                editorTextField(L("URL or repository"), text: optionalBinding(\SandboxPlugin.source))
             }
         }
     }
 
     var dependenciesSection: some View {
-        editorSection("Dependencies", itemCount: plugin.dependencies?.count) {
+        editorSection(L("Dependencies"), itemCount: plugin.dependencies?.count) {
             Text("System packages installed via apk", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
@@ -160,13 +165,13 @@ private extension SandboxPluginEditorView {
                     get: { plugin.dependencies ?? [] },
                     set: { plugin.dependencies = $0.isEmpty ? nil : $0 }
                 ),
-                placeholder: "Package name (e.g. python3)"
+                placeholder: L("Package name (e.g. python3)")
             )
         }
     }
 
     var setupSection: some View {
-        editorSection("Setup Command") {
+        editorSection(L("Setup Command")) {
             Text("Shell command run after dependencies are installed", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
@@ -175,13 +180,13 @@ private extension SandboxPluginEditorView {
                     get: { plugin.setup ?? "" },
                     set: { plugin.setup = $0.isEmpty ? nil : $0 }
                 ),
-                placeholder: "e.g. pip install -r requirements.txt"
+                placeholder: L("e.g. pip install -r requirements.txt")
             )
         }
     }
 
     var toolsSection: some View {
-        editorSection("Tools", itemCount: plugin.tools?.count) {
+        editorSection(L("Tools"), itemCount: plugin.tools?.count) {
             if let tools = plugin.tools, !tools.isEmpty {
                 ForEach(Array(tools.enumerated()), id: \.offset) { index, tool in
                     toolCard(index: index, tool: tool)
@@ -199,7 +204,7 @@ private extension SandboxPluginEditorView {
     }
 
     var filesSection: some View {
-        editorSection("Files", itemCount: plugin.files?.count) {
+        editorSection(L("Files"), itemCount: plugin.files?.count) {
             Text("Files seeded into the plugin directory", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
@@ -221,7 +226,7 @@ private extension SandboxPluginEditorView {
     }
 
     var metadataSection: some View {
-        editorSection("Metadata", itemCount: plugin.metadata?.count) {
+        editorSection(L("Metadata"), itemCount: plugin.metadata?.count) {
             Text("Custom JSON data preserved across exports and imports", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
@@ -258,7 +263,7 @@ private extension SandboxPluginEditorView {
                 Image(systemName: "wrench")
                     .font(.system(size: 10))
                     .foregroundColor(theme.accentColor)
-                Text(tool.id.isEmpty ? "New Tool" : tool.id)
+                Text(tool.id.isEmpty ? L("New Tool") : tool.id)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
@@ -274,7 +279,7 @@ private extension SandboxPluginEditorView {
                 editorTextField("tool_id", text: toolBinding(index: index, keyPath: \.id))
             }
             labeledField("Description") {
-                editorTextField("What this tool does", text: toolDescriptionBinding(index: index))
+                editorTextField(L("What this tool does"), text: toolDescriptionBinding(index: index))
             }
             labeledField("Run Command") {
                 codeField(text: toolRunBinding(index: index), placeholder: "Shell command to execute")
@@ -678,7 +683,7 @@ private extension SandboxPluginEditorView {
     func codeField(text: Binding<String>, placeholder: String, minHeight: CGFloat = 40) -> some View {
         ZStack(alignment: .topLeading) {
             if text.wrappedValue.isEmpty {
-                Text(placeholder)
+                Text(LocalizedStringKey(placeholder), bundle: .module)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundColor(theme.tertiaryText.opacity(0.5))
                     .padding(.top, 8)
@@ -702,7 +707,7 @@ private extension SandboxPluginEditorView {
 
     func labeledField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
             content()

@@ -17,7 +17,15 @@ enum VoiceTab: String, CaseIterable, AnimatedTabItem {
     case vadMode = "VAD Mode"
     case models = "Models"
 
-    var title: String { rawValue }
+    var title: String {
+        switch self {
+        case .setup: return L("Setup")
+        case .speechToText: return L("Speech To Text")
+        case .textToSpeech: return L("Text To Speech")
+        case .vadMode: return L("VAD Mode")
+        case .models: return L("Models")
+        }
+    }
 }
 
 // MARK: - Voice View

@@ -149,8 +149,8 @@ struct ToolsManagerView: View {
                         icon: "wrench.and.screwdriver",
                         title: L("No tools available"),
                         subtitle: searchText.isEmpty
-                            ? "Enable a working folder, sandbox, plugin, or remote provider to add tools"
-                            : "Try a different search term"
+                            ? L("Enable a working folder, sandbox, plugin, or remote provider to add tools")
+                            : L("Try a different search term")
                     )
                 } else {
                     if pluginsWithMissingPermissionsCount > 0 {
@@ -374,12 +374,12 @@ struct ToolsManagerView: View {
 
     private func runtimeBadge(for entry: ToolRegistry.ToolEntry) -> String {
         if ToolRegistry.shared.builtInSandboxToolNamesSnapshot.contains(entry.name) {
-            return "Sandbox"
+            return L("Sandbox")
         }
         if ToolRegistry.folderToolNames.contains(entry.name) {
-            return "Folder"
+            return L("Folder")
         }
-        return "Runtime"
+        return L("Runtime")
     }
 
     private func reload() {

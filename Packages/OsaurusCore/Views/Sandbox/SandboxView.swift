@@ -253,17 +253,17 @@ private extension SandboxView {
                     .init(
                         icon: "puzzlepiece.extension",
                         title: L("Sandbox Plugins"),
-                        description: "Install tools that run inside the VM"
+                        description: L("Install tools that run inside the VM")
                     ),
                     .init(
                         icon: "terminal",
                         title: L("Autonomous Exec"),
-                        description: "Agents run shell commands safely"
+                        description: L("Agents run shell commands safely")
                     ),
                     .init(
                         icon: "lock.shield",
                         title: L("Full Isolation"),
-                        description: "Separate filesystem per agent"
+                        description: L("Separate filesystem per agent")
                     ),
                 ],
                 primaryAction: .init(

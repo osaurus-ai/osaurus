@@ -454,7 +454,7 @@ struct PluginsView: View {
             HeaderIconButton(
                 "arrow.clockwise",
                 isLoading: isRefreshButtonLoading,
-                help: isRefreshButtonLoading ? "Refreshing..." : "Refresh repository"
+                help: isRefreshButtonLoading ? L("Refreshing...") : L("Refresh repository")
             ) {
                 Task {
                     isRefreshButtonLoading = true
@@ -496,8 +496,8 @@ struct PluginsView: View {
                     icon: "puzzlepiece.extension",
                     title: L("No plugins installed"),
                     subtitle: searchText.isEmpty
-                        ? "Browse the repository or import a Claude plugin"
-                        : "Try a different search term"
+                        ? L("Browse the repository or import a Claude plugin")
+                        : L("Try a different search term")
                 )
             } else {
                 ScrollView {

@@ -47,18 +47,18 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     /// Short description shown below the name
     var description: String {
         switch self {
-        case .anthropic: return "Claude models"
-        case .azureOpenAI: return "Azure deployments"
+        case .anthropic: return L("Claude models")
+        case .azureOpenAI: return L("Azure deployments")
         case .atlasCloud: return "DeepSeek, Qwen, GLM, Kimi, MiniMax"
-        case .openai: return "ChatGPT/Codex or Platform API"
-        case .google: return "Gemini models"
-        case .xai: return "Grok models"
+        case .openai: return L("ChatGPT/Codex or Platform API")
+        case .google: return L("Gemini models")
+        case .xai: return L("Grok models")
         case .deepseek: return "deepseek-v4-pro / v4-flash"
-        case .minimax: return "MiniMax M-series models"
-        case .venice: return "Privacy-first AI"
-        case .openrouter: return "Multi-provider"
-        case .ollama: return "Run models locally via Ollama"
-        case .custom: return "Custom endpoint"
+        case .minimax: return L("MiniMax M-series models")
+        case .venice: return L("Privacy-first AI")
+        case .openrouter: return L("Multi-provider")
+        case .ollama: return L("Run models locally via Ollama")
+        case .custom: return L("Custom endpoint")
         }
     }
 
@@ -120,8 +120,8 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     var badge: String? {
         switch self {
         case .azureOpenAI: return "Azure"
-        case .venice: return "Privacy"
-        case .ollama: return "Local"
+        case .venice: return L("Privacy")
+        case .ollama: return L("Local")
         default: return nil
         }
     }
@@ -153,59 +153,59 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .azureOpenAI:
             return [
-                "Open your Azure OpenAI resource in Azure AI Foundry",
-                "Copy the resource endpoint host and an API key",
-                "Add deployment names if they do not appear automatically",
-                "Paste the key here",
+                L("Open your Azure OpenAI resource in Azure AI Foundry"),
+                L("Copy the resource endpoint host and an API key"),
+                L("Add deployment names if they do not appear automatically"),
+                L("Paste the key here"),
             ]
         case .atlasCloud:
             return [
-                "Go to the AtlasCloud API keys page",
-                "Create or copy an API key",
-                "Use the OpenAI-compatible base URL https://api.atlascloud.ai/v1",
-                "Paste the key here",
+                L("Go to the AtlasCloud API keys page"),
+                L("Create or copy an API key"),
+                L("Use the OpenAI-compatible base URL https://api.atlascloud.ai/v1"),
+                L("Paste the key here"),
             ]
         case .openai:
             return [
-                "Go to the OpenAI Platform API keys page",
-                "Sign in to your developer account",
-                "Create a new API key",
-                "Copy and paste it here",
+                L("Go to the OpenAI Platform API keys page"),
+                L("Sign in to your developer account"),
+                L("Create a new API key"),
+                L("Copy and paste it here"),
             ]
         case .venice:
             return [
-                "Go to Venice AI settings page",
-                "Sign in or create an account",
-                "Generate a new API key",
-                "Copy and paste it here",
+                L("Go to Venice AI settings page"),
+                L("Sign in or create an account"),
+                L("Generate a new API key"),
+                L("Copy and paste it here"),
             ]
         case .deepseek:
             return [
-                "Go to the DeepSeek Platform API keys page",
-                "Sign in or create an account",
-                "Create a new API key",
-                "Copy and paste it here",
+                L("Go to the DeepSeek Platform API keys page"),
+                L("Sign in or create an account"),
+                L("Create a new API key"),
+                L("Copy and paste it here"),
             ]
         case .minimax:
             return [
-                "Go to the MiniMax platform API keys page",
-                "Sign in or create an account",
-                "Create a new secret key",
-                "Copy and paste it here",
+                L("Go to the MiniMax platform API keys page"),
+                L("Sign in or create an account"),
+                L("Create a new secret key"),
+                L("Copy and paste it here"),
             ]
         case .ollama:
             return [
-                "Install Ollama from ollama.com",
-                "Run `ollama serve` (or launch the app)",
-                "Pull a model — e.g. `ollama pull llama3.2`",
-                "Click Connect — no API key required",
+                L("Install Ollama from ollama.com"),
+                L("Run `ollama serve` (or launch the app)"),
+                L("Pull a model — e.g. `ollama pull llama3.2`"),
+                L("Click Connect — no API key required"),
             ]
         default:
             return [
-                "Go to \(name) console",
-                "Sign in or create an account",
-                "Click \"API Keys\" \u{2192} \"Create Key\"",
-                "Copy and paste it here",
+                L("Go to \(name) console"),
+                L("Sign in or create an account"),
+                L("Click \"API Keys\" → \"Create Key\""),
+                L("Copy and paste it here"),
             ]
         }
     }

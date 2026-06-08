@@ -16,7 +16,13 @@ enum ServerTab: String, CaseIterable, AnimatedTabItem {
     case settings = "Settings"
     case apiReference = "API Reference"
 
-    var title: String { rawValue }
+    var title: String {
+        switch self {
+        case .overview: return L("Overview")
+        case .settings: return L("Settings")
+        case .apiReference: return L("API Reference")
+        }
+    }
 }
 
 // MARK: - Cached Formatters
@@ -1897,7 +1903,7 @@ private struct EndpointRow: View {
                         } else {
                             Image(systemName: "paperplane.fill").font(.system(size: 10))
                         }
-                        Text(isLoading ? "Sending..." : "Send Request")
+                        Text(LocalizedStringKey(isLoading ? "Sending..." : "Send Request"), bundle: .module)
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .foregroundColor(.white)
@@ -2048,7 +2054,7 @@ private struct TranscriptionTestRow: View {
                         } else {
                             Image(systemName: "paperplane.fill").font(.system(size: 10))
                         }
-                        Text(isLoading ? "Sending..." : "Send Request")
+                        Text(LocalizedStringKey(isLoading ? "Sending..." : "Send Request"), bundle: .module)
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .foregroundColor(.white)

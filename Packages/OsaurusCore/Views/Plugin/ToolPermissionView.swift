@@ -215,7 +215,7 @@ struct ToolPermissionView: View {
         VStack(spacing: 14) {
             HStack(spacing: 12) {
                 PermissionButton(
-                    title: "Deny",
+                    title: L("Deny"),
                     shortcutHint: "esc",
                     icon: "xmark",
                     isPrimary: false,
@@ -223,7 +223,7 @@ struct ToolPermissionView: View {
                     action: onDeny
                 )
                 PermissionButton(
-                    title: "Allow",
+                    title: L("Allow"),
                     shortcutHint: "return",
                     icon: "checkmark",
                     isPrimary: true,

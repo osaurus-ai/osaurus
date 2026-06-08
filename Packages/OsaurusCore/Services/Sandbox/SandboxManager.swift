@@ -429,7 +429,7 @@
             _ c: LinuxContainer,
             bridge: Task<Void, Error>
         ) async throws {
-            await startStep(.startContainer, detail: "Booting Linux VM")
+            await startStep(.startContainer, detail: L("Booting Linux VM"))
             try await c.create()
             // Bridge must be bound before container.start() — that's
             // when the guest attaches the relayed socket. Awaiting
@@ -560,7 +560,7 @@
                     // to be listening by the time `container.start()` runs
                     // (that's when the guest attaches the relayed socket),
                     // so the slower of the two hides the other's cost.
-                    await startStep(.startBridge, detail: "Binding host socket")
+                    await startStep(.startBridge, detail: L("Binding host socket"))
                     let bridgeStarted = Task {
                         try await HostAPIBridgeServer.shared.start(
                             socketPath: Self.bridgeSocketPath
@@ -650,7 +650,7 @@
                     }
                 }
 
-                await startStep(.configureSandbox, detail: "Installing in-guest shim")
+                await startStep(.configureSandbox, detail: L("Installing in-guest shim"))
                 try await configureSandbox()
                 await endStep(.configureSandbox, status: .completed)
 
@@ -692,7 +692,7 @@
                 // `concludeProvisioningPhase` so the fullscreen progress
                 // view drops out and the dashboard takes over.
                 if hasPlugins {
-                    await startStep(.verifyPlugins, detail: "Restoring plugin dependencies")
+                    await startStep(.verifyPlugins, detail: L("Restoring plugin dependencies"))
                     await concludeProvisioningPhase()
                     startPostStartVerifyObserver()
                 } else {
@@ -1338,7 +1338,7 @@
             let stagedPath = OsaurusPaths.containerInitFSFile()
 
             if !FileManager.default.fileExists(atPath: stagedPath.path) {
-                await startStep(.downloadInitFS, detail: "Resolving CDN mirror")
+                await startStep(.downloadInitFS, detail: L("Resolving CDN mirror"))
                 try OsaurusPaths.ensureExists(OsaurusPaths.container())
                 do {
                     try await downloadFile(
@@ -1370,7 +1370,7 @@
                 return Kernel(path: kernelPath, platform: .linuxArm)
             }
 
-            await startStep(.downloadKernel, detail: "Resolving GitHub mirror")
+            await startStep(.downloadKernel, detail: L("Resolving GitHub mirror"))
 
             let kernelDir = OsaurusPaths.containerKernelDir()
             try OsaurusPaths.ensureExists(kernelDir)
@@ -1389,7 +1389,7 @@
             await endStep(.downloadKernel, status: .completed)
             defer { try? FileManager.default.removeItem(at: stableTarball) }
 
-            await startStep(.extractKernel, detail: "Untarring archive")
+            await startStep(.extractKernel, detail: L("Untarring archive"))
 
             // Hand the sync `tar` + `find` + `copyItem` work to a detached
             // task so `Process.waitUntilExit()` doesn't pin the actor's
@@ -2115,14 +2115,14 @@
         /// the legacy `provisioningPhase` keeps the two surfaces in sync.
         static func defaultStepLabel(_ id: ProvisioningStepID) -> String {
             switch id {
-            case .downloadKernel: return "Downloading Linux kernel"
-            case .downloadInitFS: return "Downloading init filesystem"
-            case .extractKernel: return "Extracting kernel"
-            case .createContainer: return "Pulling sandbox image"
-            case .startBridge: return "Starting host API bridge"
-            case .startContainer: return "Booting container"
-            case .configureSandbox: return "Configuring sandbox"
-            case .verifyPlugins: return "Restoring plugins"
+            case .downloadKernel: return L("Downloading Linux kernel")
+            case .downloadInitFS: return L("Downloading init filesystem")
+            case .extractKernel: return L("Extracting kernel")
+            case .createContainer: return L("Pulling sandbox image")
+            case .startBridge: return L("Starting host API bridge")
+            case .startContainer: return L("Booting container")
+            case .configureSandbox: return L("Configuring sandbox")
+            case .verifyPlugins: return L("Restoring plugins")
             }
         }
 

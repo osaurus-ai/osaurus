@@ -208,15 +208,23 @@ struct AgentsView: View {
                             title: L("Create Your First Agent"),
                             subtitle: L("Custom AI assistants with unique prompts, tools, and styles."),
                             examples: [
-                                .init(icon: "calendar", title: "Daily Planner", description: "Manage your schedule"),
+                                .init(
+                                    icon: "calendar",
+                                    title: L("Daily Planner"),
+                                    description: L("Manage your schedule")
+                                ),
                                 .init(
                                     icon: "message.fill",
-                                    title: "Message Assistant",
-                                    description: "Draft and send texts"
+                                    title: L("Message Assistant"),
+                                    description: L("Draft and send texts")
                                 ),
-                                .init(icon: "map.fill", title: "Local Guide", description: "Find places nearby"),
+                                .init(icon: "map.fill", title: L("Local Guide"), description: L("Find places nearby")),
                             ],
-                            primaryAction: .init(title: "Create Agent", icon: "plus", handler: { isCreating = true }),
+                            primaryAction: .init(
+                                title: L("Create Agent"),
+                                icon: "plus",
+                                handler: { isCreating = true }
+                            ),
                             hasAppeared: hasAppeared
                         )
 
@@ -605,10 +613,12 @@ private struct AgentCard: View {
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
         .themedAlert(
-            "Delete Agent",
+            L("Delete Agent"),
             isPresented: $showDeleteConfirm,
             message:
-                "Are you sure you want to delete \"\(agent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed.",
+                L(
+                    "Are you sure you want to delete \"\(agent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed."
+                ),
             primaryButton: .destructive("Delete", action: onDelete),
             secondaryButton: .cancel("Cancel")
         )
@@ -1357,7 +1367,7 @@ struct AgentDetailView: View {
     private var bodyWithAlerts: some View {
         bodyWithSheets
             .themedAlert(
-                "Bundle operation failed",
+                L("Bundle operation failed"),
                 isPresented: Binding(
                     get: { bundleErrorMessage != nil },
                     set: { if !$0 { bundleErrorMessage = nil } }
@@ -1366,7 +1376,7 @@ struct AgentDetailView: View {
                 primaryButton: .primary("OK") { bundleErrorMessage = nil }
             )
             .themedAlert(
-                "Bundle ready",
+                L("Bundle ready"),
                 isPresented: Binding(
                     get: { bundleSuccessMessage != nil },
                     set: { if !$0 { bundleSuccessMessage = nil } }
@@ -1375,54 +1385,62 @@ struct AgentDetailView: View {
                 primaryButton: .primary("OK") { bundleSuccessMessage = nil }
             )
             .themedAlert(
-                "Delete Agent",
+                L("Delete Agent"),
                 isPresented: $showDeleteConfirm,
                 message:
-                    "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed.",
-                primaryButton: .destructive("Delete") { onDelete(currentAgent) },
-                secondaryButton: .cancel("Cancel")
+                    L(
+                        "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed."
+                    ),
+                primaryButton: .destructive(L("Delete")) { onDelete(currentAgent) },
+                secondaryButton: .cancel(L("Cancel"))
             )
             .themedAlert(
-                "Expose Agent to Internet?",
+                L("Expose Agent to Internet?"),
                 isPresented: $showRelayConfirmation,
                 message:
-                    "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
-                primaryButton: .destructive("Enable Relay") {
+                    L(
+                        "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints."
+                    ),
+                primaryButton: .destructive(L("Enable Relay")) {
                     relayManager.setTunnelEnabled(true, for: agent.id)
                 },
-                secondaryButton: .cancel("Cancel")
+                secondaryButton: .cancel(L("Cancel"))
             )
             .themedAlert(
-                "Retry plugin load?",
+                L("Retry plugin load?"),
                 isPresented: Binding(
                     get: { pendingFailedPluginRetry != nil },
                     set: { if !$0 { pendingFailedPluginRetry = nil } }
                 ),
                 message:
-                    "The host quarantined this plugin after it caused a crash during load. Retrying re-runs the same dylib against the same host build, so if the underlying bug (most often a misaligned `osr_host_api` mirror in the plugin) is unfixed it will crash again. Use this only after you have rebuilt or re-installed the plugin.",
-                primaryButton: .destructive("Retry Anyway") {
+                    L(
+                        "The host quarantined this plugin after it caused a crash during load. Retrying re-runs the same dylib against the same host build, so if the underlying bug (most often a misaligned `osr_host_api` mirror in the plugin) is unfixed it will crash again. Use this only after you have rebuilt or re-installed the plugin."
+                    ),
+                primaryButton: .destructive(L("Retry Anyway")) {
                     if let pid = pendingFailedPluginRetry {
                         confirmRetryFailedPlugin(pid)
                     }
                     pendingFailedPluginRetry = nil
                 },
-                secondaryButton: .cancel("Cancel")
+                secondaryButton: .cancel(L("Cancel"))
             )
             .themedAlert(
-                "Uninstall plugin?",
+                L("Uninstall plugin?"),
                 isPresented: Binding(
                     get: { pendingFailedPluginUninstall != nil },
                     set: { if !$0 { pendingFailedPluginUninstall = nil } }
                 ),
                 message:
-                    "This permanently deletes the plugin's installed dylib, manifest, and per-agent secrets from disk. The host will stop attempting to load it on every launch — the only way to escape a crash-looping plugin without editing files by hand. You can reinstall it later from the Tools manager.",
-                primaryButton: .destructive("Uninstall") {
+                    L(
+                        "This permanently deletes the plugin's installed dylib, manifest, and per-agent secrets from disk. The host will stop attempting to load it on every launch — the only way to escape a crash-looping plugin without editing files by hand. You can reinstall it later from the Tools manager."
+                    ),
+                primaryButton: .destructive(L("Uninstall")) {
                     if let pid = pendingFailedPluginUninstall {
                         confirmUninstallFailedPlugin(pid)
                     }
                     pendingFailedPluginUninstall = nil
                 },
-                secondaryButton: .cancel("Cancel")
+                secondaryButton: .cancel(L("Cancel"))
             )
     }
 
@@ -2561,7 +2579,7 @@ struct AgentDetailView: View {
     /// `AgentScheduleSettings.defaults(for:)`. The read-only chip in the
     /// Next Run banner deep-links here.
     private var scheduleSection: some View {
-        AgentDetailSection(title: "Scheduling", icon: "calendar.badge.clock") {
+        AgentDetailSection(title: L("Scheduling"), icon: "calendar.badge.clock") {
             VStack(alignment: .leading, spacing: 10) {
                 Text(
                     "How often this agent is allowed to run itself in the background. The agent picks its own next time within these bounds.",
@@ -2693,7 +2711,7 @@ struct AgentDetailView: View {
     /// the Configure tab leads with model + capabilities + system prompt for the
     /// 90% case.
     private var generationOverridesSection: some View {
-        AgentDetailSection(title: "Generation Overrides", icon: "slider.horizontal.3") {
+        AgentDetailSection(title: L("Generation Overrides"), icon: "slider.horizontal.3") {
             VStack(spacing: 12) {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -3347,7 +3365,7 @@ struct AgentDetailView: View {
             }
 
             if let configSpec = loaded.plugin.manifest.capabilities.config {
-                AgentDetailSection(title: "Configuration", icon: "slider.horizontal.3") {
+                AgentDetailSection(title: L("Configuration"), icon: "slider.horizontal.3") {
                     PluginConfigView(
                         pluginId: pid,
                         agentId: agent.id,
@@ -3375,7 +3393,7 @@ struct AgentDetailView: View {
     private func pluginDiagnosticsCard(for pluginId: String) -> some View {
         let entries = PluginOnceLogger.entries(forPlugin: pluginId)
         if !entries.isEmpty {
-            AgentDetailSection(title: "Diagnostics", icon: "exclamationmark.triangle") {
+            AgentDetailSection(title: L("Diagnostics"), icon: "exclamationmark.triangle") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(
                         String(
@@ -3442,7 +3460,7 @@ struct AgentDetailView: View {
             String(format: L("\u{201C}%@\u{201D} could not be loaded for this agent."), display)
         )
 
-        AgentDetailSection(title: "Plugin failed to load", icon: "exclamationmark.triangle.fill") {
+        AgentDetailSection(title: L("Plugin failed to load"), icon: "exclamationmark.triangle.fill") {
             VStack(alignment: .leading, spacing: 14) {
                 failedPluginField(label: "Error") {
                     Text(error)
@@ -3623,7 +3641,7 @@ struct AgentDetailView: View {
         let pid = loaded.plugin.id
         let manifestDefault = loaded.plugin.manifest.instructions ?? ""
 
-        AgentDetailSection(title: "Instructions", icon: "text.bubble") {
+        AgentDetailSection(title: L("Instructions"), icon: "text.bubble") {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Customize how the AI uses this plugin.", bundle: .module)
@@ -3701,7 +3719,7 @@ struct AgentDetailView: View {
     ) -> some View {
         let pid = loaded.plugin.id
 
-        AgentDetailSection(title: "Route Endpoints", icon: "arrow.left.arrow.right") {
+        AgentDetailSection(title: L("Route Endpoints"), icon: "arrow.left.arrow.right") {
             VStack(alignment: .leading, spacing: 16) {
                 if let baseURL = tunnelBaseURL {
                     routeBaseURLRow(
@@ -3867,9 +3885,9 @@ struct AgentDetailView: View {
         let sandboxRunning = SandboxManager.State.shared.status == .running
 
         let subtitle: String = {
-            if sandboxRunning { return "Running" }
-            if sandboxAvailable { return "Not Running" }
-            return "Unavailable"
+            if sandboxRunning { return L("Running") }
+            if sandboxAvailable { return L("Not Running") }
+            return L("Unavailable")
         }()
 
         AgentDetailSection(title: L("Sandbox"), icon: "shippingbox", subtitle: subtitle) {
@@ -4561,7 +4579,7 @@ struct AgentDetailView: View {
         AgentDetailSection(
             title: L("Schedules"),
             icon: "clock.fill",
-            subtitle: linkedSchedules.isEmpty ? "None" : "\(linkedSchedules.count)"
+            subtitle: linkedSchedules.isEmpty ? L("None") : "\(linkedSchedules.count)"
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 if linkedSchedules.isEmpty {
@@ -4644,7 +4662,7 @@ struct AgentDetailView: View {
         AgentDetailSection(
             title: L("Watchers"),
             icon: "eye.fill",
-            subtitle: linkedWatchers.isEmpty ? "None" : "\(linkedWatchers.count)"
+            subtitle: linkedWatchers.isEmpty ? L("None") : "\(linkedWatchers.count)"
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 if linkedWatchers.isEmpty {
@@ -4822,7 +4840,7 @@ struct AgentDetailView: View {
         AgentDetailSection(
             title: L("Pinned Facts"),
             icon: "pin.fill",
-            subtitle: pinnedFacts.isEmpty ? "None" : "\(pinnedFacts.count)"
+            subtitle: pinnedFacts.isEmpty ? L("None") : "\(pinnedFacts.count)"
         ) {
             if pinnedFacts.isEmpty {
                 AgentSectionEmptyState(
@@ -4846,7 +4864,7 @@ struct AgentDetailView: View {
         AgentDetailSection(
             title: L("Episodes"),
             icon: "doc.text",
-            subtitle: episodes.isEmpty ? "None" : "\(episodes.count)"
+            subtitle: episodes.isEmpty ? L("None") : "\(episodes.count)"
         ) {
             if episodes.isEmpty {
                 AgentSectionEmptyState(

@@ -39,8 +39,8 @@ public struct SandboxAgentCleanupResult: Sendable {
 
         let title =
             (skippedContainerUserCleanup || !warnings.isEmpty)
-            ? "Sandbox Cleanup Incomplete"
-            : "Sandbox Resources Removed"
+            ? L("Sandbox Cleanup Incomplete")
+            : L("Sandbox Resources Removed")
         return SandboxCleanupNotice(title: title, message: lines.joined(separator: "\n\n"))
     }
 }

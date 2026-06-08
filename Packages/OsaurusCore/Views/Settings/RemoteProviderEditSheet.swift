@@ -1073,7 +1073,7 @@ private struct AddProviderFlow: View {
                             .foregroundColor(theme.tertiaryText)
                             .rotationEffect(.degrees(showAdvanced ? 90 : 0))
 
-                        Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
+                        Text(showAdvanced ? L("Hide advanced settings") : L("Show advanced settings"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.secondaryText)
 
@@ -2101,7 +2101,7 @@ private struct EditProviderFlow: View {
                             .foregroundColor(theme.tertiaryText)
                             .rotationEffect(.degrees(showAdvanced ? 90 : 0))
 
-                        Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
+                        Text(showAdvanced ? L("Hide advanced settings") : L("Show advanced settings"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.secondaryText)
 

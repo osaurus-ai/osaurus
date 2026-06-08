@@ -117,8 +117,8 @@ struct ThemeEditorView: View {
                 .buttonStyle(PlainButtonStyle())
             }
 
-            themeTextField("Theme Name", text: $editingTheme.metadata.name, fontSize: 14, weight: .medium, radius: 8)
-            themeTextField("Author Name", text: $editingTheme.metadata.author, fontSize: 13, radius: 6)
+            themeTextField(L("Theme Name"), text: $editingTheme.metadata.name, fontSize: 14, weight: .medium, radius: 8)
+            themeTextField(L("Author Name"), text: $editingTheme.metadata.author, fontSize: 13, radius: 6)
         }
         .padding(16)
     }
@@ -148,7 +148,12 @@ struct ThemeEditorView: View {
                 Button(action: saveTheme) {
                     HStack(spacing: 4) {
                         if showSaveConfirmation { Image(systemName: "checkmark") }
-                        Text(showSaveConfirmation ? "Saved!" : (editingTheme.isBuiltIn ? "Save as Copy" : "Save"))
+                        Text(
+                            LocalizedStringKey(
+                                showSaveConfirmation ? "Saved!" : (editingTheme.isBuiltIn ? "Save as Copy" : "Save")
+                            ),
+                            bundle: .module
+                        )
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -162,7 +167,7 @@ struct ThemeEditorView: View {
 
     private var appearanceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection("Appearance") {
+            editorSection(L("Appearance")) {
                 colorRow("Accent Color", hex: $editingTheme.colors.accentColor)
 
                 HStack {
@@ -198,7 +203,7 @@ struct ThemeEditorView: View {
 
     private var glassSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection("Glass") {
+            editorSection(L("Glass")) {
                 glassToggleRow(
                     label: "Chat Area",
                     isOn: Binding(
@@ -281,7 +286,7 @@ struct ThemeEditorView: View {
 
     private var codeSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection("Code") {
+            editorSection(L("Code")) {
                 codeHighlightThemePicker
                 colorRow("Code Block BG", hex: $editingTheme.colors.codeBlockBackground)
                 colorRow("Text Selection", hex: $editingTheme.colors.selectionColor)
@@ -295,7 +300,7 @@ struct ThemeEditorView: View {
 
     private var colorsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection("Colors") {
+            editorSection(L("Colors")) {
                 colorRow("Primary Text", hex: $editingTheme.colors.primaryText)
                 colorRow("Secondary Text", hex: $editingTheme.colors.secondaryText)
                 colorRow("Tertiary Text", hex: $editingTheme.colors.tertiaryText)
@@ -307,7 +312,7 @@ struct ThemeEditorView: View {
                 colorRow("Tertiary BG", hex: $editingTheme.colors.tertiaryBackground)
             }
 
-            editorSection("Advanced Colors", itemCount: 7) {
+            editorSection(L("Advanced Colors"), itemCount: 7) {
                 colorRowOptional("Placeholder", hex: $editingTheme.colors.placeholderText)
 
                 Text("Status", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
@@ -334,7 +339,7 @@ struct ThemeEditorView: View {
 
     private var messagesSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection("Messages") {
+            editorSection(L("Messages")) {
                 Text("User Bubble", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
@@ -386,7 +391,7 @@ struct ThemeEditorView: View {
 
     private var textAndFontsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection("Text & Fonts") {
+            editorSection(L("Text & Fonts")) {
                 fontPicker("Primary Font", fontName: $editingTheme.typography.primaryFont, isMono: false)
                 fontPicker("Mono Font", fontName: $editingTheme.typography.monoFont, isMono: true)
 
@@ -405,7 +410,7 @@ struct ThemeEditorView: View {
 
     private var bordersAndEffectsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection("Borders & Effects") {
+            editorSection(L("Borders & Effects")) {
                 Text("Borders", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 )
@@ -515,7 +520,7 @@ struct ThemeEditorView: View {
 
     private var advancedSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection("Advanced") {
+            editorSection(L("Advanced")) {
                 Text("Animation", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(
                     currentTheme.tertiaryText
                 )

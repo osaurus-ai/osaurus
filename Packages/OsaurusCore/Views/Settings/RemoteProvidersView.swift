@@ -91,10 +91,10 @@ struct RemoteProvidersView: View {
         if totalCount == 0 {
             return L("Connect to remote API providers")
         } else if connectedCount == 0 {
-            return "\(totalCount) provider\(totalCount == 1 ? "" : "s") configured"
+            return L("\(totalCount) provider\(totalCount == 1 ? "" : "s") configured")
         } else {
             let modelCount = manager.providerStates.values.reduce(0) { $0 + $1.modelCount }
-            return "\(connectedCount) connected \u{2022} \(modelCount) model\(modelCount == 1 ? "" : "s") available"
+            return L("\(connectedCount) connected • \(modelCount) model\(modelCount == 1 ? "" : "s") available")
         }
     }
 

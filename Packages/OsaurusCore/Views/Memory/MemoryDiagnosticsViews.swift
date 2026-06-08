@@ -82,12 +82,14 @@ extension MemoryView {
             }
         }
         .themedAlert(
-            "Backfill chat history?",
+            L("Backfill chat history?"),
             isPresented: $showBackfillConfirm,
             message:
-                "This walks every chat session in your history, buffers their turns into pending_signals, then runs distillation. It can take a while if you have hundreds of sessions — each one is a single LLM call against your core model. Already-distilled sessions are skipped.",
-            primaryButton: .primary("Start backfill") { runBackfill() },
-            secondaryButton: .cancel("Cancel")
+                L(
+                    "This walks every chat session in your history, buffers their turns into pending_signals, then runs distillation. It can take a while if you have hundreds of sessions — each one is a single LLM call against your core model. Already-distilled sessions are skipped."
+                ),
+            primaryButton: .primary(L("Start backfill")) { runBackfill() },
+            secondaryButton: .cancel(L("Cancel"))
         )
     }
 
@@ -274,7 +276,7 @@ extension MemoryView {
             diagnosticRow(
                 label: "Pending signals",
                 value:
-                    "\(pendingSignals.totalSignals) pending · \(pendingSignals.allTimeSignals) all-time",
+                    L("\(pendingSignals.totalSignals) pending · \(pendingSignals.allTimeSignals) all-time"),
                 statusColor: pendingSignalsStatusColor,
                 detail: pendingSignalsStatusDetail
             )
@@ -297,7 +299,7 @@ extension MemoryView {
             // pausing?" without the user needing to read logs.
             diagnosticRow(
                 label: "Live chat",
-                value: chatActive ? "active" : "idle",
+                value: chatActive ? L("active") : L("idle"),
                 statusColor: chatActive ? .orange : .green,
                 detail: chatActive
                     ? L(
@@ -319,9 +321,9 @@ extension MemoryView {
 
     private var distillQueueValueText: String {
         let q = distillSnapshot.queued
-        let activeMarker = distillSnapshot.active ? "running" : "idle"
-        if q == 0 { return "0 queued · \(activeMarker)" }
-        return "\(q) queued · \(activeMarker)"
+        let activeMarker = distillSnapshot.active ? L("running") : L("idle")
+        if q == 0 { return L("0 queued · \(activeMarker)") }
+        return L("\(q) queued · \(activeMarker)")
     }
 
     private var distillQueueStatusColor: Color {
@@ -440,7 +442,7 @@ extension MemoryView {
                 .foregroundColor(theme.primaryText)
                 .lineLimit(1)
             Spacer()
-            Text(stateText)
+            Text(LocalizedStringKey(stateText), bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(stateColor)
             if canEnableHere {
@@ -625,14 +627,14 @@ extension MemoryView {
 
     private func extractionModeDescription(_ mode: MemoryExtractionMode) -> String {
         switch mode {
-        case .sessionEnd: return "session-end (default)"
-        case .manual: return "manual"
+        case .sessionEnd: return L("session-end (default)")
+        case .manual: return L("manual")
         }
     }
 
     private func coreModelStatusText(_ status: CoreModelStatus) -> String {
         switch status {
-        case .unset: return "unset"
+        case .unset: return L("unset")
         case .available(let modelId, _, _): return "\(modelId) (available)"
         case .unavailable(let modelId, _): return "\(modelId) (unavailable)"
         case .breakerOpen(let modelId, _): return "\(modelId ?? "unset") (breaker open)"
@@ -650,7 +652,7 @@ extension MemoryView {
     private func coreModelStatusDetail(_ status: CoreModelStatus) -> String? {
         switch status {
         case .unset:
-            return "Distillation is silently disabled. Pick a model in Settings → General."
+            return L("Distillation is silently disabled. Pick a model in Settings → General.")
         case .unavailable(_, let reason):
             return reason
         case .breakerOpen(_, let until):
@@ -663,10 +665,10 @@ extension MemoryView {
 
     private func processingLogStatusBadge(_ status: String) -> String {
         switch status.lowercased() {
-        case "success": return "OK"
-        case "error": return "ERR"
-        case "empty": return "NIL"
-        case "skipped": return "SKP"
+        case "success": return L("OK")
+        case "error": return L("ERR")
+        case "empty": return L("NIL")
+        case "skipped": return L("SKP")
         default: return status.uppercased()
         }
     }
@@ -690,26 +692,26 @@ extension MemoryView {
 
     func diagnosticHeadline() -> DiagnosticHeadline {
         if !config.enabled {
-            return DiagnosticHeadline(text: "Memory disabled globally.", color: .red)
+            return DiagnosticHeadline(text: L("Memory disabled globally."), color: .red)
         }
         if case .unavailable = coreModelStatus {
-            return DiagnosticHeadline(text: "Core model unavailable.", color: .red)
+            return DiagnosticHeadline(text: L("Core model unavailable."), color: .red)
         }
         if case .unset = coreModelStatus {
-            return DiagnosticHeadline(text: "Core model not configured.", color: .red)
+            return DiagnosticHeadline(text: L("Core model not configured."), color: .red)
         }
         if pendingSignals.totalSignals == 0 && totalEpisodes == 0 {
             return DiagnosticHeadline(
-                text: "No buffered turns and no episodes — check per-agent memory.",
+                text: L("No buffered turns and no episodes — check per-agent memory."),
                 color: .orange
             )
         }
         if pendingSignals.totalSignals > 0 && recentLogs.first?.status != "success" {
             return DiagnosticHeadline(
-                text: "\(pendingSignals.totalSignals) buffered turns waiting on distillation.",
+                text: L("\(pendingSignals.totalSignals) buffered turns waiting on distillation."),
                 color: .orange
             )
         }
-        return DiagnosticHeadline(text: "Pipeline healthy.", color: .green)
+        return DiagnosticHeadline(text: L("Pipeline healthy."), color: .green)
     }
 }

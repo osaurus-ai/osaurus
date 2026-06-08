@@ -144,7 +144,13 @@ enum ToolsTab: String, CaseIterable, AnimatedTabItem {
     case remote = "Remote"
     case sandbox = "Sandbox"
 
-    var title: String { rawValue }
+    var title: String {
+        switch self {
+        case .available: return L("Available")
+        case .remote: return L("Remote")
+        case .sandbox: return L("Sandbox")
+        }
+    }
 }
 
 // MARK: - Skills Tab (for SkillsView)

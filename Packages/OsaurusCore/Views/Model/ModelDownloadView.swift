@@ -25,14 +25,14 @@ enum ModelSortOption: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .recommended: return "Recommended"
-        case .downloadsDesc: return "Most Downloaded"
-        case .nameAsc: return "Name (A–Z)"
-        case .compatibility: return "Compatibility"
-        case .sizeAsc: return "Size (Smallest first)"
-        case .sizeDesc: return "Size (Largest first)"
-        case .newest: return "Newest"
-        case .oldest: return "Oldest"
+        case .recommended: return L("Recommended")
+        case .downloadsDesc: return L("Most Downloaded")
+        case .nameAsc: return L("Name (A–Z)")
+        case .compatibility: return L("Compatibility")
+        case .sizeAsc: return L("Size (Smallest first)")
+        case .sizeDesc: return L("Size (Largest first)")
+        case .newest: return L("Newest")
+        case .oldest: return L("Oldest")
         }
     }
 
@@ -461,7 +461,7 @@ struct ModelDownloadView: View {
                 .padding(.bottom, 4)
 
                 Group {
-                    FilterSection(title: "Model Type") {
+                    FilterSection(title: L("Model Type")) {
                         HStack(spacing: 8) {
                             FilterChip(label: "LLM", isSelected: filterState.typeFilter.isLLM) {
                                 mutateFilter {
@@ -476,7 +476,7 @@ struct ModelDownloadView: View {
                         }
                     }
 
-                    FilterSection(title: "Model Size") {
+                    FilterSection(title: L("Model Size")) {
                         FlowLayout(spacing: 8) {
                             ForEach(ModelManager.ModelFilterState.SizeCategory.allCases) { cat in
                                 FilterChip(label: cat.rawValue, isSelected: filterState.sizeCategory == cat) {
@@ -488,7 +488,7 @@ struct ModelDownloadView: View {
                         }
                     }
 
-                    FilterSection(title: "Parameters") {
+                    FilterSection(title: L("Parameters")) {
                         HStack(spacing: 8) {
                             ForEach(ModelManager.ModelFilterState.ParamCategory.allCases) { cat in
                                 FilterChip(label: cat.rawValue, isSelected: filterState.paramCategory == cat) {
@@ -503,7 +503,7 @@ struct ModelDownloadView: View {
                     // clears the others so the filter stays a single optional
                     // (matches SizeCategory / ParamCategory conventions and
                     // keeps `isActive` trivially `performance != nil`).
-                    FilterSection(title: "Performance") {
+                    FilterSection(title: L("Performance")) {
                         FlowLayout(spacing: 8) {
                             ForEach(ModelManager.ModelFilterState.PerformanceFilter.allCases) { opt in
                                 FilterChip(
@@ -518,7 +518,7 @@ struct ModelDownloadView: View {
                             }
                         }
                     }
-                    FilterSection(title: "Model Family") {
+                    FilterSection(title: L("Model Family")) {
                         let families = Array(Set(modelManager.availableModels.map { $0.family })).sorted()
                         if families.isEmpty {
                             Text("No families found", bundle: .module)
@@ -1596,7 +1596,7 @@ private struct SystemStatusBar: View {
     var body: some View {
         HStack(spacing: 20) {
             ResourceGauge(
-                label: "Memory",
+                label: L("Memory"),
                 icon: "memorychip",
                 usedFraction: totalMemoryGB > 0 ? usedMemoryGB / totalMemoryGB : 0,
                 detail: String(
@@ -1607,7 +1607,7 @@ private struct SystemStatusBar: View {
             )
 
             ResourceGauge(
-                label: "Storage",
+                label: L("Storage"),
                 icon: DirectoryPickerService.shared.hasValidDirectory ? "externaldrive" : "internaldrive",
                 usedFraction: totalStorageGB > 0
                     ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,

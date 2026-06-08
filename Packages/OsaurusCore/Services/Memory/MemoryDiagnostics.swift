@@ -42,13 +42,15 @@ extension BufferProbeOutcome {
         switch self {
         case .success(let before, let after):
             return
-                "OK: bufferTurn inserted a row (\(before) → \(after)). The buffer path is healthy. Run 'Distill pending' or wait for the debounce."
+                L(
+                    "OK: bufferTurn inserted a row (\(before) → \(after)). The buffer path is healthy. Run 'Distill pending' or wait for the debounce."
+                )
         case .failure(let reason, let schemaDump):
             if let schemaDump {
                 return
                     "FAIL: \(reason)\n\nactual pending_signals schema:\n\(schemaDump)"
             }
-            return "FAIL: \(reason)"
+            return L("FAIL: \(reason)")
         }
     }
 }

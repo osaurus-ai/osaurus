@@ -824,10 +824,10 @@ private struct SessionRow: View {
     /// Low-contrast hint showing the Return and Esc shortcuts.
     private var renameKeyboardHint: some View {
         HStack(spacing: 6) {
-            keyHintChip(symbol: "return", label: "save")
+            keyHintChip(symbol: "return", label: "Save")
             Text("·")
                 .font(.system(size: 9))
-            keyHintChip(symbol: "escape", label: "cancel")
+            keyHintChip(symbol: "escape", label: "Cancel")
         }
         .foregroundColor(theme.secondaryText.opacity(0.75))
         .padding(.leading, 6)
