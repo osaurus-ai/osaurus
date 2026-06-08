@@ -889,6 +889,7 @@ struct MLXBatchAdapter {
             && !Hy3ReasoningProfile.matches(modelId: modelName)
             && !ModelFamilyNames.isMiniMaxFamily(modelName)
             && !ModelFamilyNames.isStepFamily(modelName)
+            && !ModelRuntime.isKnownHybridModel(name: modelName)
     }
 
     // MARK: - Submission

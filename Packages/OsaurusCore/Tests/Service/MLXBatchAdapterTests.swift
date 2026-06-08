@@ -986,6 +986,32 @@ struct MLXBatchAdapterTests {
                 maxBatchSize: 1
             )
         )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+                maxBatchSize: 1
+            ),
+            "Hybrid SSM families need exact cache/topology proof on the uncompiled path; Osaurus must not opt them into the B=1 compiled trace"
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "Qwen3.5-35B-A3B-JANGTQ",
+                maxBatchSize: 1
+            ),
+            "Qwen 3.5 hybrid linear-attention caches carry companion state, so the app must not request the solo compiled trace by default"
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "Qwen3.5-35B-A3B-JANGTQ",
+                maxBatchSize: 8
+            )
+        )
+        #expect(
+            MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "mlx-community/Llama-3.2-3B-Instruct-4bit",
+                maxBatchSize: 1
+            )
+        )
     }
 
     @Test func registry_shutdownNonexistentIsNoop() async {
