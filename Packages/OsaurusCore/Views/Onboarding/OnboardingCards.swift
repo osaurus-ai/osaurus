@@ -128,6 +128,7 @@ struct OnboardingGlassCard<Content: View>: View {
 enum OnboardingRowAccessory {
     case none
     case radio(isSelected: Bool)
+    case toggle(isOn: Bool)
     case chevron
 }
 
@@ -343,6 +344,12 @@ struct OnboardingRowCard: View {
                         Circle().fill(Color.white).frame(width: 7, height: 7)
                     }
                 }
+            case .toggle(let isOn):
+                Toggle("", isOn: .constant(isOn))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(theme.accentColor)
+                    .allowsHitTesting(false)
             case .chevron:
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
