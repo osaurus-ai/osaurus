@@ -334,3 +334,50 @@ ZAYA CCA repeat-cache artifact:
 - Turn 5 emitted `line_count` with args `red\n green\n blue`, adding spaces before later lines, so exact argument preservation still failed.
 - Disk L2 hits were proven: turn 2 `disk_l2_hits +1`, turn 3 `disk_l2_hits +1`; final counters reached `disk_l2_hits=2`, `disk_l2_misses=17`, `disk_l2_stores=9`.
 - Keep DSV4 repeat-cache readiness partial: disk-hit movement is now proven in the named isolation, but exact repeated tool arguments are still unstable.
+
+### 2026-06-07 23:16 PDT Nemotron Ultra PR #1411 live app boundary
+
+- Osaurus PR branch: `codex/vmlx-nemotron-runtime-pin`, head
+  `975aca2fceb222aa6ab9c3eddc2f0edfbef69367`.
+- vMLX pin in `Package.swift` / resolved files:
+  `ef15137a47fa5cda7329c840366ecc02e345d7ed`.
+- No-sign app:
+  `/private/tmp/osaurus-vmlx-pin-integration/build/DerivedData-nemotron-nosign-975aca2f/Build/Products/Release/osaurus.app`.
+- Build proof:
+  `/tmp/osaurus-nemotron-nosign-build-975aca2f-20260607-225616.log`;
+  `** BUILD SUCCEEDED **`, ad-hoc signature, no keychain signing prompt.
+- Private-file boundary: this PR evidence did not modify or stage `AGENTS.md`
+  or `.agents/`; both are kept out of this evidence commit scope.
+- Cold artifact:
+  `/tmp/osaurus-nemotron-ultra-live-975aca2f-20260607-230640`.
+  - Model: `nvidia-nemotron-3-ultra-550b-a55b-jangtq_1l`.
+  - Turn 1 required `line_count`: exact args `red\ngreen\nblue`,
+    `finish_reason=tool_calls`, no visible content, no reasoning/protocol leak.
+  - Turn 2 after tool result: visible answer mentioned `Three lines`, no tool
+    call and no protocol leak, but the response repeated the answer text and
+    surrounding sentence fragments before stopping.
+  - Turn 3 required `line_count` after tool history: exact args `one\ntwo`,
+    `finish_reason=tool_calls`, no visible content, no protocol leak.
+  - Topology: 60 layers, 12 KV layers, 48 Mamba layers,
+    `requires_ssm_companion_state=true`, `companion=ssm`,
+    disk-backed restore required, TurboQuant KV 0.
+  - Cold cache movement: `disk_l2_misses +5`, `disk_l2_stores +4`,
+    `disk_l2_hits +0`; cold row failed strict disk-hit promotion.
+  - Token rates recorded by the harness: turn 2 `143` completion tokens in
+    `216.8s`, about `0.66 tok/s`.
+- Warm artifact:
+  `/tmp/osaurus-nemotron-ultra-live-warm-975aca2f-20260607-231239`.
+  - Tool/parser checks stayed green: turn 1 and turn 3 exact structured
+    `line_count` calls, no protocol leak.
+  - Warm cache proof passed: `disk_l2_hits +3`, `ssm_companion_hits +3`,
+    `companion_hits +3`, and `ssm_companion_rederives +0`.
+  - Turn 2 still failed readiness: `finish_reason=length`, visible content
+    began with the correct answer but degraded into repeated numeric/junk text.
+  - Warm token rate for turn 2: `96` completion tokens in `164.0s`, about
+    `0.59 tok/s`.
+- Status: Nemotron Ultra JANGTQ_1L is parser-pass, topology-pass, and warm
+  hybrid SSM cache-hit-pass on this PR app path, but remains production
+  `PARTIAL` for answer quality and speed on the tool-result follow-up. Do not
+  promote it to release-ready from these rows, and do not hide the failure with
+  sampler overrides, prompt coercion, forced reasoning/tool tags, or parser
+  repair.
