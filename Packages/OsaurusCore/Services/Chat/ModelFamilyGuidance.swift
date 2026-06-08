@@ -218,10 +218,11 @@ enum ModelFamilyGuidance {
         more evidence is needed. Only answer in prose once the requested work \
         is actually grounded or complete.
         - Use only tools present in the schema for this request. If the needed \
-        capability seems missing, check the Enabled-capabilities manifest and \
-        run `capabilities_discover` first; only after a discover comes back \
-        empty may you tell the user exactly what is unavailable. Schema absence \
-        alone is not grounds to deny a capability.
+        capability seems missing, follow the listed discovery path: check the \
+        Enabled-capabilities manifest and run `capabilities_discover` first; \
+        only after a discover comes back empty may you tell the user exactly \
+        what is unavailable. Schema absence alone is not grounds to deny a \
+        capability.
         """
 
     /// LFM2 / Liquid: small-active MoE that hedges and refuses when it sees

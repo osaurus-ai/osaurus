@@ -79,14 +79,20 @@ struct SystemPromptComposerToolResolutionTests {
     // MARK: - Auto mode
 
     @Test
-    func autoMode_includesAlwaysLoadedBuiltins() async {
+    func autoMode_includesAlwaysLoadedAndPreflightAdditions() async {
         await withSandboxAgent(autonomous: false) { agentId in
             let tools = SystemPromptComposer.resolveTools(
                 agentId: agentId,
-                executionMode: .none
+                executionMode: .none,
+                additionalToolNames: ["render_chart"]
             )
+            let names = Set(tools.map { $0.function.name })
             // Built-ins like capabilities_discover must be present in auto mode.
-            #expect(tools.contains { $0.function.name == "capabilities_discover" })
+            #expect(names.contains("capabilities_discover"))
+            #expect(names.contains("capabilities_load"))
+            // A tool loaded mid-session via capabilities_load/preflight must
+            // survive the lean auto-mode gate even if it is normally hidden.
+            #expect(names.contains("render_chart"))
         }
     }
 
