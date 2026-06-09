@@ -278,6 +278,23 @@ struct ModelManagerTests {
         #expect(detected.map(\.id).contains("JANGQ-AI/Step-3.7-Flash-JANGTQ_K"))
     }
 
+    @Test func scanLocalModels_detectsExternalGemma4QATRootWhenConfigured() async throws {
+        guard let rawRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_GEMMA4_QAT_ROOT"],
+            !rawRoot.isEmpty
+        else {
+            return
+        }
+
+        let root = URL(fileURLWithPath: (rawRoot as NSString).expandingTildeInPath, isDirectory: true)
+        let detected = ModelManager.scanLocalModels(at: root)
+        let ids = Set(detected.map { $0.id.lowercased() })
+        #expect(ids.contains("osaurusai/gemma-4-e2b-it-qat-mxfp4"))
+        #expect(ids.contains("osaurusai/gemma-4-e4b-it-qat-mxfp4"))
+        #expect(ids.contains("osaurusai/gemma-4-12b-it-qat-mxfp4"))
+        #expect(ids.contains("osaurusai/gemma-4-26b-a4b-it-qat-mxfp4"))
+        #expect(ids.contains("osaurusai/gemma-4-31b-it-qat-mxfp4"))
+    }
+
     @Test func scanLocalModels_skipsLargeSupportTreesBesideJANGBundles() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("osu-jangq-root-\(UUID().uuidString)")
