@@ -49,7 +49,7 @@ public enum MemoryDatabaseError: Error, LocalizedError {
 public final class MemoryDatabase: @unchecked Sendable {
     public static let shared = MemoryDatabase()
 
-    private static let schemaVersion = 7
+    private static let schemaVersion = 8
 
     nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -156,7 +156,7 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     /// Highest schema version this build knows how to produce. Opening a DB
     /// stamped newer than this is refused (forward-version fail-fast).
-    private static let latestSchemaVersion = 7
+    private static let latestSchemaVersion = 8
 
     private func runMigrations() throws {
         let currentVersion = try getSchemaVersion()
@@ -181,6 +181,10 @@ public final class MemoryDatabase: @unchecked Sendable {
             // `migrateToV7` owns its own BEGIN/COMMIT (table rebuild), so it
             // must NOT be double-wrapped — a nested BEGIN traps SQLite.
             try migrateToV7()
+        }
+        if currentVersion < 8 {
+            // Same self-managed BEGIN/COMMIT as v7 — do not double-wrap.
+            try migrateToV8()
         }
     }
 
@@ -418,7 +422,33 @@ public final class MemoryDatabase: @unchecked Sendable {
     /// migration a fast no-op for fresh installs.
     private func migrateToV7() throws {
         MemoryLogger.database.info("Running v7 migration (drop orphan pending_signals.signal_type)")
+        try dropOrphanSignalTypeColumnIfPresent()
+        try setSchemaVersion(7)
+    }
 
+    /// V8 migration: re-run the orphan `signal_type` drop.
+    ///
+    /// `migrateToV7` is version-gated behind `currentVersion < 7`, so any
+    /// database that was stamped `user_version = 7` *while still carrying*
+    /// the orphan column (an intermediate pre-release build bumped the
+    /// version without effectively dropping it) never got repaired — and
+    /// because the runtime `INSERT INTO pending_signals` doesn't bind
+    /// `signal_type`, every buffer-turn write throws
+    /// `SQLITE_CONSTRAINT_NOTNULL` (extended code 1299), so no turn ever
+    /// reaches the database and no episodes are ever produced. Re-running
+    /// the same idempotent drop at v8 lets those stuck databases self-heal;
+    /// it's a fast no-op for everyone already canonical.
+    private func migrateToV8() throws {
+        MemoryLogger.database.info("Running v8 migration (re-check orphan pending_signals.signal_type)")
+        try dropOrphanSignalTypeColumnIfPresent()
+        try setSchemaVersion(8)
+    }
+
+    /// Detect and drop the orphan `pending_signals.signal_type` column if it
+    /// is present, leaving the canonical schema behind. Idempotent: a no-op
+    /// when the column is already absent. Does **not** stamp the schema
+    /// version — the calling migration owns that.
+    private func dropOrphanSignalTypeColumnIfPresent() throws {
         var hasOrphan = false
         try executeRaw("PRAGMA table_info(pending_signals)") { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -431,8 +461,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
 
         guard hasOrphan else {
-            try setSchemaVersion(7)
-            MemoryLogger.database.info("v7 migration: no orphan column found, schema already canonical")
+            MemoryLogger.database.info("pending_signals already canonical, no orphan column to drop")
             return
         }
 
@@ -444,7 +473,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         // doesn't leave a half-rebuilt table.
         try executeRaw("BEGIN TRANSACTION")
         do {
-            try executeRaw("ALTER TABLE pending_signals RENAME TO pending_signals_v6")
+            try executeRaw("ALTER TABLE pending_signals RENAME TO pending_signals_old")
             try executeRaw(
                 """
                     CREATE TABLE pending_signals (
@@ -464,10 +493,10 @@ public final class MemoryDatabase: @unchecked Sendable {
                         (id, agent_id, conversation_id, user_message, assistant_message, status, created_at)
                     SELECT
                         id, agent_id, conversation_id, user_message, assistant_message, status, created_at
-                    FROM pending_signals_v6
+                    FROM pending_signals_old
                 """
             )
-            try executeRaw("DROP TABLE pending_signals_v6")
+            try executeRaw("DROP TABLE pending_signals_old")
             // Indexes were attached to the old table name and got
             // dropped along with it; recreate against the new table.
             try executeRaw(
@@ -482,8 +511,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             throw error
         }
 
-        try setSchemaVersion(7)
-        MemoryLogger.database.info("v7 migration: rebuilt pending_signals without signal_type column")
+        MemoryLogger.database.info("rebuilt pending_signals without orphan signal_type column")
     }
 
     private func createV5Tables() throws {
