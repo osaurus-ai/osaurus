@@ -43,28 +43,99 @@ public struct DiscoveredAgent: Identifiable, Equatable, Sendable {
 /// Browses the local network for `_osaurus._tcp.` services and surfaces them
 /// as `DiscoveredAgent` values.  Agents that belong to this device are
 /// automatically filtered out by comparing UUIDs against `AgentManager`.
+///
+/// The actual `NetServiceBrowser`/`NetService` work runs on a dedicated
+/// background run-loop thread (`BonjourBrowserCore`). `searchForServices` and
+/// `resolve` make synchronous connections to mDNSResponder that can block for
+/// seconds on a busy or cold launch; keeping them off the main run loop means
+/// they never hang the UI. Resolved results are marshalled back here onto the
+/// main actor to update the published list.
 @MainActor
 public final class BonjourBrowser: NSObject, ObservableObject {
     public static let shared = BonjourBrowser()
 
     @Published public private(set) var discoveredAgents: [DiscoveredAgent] = []
 
-    private var browser: NetServiceBrowser?
-    /// Services currently being resolved, keyed by NetService name.
-    private var resolvingServices: [String: NetService] = [:]
+    private var core: BonjourBrowserCore?
 
     private override init() {
         super.init()
-        startBrowsing()
+        let core = BonjourBrowserCore(
+            serviceType: BonjourAdvertiser.serviceType,
+            onResolved: { agent in
+                Task { @MainActor [weak self] in self?.upsert(agent) }
+            },
+            onRemoved: { serviceName in
+                Task { @MainActor [weak self] in self?.remove(serviceName: serviceName) }
+            }
+        )
+        self.core = core
+        core.start()
     }
 
     // MARK: - Private
 
-    private func startBrowsing() {
-        let b = NetServiceBrowser()
-        b.delegate = self
-        b.searchForServices(ofType: BonjourAdvertiser.serviceType, inDomain: "")
-        browser = b
+    private func upsert(_ agent: DiscoveredAgent) {
+        // Skip agents that belong to this device.
+        let localIds = Set(AgentManager.shared.agents.map(\.id))
+        guard !localIds.contains(agent.id) else { return }
+
+        if let idx = discoveredAgents.firstIndex(where: { $0.serviceName == agent.serviceName }) {
+            discoveredAgents[idx] = agent
+        } else {
+            discoveredAgents.append(agent)
+        }
+    }
+
+    private func remove(serviceName: String) {
+        discoveredAgents.removeAll { $0.serviceName == serviceName }
+    }
+}
+
+// MARK: - BonjourBrowserCore
+
+/// Owns the `NetServiceBrowser` and runs it, plus all `NetService` resolves, on
+/// a private background thread with its own run loop. All mutable state is
+/// touched only on that thread; resolved agents are delivered through the
+/// `@Sendable` callbacks. The browser lives for the process lifetime, so the
+/// thread and its run loop are never torn down.
+private final class BonjourBrowserCore: NSObject, @unchecked Sendable {
+    private let serviceType: String
+    private let onResolved: @Sendable (DiscoveredAgent) -> Void
+    private let onRemoved: @Sendable (String) -> Void
+
+    private var browser: NetServiceBrowser?
+    /// Retains services while they resolve (a dropped reference cancels the
+    /// resolve), keyed by NetService name.
+    private var resolvingServices: [String: NetService] = [:]
+
+    init(
+        serviceType: String,
+        onResolved: @escaping @Sendable (DiscoveredAgent) -> Void,
+        onRemoved: @escaping @Sendable (String) -> Void
+    ) {
+        self.serviceType = serviceType
+        self.onResolved = onResolved
+        self.onRemoved = onRemoved
+        super.init()
+    }
+
+    func start() {
+        let thread = Thread { [weak self] in
+            guard let self else { return }
+            let runLoop = RunLoop.current
+            let browser = NetServiceBrowser()
+            browser.delegate = self
+            browser.schedule(in: runLoop, forMode: .default)
+            browser.searchForServices(ofType: self.serviceType, inDomain: "")
+            self.browser = browser
+            // The scheduled browser installs a run-loop source, so `run()`
+            // blocks here for the process lifetime instead of returning.
+            runLoop.run()
+        }
+        thread.name = "com.osaurus.bonjour-browser"
+        thread.stackSize = 512 * 1024
+        thread.start()
     }
 
     private func handleResolved(service: NetService) {
@@ -76,14 +147,7 @@ public final class BonjourBrowser: NSObject, ObservableObject {
         guard
             let idData = fields["id"],
             let idString = String(data: idData, encoding: .utf8),
-            let agentId = UUID(uuidString: idString)
-        else { return }
-
-        // Skip agents that belong to this device.
-        let localIds = Set(AgentManager.shared.agents.map(\.id))
-        guard !localIds.contains(agentId) else { return }
-
-        guard
+            let agentId = UUID(uuidString: idString),
             let name = fields["name"].flatMap({ String(data: $0, encoding: .utf8) })
         else { return }
 
@@ -99,24 +163,18 @@ public final class BonjourBrowser: NSObject, ObservableObject {
             port: Int(service.port),
             serviceName: service.name
         )
-
-        if let idx = discoveredAgents.firstIndex(where: { $0.serviceName == service.name }) {
-            discoveredAgents[idx] = agent
-        } else {
-            discoveredAgents.append(agent)
-        }
+        onResolved(agent)
     }
 }
 
-// MARK: - NetServiceBrowserDelegate
+// MARK: - NetServiceBrowserDelegate / NetServiceDelegate
 
-// @preconcurrency tells Swift that these ObjC protocols predate Swift concurrency.
-// The callbacks are guaranteed to arrive on the main run loop (the browser is
-// started from @MainActor init()), so the @MainActor isolation on the methods
-// below is correct and no actor-boundary crossing occurs.
+// Callbacks arrive on the background browser thread's run loop. `BonjourBrowserCore`
+// is not actor-isolated, so the delegate methods run there directly and mutate
+// `resolvingServices` only on that thread.
 
-extension BonjourBrowser: @preconcurrency NetServiceBrowserDelegate {
-    public func netServiceBrowser(
+extension BonjourBrowserCore: NetServiceBrowserDelegate {
+    func netServiceBrowser(
         _ browser: NetServiceBrowser,
         didFind service: NetService,
         moreComing: Bool
@@ -126,24 +184,22 @@ extension BonjourBrowser: @preconcurrency NetServiceBrowserDelegate {
         service.resolve(withTimeout: 5.0)
     }
 
-    public func netServiceBrowser(
+    func netServiceBrowser(
         _ browser: NetServiceBrowser,
         didRemove service: NetService,
         moreComing: Bool
     ) {
         resolvingServices.removeValue(forKey: service.name)
-        discoveredAgents.removeAll { $0.serviceName == service.name }
+        onRemoved(service.name)
     }
 }
 
-// MARK: - NetServiceDelegate
-
-extension BonjourBrowser: @preconcurrency NetServiceDelegate {
-    public func netServiceDidResolveAddress(_ sender: NetService) {
+extension BonjourBrowserCore: NetServiceDelegate {
+    func netServiceDidResolveAddress(_ sender: NetService) {
         handleResolved(service: sender)
     }
 
-    public func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
+    func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
         resolvingServices.removeValue(forKey: sender.name)
         print("[Bonjour] Failed to resolve '\(sender.name)': \(errorDict)")
     }
