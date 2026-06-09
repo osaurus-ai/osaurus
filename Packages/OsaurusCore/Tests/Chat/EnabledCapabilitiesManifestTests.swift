@@ -113,6 +113,11 @@ struct EnabledCapabilitiesManifestTests {
         #expect(rendered.contains("  skill/Mail Helper"))
         #expect(!rendered.contains("Mail Helper — "))
         #expect(!rendered.contains("(skill)"))
+        // Compact also shortens the intro: the worked example is for the
+        // full variant; the load-by-id instruction must survive.
+        #expect(!rendered.contains("Worked example"))
+        #expect(rendered.contains("## Enabled capabilities"))
+        #expect(rendered.contains("capabilities_load"))
     }
 
     @Test("token cap collapses overflow plugins to a pointer line")

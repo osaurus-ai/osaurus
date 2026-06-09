@@ -46,6 +46,26 @@ struct PromptWhitespaceTests {
         )
     }
 
+    @Test("googleGeminiGuidance has no whitespace continuation artifacts")
+    func geminiGuidanceRendersClean() {
+        assertNoContinuationLeak(
+            ModelFamilyGuidance.googleGeminiGuidance,
+            label: "googleGeminiGuidance"
+        )
+    }
+
+    @Test("compact family variants have no whitespace continuation artifacts")
+    func compactFamilyVariantsRenderClean() {
+        assertNoContinuationLeak(
+            ModelFamilyGuidance.gptCodexGuidanceCompact,
+            label: "gptCodexGuidanceCompact"
+        )
+        assertNoContinuationLeak(
+            ModelFamilyGuidance.googleGemmaGuidanceCompact,
+            label: "googleGemmaGuidanceCompact"
+        )
+    }
+
     @Test("glmQwenGuidance has no whitespace continuation artifacts")
     func glmQwenGuidanceRendersClean() {
         assertNoContinuationLeak(
@@ -86,11 +106,15 @@ struct PromptWhitespaceTests {
         )
     }
 
-    @Test("groundingDirective has no whitespace continuation artifacts")
+    @Test("groundingDirective variants have no whitespace continuation artifacts")
     func groundingDirectiveRendersClean() {
         assertNoContinuationLeak(
-            SystemPromptTemplates.groundingDirective,
-            label: "groundingDirective"
+            SystemPromptTemplates.groundingDirectiveFull,
+            label: "groundingDirectiveFull"
+        )
+        assertNoContinuationLeak(
+            SystemPromptTemplates.groundingDirectiveBase,
+            label: "groundingDirectiveBase"
         )
     }
 

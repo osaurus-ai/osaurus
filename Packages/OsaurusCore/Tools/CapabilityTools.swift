@@ -419,10 +419,10 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
 final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     let name = "capabilities_load"
     let description =
-        "Load capabilities into the current session by ID. IDs come from the Enabled-capabilities list "
+        "Load capabilities into the current session by ID. IDs come from the Enabled capabilities list "
         + "or from `capabilities_discover` results — do not invent IDs. After loading, the named tools are "
-        + "callable for the rest of the session and named skills are appended to your instructions. "
-        + "Example: `{\"ids\": [\"tool/sandbox_exec\", \"skill/plot-data\"]}`."
+        + "callable for the rest of the session; a named skill's instructions are returned in this tool's "
+        + "result for you to follow. Example: `{\"ids\": [\"tool/sandbox_exec\", \"skill/plot-data\"]}`."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -432,7 +432,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
                 "description": .string(
-                    "IDs from the Enabled-capabilities list or capabilities_discover results (e.g. 'method/abc', 'tool/sandbox_exec', 'skill/swift-best-practices')"
+                    "IDs from the Enabled capabilities list or capabilities_discover results (e.g. 'method/abc', 'tool/sandbox_exec', 'skill/swift-best-practices')"
                 ),
             ])
         ]),
@@ -447,7 +447,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             args,
             "ids",
             expected:
-                "non-empty array of `<type>/<id>` strings from the Enabled-capabilities list or `capabilities_discover` results",
+                "non-empty array of `<type>/<id>` strings from the Enabled capabilities list or `capabilities_discover` results",
             tool: name
         )
         guard case .value(let ids) = idsReq else { return idsReq.failureEnvelope ?? "" }
@@ -458,7 +458,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             guard let slashIdx = id.firstIndex(of: "/") else {
                 output +=
                     "Warning: Invalid ID format '\(id)' — expected `<type>/<id>` "
-                    + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled-capabilities list or `capabilities_discover`.\n"
+                    + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`.\n"
                 continue
             }
 

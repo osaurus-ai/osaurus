@@ -74,20 +74,38 @@ public enum SystemPromptTemplates {
     /// Anti-fabrication directive injected whenever tools are present
     /// (gated on `!effectiveToolsOff` + a non-empty schema in the
     /// composer). Both conditions are session-constant → KV-cache safe.
-    /// Deliberately tool-name-free: this section can be emitted when
-    /// `capabilities_discover` is NOT in the schema (e.g. manual mode), and
-    /// naming a tool that isn't in the request is the recitation-loop trap
-    /// `defaultPersona` documents. The capability-discovery nudge (when
-    /// present) supplies the "how to find a tool" half; this supplies the
-    /// "don't fabricate when none fits" half.
-    public static let groundingDirective = """
+    /// This is the full variant — it names `capabilities_discover` and the
+    /// Enabled capabilities list, so the composer emits it only when that
+    /// tool is actually in the resolved schema. Naming a tool that isn't
+    /// in the request is the recitation-loop trap `defaultPersona`
+    /// documents; schemas without discovery get `groundingDirectiveBase`
+    /// instead (via `groundingDirective(discoveryAvailable:)`).
+    public static let groundingDirectiveFull = """
         ## Grounding
 
         - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
         - You can almost always get there: a shell or network tool fetches live/external data, and `capabilities_discover` finds tools you don't have yet. Attempt that before deciding you can't — the absence of a purpose-built tool is not a dead end. Say what you can't do only after genuinely trying, and never invent a tool name or fabricate a value to fill a gap.
-        - A claim about your own capabilities is a factual claim. "I don't have a tool for X" or "I can't do X" must be backed by either the Enabled-capabilities manifest or a `capabilities_discover` call that came back empty. Never by X being absent from your current tool schema. Your loaded tools are a fixed subset, not the full enabled set.
-        - When the user asks whether you have a tool, whether you can do something, or what you can do: check the manifest first, then `capabilities_discover` if the manifest does not settle it, then answer.
+        - A claim about your own capabilities is a factual claim. "I don't have a tool for X" or "I can't do X" must be backed by either the Enabled capabilities list or a `capabilities_discover` call that came back empty. Never by X being absent from your current tool schema. Your loaded tools are a fixed subset, not the full enabled set.
+        - When the user asks whether you have a tool, whether you can do something, or what you can do: check the Enabled capabilities list first, then `capabilities_discover` if the list does not settle it, then answer.
         """
+
+    /// Tool-name-free grounding variant for schemas WITHOUT
+    /// `capabilities_discover` (e.g. manual mode with a curated tool list).
+    /// Keeps the anti-fabrication core; drops the discover/manifest bullets
+    /// that would name a tool the model cannot call.
+    public static let groundingDirectiveBase = """
+        ## Grounding
+
+        - Ground factual and live-data claims — weather, prices, web content, file contents, command output, current state — in a tool result rather than answering from memory.
+        - Say what you can't do only after genuinely trying with the tools you have, and never invent a tool name or fabricate a value to fill a gap.
+        """
+
+    /// Select the grounding variant for the resolved schema. The flag is
+    /// session-constant (the schema is frozen at session start), so the
+    /// choice is KV-cache safe.
+    public static func groundingDirective(discoveryAvailable: Bool) -> String {
+        discoveryAvailable ? groundingDirectiveFull : groundingDirectiveBase
+    }
 
     // MARK: - Capability Discovery Nudge
 
@@ -100,7 +118,7 @@ public enum SystemPromptTemplates {
         ## Discovering more tools
 
         Your current tool list is a fixed starting set, not an exhaustive \
-        one. The Enabled-capabilities list below names more you can pull in on \
+        one. The Enabled capabilities list below names more you can pull in on \
         demand and shows exactly how to load by id with capabilities_load. \
         When a capability seems missing and is NOT named there, \
         `capabilities_discover({"query": "<what you need>"})` searches beyond \
@@ -129,7 +147,7 @@ public enum SystemPromptTemplates {
             ## Discovering more tools
 
             Your current tool list is a fixed starting set, not an exhaustive \
-            one. The Enabled-capabilities list below names more you can pull in \
+            one. The Enabled capabilities list below names more you can pull in \
             on demand and shows exactly how to load by id with \
             capabilities_load. When a capability seems missing and is NOT named \
             there, `capabilities_discover({"query": "<what you need>"})` \
@@ -146,7 +164,7 @@ public enum SystemPromptTemplates {
         // renumbers automatically and no context is spent on an unavailable
         // path.
         var stepBodies: [[String]] = [
-            ["Check the Enabled-capabilities manifest."],
+            ["Check the Enabled capabilities list."],
             ["capabilities_discover for what you need; capabilities_load anything returned."],
             [
                 "Assemble it from sandbox primitives. The sandbox has network access,",
@@ -401,20 +419,36 @@ public enum SystemPromptTemplates {
             blocks.append(lines.joined(separator: "\n"))
         }
 
-        let intro = """
-            ## Enabled capabilities
+        // The "never deny a listed capability" rule is owned by
+        // `toolGroundingLine` / `groundingDirective` (which co-fire whenever
+        // this section renders), so the intro doesn't restate it. Compact
+        // mode (small-context models) also drops the worked example — the
+        // ids themselves are what stop a small model from denying a
+        // capability, and the example's tokens crowd an 8K window.
+        let intro: String
+        if compact {
+            intro = """
+                ## Enabled capabilities
 
-            These capabilities are enabled for this session. Each line begins \
-            with its loadable id; some are already in your tool schema, others \
-            must be loaded first. To load one, call capabilities_load with its \
-            id exactly as shown \
-            (e.g. `capabilities_load({"ids": ["tool/<name>"]})`). They are real \
-            — confirm and load one when asked rather than denying it.
+                Enabled for this session. Each line begins with its loadable \
+                id; load one before use with capabilities_load \
+                (e.g. `capabilities_load({"ids": ["tool/<name>"]})`).
+                """
+        } else {
+            intro = """
+                ## Enabled capabilities
 
-            Worked example — User: "You have a list_messages tool." If \
-            `tool/list_messages` is listed here, confirm it and capabilities_load \
-            it before use.
-            """
+                These capabilities are enabled for this session. Each line begins \
+                with its loadable id; some are already in your tool schema, others \
+                must be loaded first. To load one, call capabilities_load with its \
+                id exactly as shown \
+                (e.g. `capabilities_load({"ids": ["tool/<name>"]})`).
+
+                Worked example — User: "You have a list_messages tool." If \
+                `tool/list_messages` is listed here, confirm it and capabilities_load \
+                it before use.
+                """
+        }
 
         return intro + "\n\n" + blocks.joined(separator: "\n")
     }
@@ -462,7 +496,7 @@ public enum SystemPromptTemplates {
     public static let riskAwareGuidance = """
         ## Risk-aware actions
 
-        - Default to acting. Local, reversible work — reading, editing a file, running a command or test, installing into the sandbox — just do it; you do not need to ask permission first.
+        - Local, reversible work — reading, editing a file, running a command or test, installing into the sandbox — needs no permission; just do it.
         - Only pause to confirm for genuinely destructive or hard-to-undo actions: deleting the user's files, `rm -rf`, dropping data, force-pushing. The test is reversibility — if it's reversible, proceed.
         - When encountering unexpected state (unfamiliar files, unknown processes), investigate before removing anything.
         """

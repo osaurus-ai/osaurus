@@ -337,6 +337,12 @@ public struct SystemPromptComposer: Sendable {
     /// (driven by the resolved model's size class) → KV-cache safe.
     static let soulTinyMaxBytes: Int = 1 * 1024
 
+    /// Mid-tier SOUL byte budget for small-context models (~8K window).
+    /// The default 8 KB cap is ~2K tokens — a quarter of the whole window
+    /// — so `.small` gets 2 KB: enough for real preferences, not enough to
+    /// crowd out the user's turn. Session-constant → KV-cache safe.
+    static let soulSmallMaxBytes: Int = 2 * 1024
+
     /// Marker appended on its own line after a truncation so the model
     /// knows the agent's soul was clipped (don't extrapolate from the
     /// trailing line as if it were the natural end of the file).
@@ -422,13 +428,16 @@ public struct SystemPromptComposer: Sendable {
         return content
     }
 
-    /// SOUL byte budget for a model: the tighter tiny-context cap for
-    /// `.tiny` models, the default otherwise. Pure + session-constant
-    /// (size class is fixed for a session's model) so both the send and
-    /// preview paths agree and the result is KV-cache stable.
+    /// SOUL byte budget for a model, stepped by size class (`.tiny` 1 KB,
+    /// `.small` 2 KB, `.normal` 8 KB). Pure + session-constant (size class
+    /// is fixed for a session's model) so both the send and preview paths
+    /// agree and the result is KV-cache stable.
     private static func soulCap(forModel modelId: String?) -> Int {
-        ContextSizeResolver.resolve(modelId: modelId).sizeClass == .tiny
-            ? soulTinyMaxBytes : soulMaxBytes
+        switch ContextSizeResolver.resolve(modelId: modelId).sizeClass {
+        case .tiny: return soulTinyMaxBytes
+        case .small: return soulSmallMaxBytes
+        case .normal: return soulMaxBytes
+        }
     }
 
     /// Assemble every tool-axis decision for the request: size-class
@@ -605,10 +614,11 @@ public struct SystemPromptComposer: Sendable {
     ///  14. enabledManifest           static, frozen, gated on capabilities_load
     ///                                (all enabled tools + plugin skills + standalone skills)
     ///  15. skillsGovern              static body, paired with enabledManifest
-    ///  16. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
-    ///  17. sandboxState              dynamic, installed packages + secrets (mutate mid-session)
-    ///  18. sandboxUnavailable        dynamic, gated on registrar failure
-    ///  19. pluginCreator             dynamic, injected when plugin creation is enabled
+    ///  16. pluginCreator             static, injected when plugin creation is enabled
+    ///                                (session-constant gate — joins the cached prefix)
+    ///  17. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
+    ///  18. sandboxState              dynamic, installed packages + secrets (mutate mid-session)
+    ///  19. sandboxUnavailable        dynamic, gated on registrar failure
     ///
     /// Statics come before dynamics so the cached prefix
     /// (`PromptManifest.staticPrefixContent`) reaches as far as possible —
@@ -726,9 +736,14 @@ public struct SystemPromptComposer: Sendable {
         // family now resolves to a block, including a deliberately minimal
         // default for unrecognised families; the blocks stay short so this
         // is not the bloated universal "agentic workflow" addendum we avoid.
+        // `.small` windows get the compact variant where one exists — the
+        // size class is session-constant, so the choice is KV-cache safe.
         // See ModelFamilyGuidance.swift.
         if !effectiveToolsOff,
-            let familyGuidance = ModelFamilyGuidance.guidance(forModelId: snapshot.model)
+            let familyGuidance = ModelFamilyGuidance.guidance(
+                forModelId: snapshot.model,
+                compact: toolset.sizeClass == .small
+            )
         {
             composer.append(
                 .static(
@@ -743,15 +758,19 @@ public struct SystemPromptComposer: Sendable {
         // chat. Gated on tools being present (off-case is handled by the
         // persona's "answer from your own knowledge" clause) — both the
         // tools-off flag and the resolved schema are session-constant, so
-        // this stays KV-cache safe. Tool-name-free on purpose (see the
-        // template doc) so it's safe even when `capabilities_discover` isn't
-        // in the schema.
+        // this stays KV-cache safe. The full variant names
+        // `capabilities_discover` / the Enabled capabilities list, so it is
+        // only emitted when that tool is actually in the schema; otherwise
+        // the tool-name-free base variant avoids the recitation-loop trap
+        // `defaultPersona` documents.
         if !effectiveToolsOff, !resolvedNames.isEmpty {
             composer.append(
                 .static(
                     id: "grounding",
                     label: "Grounding",
-                    content: SystemPromptTemplates.groundingDirective
+                    content: SystemPromptTemplates.groundingDirective(
+                        discoveryAvailable: resolvedNames.contains("capabilities_discover")
+                    )
                 )
             )
         }
@@ -929,7 +948,7 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Enabled-capabilities manifest: the grounded answer to "do you
+        // Enabled capabilities manifest: the grounded answer to "do you
         // have X". The schema only carries a fixed hot subset of the agent's
         // enabled tools; without this block a small model looks at its
         // schema, sees nothing, and (correctly-by-instruction) denies having
@@ -943,9 +962,10 @@ public struct SystemPromptComposer: Sendable {
         // The string is rendered+frozen in `resolveEnabledManifest` and
         // injected as a STATIC section (paired with `skillsGovern`) so it
         // joins the cached KV prefix and stays byte-stable across turns —
-        // the manifest no longer shrinks as the agent loads tools. It is the
-        // last static section, so it must precede every dynamic block below
-        // (the static prefix ends at the first dynamic section).
+        // the manifest no longer shrinks as the agent loads tools. Together
+        // with `pluginCreator` below it closes out the static block, so both
+        // must precede every dynamic section (the static prefix ends at the
+        // first dynamic section).
         if let manifestSection = toolset.enabledManifest, !manifestSection.isEmpty {
             composer.append(
                 .static(
@@ -957,10 +977,53 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "skillsGovern",
-                    label: "Skills That Govern Tool Groups",
+                    label: "Skills that govern tool groups",
                     content: SystemPromptTemplates.skillsGovernToolGroups
                 )
             )
+        }
+
+        // Plugin-creator injection: inject the `## Building new tools` section
+        // whenever plugin creation is enabled for this session.
+        // `sandbox_plugin_register` is always-loaded in that case but lives in
+        // the base schema with no tool group beneath it, so nothing ever pulls
+        // in the teaching section the way loading a governing skill pulls its
+        // tool group. This is the inverse link: the register action never
+        // arrives without the instructions that teach the plugin format.
+        //
+        // We also fire during sandbox init-pending (autonomousEnabled but
+        // sandbox tools haven't registered yet). Without that, the agent
+        // had no signal that plugin creation would be available once the
+        // container finished provisioning — `canCreatePlugins` already
+        // folds `autonomousEnabled && pluginCreate`, so this stays correct.
+        //
+        // STATIC by design: every gate input (tools-off flag, sandbox
+        // availability, the pluginCreate flag) is session-constant, so the
+        // section joins the cached KV prefix instead of breaking it. It is
+        // deliberately NOT gated on `capabilityPromptSectionsEnabled` (the
+        // per-turn trivial-input flag) — that gate would make the section
+        // appear/disappear between a trivial turn 1 and a real turn 2,
+        // rewriting the cached prefix mid-session.
+        //
+        // All agent-side flags ride on `snapshot`, captured once at the
+        // start of compose, so the gate can't race sibling MainActor work
+        // (test setup, plugin registration) between awaits.
+        let gateInputs = PluginCreatorGate.Inputs(
+            effectiveToolsOff: effectiveToolsOff,
+            sandboxAvailable: executionMode.usesSandboxTools || snapshot.autonomousEnabled,
+            canCreatePlugins: snapshot.canCreatePlugins
+        )
+        if PluginCreatorGate.shouldInject(gateInputs) {
+            composer.append(
+                .static(
+                    id: "pluginCreator",
+                    label: "Plugin Creator",
+                    content: PluginCreatorGate.section(
+                        instructions: SystemPromptTemplates.pluginCreatorInstructions
+                    )
+                )
+            )
+            trace?.set("pluginCreatorInjected", "1")
         }
 
         // ── Dynamics ─────────────────────────────────────────────────
@@ -1007,42 +1070,6 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("sandboxUnavailable", reason.kind.rawValue)
         }
 
-        // Plugin-creator injection: inject the `## Building new tools` section
-        // whenever plugin creation is enabled for this session.
-        // `sandbox_plugin_register` is always-loaded in that case but lives in
-        // the base schema with no tool group beneath it, so nothing ever pulls
-        // in the teaching section the way loading a governing skill pulls its
-        // tool group. This is the inverse link: the register action never
-        // arrives without the instructions that teach the plugin format.
-        //
-        // We also fire during sandbox init-pending (autonomousEnabled but
-        // sandbox tools haven't registered yet). Without that, the agent
-        // had no signal that plugin creation would be available once the
-        // container finished provisioning — `canCreatePlugins` already
-        // folds `autonomousEnabled && pluginCreate`, so this stays correct.
-        //
-        // All agent-side flags ride on `snapshot`, captured once at the
-        // start of compose, so the gate can't race sibling MainActor work
-        // (test setup, plugin registration) between awaits.
-        let gateInputs = PluginCreatorGate.Inputs(
-            effectiveToolsOff: effectiveToolsOff,
-            sandboxAvailable: executionMode.usesSandboxTools || snapshot.autonomousEnabled,
-            canCreatePlugins: snapshot.canCreatePlugins
-        )
-        if toolset.capabilityPromptSectionsEnabled,
-            PluginCreatorGate.shouldInject(gateInputs)
-        {
-            composer.append(
-                .dynamic(
-                    id: "pluginCreator",
-                    label: "Plugin Creator",
-                    content: PluginCreatorGate.section(
-                        instructions: SystemPromptTemplates.pluginCreatorInstructions
-                    )
-                )
-            )
-            trace?.set("pluginCreatorInjected", "1")
-        }
     }
 
     /// Build the **complete** enabled-capabilities manifest: every tool and
@@ -1438,6 +1465,14 @@ public struct SystemPromptComposer: Sendable {
     /// nil for the freeze snapshot — the popover prices what
     /// `composeChatContext(query: "")` would emit, not a mid-session
     /// freeze.
+    ///
+    /// Known, deliberate divergence: `capabilityPromptSectionsEnabled` is
+    /// hardcoded `true` here, while a trivial first send ("hi", "thanks")
+    /// suppresses the capability nudge (see `isTrivialUserQuery`). The
+    /// popover therefore prices the prompt a *real task* will produce —
+    /// slightly overstating a greeting-only first turn is the honest side
+    /// to err on, and pricing against `""` already means "unknown next
+    /// input" rather than "greeting".
     @MainActor
     private static func previewToolset(
         snapshot: AgentConfigSnapshot,

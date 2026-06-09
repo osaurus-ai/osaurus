@@ -31,10 +31,10 @@
 //   14. enabledManifest           static, frozen (all enabled tools +
 //                                  plugin skills + standalone skills)
 //   15. skillsGovern              static (paired with enabledManifest)
-//   16. agentDBSchema             dynamic, live schema snapshot
-//   17. sandboxState              dynamic, installed packages + secrets
-//   18. sandboxUnavailable        dynamic
-//   19. pluginCreator             dynamic
+//   16. pluginCreator             static (session-constant gate)
+//   17. agentDBSchema             dynamic, live schema snapshot
+//   18. sandboxState              dynamic, installed packages + secrets
+//   19. sandboxUnavailable        dynamic
 //
 //  Sections 4/9 carry only session-constant framing; their mutable state
 //  (13/14) rides in the dynamic block so a schema change, package install,
@@ -211,6 +211,13 @@ struct PromptSectionOrderingTests {
             #expect(ctx.prompt.contains("build a sandbox plugin (see Building"))
             // The capability ladder ends in a build step, not denial.
             #expect(ctx.prompt.contains("Only after these come up empty"))
+            // The plugin-creator backstop joins the prompt as a STATIC
+            // section — its gate is session-constant, so it belongs in the
+            // cached KV prefix rather than the dynamic tail.
+            #expect(ids.contains("pluginCreator"))
+            let pluginCreatorSection = ctx.manifest.sections.first { $0.id == "pluginCreator" }
+            #expect(pluginCreatorSection?.cacheability == .static)
+            #expect(ctx.staticPrefix.contains("## Building new tools"))
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             _ = await AgentManager.shared.delete(id: agent.id)
