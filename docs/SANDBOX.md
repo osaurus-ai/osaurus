@@ -417,15 +417,14 @@ The prompt path keeps secret values out of the conversation history and LLM cont
 
 ---
 
-## Sandbox Plugin Creator (Agent-Authored Plugins)
+## Building New Tools (Agent-Authored Plugins)
 
-Agents can author, package, and register new sandbox plugins at runtime. The model-facing skill is named **Sandbox Plugin Creator** and is injected into the system prompt automatically when an autonomous agent has no other plugin/MCP tools available. Both the in-process `sandbox_plugin_register` tool and the host-API `POST /api/plugin/create` endpoint funnel through one shared registration pipeline (`SandboxPluginRegistration.register`) so they cannot drift.
+Agents can author, package, and register new sandbox plugins at runtime. The plugin-authoring recipe is injected into the system prompt as a **`## Building new tools`** section whenever plugin creation is enabled for the session (it is not modeled as a loadable skill, so it never appears in the capabilities manifest, discover, search, or load). Both the in-process `sandbox_plugin_register` tool and the host-API `POST /api/plugin/create` endpoint funnel through one shared registration pipeline (`SandboxPluginRegistration.register`) so they cannot drift.
 
 ### Requirements
 
 - `autonomousExec.enabled` must be `true` on the agent
-- `autonomousExec.pluginCreate` must be `true` (the default in `AutonomousExecConfig`)
-- The **Sandbox Plugin Creator** skill must be enabled (it is, by default — disable it in the skill catalog to suppress the auto-injected backstop)
+- `autonomousExec.pluginCreate` must be `true` (the default in `AutonomousExecConfig`) — this is the single control for plugin creation; turning it off both suppresses the injected section and disables `sandbox_plugin_register`
 
 ### Workflow
 

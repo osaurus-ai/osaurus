@@ -12225,6 +12225,7 @@
       }
     },
     "Create new sandbox plugins when you need an integration or capability that doesn't exist yet" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -40528,6 +40529,7 @@
       }
     },
     "Sandbox Plugin Creator" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

@@ -112,6 +112,189 @@ public enum SystemPromptTemplates {
         work around the gap or tell the user the capability is unavailable.
         """
 
+    /// Sandbox-mode variant of the discovery nudge. Keeps the discover/load
+    /// explanation and the "don't invent" line, then replaces the terminal
+    /// "tell the user it is unavailable" sentence with an escalation ladder
+    /// that treats a missing capability as the start of work, not a dead end.
+    /// The "unavailable" terminus moves to the LAST step, after the build
+    /// steps. Sandbox-only because the ladder leans on sandbox primitives
+    /// (network, python3, node, sqlite3, curl, `sandbox_install`).
+    ///
+    /// `canCreatePlugins` toggles the plugin-build rung: when the agent cannot
+    /// create plugins, step 4 (build a sandbox plugin) and the "build when
+    /// reusable" closing line are dropped and the ladder renumbers so the
+    /// terminus stays last — no wasted context on an unavailable path.
+    public static func capabilityDiscoveryNudgeSandbox(canCreatePlugins: Bool) -> String {
+        let intro = """
+            ## Discovering more tools
+
+            Your current tool list is a fixed starting set, not an exhaustive \
+            one. The Enabled-capabilities list below names more you can pull in \
+            on demand and shows exactly how to load by id with \
+            capabilities_load. When a capability seems missing and is NOT named \
+            there, `capabilities_discover({"query": "<what you need>"})` \
+            searches beyond the listed set and returns IDs like \
+            `tool/sandbox_exec` or `skill/plot-data` that you load the same way.
+
+            Do not invent tool names — use IDs from the list or from discovery.
+            """
+
+        // Ladder step bodies, in order. The first line of each becomes
+        // "N. <line>"; any further lines are continuations indented 3 spaces
+        // to align under the single-digit number prefix. The plugin-build rung
+        // is included only when the agent can create plugins, so the terminus
+        // renumbers automatically and no context is spent on an unavailable
+        // path.
+        var stepBodies: [[String]] = [
+            ["Check the Enabled-capabilities manifest."],
+            ["capabilities_discover for what you need; capabilities_load anything returned."],
+            [
+                "Assemble it from sandbox primitives. The sandbox has network access,",
+                "   python3, node, sqlite3, curl, and sandbox_install for any client library.",
+                "   Most external systems reduce to a known shape:",
+                "   - REST / GraphQL APIs: authenticated HTTP with requests or fetch.",
+                "   - SQL / NoSQL databases: install the driver, read the connection string",
+                "     from a secret, connect.",
+                "   - CLIs and SDKs: install and invoke them.",
+                "   When you do not know an API's shape, find out: read its docs over the",
+                "   network, inspect responses, iterate against a harmless read-only call first.",
+            ],
+        ]
+        if canCreatePlugins {
+            stepBodies.append([
+                "If the need is reusable or recurring, build a sandbox plugin (see Building",
+                "   new tools) so later sessions reuse it.",
+            ])
+        }
+        stepBodies.append([
+            "Only after these come up empty do you tell the user the capability is",
+            "   unavailable, and state what you tried.",
+        ])
+
+        var ladder: [String] = [
+            "You are a coding agent. Connecting to an external service is a task you do,",
+            "not a capability you wait to be given. When something seems missing, treat it",
+            "as the start of the work. Escalate in order:",
+        ]
+        for (index, body) in stepBodies.enumerated() {
+            ladder.append("\(index + 1). \(body[0])")
+            ladder.append(contentsOf: body.dropFirst())
+        }
+
+        // Closing guidance. The "build vs inline" rule only applies when the
+        // agent can create plugins; the secret/risk pointers always apply.
+        if canCreatePlugins {
+            ladder.append("Build when the solution is reusable; write inline one-off code when it is not.")
+        }
+        ladder.append("Credentials for any of this follow Secret handling. Destructive actions still")
+        ladder.append("follow Risk-aware actions.")
+
+        return intro + "\n\n" + ladder.joined(separator: "\n")
+    }
+
+    // MARK: - Secret Handling
+
+    /// Secret-handling discipline. Sandbox-only: it leans on the
+    /// `sandbox_secret_set` / `sandbox_secret_check` tools and the fact that
+    /// stored secrets are exposed to the sandbox as environment variables.
+    /// Keeps secret values out of the transcript (which is persisted) by
+    /// routing collection through the out-of-band prompt instead of chat.
+    public static let secretHandlingGuidance = """
+        ## Secret handling
+        - Never ask the user to paste an API key, token, password, connection string, or other secret into chat. Chat content is persisted to the transcript.
+        - To collect a secret, call sandbox_secret_set with key, description, and instructions, and OMIT value. The harness prompts the user out-of-band; the value never enters the conversation. Put what to paste and where to find it in instructions.
+        - Call sandbox_secret_check first; skip collection if the secret exists.
+        - Stored secrets are exposed to the sandbox as environment variables named by their key. Read them in code via the environment (e.g. os.environ["SHOPIFY_TOKEN"]). There is no tool that returns a secret value, by design. Reference the secret by env var, never inline it.
+        - Never echo a secret value, write it to a file in plaintext, or pass it as a tool-call argument.
+        - Never record a secret value in SOUL.md, memory, or any persisted note; reference it by its env var instead.
+        """
+
+    // MARK: - Self-improvement
+
+    /// Self-improvement discipline. Sandbox-only: it references workspace
+    /// persistence, sandbox plugins, and SOUL.md (the sandbox-only identity
+    /// layer). Encourages the agent to capture reusable work so later sessions
+    /// reuse it instead of re-deriving the same code.
+    ///
+    /// `canCreatePlugins` toggles the two plugin-build bullets: when the agent
+    /// cannot create plugins, they are dropped so the section spends no context
+    /// describing an unavailable path.
+    public static func selfImprovementGuidance(canCreatePlugins: Bool) -> String {
+        let persistence =
+            "- Workspace files persist across messages. Save reusable scripts and clients there rather than rebuilding them."
+        let pluginBuild =
+            "- Build or update a sandbox plugin when you notice any of these: you just completed a multi-step integration that worked, you found the working path after hitting dead ends, the user corrected your approach, or the same integration is coming up again. Capture the working path while you still have it."
+        let pluginFix =
+            "- When a plugin you built turns out wrong or incomplete, fix the plugin itself rather than working around it. Plugins improve through use."
+        let soul =
+            "- When you observe a durable, cross-session pattern in how the user works, record it in `~/SOUL.md` with `sandbox_write_file` (edits apply on the next session). Capture stable preferences, conventions, environment facts, and lessons learned; keep session facts, one-off paths, and project details out."
+        let secret =
+            "- Anything you build that touches a secret follows Secret handling."
+
+        var bullets = [persistence]
+        if canCreatePlugins {
+            bullets.append(pluginBuild)
+            bullets.append(pluginFix)
+        }
+        bullets.append(soul)
+        bullets.append(secret)
+
+        return "## Self-improvement\n" + bullets.joined(separator: "\n")
+    }
+
+    // MARK: - Building New Tools
+
+    /// The plugin-authoring recipe injected as the `## Building new tools`
+    /// section by `PluginCreatorGate` whenever plugin creation is enabled for
+    /// the session. Owns the *how* (the SandboxPlugin schema, the write →
+    /// register → verify loop); the *when-to-build* triggers live in
+    /// `selfImprovementGuidance` and the discovery ladder. Body only — the
+    /// gate supplies the heading and intro line.
+    public static let pluginCreatorInstructions = """
+        A sandbox plugin is a JSON recipe (`plugin.json`) plus helper scripts
+        that run in your sandbox. Use one when you need to connect to a service
+        you have no tools for AND it has an API you can call from Python or
+        Node. (Confirm nothing already covers it first — see Discovering more
+        tools.)
+
+        ### Steps
+
+        1. **Secrets.** If the API needs a key or token, collect it via Secret handling (`sandbox_secret_check`, then `sandbox_secret_set` with `value` omitted). Declare the names in `plugin.json` `secrets`; never put a secret value in chat or in plugin files.
+        2. **Write files** under `plugins/{service}/` with `sandbox_write_file` — scripts first, then `plugin.json`. `sandbox_plugin_register` packages the whole directory automatically: do NOT inline script contents or add a `files` field. Binary files are rejected — regenerate them in `setup` instead.
+        3. **Write `plugin.json`** (SandboxPlugin schema):
+
+        ```json
+        {
+          "name": "Service Name",
+          "description": "What this integration does",
+          "dependencies": ["python3", "py3-pip"],
+          "setup": "pip install service-sdk",
+          "secrets": ["SERVICE_API_KEY"],
+          "permissions": { "network": "api.service.com" },
+          "tools": [
+            {
+              "id": "get_item",
+              "description": "Get an item by ID",
+              "parameters": { "item_id": { "type": "string", "description": "Item ID" } },
+              "run": "python3 scripts/get_item.py"
+            }
+          ]
+        }
+        ```
+
+        - `dependencies`: Alpine packages (`apk add`). `setup` and every `run` command are validated against the network allowlist (Alpine repos, PyPI, npm, GitHub, crates.io); reaching any other host fails registration.
+        - `secrets`: names whose values come from Keychain — registration fails up front if a declared secret has no value yet.
+        - `permissions.network`: comma-separated API hostnames the scripts reach (`outbound` / `none` / malformed → `none`). `permissions.inference` is forced to `false`.
+        4. **Write the scripts.** Parameters arrive as `$PARAM_{NAME}` (uppercased) env vars, secrets as `$NAME` env vars; print JSON to stdout, errors to stderr, exit non-zero on failure.
+        5. **Register and verify.** Call `sandbox_plugin_register(plugin_id: "{service}")` — it installs deps, runs setup, and makes the tools available immediately (and persists them). Call one to confirm; on failure read stderr, fix, and re-register. Then tell the user what's now available.
+
+        ### Guidelines
+
+        - One focused action per tool, not a mega-tool. Default to read operations; add writes only if asked.
+        - Use well-maintained libraries, validate required parameters, return structured JSON, and paginate list operations.
+        - Tool names are auto-prefixed with the plugin id (e.g. `notion_list_databases`).
+        """
+
     // MARK: - Enabled Capabilities Manifest
 
     /// One tool or skill row in the enabled-capabilities manifest. Carries
@@ -222,17 +405,15 @@ public enum SystemPromptTemplates {
             ## Enabled capabilities
 
             These capabilities are enabled for this session. Each line begins \
-            with its loadable id. Some may already be in your current tool \
-            schema; others must be loaded before use. To load one, call \
-            capabilities_load with its id exactly as shown \
+            with its loadable id; some are already in your tool schema, others \
+            must be loaded first. To load one, call capabilities_load with its \
+            id exactly as shown \
             (e.g. `capabilities_load({"ids": ["tool/<name>"]})`). They are real \
-            — do not deny having a capability that appears here.
+            — confirm and load one when asked rather than denying it.
 
-            Worked example — User: "You have a list_messages tool." You: check \
-            this manifest. If tool/list_messages is listed, confirm it and call \
-            capabilities_load with that id before using it. Only if it is absent \
-            from both this manifest and an empty capabilities_discover result do \
-            you say it is unavailable.
+            Worked example — User: "You have a list_messages tool." If \
+            `tool/list_messages` is listed here, confirm it and capabilities_load \
+            it before use.
             """
 
         return intro + "\n\n" + blocks.joined(separator: "\n")
@@ -378,15 +559,21 @@ public enum SystemPromptTemplates {
         if !installed.isEmpty { parts.append(installed) }
         let secrets = secretsPromptBlock(secretNames)
         if !secrets.isEmpty { parts.append(secrets) }
-        // Each block is self-contained and trailing-newline terminated; the
-        // composer trims the section, so a single `\n` join keeps the two
-        // logical blocks on their own lines without a runaway blank run.
-        return parts.joined(separator: "\n")
+        // Nothing live to report → empty so the composer drops the section
+        // (no bare heading).
+        guard !parts.isEmpty else { return "" }
+        // A heading anchors these blocks instead of leaving "Already
+        // installed…" / "Configured secrets…" floating after the previous
+        // section. Each block is self-contained and trailing-newline
+        // terminated; the composer trims the section, so a single `\n` join
+        // keeps the logical blocks on their own lines without a runaway
+        // blank run.
+        return "## Sandbox state\n\n" + parts.joined(separator: "\n")
     }
 
     // MARK: - Sandbox Building Blocks
 
-    static let sandboxSectionHeading = "## Linux Sandbox Environment"
+    static let sandboxSectionHeading = "## Linux sandbox environment"
     static let sandboxReadFileHint =
         "`sandbox_read_file` with `start_line`/`line_count`/`tail_lines`"
 
@@ -471,7 +658,6 @@ public enum SystemPromptTemplates {
             - Install Python, Node, or system deps with `sandbox_install` (`manager`: `pip` / `npm` / `apk`).
             - Use \(logReadHint) to inspect large logs.
             - The sandbox is disposable; experiment freely.
-            - Your `SOUL.md` at `~/SOUL.md` records stable preferences across sessions. Edit it with `sandbox_write_file` when you observe a durable pattern; edits apply on the next session.
             """
     }
 
@@ -532,7 +718,7 @@ public enum SystemPromptTemplates {
     public static func folderContext(from folderContext: FolderContext?) -> String {
         guard let folder = folderContext else { return "" }
 
-        var lines: [String] = ["## Working Directory"]
+        var lines: [String] = ["## Working directory"]
         lines.append("**Path:** \(folder.rootPath.path)")
         if folder.projectType != .unknown {
             lines.append("**Project Type:** \(folder.projectType.displayName)")
@@ -568,7 +754,7 @@ public enum SystemPromptTemplates {
         if let contextFiles = folder.contextFiles, !contextFiles.isEmpty {
             section += """
 
-                ## Project Context
+                ## Project context
 
                 The following project context file has been loaded and should be followed:
 
@@ -625,7 +811,7 @@ public enum SystemPromptTemplates {
     ) -> String {
         guard let folder = folderContext else { return "" }
 
-        var lines: [String] = ["## Host Workspace (read-only)"]
+        var lines: [String] = ["## Host workspace (read-only)"]
         lines.append("**Path:** \(folder.rootPath.path)")
         if folder.projectType != .unknown {
             lines.append("**Project Type:** \(folder.projectType.displayName)")
@@ -654,7 +840,7 @@ public enum SystemPromptTemplates {
         if let contextFiles = folder.contextFiles, !contextFiles.isEmpty {
             section += """
 
-                ## Project Context
+                ## Project context
 
                 The following project context file has been loaded and should be followed:
 

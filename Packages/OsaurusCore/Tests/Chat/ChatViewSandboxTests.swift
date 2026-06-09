@@ -45,7 +45,7 @@ struct ChatViewSandboxTests {
         #expect(sandboxPrompt.contains("sandbox_exec"))
         // Plain sandbox (no host folder) must NOT emit the combined
         // read-only workspace section or the unified Files block.
-        #expect(sandboxPrompt.contains("## Host Workspace (read-only)") == false)
+        #expect(sandboxPrompt.contains("## Host workspace (read-only)") == false)
         #expect(sandboxPrompt.contains("## Files") == false)
         // Plain sandbox keeps the sandbox read tools in its dispatch guide.
         #expect(sandboxPrompt.contains("sandbox_read_file"))
@@ -95,7 +95,7 @@ struct ChatViewSandboxTests {
         // ...alongside the read-only host workspace section and the
         // unified Files block that routes one file family by path so the
         // model never picks between `file_*` and `sandbox_*` read tools.
-        #expect(prompt.contains("## Host Workspace (read-only)"))
+        #expect(prompt.contains("## Host workspace (read-only)"))
         #expect(prompt.contains("## Files"))
         // The unified Files block must name the real exec tools, never the
         // (hidden in this mode) host `shell_run`.

@@ -189,8 +189,9 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
                 text = """
                     No capabilities found matching \(queryList).
 
-                    You can create new tools for this. Load the plugin creator skill:
-                      capabilities_load("skill/Sandbox Plugin Creator")
+                    Don't stop here — build it. Assemble it from sandbox \
+                    primitives (see Discovering more tools), and package \
+                    reusable work as a sandbox plugin (see Building new tools).
                     """
             } else {
                 text = "No capabilities found matching \(queryList)."

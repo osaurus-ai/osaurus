@@ -18,20 +18,23 @@
 //    1. platform                  (forChat)
 //    2. persona                   (forChat)
 //    3. soul                      static, sandbox-only, frozen per session
-//    4. agentDB                   static framing, gated on dbEnabled
-//    5. modelFamilyGuidance       static, gated on family match
-//    6. codeStyle                 static, gated on file-mutation tools
-//    7. riskAware                 static, gated on file-mutation tools
-//    8. agentLoopGuidance         static, gated on prior loop-tool use
-//    9. sandbox / folderContext   static framing, mode-specific
-//   10. capabilityNudge           static, gated on capabilities_discover
-//   11. enabledManifest           static, frozen (all enabled tools +
+//    4. selfImprovement           static, sandbox-only (canCreatePlugins-aware)
+//    5. agentDB                   static framing, gated on dbEnabled
+//    6. modelFamilyGuidance       static, gated on family match
+//    7. grounding                 static, gated on tools present
+//    8. codeStyle                 static, gated on file-mutation tools
+//    9. riskAware                 static, gated on file-mutation tools
+//   10. secretHandling            static, sandbox-only
+//   11. agentLoopGuidance         static, gated on prior loop-tool use
+//   12. sandbox / folderContext   static framing, mode-specific
+//   13. capabilityNudge           static, gated on capabilities_discover
+//   14. enabledManifest           static, frozen (all enabled tools +
 //                                  plugin skills + standalone skills)
-//   12. skillsGovern              static (paired with enabledManifest)
-//   13. agentDBSchema             dynamic, live schema snapshot
-//   14. sandboxState              dynamic, installed packages + secrets
-//   15. sandboxUnavailable        dynamic
-//   16. pluginCreator             dynamic
+//   15. skillsGovern              static (paired with enabledManifest)
+//   16. agentDBSchema             dynamic, live schema snapshot
+//   17. sandboxState              dynamic, installed packages + secrets
+//   18. sandboxUnavailable        dynamic
+//   19. pluginCreator             dynamic
 //
 //  Sections 4/9 carry only session-constant framing; their mutable state
 //  (13/14) rides in the dynamic block so a schema change, package install,
@@ -154,9 +157,11 @@ struct PromptSectionOrderingTests {
                 [
                     "platform",
                     "persona",
+                    "selfImprovement",
                     "modelFamilyGuidance",
                     "codeStyle",
                     "riskAware",
+                    "secretHandling",
                     "sandbox",
                     "capabilityNudge",
                 ],
@@ -165,6 +170,112 @@ struct PromptSectionOrderingTests {
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    // MARK: - Sandbox-only block gating (Secret handling / Self-improvement /
+    //         capability build ladder)
+
+    /// In sandbox mode with plugin creation enabled, the three sandbox-gated
+    /// blocks appear and carry their plugin-build lines: Self-improvement
+    /// names sandbox plugins, and the capability nudge ends in a build step
+    /// (not denial). Secret handling is present regardless of plugin creation.
+    @Test("sandbox blocks: present with plugin lines when canCreatePlugins")
+    func sandboxBlocks_presentWithPluginLinesWhenCanCreate() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let agent = Agent(
+                name: "SandboxBlocks-PluginOn",
+                systemPrompt: "Test identity",
+                agentAddress: "test-sandbox-blocks-on-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: true, pluginCreate: true)
+            )
+            AgentManager.shared.add(agent)
+            BuiltinSandboxTools.register(
+                agentId: agent.id.uuidString,
+                agentName: agent.name,
+                config: AutonomousExecConfig(enabled: true, pluginCreate: true)
+            )
+
+            let ctx = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .sandbox(hostRead: nil),
+                model: "gpt-5"
+            )
+            let ids = sectionIds(ctx)
+            #expect(ids.contains("secretHandling"))
+            #expect(ids.contains("selfImprovement"))
+            #expect(ctx.prompt.contains("## Secret handling"))
+            #expect(ctx.prompt.contains("## Self-improvement"))
+            // Plugin-build lines present when plugin creation is on.
+            #expect(ctx.prompt.contains("Build or update a sandbox plugin"))
+            #expect(ctx.prompt.contains("build a sandbox plugin (see Building"))
+            // The capability ladder ends in a build step, not denial.
+            #expect(ctx.prompt.contains("Only after these come up empty"))
+
+            ToolRegistry.shared.unregisterAllSandboxTools()
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    /// In sandbox mode with plugin creation OFF, the sections still appear but
+    /// every plugin-build line is stripped — no wasted context describing an
+    /// unavailable path. The non-plugin guidance (workspace persistence,
+    /// SOUL.md, secret handling) stays.
+    @Test("sandbox blocks: plugin lines stripped when canCreatePlugins is off")
+    func sandboxBlocks_pluginLinesStrippedWhenCannotCreate() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let agent = Agent(
+                name: "SandboxBlocks-PluginOff",
+                systemPrompt: "Test identity",
+                agentAddress: "test-sandbox-blocks-off-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: true, pluginCreate: false)
+            )
+            AgentManager.shared.add(agent)
+            BuiltinSandboxTools.register(
+                agentId: agent.id.uuidString,
+                agentName: agent.name,
+                config: AutonomousExecConfig(enabled: true, pluginCreate: false)
+            )
+
+            let ctx = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .sandbox(hostRead: nil),
+                model: "gpt-5"
+            )
+            let ids = sectionIds(ctx)
+            // Sections themselves remain.
+            #expect(ids.contains("secretHandling"))
+            #expect(ids.contains("selfImprovement"))
+            #expect(ctx.prompt.contains("## Self-improvement"))
+            #expect(ctx.prompt.contains("Workspace files persist across messages"))
+            // Every plugin-build line is gone.
+            #expect(!ctx.prompt.contains("Build or update a sandbox plugin"))
+            #expect(!ctx.prompt.contains("build a sandbox plugin (see Building"))
+            // The pluginCreator backstop also stays out without plugin creation.
+            #expect(ids.contains("pluginCreator") == false)
+
+            ToolRegistry.shared.unregisterAllSandboxTools()
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    /// Outside sandbox mode, none of the sandbox-only blocks appear — the
+    /// non-sandbox prompt keeps the original "Discovering more tools" terminus.
+    @Test("sandbox blocks: absent outside sandbox mode")
+    func sandboxBlocks_absentOutsideSandbox() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let ctx = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "gpt-5"
+            )
+            let ids = sectionIds(ctx)
+            #expect(ids.contains("secretHandling") == false)
+            #expect(ids.contains("selfImprovement") == false)
+            #expect(!ctx.prompt.contains("## Secret handling"))
+            #expect(!ctx.prompt.contains("## Self-improvement"))
+            // No sandbox primitives leak into the non-sandbox ladder.
+            #expect(!ctx.prompt.contains("Assemble it from sandbox primitives"))
         }
     }
 

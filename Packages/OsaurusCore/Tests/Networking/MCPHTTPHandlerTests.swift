@@ -53,10 +53,10 @@ struct MCPHTTPHandlerTests {
 
     @Test func mcp_tools_lists_only_enabled_tools() async throws {
         // `EchoTool` is a dynamic tool registered into the process-wide
-        // `ToolRegistry.shared`. `PluginCreatorInjectionTests` reads
-        // `dynamicCatalogIsEmpty()` and would flake if `EchoTool` were
-        // registered concurrently. Hold the cross-suite lock across the
-        // whole register / assert / unregister window.
+        // `ToolRegistry.shared`. Other suites that assert on the dynamic
+        // catalog contents (e.g. `ToolSearchServiceTests`) would flake if
+        // `EchoTool` were registered concurrently. Hold the cross-suite lock
+        // across the whole register / assert / unregister window.
         try await DynamicCatalogTestLock.shared.run {
             let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
                 "osaurus-tests-\(UUID().uuidString)",

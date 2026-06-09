@@ -2,10 +2,11 @@
 //  SandboxSectionTokenAuditTests.swift
 //
 //  Item 7 of the sandbox tightening spec, refreshed during the prompt-bloat
-//  follow-up: the canonical sandbox section should sit around 400 tokens
-//  even with the SOUL.md advert. The full operational details now live in
-//  the sandbox tool descriptions and can be pulled in through lazy schemas,
-//  so this top-level section only carries mode framing and dispatch hints.
+//  follow-up: the canonical sandbox section should sit around 400 tokens.
+//  The full operational details now live in the sandbox tool descriptions
+//  (pulled in through lazy schemas) and SOUL guidance lives in the
+//  Self-improvement section, so this top-level section only carries mode
+//  framing and dispatch hints.
 //
 //  Numbers from the in-tree run on 2026-05-06:
 //    canonical before T-O: 458 tokens (no secrets configured)
@@ -62,26 +63,31 @@ struct SandboxSectionTokenAuditTests {
         #expect(files.contains("/workspace"))
     }
 
-    /// PR3 of the SOUL.md spec adds a one-line advert to
-    /// `sandboxRuntimeHints`. The advert is the only signal the agent
-    /// has that `~/SOUL.md` is meaningful — the bootstrap seed exists
-    /// but a model with no advert has no reason to read or write it.
-    /// Pin both the file path and the verb so a future trim cannot
-    /// silently drop the affordance while the seed file still ships.
-    @Test("sandbox section advertises ~/SOUL.md as agent-editable")
-    func sandboxSectionAdvertisesSoul() {
-        let section = SystemPromptTemplates.sandbox()
+    /// `~/SOUL.md` guidance has a single owner: the always-present
+    /// `## Self-improvement` section (which co-fires on every sandbox turn).
+    /// To keep the surfaces from drifting back into duplication, the static
+    /// sandbox framing must NOT re-advertise SOUL, and Self-improvement must
+    /// carry the path, the edit verb, and the next-session cadence.
+    @Test("SOUL.md guidance lives in Self-improvement, not the sandbox framing")
+    func soulGuidanceOwnedBySelfImprovement() {
+        let framing = SystemPromptTemplates.sandbox()
         #expect(
-            section.contains("~/SOUL.md"),
-            "Sandbox section dropped the `~/SOUL.md` mention. Without it the agent has no signal that the bootstrap seed is meaningful or that editing is sanctioned. Section:\n\(section)"
+            !framing.contains("SOUL.md"),
+            "Sandbox framing should no longer carry SOUL guidance — it moved to the Self-improvement section. Framing:\n\(framing)"
+        )
+
+        let selfImprovement = SystemPromptTemplates.selfImprovementGuidance(canCreatePlugins: false)
+        #expect(
+            selfImprovement.contains("~/SOUL.md"),
+            "Self-improvement dropped the `~/SOUL.md` mention — the agent needs a signal that the bootstrap seed is meaningful and editing is sanctioned."
         )
         #expect(
-            section.contains("stable preferences across sessions"),
-            "Sandbox section dropped the SOUL framing — the agent needs to know edits persist beyond the current session."
+            selfImprovement.contains("sandbox_write_file"),
+            "Self-improvement dropped the SOUL edit verb."
         )
         #expect(
-            section.contains("edits apply on the next session"),
-            "Sandbox section dropped the cadence note — the agent needs to know SOUL edits are not visible mid-session."
+            selfImprovement.contains("next session"),
+            "Self-improvement dropped the cadence note — the agent needs to know SOUL edits are not visible mid-session."
         )
     }
 

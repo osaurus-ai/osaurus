@@ -101,6 +101,19 @@ enum ModelFamilyGuidance {
         return guidance(for: family(for: raw))
     }
 
+    // MARK: - Shared lines
+
+    /// One-line tool-grounding rule shared across the family blocks. The
+    /// full statement (live-data grounding, manifest-vs-schema, discover
+    /// before denying) lives once in `SystemPromptTemplates.groundingDirective`,
+    /// which always co-fires with a family block; this compact reminder keeps
+    /// the anti-fabrication guardrail visible inside each family's own block
+    /// without re-printing the whole paragraph four times. Wording preserves
+    /// the substrings the obedience tests pin ("Only call tools that exist in
+    /// your schema", "never invent a tool name").
+    static let toolGroundingLine =
+        "Only call tools that exist in your schema. If a capability seems missing, run `capabilities_discover` before saying it's unavailable; never invent a tool name, and never deny a capability listed in the Enabled-capabilities manifest."
+
     // MARK: - Family blocks
 
     /// GPT / Codex / o-series: persistence + verification + act-don't-ask.
@@ -108,7 +121,7 @@ enum ModelFamilyGuidance {
     /// `<tag>...</tag>` blocks as structured directives rather than as
     /// prose suggestions, so we keep that wrapping for each section.
     static let gptCodexGuidance = """
-        # Execution discipline
+        ## Execution discipline
 
         <tool_persistence>
         - Use tools whenever they improve correctness, completeness, or grounding.
@@ -155,15 +168,11 @@ enum ModelFamilyGuidance {
     /// inside the container, so a global "use absolute paths" directive
     /// would actively conflict with the active mode template.
     static let googleGemmaGuidance = """
-        # Operational directives
+        ## Operational directives
 
-        - **Only call tools that exist in your schema.** Do not enumerate, list, \
-        or describe your available tools in your reply. If you don't see a tool \
-        you'd want, check the Enabled-capabilities manifest and run \
-        `capabilities_discover` first; only after a discover comes back empty \
-        may you work around it or tell the user it is unavailable — never deny a \
-        capability just because it is absent from your current schema, and never \
-        call or mention a name that isn't in your schema.
+        - \(toolGroundingLine)
+        - **Don't enumerate tools.** Never list or describe your available \
+        tools in your reply, and never mention a name that isn't in your schema.
         - **Verify before you act.** Read the file or list the directory first \
         when a path is involved; never guess at file contents.
         - **Be concise.** Brief plain-language answers — a few sentences, not \
@@ -184,12 +193,9 @@ enum ModelFamilyGuidance {
     /// look thorough. Pairs well with the folder-context act-don't-narrate
     /// line for `.hostFolder` chats.
     static let glmQwenGuidance = """
-        # Reminders
+        ## Reminders
 
-        - Only call tools that exist in your schema. If a capability seems \
-        missing: discover it first; only after a `capabilities_discover` comes \
-        back empty may you work around it or tell the user it is unavailable. \
-        Never deny a capability that appears in the Enabled-capabilities manifest.
+        - \(toolGroundingLine)
         - Prefer one rich shell invocation over many small calls when the \
         steps are mechanical.
         - Keep going until the task is done. After a tool returns, take \
@@ -206,7 +212,7 @@ enum ModelFamilyGuidance {
     /// specific tool so it stays safe outside folder/sandbox mode; the active
     /// schema and mode-specific prompt sections carry the actual tool names.
     static let deepSeekGuidance = """
-        # Tool-use discipline
+        ## Tool-use discipline
 
         - If the next step is to inspect files, list a directory, run a \
         command, check state, or verify a claim, emit the appropriate tool \
@@ -217,12 +223,7 @@ enum ModelFamilyGuidance {
         - After a tool result, continue with the next concrete tool call when \
         more evidence is needed. Only answer in prose once the requested work \
         is actually grounded or complete.
-        - Use only tools present in the schema for this request. If the needed \
-        capability seems missing, follow the listed discovery path: check the \
-        Enabled-capabilities manifest and run `capabilities_discover` first; \
-        only after a discover comes back empty may you tell the user exactly \
-        what is unavailable. Schema absence alone is not grounds to deny a \
-        capability.
+        - \(toolGroundingLine)
         """
 
     /// LFM2 / Liquid: small-active MoE that hedges and refuses when it sees
@@ -232,15 +233,11 @@ enum ModelFamilyGuidance {
     /// `SystemPromptTemplates.groundingDirective` (which always co-fires when
     /// this block does), so it is intentionally not repeated here.
     static let lfm2Guidance = """
-        # Reminders
+        ## Reminders
 
         - You have tools. When a listed tool can satisfy the request, call it — \
         do not decline, and do not just describe what you would do.
-        - Only call tools that exist in your schema. If a needed capability \
-        seems missing: discover it first; only after a `capabilities_discover` \
-        comes back empty may you work around it or tell the user it is \
-        unavailable. Never deny a capability that appears in the \
-        Enabled-capabilities manifest, and never invent a tool name.
+        - \(toolGroundingLine)
         - For local, reversible work (reading, editing a file, running a test), \
         just proceed. Ask a clarifying question only when guessing wrong would \
         change the result.
@@ -256,16 +253,10 @@ enum ModelFamilyGuidance {
     /// owned by `SystemPromptTemplates.groundingDirective` (always co-fires),
     /// so it is intentionally not repeated here.
     static let defaultGuidance = """
-        # Reminders
+        ## Reminders
 
         - Use a listed tool when it improves correctness or grounds a claim. \
         Don't decline a request you have the tools to satisfy.
-        - Only call tools that exist in your schema. If a capability seems \
-        missing: discover it first; only after a `capabilities_discover` comes \
-        back empty may you work around it or tell the user it is unavailable. \
-        Never deny a capability that appears in the Enabled-capabilities \
-        manifest, and never invent a tool name.
-        - For local, reversible work, just proceed; ask only when guessing wrong \
-        would change the result.
+        - \(toolGroundingLine)
         """
 }

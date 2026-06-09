@@ -591,21 +591,24 @@ public struct SystemPromptComposer: Sendable {
     ///   1. platform                  (forChat)
     ///   2. persona                   (forChat)
     ///   3. soul                      static, sandbox-only, frozen per session
-    ///   4. agentDB                   static framing, gated on dbEnabled
-    ///   5. modelFamilyGuidance       static, every family (default for .other)
-    ///   6. grounding                 static, gated on tools present
-    ///   7. codeStyle                 static, gated on file-edit tools
-    ///   8. riskAware                 static, gated on file-mutation tools
-    ///   9. agentLoopGuidance         static, gated on loop tools (or small ctx)
-    ///  10. sandbox / folderContext   static framing, mode-specific, gated on tools on
-    ///  11. capabilityNudge           static, gated on capabilities_discover
-    ///  12. enabledManifest           static, frozen, gated on capabilities_load
+    ///   4. selfImprovement           static, sandbox-only (canCreatePlugins-aware)
+    ///   5. agentDB                   static framing, gated on dbEnabled
+    ///   6. modelFamilyGuidance       static, every family (default for .other)
+    ///   7. grounding                 static, gated on tools present
+    ///   8. codeStyle                 static, gated on file-edit tools
+    ///   9. riskAware                 static, gated on file-mutation tools
+    ///  10. secretHandling            static, sandbox-only
+    ///  11. agentLoopGuidance         static, gated on loop tools (or small ctx)
+    ///  12. sandbox / folderContext   static framing, mode-specific, gated on tools on
+    ///  13. capabilityNudge           static, gated on capabilities_discover
+    ///                                (sandbox: build-ladder variant, canCreatePlugins-aware)
+    ///  14. enabledManifest           static, frozen, gated on capabilities_load
     ///                                (all enabled tools + plugin skills + standalone skills)
-    ///  13. skillsGovern              static body, paired with enabledManifest
-    ///  14. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
-    ///  15. sandboxState              dynamic, installed packages + secrets (mutate mid-session)
-    ///  16. sandboxUnavailable        dynamic, gated on registrar failure
-    ///  17. pluginCreator             dynamic, backstop
+    ///  15. skillsGovern              static body, paired with enabledManifest
+    ///  16. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
+    ///  17. sandboxState              dynamic, installed packages + secrets (mutate mid-session)
+    ///  18. sandboxUnavailable        dynamic, gated on registrar failure
+    ///  19. pluginCreator             dynamic, injected when plugin creation is enabled
     ///
     /// Statics come before dynamics so the cached prefix
     /// (`PromptManifest.staticPrefixContent`) reaches as far as possible —
@@ -666,6 +669,26 @@ public struct SystemPromptComposer: Sendable {
                     id: "soul",
                     label: "Soul",
                     content: SystemPromptTemplates.soulSection(soulSection)
+                )
+            )
+        }
+
+        // Self-improvement: capture reusable work (scripts, clients, plugins)
+        // and durable cross-session patterns (SOUL.md) so later sessions reuse
+        // them instead of re-deriving. Sandbox-only — it references workspace
+        // persistence, sandbox plugins, and SOUL.md, none of which exist
+        // outside sandbox mode. The plugin-build bullets drop out when the
+        // agent can't create plugins so the section spends no context on an
+        // unavailable path. Sits right after SOUL so the two identity/learning
+        // layers read together. Session-constant inputs keep it static.
+        if !effectiveToolsOff, executionMode.usesSandboxTools {
+            composer.append(
+                .static(
+                    id: "selfImprovement",
+                    label: "Self-Improvement",
+                    content: SystemPromptTemplates.selfImprovementGuidance(
+                        canCreatePlugins: snapshot.canCreatePlugins
+                    )
                 )
             )
         }
@@ -757,6 +780,22 @@ public struct SystemPromptComposer: Sendable {
                     id: "riskAware",
                     label: "Risk-Aware Actions",
                     content: SystemPromptTemplates.riskAwareGuidance
+                )
+            )
+        }
+
+        // Secret handling: route secret collection through the out-of-band
+        // `sandbox_secret_set` prompt instead of chat (which is persisted to
+        // the transcript), and keep secret values out of files, tool args, and
+        // notes. Sandbox-only — it leans on the sandbox secret tools and the
+        // env-var exposure that only exists in sandbox mode. Sits next to
+        // Risk-aware so the two safety blocks read together. Session-constant.
+        if !effectiveToolsOff, executionMode.usesSandboxTools {
+            composer.append(
+                .static(
+                    id: "secretHandling",
+                    label: "Secret Handling",
+                    content: SystemPromptTemplates.secretHandlingGuidance
                 )
             )
         }
@@ -869,11 +908,23 @@ public struct SystemPromptComposer: Sendable {
             !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_discover" })
         {
+            // Sandbox mode swaps the terminus ("tell the user it is
+            // unavailable") for an escalation ladder that ends in a build
+            // step, not denial — the sandbox can assemble most integrations
+            // from primitives. Outside sandbox there are no such primitives,
+            // so the original nudge (with its terminus) stays. The ladder's
+            // plugin-build rung is further gated on `canCreatePlugins`.
+            let nudge =
+                executionMode.usesSandboxTools
+                ? SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
+                    canCreatePlugins: snapshot.canCreatePlugins
+                )
+                : SystemPromptTemplates.capabilityDiscoveryNudge
             composer.append(
                 .static(
                     id: "capabilityNudge",
                     label: "Capability Discovery",
-                    content: SystemPromptTemplates.capabilityDiscoveryNudge
+                    content: nudge
                 )
             )
         }
@@ -956,13 +1007,13 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("sandboxUnavailable", reason.kind.rawValue)
         }
 
-        // Plugin-creator backstop: only inject when the agent literally
-        // has NO dynamic tools available (no MCP / plugin / sandbox-plugin
-        // installed) AND nothing was resolved this turn. The narrower gate
-        // prevents the skill from being injected on every "this turn just
-        // doesn't need a plugin" case for users who already have plugin
-        // tools installed — which would bias the model toward writing new
-        // plugins instead of using the ones it has.
+        // Plugin-creator injection: inject the `## Building new tools` section
+        // whenever plugin creation is enabled for this session.
+        // `sandbox_plugin_register` is always-loaded in that case but lives in
+        // the base schema with no tool group beneath it, so nothing ever pulls
+        // in the teaching section the way loading a governing skill pulls its
+        // tool group. This is the inverse link: the register action never
+        // arrives without the instructions that teach the plugin format.
         //
         // We also fire during sandbox init-pending (autonomousEnabled but
         // sandbox tools haven't registered yet). Without that, the agent
@@ -972,31 +1023,21 @@ public struct SystemPromptComposer: Sendable {
         //
         // All agent-side flags ride on `snapshot`, captured once at the
         // start of compose, so the gate can't race sibling MainActor work
-        // (test setup, plugin registration, skill toggle) between awaits.
-        let pluginCreatorSkill = SkillManager.shared.skill(named: "Sandbox Plugin Creator")
+        // (test setup, plugin registration) between awaits.
         let gateInputs = PluginCreatorGate.Inputs(
             effectiveToolsOff: effectiveToolsOff,
             sandboxAvailable: executionMode.usesSandboxTools || snapshot.autonomousEnabled,
-            canCreatePlugins: snapshot.canCreatePlugins,
-            dynamicCatalogIsEmpty: ToolRegistry.shared.dynamicCatalogIsEmpty(),
-            hasResolvedDynamicTools: hasDynamicTools(
-                snapshot: snapshot,
-                resolvedToolNames: resolvedNames,
-                alwaysLoadedNames: toolset.alwaysLoadedNames
-            ),
-            skillEnabled: pluginCreatorSkill?.enabled ?? false
+            canCreatePlugins: snapshot.canCreatePlugins
         )
         if toolset.capabilityPromptSectionsEnabled,
-            PluginCreatorGate.shouldInject(gateInputs),
-            let skill = pluginCreatorSkill
+            PluginCreatorGate.shouldInject(gateInputs)
         {
             composer.append(
                 .dynamic(
                     id: "pluginCreator",
                     label: "Plugin Creator",
                     content: PluginCreatorGate.section(
-                        skillName: skill.name,
-                        instructions: skill.instructions
+                        instructions: SystemPromptTemplates.pluginCreatorInstructions
                     )
                 )
             )
@@ -1589,27 +1630,6 @@ public struct SystemPromptComposer: Sendable {
             debugLog(
                 "[Context:tools] WARNING: autonomous execution is enabled but real sandbox tools are not registered — system prompt will carry the 'Sandbox not ready' notice. sandboxStatus=\(sandboxStatus). If sandboxStatus is 'running', SandboxAgentProvisioner.ensureProvisioned likely threw — check earlier [Sandbox] log lines."
             )
-        }
-    }
-
-    /// Did the current request resolve any dynamic (non-always-loaded,
-    /// non-sandbox-builtin) tool? Used by `finalizeContext` to decide whether
-    /// to inject the plugin-creator fallback skill.
-    ///
-    /// In manual mode the user's explicit picks are the dynamic surface. In
-    /// auto mode (Design C) the schema is the always-loaded hot set plus any
-    /// `capabilities_load` picks, so dynamic tools are exactly the resolved
-    /// names that fall outside the always-loaded snapshot.
-    private static func hasDynamicTools(
-        snapshot: AgentConfigSnapshot,
-        resolvedToolNames: Set<String>,
-        alwaysLoadedNames: LoadedTools
-    ) -> Bool {
-        switch snapshot.toolMode {
-        case .auto:
-            return !resolvedToolNames.subtracting(alwaysLoadedNames).isEmpty
-        case .manual:
-            return !(snapshot.manualToolNames?.isEmpty ?? true)
         }
     }
 

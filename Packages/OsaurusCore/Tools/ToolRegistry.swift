@@ -1156,15 +1156,6 @@ final class ToolRegistry: ObservableObject {
         return listTools().filter { $0.enabled && !alwaysLoaded.contains($0.name) }
     }
 
-    /// True when no dynamic (MCP / plugin / sandbox-plugin) tool is enabled
-    /// for the agent. Used by `SystemPromptComposer` to decide whether the
-    /// "Sandbox Plugin Creator" skill should be injected as a backstop —
-    /// only when the agent literally has no way to satisfy a request via
-    /// existing tools, not just when this turn's preflight didn't pick one.
-    func dynamicCatalogIsEmpty() -> Bool {
-        listDynamicTools().isEmpty
-    }
-
     /// Explain why a tool is callable now, loadable through
     /// `capabilities_load`, or unavailable. This is read-only diagnostic
     /// state: callers still enforce visibility/loading through the existing

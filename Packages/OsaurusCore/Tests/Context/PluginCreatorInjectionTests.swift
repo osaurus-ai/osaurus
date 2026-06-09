@@ -2,7 +2,8 @@
 //  PluginCreatorInjectionTests.swift
 //  osaurusTests
 //
-//  Covers the "Sandbox Plugin Creator" backstop at two levels:
+//  Covers the plugin-creator backstop (the `## Building new tools`
+//  section) at two levels:
 //
 //  1. `PluginCreatorGate.shouldInject` — pure gate. Unit tests exhaust
 //     every input combination with zero globals / zero async hops.
@@ -14,7 +15,7 @@
 //     — the injection call site is three lines).
 //
 //  2. `PluginCreatorGate.section` — pure formatter. Locks the output
-//     shape so downstream "contains Sandbox Plugin Creator" /
+//     shape so the "Building new tools" heading and
 //     "contains sandbox_plugin_register" assertions don't silently
 //     break if the template text drifts.
 //
@@ -38,10 +39,7 @@ struct PluginCreatorGateTests {
         PluginCreatorGate.Inputs(
             effectiveToolsOff: false,
             sandboxAvailable: true,
-            canCreatePlugins: true,
-            dynamicCatalogIsEmpty: true,
-            hasResolvedDynamicTools: false,
-            skillEnabled: true
+            canCreatePlugins: true
         )
     }
 
@@ -71,27 +69,6 @@ struct PluginCreatorGateTests {
         #expect(PluginCreatorGate.shouldInject(inputs) == false)
     }
 
-    @Test
-    func shouldInject_rejectsWhenCatalogHasOtherTools() {
-        var inputs = baseInputs()
-        inputs.dynamicCatalogIsEmpty = false
-        #expect(PluginCreatorGate.shouldInject(inputs) == false)
-    }
-
-    @Test
-    func shouldInject_rejectsWhenThisTurnResolvedDynamicTools() {
-        var inputs = baseInputs()
-        inputs.hasResolvedDynamicTools = true
-        #expect(PluginCreatorGate.shouldInject(inputs) == false)
-    }
-
-    @Test
-    func shouldInject_rejectsWhenUserDisabledTheSkill() {
-        var inputs = baseInputs()
-        inputs.skillEnabled = false
-        #expect(PluginCreatorGate.shouldInject(inputs) == false)
-    }
-
     // Sanity check: multiple failing conditions still fail (no weird
     // cancellation). Locks the "all gates must pass" contract instead
     // of just "any one gate failing kills it".
@@ -100,24 +77,23 @@ struct PluginCreatorGateTests {
         var inputs = baseInputs()
         inputs.effectiveToolsOff = true
         inputs.sandboxAvailable = false
-        inputs.skillEnabled = false
+        inputs.canCreatePlugins = false
         #expect(PluginCreatorGate.shouldInject(inputs) == false)
     }
 
     // MARK: - section formatter
 
     @Test
-    func section_includesSkillNameAndInstructions() {
+    func section_includesHeadingAndInstructions() {
         let rendered = PluginCreatorGate.section(
-            skillName: "Sandbox Plugin Creator",
             instructions: "Write a plugin.json and call sandbox_plugin_register."
         )
-        #expect(rendered.contains("Sandbox Plugin Creator"))
         #expect(rendered.contains("sandbox_plugin_register"))
-        // The opening fallback message is the load-bearing signal to
-        // the model that "no existing tools match" — assert it's there
-        // so future template edits can't silently drop it.
-        #expect(rendered.contains("No existing tools match this request"))
+        // The opening header + the "plugin creation is enabled" framing are the
+        // load-bearing signal to the model that it can build new tools — assert
+        // both are there so future template edits can't silently drop them.
+        #expect(rendered.contains("## Building new tools"))
+        #expect(rendered.contains("Plugin creation is enabled"))
     }
 }
 

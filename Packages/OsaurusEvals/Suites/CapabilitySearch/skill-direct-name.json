@@ -3,7 +3,7 @@
   "domain": "capability_search",
   "label": "capability search • skill • direct name match",
   "query": "help me debug this crash",
-  "notes": "Probes the simplest skill recall shape: query carries the skill's category keyword ('debug') as a literal token. The built-in 'Debug Assistant' skill's name + keywords array both contain 'debug' / 'crash', so this should be a near-trivial pass. If even THIS fails, the skill index is dead — useful as a smoke-test before reading the trickier cases. All 8 built-in skills are enabled to keep the catalog realistic.",
+  "notes": "Probes the simplest skill recall shape: query carries the skill's category keyword ('debug') as a literal token. The built-in 'Debug Assistant' skill's name + keywords array both contain 'debug' / 'crash', so this should be a near-trivial pass. If even THIS fails, the skill index is dead — useful as a smoke-test before reading the trickier cases. All 7 built-in skills are enabled to keep the catalog realistic.",
   "fixtures": {
     "enableSkills": [
       "Research Analyst",
@@ -12,7 +12,6 @@
       "Productivity Coach",
       "Content Summarizer",
       "Debug Assistant",
-      "Sandbox Plugin Creator",
       "Data Visualizer"
     ]
   },

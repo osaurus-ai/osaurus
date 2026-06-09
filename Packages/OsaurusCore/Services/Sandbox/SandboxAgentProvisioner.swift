@@ -173,10 +173,12 @@ public final class SandboxAgentProvisioner {
 
     // MARK: - SOUL.md Bootstrap
 
-    /// First-run seed body for `~/SOUL.md`. Spelt out so the agent's
-    /// first read of its own soul file makes the contract explicit:
-    /// what the file is, what belongs in it, what does NOT belong in
-    /// it, and the cadence on which edits become visible.
+    /// First-run seed body for `~/SOUL.md`. Identity-only on purpose:
+    /// it tells the agent what the file is, that editing is sanctioned,
+    /// and the next-session cadence. The detailed what-goes /
+    /// what-does-not-go boundary lives once in the always-present
+    /// `## Self-improvement` prompt section, so the seed does not repeat
+    /// it.
     ///
     /// An empty SOUL.md would leave the agent unsure whether the file
     /// is meaningful or accidental — the seed is what makes editing
@@ -185,21 +187,9 @@ public final class SandboxAgentProvisioner {
         # SOUL
 
         This file is your space to record stable preferences and patterns you
-        learn about working with the user. It persists across sessions. You
-        can edit it freely with sandbox_write_file (it writes whole files and
-        edits in place).
-
-        What goes here:
-        - Stable user preferences (tooling choices, voice, formatting).
-        - Recurring patterns the user expects.
-        - Working agreements established over time.
-
-        What does NOT go here:
-        - Session-specific facts (use memory).
-        - Project-specific details (use AGENTS.md in folder mode if applicable).
-        - Transient context.
-
-        Edits apply on the next session.
+        learn about working with the user. It persists across sessions, and you
+        can edit it freely with sandbox_write_file. Edits apply on the
+        next session.
         """
 
     /// Build the `test -f ... || cat > ... <<'SOUL_EOF' ... SOUL_EOF`

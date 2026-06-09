@@ -2,19 +2,21 @@
 //  PluginCreatorGate.swift
 //  osaurus
 //
-//  Pure decision logic + formatting for the "Sandbox Plugin Creator" backstop.
+//  Pure decision logic + formatting for the plugin-creator backstop.
 //
 
 import Foundation
 
-/// Pure decision logic + formatting for the "Sandbox Plugin Creator" backstop.
+/// Pure decision logic + formatting for the plugin-creator backstop — the
+/// `## Building new tools` section that teaches the plugin format whenever
+/// plugin creation is enabled.
 ///
 /// Extracted from `SystemPromptComposer` so the gate can be unit-tested
-/// without fighting `ToolRegistry.shared` / `SkillManager.shared` / `AgentManager.shared`.
-/// The composer snapshots all inputs at the start of a turn, then calls
+/// without fighting `ToolRegistry.shared` / `AgentManager.shared`. The
+/// composer snapshots all inputs at the start of a turn, then calls
 /// `shouldInject(_:)` with plain booleans — no actor hops, no globals.
 public enum PluginCreatorGate {
-    /// Every input that decides whether to inject the skill this turn.
+    /// Every input that decides whether to inject the section this turn.
     /// Agent-side flags ride on the composer's `AgentConfigSnapshot`,
     /// captured once at the start of compose so the gate sees the same
     /// view of the world the rest of the pipeline does.
@@ -22,51 +24,48 @@ public enum PluginCreatorGate {
         public var effectiveToolsOff: Bool
         public var sandboxAvailable: Bool
         public var canCreatePlugins: Bool
-        public var dynamicCatalogIsEmpty: Bool
-        public var hasResolvedDynamicTools: Bool
-        public var skillEnabled: Bool
 
         public init(
             effectiveToolsOff: Bool,
             sandboxAvailable: Bool,
-            canCreatePlugins: Bool,
-            dynamicCatalogIsEmpty: Bool,
-            hasResolvedDynamicTools: Bool,
-            skillEnabled: Bool
+            canCreatePlugins: Bool
         ) {
             self.effectiveToolsOff = effectiveToolsOff
             self.sandboxAvailable = sandboxAvailable
             self.canCreatePlugins = canCreatePlugins
-            self.dynamicCatalogIsEmpty = dynamicCatalogIsEmpty
-            self.hasResolvedDynamicTools = hasResolvedDynamicTools
-            self.skillEnabled = skillEnabled
         }
     }
 
     /// Pure gate. Returns true iff every condition holds:
     /// - tools aren't globally off
     /// - sandbox is available (either already active or autonomous-enabled)
-    /// - the agent is allowed to create plugins
-    /// - the user has no dynamic tools installed AND this turn didn't resolve any
-    /// - the user hasn't disabled the built-in skill
+    /// - the agent is allowed to create plugins (the `pluginCreate` flag, which
+    ///   is also the single user-facing control for plugin creation)
+    ///
+    /// `sandbox_plugin_register` is always-loaded whenever plugin creation is
+    /// enabled, but it lives in the base schema with no tool group beneath it,
+    /// so nothing ever pulls in the teaching section the way loading a governing
+    /// skill pulls its tool group. This gate is that inverse link: when plugin
+    /// creation is enabled, inject the section that explains the plugin format
+    /// so the register action never arrives without its instructions.
     public static func shouldInject(_ inputs: Inputs) -> Bool {
         !inputs.effectiveToolsOff
             && inputs.sandboxAvailable
             && inputs.canCreatePlugins
-            && inputs.dynamicCatalogIsEmpty
-            && !inputs.hasResolvedDynamicTools
-            && inputs.skillEnabled
     }
 
-    /// Pure formatter for the injected section.
-    public static func section(skillName: String, instructions: String) -> String {
+    /// Pure formatter for the injected section. `instructions` nests its own
+    /// `###` subsections under this single `## Building new tools` heading, so
+    /// the section reads as one block. Callers pass
+    /// `SystemPromptTemplates.pluginCreatorInstructions`.
+    public static func section(instructions: String) -> String {
         """
-        ## No existing tools match this request
+        ## Building new tools
 
-        You can create new tools by writing a sandbox plugin.
-        Follow the instructions below.
+        Plugin creation is enabled for this session: you can build sandbox
+        plugins that add new tools you can call immediately and that persist
+        for later sessions. The recipe below shows how.
 
-        ## Skill: \(skillName)
         \(instructions)
         """
     }

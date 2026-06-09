@@ -6,9 +6,9 @@
 //  global `ToolRegistry` dynamic catalog. `@Suite(.serialized)` only
 //  serializes tests within a single suite, so cross-suite races (e.g.
 //  `MCPHTTPHandlerTests` registering a dynamic tool while
-//  `PluginCreatorInjectionTests` asserts `dynamicCatalogIsEmpty()`)
-//  still happen — both suites are `@MainActor`, but every `await`
-//  releases the MainActor and lets the other suite interleave.
+//  `ToolSearchServiceTests` asserts on the catalog contents) still
+//  happen — both suites are `@MainActor`, but every `await` releases
+//  the MainActor and lets the other suite interleave.
 //
 //  Tests that touch the dynamic catalog should wrap their critical
 //  section in `await DynamicCatalogTestLock.shared.run { ... }`.

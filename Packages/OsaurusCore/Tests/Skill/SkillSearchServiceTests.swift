@@ -14,11 +14,28 @@ import Testing
 struct SkillSearchServiceTests {
 
     @Test func searchFallsBackToBuiltInSkillsWhenUninitialized() async {
-        let results = await SkillSearchService.shared.search(
-            query: "sandbox plugin creator integration tools",
-            threshold: 0.25
-        )
-        #expect(results.contains { $0.skill.name == L("Sandbox Plugin Creator") })
+        // The live lexical fallback only surfaces *enabled* skills, and
+        // built-ins ship disabled. Enable one for the duration of the check
+        // (under the storage lock so the transient state can't leak into
+        // sibling suites) and restore it before releasing.
+        await SandboxTestLock.runWithStoragePaths {
+            await SkillManager.shared.refresh()
+            guard let debugAssistant = SkillManager.shared.skill(named: L("Debug Assistant"))
+            else {
+                Issue.record("Debug Assistant built-in skill missing")
+                return
+            }
+            let wasEnabled = debugAssistant.enabled
+            await SkillManager.shared.setEnabled(true, for: debugAssistant.id)
+
+            let results = await SkillSearchService.shared.search(
+                query: "help me debug this crash",
+                threshold: 0.25
+            )
+
+            await SkillManager.shared.setEnabled(wasEnabled, for: debugAssistant.id)
+            #expect(results.contains { $0.skill.name == L("Debug Assistant") })
+        }
     }
 
     @Test func indexSkillDoesNotCrashWhenUninitialized() async {

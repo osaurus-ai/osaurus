@@ -3,10 +3,12 @@
 //
 //  Pin the contract of the SOUL.md bootstrap seed:
 //
-//  - The seed body still spells out the file's purpose, what belongs in
-//    it, what does NOT belong in it, and the cadence on which edits
-//    apply. Empty / vague seeds defeat the whole point — the agent has
-//    to learn the contract from its first read.
+//  - The seed body still spells out the file's purpose, sanctions edits,
+//    and states the cadence on which edits apply. The detailed
+//    what-goes / what-does-not-go boundary now lives once in the
+//    always-present `## Self-improvement` prompt section (which co-fires
+//    on every sandbox turn), so the one-time seed stays identity-only
+//    rather than duplicating it.
 //  - The seed script is idempotent: a `test -f "$HOME/SOUL.md" ||`
 //    guard wraps the heredoc so a soul the agent has accumulated edits
 //    to is never overwritten on subsequent provisions.
@@ -50,16 +52,18 @@ struct SandboxAgentProvisionerSoulSeedTests {
         #expect(!body.contains("sandbox_edit_file"))
     }
 
-    /// The contract draws an explicit boundary against memory and
-    /// AGENTS.md. Keeping that boundary visible in the seed prevents
-    /// the agent from cross-pollinating surfaces that the spec
-    /// intentionally separated.
-    @Test("seed body draws a boundary against memory + AGENTS.md")
-    func seedBody_drawsBoundary() {
+    /// The seed stays identity-only: the detailed what-goes / what-does-not-go
+    /// boundary moved to the always-present `## Self-improvement` prompt
+    /// section, so the one-time seed must NOT re-list it. Pinning the
+    /// absence keeps the two surfaces from drifting back into duplication.
+    @Test("seed body stays identity-only and delegates the boundary to the prompt")
+    func seedBody_staysIdentityOnly() {
         let body = SandboxAgentProvisioner.soulSeedBody
-        #expect(body.lowercased().contains("memory"))
-        #expect(body.contains("AGENTS.md"))
-        #expect(body.lowercased().contains("transient"))
+        #expect(!body.contains("What goes here"))
+        #expect(!body.contains("What does NOT go here"))
+        // The Self-improvement section is the single owner of the boundary.
+        let selfImprovement = SystemPromptTemplates.selfImprovementGuidance(canCreatePlugins: false)
+        #expect(selfImprovement.contains("SOUL.md"))
     }
 
     @Test("seed body explains the next-session cadence")
