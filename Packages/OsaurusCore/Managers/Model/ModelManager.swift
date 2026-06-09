@@ -1461,13 +1461,8 @@ extension ModelManager {
     /// layouts.
     internal nonisolated static func scanLocalModels(at root: URL) -> [MLXModel] {
         let fm = FileManager.default
-        guard
-            (try? fm.contentsOfDirectory(
-                at: root,
-                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                options: [.skipsHiddenFiles]
-            )) != nil
-        else {
+        var rootIsDir: ObjCBool = false
+        guard fm.fileExists(atPath: root.path, isDirectory: &rootIsDir), rootIsDir.boolValue else {
             return []
         }
 
@@ -1517,6 +1512,21 @@ extension ModelManager {
             return false
         }
 
+        func shouldDescendIntoLocalModelCandidate(_ entry: URL) -> Bool {
+            let name = entry.lastPathComponent.lowercased()
+            let skippedInfrastructureDirectories: Set<String> = [
+                "__pycache__",
+                "sources",
+                "source",
+                "cache",
+                "tokenizer",
+                "text_encoder",
+                "transformer",
+                "vae",
+            ]
+            return !skippedInfrastructureDirectories.contains(name)
+        }
+
         // Three layouts are supported and may coexist under the same root:
         //   1. Flat:        <root>/<modelDir>/{config.json,tokenizer.*,*.safetensors}
         //   2. Nested:      <root>/<org>/<repo>/{config.json,...}        (HF style)
@@ -1532,13 +1542,11 @@ extension ModelManager {
         // — anything deeper is treated as not-a-bundle.
         func scanDir(_ root: URL, prefix: [String], maxDepth: Int) {
             guard maxDepth > 0,
-                let entries = try? fm.contentsOfDirectory(
-                    at: root,
-                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                    options: [.skipsHiddenFiles]
-                )
+                let entryNames = try? fm.contentsOfDirectory(atPath: root.path)
             else { return }
-            for entry in entries {
+            for entryName in entryNames where !entryName.hasPrefix(".") {
+                let entry = root.appendingPathComponent(entryName, isDirectory: true)
+                guard shouldDescendIntoLocalModelCandidate(entry) else { continue }
                 guard let resolved = resolvedDirectory(entry) else { continue }
                 let nameComponents = prefix + [entry.lastPathComponent]
                 if isModelBundle(resolved) {

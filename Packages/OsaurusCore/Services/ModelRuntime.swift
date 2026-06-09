@@ -663,6 +663,9 @@ public actor ModelRuntime {
         modelDirectory: URL? = nil,
         modelName: String? = nil
     ) -> Int64 {
+        if let knownHeadroom = Self.knownMiMoOrN2JANGTQKVHeadroomBytes(modelName: modelName) {
+            return knownHeadroom
+        }
         if let modelDirectory,
             let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(at: modelDirectory)
         {
@@ -678,6 +681,23 @@ public actor ModelRuntime {
         let scaled = Int64(Double(weights) * 0.20)
         let floor: Int64 = 512 * 1024 * 1024
         return max(scaled, floor)
+    }
+
+    private static func knownMiMoOrN2JANGTQKVHeadroomBytes(modelName: String?) -> Int64? {
+        guard let modelName else { return nil }
+        let normalized =
+            modelName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        guard normalized.contains("jangtq") else { return nil }
+        if normalized.contains("mimo-v2.5") {
+            return 512 * 1024 * 1024
+        }
+        if normalized.contains("nex-n2-pro") {
+            return 4 * 1024 * 1024 * 1024
+        }
+        return nil
     }
 
     private static func estimatedArchitectureKVHeadroomBytes(at directory: URL) -> Int64? {
@@ -707,10 +727,10 @@ public actor ModelRuntime {
                 return hidden / heads
             }()
         let maxPositions =
-            intValue(config["max_position_embeddings"])
+            effectiveKVPositionBudget(config: config)
+            ?? intValue(config["max_position_embeddings"])
             ?? intValue(config["max_sequence_length"])
             ?? intValue(config["seq_length"])
-            ?? intValue(config["sliding_window"])
             ?? 32768
         guard let kvHeads, let headDim, kvHeads > 0, headDim > 0, maxPositions > 0 else {
             return nil
@@ -756,6 +776,26 @@ public actor ModelRuntime {
             return pattern.filter { $0 == "*" || $0 == "A" || $0 == "a" }.count
         }
         return intValue(config["num_hidden_layers"]) ?? 0
+    }
+
+    private static func effectiveKVPositionBudget(config: [String: Any]) -> Int? {
+        // Sliding-window/chunked attention families such as MiMo expose a very
+        // large theoretical context window, but vMLX does not preallocate KV
+        // for that full value at load time. The pre-load crash gate should
+        // budget the configured active window instead of rejecting before the
+        // mmap/JANGTQ path can prove its footprint.
+        let window =
+            intValue(config["sliding_window_size"])
+            ?? intValue(config["sliding_window"])
+            ?? intValue(config["attention_chunk_size"])
+        guard let window, window > 0 else { return nil }
+        if config["sliding_window_size"] != nil
+            || config["sliding_window"] != nil
+            || config["attention_chunk_size"] != nil
+        {
+            return window
+        }
+        return nil
     }
 
     private static func mambaLayerCount(in config: [String: Any]) -> Int {
@@ -1072,7 +1112,7 @@ public actor ModelRuntime {
         // meant the resident-RAM accounting — and the pre-load feasibility gate
         // below — were blind under the default strict policy. The value also
         // feeds `mlxCacheLimit()` and the `/health` + model-picker surfaces.
-        let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
+        let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)
         let loadFootprintBytes = Self.effectiveLoadFootprintBytes(
             rawWeightsBytes: weightsBytes,
             modelDirectory: localURL,
@@ -1132,6 +1172,7 @@ public actor ModelRuntime {
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
             let serverSettings = ServerRuntimeSettingsStore.snapshot()
             let mtpPlan = Self.resolveNativeMTPLaunchPlan(
+                modelName: name,
                 modelDirectory: localURL,
                 settings: serverSettings
             )
@@ -2040,9 +2081,18 @@ public actor ModelRuntime {
     }
 
     private nonisolated static func resolveNativeMTPLaunchPlan(
+        modelName: String,
         modelDirectory: URL,
         settings: VMLXServerRuntimeSettings
     ) -> NativeMTPLaunchPlan {
+        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName) {
+            return NativeMTPLaunchPlan(
+                loadConfiguration: .osaurusProduction,
+                draftStrategy: nil,
+                statusLine: nil,
+                reason: "MiMo/N2 JANG text runtime is not an MTP bundle; using autoregressive load."
+            )
+        }
         let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
         let jangConfig = try? JangLoader.loadConfig(at: modelDirectory)
         let status: MTPBundleStatus?
@@ -2678,8 +2728,30 @@ public actor ModelRuntime {
         }
     }
 
-    private static func computeWeightsSizeBytes(at url: URL) -> Int64 {
+    private static func computeWeightsSizeBytes(at url: URL, modelName: String? = nil) -> Int64 {
         let fm = FileManager.default
+
+        if let knownSize = Self.knownMiMoOrN2JANGTQWeightsSizeBytes(modelName: modelName),
+            fm.fileExists(atPath: url.appendingPathComponent("jangtq_runtime.safetensors").path)
+        {
+            return knownSize
+        }
+
+        for indexName in [
+            "model.safetensors.index.json",
+            "pytorch_model.safetensors.index.json",
+        ] {
+            let indexURL = url.appendingPathComponent(indexName)
+            guard fm.fileExists(atPath: indexURL.path),
+                let data = try? Data(contentsOf: indexURL),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let metadata = object["metadata"] as? [String: Any]
+            else { continue }
+
+            if let totalSize = Self.int64Value(metadata["total_size"]), totalSize > 0 {
+                return totalSize
+            }
+        }
 
         let directWeightNames = [
             "model.safetensors",
@@ -2738,6 +2810,23 @@ public actor ModelRuntime {
         return total
     }
 
+    private static func knownMiMoOrN2JANGTQWeightsSizeBytes(modelName: String?) -> Int64? {
+        guard let modelName else { return nil }
+        let normalized =
+            modelName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        guard normalized.contains("jangtq") else { return nil }
+        if normalized.contains("mimo-v2.5") {
+            return 83_308_734_780
+        }
+        if normalized.contains("nex-n2-pro") {
+            return 108_459_132_884
+        }
+        return nil
+    }
+
     static func effectiveLoadFootprintBytes(
         rawWeightsBytes: Int64,
         modelDirectory: URL?,
@@ -2763,6 +2852,12 @@ public actor ModelRuntime {
         let fm = FileManager.default
         guard fm.fileExists(atPath: directory.appendingPathComponent("jangtq_runtime.safetensors").path)
         else { return false }
+        if let modelName,
+            ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName),
+            modelName.lowercased().contains("jangtq")
+        {
+            return true
+        }
 
         let config = Self.readJSONObject(at: directory.appendingPathComponent("config.json"))
         let jang = Self.readJSONObject(at: directory.appendingPathComponent("jang_config.json"))
@@ -2794,9 +2889,14 @@ public actor ModelRuntime {
         {
             return true
         }
-        if let mxtqBits = jang["mxtq_bits"] as? [String: Any],
-            mxtqBits["routed_expert"] != nil
+        let configMxtqBits = config["mxtq_bits"] as? [String: Any]
+        let jangMxtqBits = jang["mxtq_bits"] as? [String: Any]
+        if configMxtqBits?["routed_expert"] != nil
+            || jangMxtqBits?["routed_expert"] != nil
         {
+            return true
+        }
+        if Self.stringValue((config["quantization"] as? [String: Any])?["routed_experts"]) != nil {
             return true
         }
         return false
@@ -3074,6 +3174,14 @@ public actor ModelRuntime {
         return nil
     }
 
+    private static func int64Value(_ value: Any?) -> Int64? {
+        if let int = value as? Int { return Int64(int) }
+        if let int64 = value as? Int64 { return int64 }
+        if let number = value as? NSNumber { return number.int64Value }
+        if let string = value as? String { return Int64(string) }
+        return nil
+    }
+
     /// Async wrapper around `validateJANGTQSidecarIfRequired` that, on a
     /// "missing sidecar but stamp says JANGTQ" failure (and ONLY that
     /// specific failure), tries once to download
@@ -3101,6 +3209,25 @@ public actor ModelRuntime {
                     ]
                 )
             }
+            return
+        }
+        if Self.isMiMoOrN2JANGTQName(modelId) || Self.isMiMoOrN2JANGTQName(name) {
+            let sidecarURL = directory.appendingPathComponent("jangtq_runtime.safetensors")
+            guard FileManager.default.fileExists(atPath: sidecarURL.path) else {
+                throw NSError(
+                    domain: "ModelRuntime",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Model '\(name)' is a MiMo/N2 JANGTQ bundle but is missing "
+                            + "required sidecar file 'jangtq_runtime.safetensors'. "
+                            + "Re-download the full model or obtain the sidecar from the original publisher."
+                    ]
+                )
+            }
+            // MiMo/N2 JANGTQ bundle validation is owned by the pinned vMLX
+            // runtime. Avoid a synchronous Foundation read of `jang_config.json`
+            // on large or symlinked external app bundles before vMLX can load.
             return
         }
 
@@ -3175,6 +3302,16 @@ public actor ModelRuntime {
             .replacingOccurrences(of: "_", with: "-")
         return normalized.contains("step-3.7")
             && normalized.contains("jangtq")
+    }
+
+    private static func isMiMoOrN2JANGTQName(_ value: String) -> Bool {
+        let normalized =
+            value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        guard normalized.contains("jangtq") else { return false }
+        return ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(normalized)
     }
 
     /// Build the ordered list of HF `<org>/<repo>` candidates to try when

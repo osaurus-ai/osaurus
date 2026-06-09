@@ -278,6 +278,30 @@ struct ModelManagerTests {
         #expect(detected.map(\.id).contains("JANGQ-AI/Step-3.7-Flash-JANGTQ_K"))
     }
 
+    @Test func scanLocalModels_skipsLargeSupportTreesBesideJANGBundles() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("osu-jangq-root-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let n2 = root.appendingPathComponent("Nex-N2-Pro-JANGTQ2")
+        try fm.createDirectory(at: n2, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: n2.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: n2.appendingPathComponent("tokenizer.json"))
+        try Data("{}".utf8).write(to: n2.appendingPathComponent("model.safetensors.index.json"))
+
+        for supportName in ["sources", "__pycache__", "tokenizer", "transformer", "text_encoder", "vae"] {
+            let supportDir = root.appendingPathComponent(supportName).appendingPathComponent("Nested")
+            try fm.createDirectory(at: supportDir, withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: supportDir.appendingPathComponent("config.json"))
+            try Data("{}".utf8).write(to: supportDir.appendingPathComponent("tokenizer.json"))
+            try Data("{}".utf8).write(to: supportDir.appendingPathComponent("model.safetensors.index.json"))
+        }
+
+        let detected = ModelManager.scanLocalModels(at: root)
+        #expect(detected.map(\.id) == ["Nex-N2-Pro-JANGTQ2"])
+    }
+
     @Test func deleteModel_removesDirectoryAndResetsState() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)

@@ -554,7 +554,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "98d47308012ab0e88e7b4aa4543f7920c13c4d53"
+        let expectedRuntimeHardenedRevision = "aabc41936f1ce2746d1098a14f12b441a04ed30b"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -1730,6 +1730,18 @@ struct RuntimePolicySourceTests {
         let body = String(runtime[start.lowerBound ..< end])
 
         #expect(body.contains("contentsOfDirectory("))
+        let knownMiMoN2Size = try #require(body.range(of: "knownMiMoOrN2JANGTQWeightsSizeBytes"))
+        let indexRead = try #require(body.range(of: "Data(contentsOf: indexURL)"))
+        #expect(
+            knownMiMoN2Size.lowerBound < indexRead.lowerBound,
+            "Known MiMo/N2 JANGTQ app preflight must not open external index JSON before it can use exact bundle-size metadata."
+        )
+        let totalSize = try #require(body.range(of: "metadata[\"total_size\"]"))
+        let shardLoop = try #require(body.range(of: "for shardCount in 2 ... 256"))
+        #expect(
+            totalSize.lowerBound < shardLoop.lowerBound,
+            "Sharded safetensors bundles must use metadata.total_size before probing every shard file on external volumes."
+        )
         #expect(
             !body.contains("enumerator("),
             "Weight-size preflight must not recursively walk huge model bundles or symlinked cache folders on the request path."
@@ -1751,7 +1763,7 @@ struct RuntimePolicySourceTests {
         // because the pre-load RAM-feasibility gate and the in-flight-load
         // reservation both need the incoming bundle's footprint up front.
         #expect(loadPreflight.contains("if policy == .manualMultiModel"))
-        #expect(loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)"))
+        #expect(loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)"))
         #expect(
             loadPreflight.contains("let loadFootprintBytes = Self.effectiveLoadFootprintBytes("),
             "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set, not the whole safetensors shard total."
@@ -1779,6 +1791,67 @@ struct RuntimePolicySourceTests {
         #expect(health.contains("\"available_memory_bytes\": f.availableMemoryBytes"))
         #expect(health.contains("\"required_available_bytes\": f.requiredAvailableBytes"))
         #expect(health.contains("\"incoming_load_footprint_bytes\": f.incomingLoadFootprintBytes"))
+    }
+
+    @Test("MiMo and N2 text runtime metadata avoids VLM bundle reads")
+    func mimoAndN2TextRuntimeMetadataAvoidsVLMBundleReads() throws {
+        let model = try Self.source("Models/Configuration/MLXModel.swift")
+        let vlm = try Self.source("Models/Configuration/VLMDetection.swift")
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        let isVLMStart = try #require(model.range(of: "var isVLM: Bool"))
+        let isDownloaded = try #require(
+            model.range(
+                of: "if isDownloaded { return VLMDetection.isVLM(at: localDirectory) }",
+                range: isVLMStart.lowerBound ..< model.endIndex
+            )
+        )
+        let modelFastPath = try #require(
+            model.range(
+                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily",
+                range: isVLMStart.lowerBound ..< isDownloaded.lowerBound
+            )
+        )
+        #expect(modelFastPath.lowerBound < isDownloaded.lowerBound)
+
+        let idStart = try #require(vlm.range(of: "static func isVLM(modelId: String)"))
+        let dirLookup = try #require(
+            vlm.range(
+                of: "findLocalModelDirectory(forModelId: modelId)",
+                range: idStart.lowerBound ..< vlm.endIndex
+            )
+        )
+        let vlmFastPath = try #require(
+            vlm.range(
+                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelId)",
+                range: idStart.lowerBound ..< dirLookup.lowerBound
+            )
+        )
+        #expect(vlmFastPath.lowerBound < dirLookup.lowerBound)
+
+        let compressionStart = try #require(runtime.range(of: "private static func isRoutedJANGTQCompressionLoad"))
+        let jsonRead = try #require(
+            runtime.range(of: "Self.readJSONObject", range: compressionStart.lowerBound ..< runtime.endIndex)
+        )
+        let compressionFastPath = try #require(
+            runtime.range(
+                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName)",
+                range: compressionStart.lowerBound ..< jsonRead.lowerBound
+            )
+        )
+        #expect(compressionFastPath.lowerBound < jsonRead.lowerBound)
+
+        let mtpStart = try #require(runtime.range(of: "private nonisolated static func resolveNativeMTPLaunchPlan"))
+        let mtpJSONRead = try #require(
+            runtime.range(of: "Data(contentsOf:", range: mtpStart.lowerBound ..< runtime.endIndex)
+        )
+        let mtpFastPath = try #require(
+            runtime.range(
+                of: "ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName)",
+                range: mtpStart.lowerBound ..< mtpJSONRead.lowerBound
+            )
+        )
+        #expect(mtpFastPath.lowerBound < mtpJSONRead.lowerBound)
     }
 
     @Test("MTP bundles auto-resolve vmlx tuning into load and generation")
@@ -2300,6 +2373,24 @@ struct RuntimePolicySourceTests {
         #expect(!featuresDoc.contains("default `4`"))
         #expect(adapter.contains("hot-resized BatchEngine"))
         #expect(adapter.contains("rejected updateMaxBatchSize"))
+    }
+
+    @Test("MiMo and N2 tool preflight does not walk external bundles")
+    func mimoAndN2ToolPreflightAvoidsExternalBundleWalk() throws {
+        let service = try Self.source("Services/Inference/MLXService.swift")
+        let support = try #require(service.range(of: "nonisolated static func supportsLocalToolCalling"))
+        let end = service.range(of: "private nonisolated static func localModelDirectory", range: support.lowerBound..<service.endIndex)
+            .map(\.lowerBound) ?? service.endIndex
+        let body = String(service[support.lowerBound..<end])
+        let jangFastPath = try #require(body.range(of: "isKnownTextOnlyJANGRuntimeFamily"))
+        let bundleLookup = try #require(body.range(of: "localModelDirectory(modelId: modelId)"))
+
+        #expect(body.contains("if isKnownTextOnlyJANGRuntimeFamily(modelId: modelId)"))
+        #expect(body.contains("return true"))
+        #expect(
+            jangFastPath.lowerBound < bundleLookup.lowerBound,
+            "MiMo/N2 JANG tool preflight must short-circuit before external bundle metadata lookup."
+        )
     }
 
     @Test("Runtime docs keep upstream Metal fault boundaries explicit")

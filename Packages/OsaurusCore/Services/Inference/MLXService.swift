@@ -304,6 +304,13 @@ actor MLXService: ToolCapableService {
             // bundle metadata reads before vMLX can load the model.
             return true
         }
+        if isKnownTextOnlyJANGRuntimeFamily(modelId: modelId) {
+            // MiMo/N2 JANG and JANGTQ tool parsing/template selection is owned
+            // by the pinned vMLX runtime. Keep Osaurus request preflight from
+            // synchronously walking large or symlinked model bundles before
+            // vMLX can load and validate the actual runtime contract.
+            return true
+        }
 
         if let directory = modelDirectory ?? localModelDirectory(modelId: modelId),
             let format = resolvedToolCallFormat(in: directory)
@@ -437,6 +444,13 @@ actor MLXService: ToolCapableService {
     private nonisolated static func mediaCapabilities(
         modelId: String
     ) -> ModelMediaCapabilities.Capabilities {
+        if isKnownTextOnlyJANGRuntimeFamily(modelId: modelId) {
+            // MiMo/N2 JANG and JANGTQ rows are text/tool runtimes in this
+            // Osaurus lane. Avoid synchronous directory/VLM probing on large
+            // or symlinked external bundles during request preflight; vMLX
+            // still owns the real model/template/tool load path.
+            return .textOnly
+        }
         if ModelFamilyNames.isStepFamily(modelId) {
             // Step 3.7 currently runs through vMLX's Step text runtime in
             // Osaurus. Some source bundles carry vision metadata, but the
@@ -453,5 +467,15 @@ actor MLXService: ToolCapableService {
             return ModelMediaCapabilities.from(directory: localDirectory, modelId: modelId)
         }
         return ModelMediaCapabilities.from(modelId: modelId)
+    }
+
+    private nonisolated static func isKnownTextOnlyJANGRuntimeFamily(modelId: String) -> Bool {
+        let normalized = modelId.lowercased().replacingOccurrences(of: "_", with: "-")
+        guard normalized.contains("jang") else { return false }
+        if normalized.contains("-vl") || normalized.contains("omni") {
+            return false
+        }
+        return normalized.contains("mimo-v2.5")
+            || normalized.contains("nex-n2-pro")
     }
 }

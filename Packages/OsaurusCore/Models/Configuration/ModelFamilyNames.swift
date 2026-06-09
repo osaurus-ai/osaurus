@@ -70,6 +70,21 @@ enum ModelFamilyNames {
         ) != nil
     }
 
+    /// MiMo V2.5 and Nex N2 local JANG/JANGTQ bundles are text/tool runtimes in
+    /// this release lane. Matching is name-only and deliberately requires the
+    /// JANG marker so future non-JANG MiMo/N2 media bundles still flow through
+    /// bundle metadata detection.
+    static func isMiMoOrN2JANGRuntimeFamily(_ modelId: String) -> Bool {
+        let normalized =
+            modelId
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        guard normalized.contains("jang") else { return false }
+        return normalized.contains("mimo-v2.5")
+            || normalized.contains("nex-n2-pro")
+    }
+
     /// DeepSeek-V4 / DSV4 Flash bundles (`model_type=deepseek_v4`).
     /// Match both public repo forms (`DeepSeek-V4-...`) and shorthand
     /// runtime names (`DSV4-...`, `deepseekv4-...`) while avoiding

@@ -182,6 +182,22 @@ struct MLXServiceRuntimePolicyTests {
         )
     }
 
+    @Test func mimoAndN2TextToolPreflightDoesNotRequireMediaBundleProbe() throws {
+        for (modelName, modelId) in [
+            ("mimo-v2.5-jangtq_2", "JANGQ-AI/MiMo-V2.5-JANGTQ_2"),
+            ("nex-n2-pro-jangtq2", "Nex-N2-Pro-JANGTQ2"),
+        ] {
+            try MLXService.validateRuntimePolicy(
+                modelName: modelName,
+                modelId: modelId,
+                messages: [ChatMessage(role: "user", content: "Use line_count on alpha\nbeta.")],
+                parameters: GenerationParameters(temperature: nil, maxTokens: 16),
+                tools: [Self.lineCountTool()],
+                runtime: VMLXServerRuntimeSettings()
+            )
+        }
+    }
+
     private static func lineCountTool() -> OsaurusCore.Tool {
         OsaurusCore.Tool(
             type: "function",

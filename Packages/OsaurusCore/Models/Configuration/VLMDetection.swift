@@ -86,6 +86,9 @@ enum VLMDetection {
         {
             return false
         }
+        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelId) {
+            return false
+        }
         return cachedVerdict("id:\(modelId)") {
             guard let dir = findLocalModelDirectory(forModelId: modelId) else { return false }
             return isVLM(at: dir)

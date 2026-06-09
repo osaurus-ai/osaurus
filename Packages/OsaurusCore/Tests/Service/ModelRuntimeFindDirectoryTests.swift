@@ -187,6 +187,114 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(effective == 30 * 1024 * 1024 * 1024)
     }
 
+    @Test("MiMo JANGTQ config-side routed metadata uses hot working set")
+    func mimoJANGTQConfigRoutedMetadataUsesCompressionHotSet() throws {
+        let dir = try makeIsolatedDir()
+        let config = """
+            {
+              "model_type": "mimo_v2",
+              "jang_profile": "JANGTQ_2",
+              "mxtq_bits": {
+                "routed_expert": {
+                  "gate_proj": 2,
+                  "up_proj": 2,
+                  "down_proj": 2
+                }
+              },
+              "quantization": {
+                "routed_experts": "tq_prestacked_switch_mlp"
+              }
+            }
+            """
+        let jang = """
+            {
+              "weight_format": "mxtq"
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+        try Data(jang.utf8).write(to: dir.appendingPathComponent("jang_config.json"))
+        try Data([0]).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
+
+        let raw: Int64 = 80 * 1024 * 1024 * 1024
+        let effective = ModelRuntime.effectiveLoadFootprintBytes(
+            rawWeightsBytes: raw,
+            modelDirectory: dir,
+            modelName: "mimo-v2.5-jangtq_2"
+        )
+
+        #expect(effective == 24 * 1024 * 1024 * 1024)
+    }
+
+    @Test("MiMo and N2 JANGTQ known names use hot working set without config JSON")
+    func mimoAndN2JANGTQKnownNameLoadFootprintAvoidsBundleJSONRead() throws {
+        for name in ["MiMo-V2.5-JANGTQ_2", "Nex-N2-Pro-JANGTQ2"] {
+            let dir = try makeIsolatedDir()
+            try Data("{".utf8).write(to: dir.appendingPathComponent("config.json"))
+            try Data("{".utf8).write(to: dir.appendingPathComponent("jang_config.json"))
+            try Data([0]).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
+
+            let raw: Int64 = 100 * 1024 * 1024 * 1024
+            let effective = ModelRuntime.effectiveLoadFootprintBytes(
+                rawWeightsBytes: raw,
+                modelDirectory: dir,
+                modelName: name
+            )
+
+            #expect(effective == 30 * 1024 * 1024 * 1024)
+        }
+    }
+
+    @Test("MiMo and N2 JANGTQ known names estimate KV headroom without config JSON")
+    func mimoAndN2JANGTQKnownNameKVHeadroomAvoidsBundleJSONRead() throws {
+        let dir = try makeIsolatedDir()
+        try Data("{".utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let weights: Int64 = 30 * 1024 * 1024 * 1024
+        #expect(
+            ModelRuntime.estimatedKVHeadroomBytes(
+                forWeights: weights,
+                modelDirectory: dir,
+                modelName: "MiMo-V2.5-JANGTQ_2"
+            ) == 512 * 1024 * 1024
+        )
+        #expect(
+            ModelRuntime.estimatedKVHeadroomBytes(
+                forWeights: weights,
+                modelDirectory: dir,
+                modelName: "Nex-N2-Pro-JANGTQ2"
+            ) == 4 * 1024 * 1024 * 1024
+        )
+    }
+
+    @Test("MiMo sliding-window KV headroom does not charge full theoretical context")
+    func mimoSlidingWindowKVHeadroomUsesActiveWindow() throws {
+        let dir = try makeIsolatedDir()
+        let config = """
+            {
+              "model_type": "mimo_v2",
+              "num_hidden_layers": 48,
+              "num_attention_heads": 64,
+              "num_key_value_heads": 4,
+              "hidden_size": 4096,
+              "max_position_embeddings": 1048576,
+              "sliding_window_size": 128,
+              "attention_chunk_size": 128,
+              "torch_dtype": "bfloat16"
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let weights: Int64 = 80 * 1024 * 1024 * 1024
+        let fallback = ModelRuntime.estimatedKVHeadroomBytes(forWeights: weights)
+        let topology = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir
+        )
+
+        #expect(fallback == 16 * 1024 * 1024 * 1024)
+        #expect(topology == 512 * 1024 * 1024)
+    }
+
     @Test("Non-JANGTQ and missing-sidecar models keep raw pre-load RAM budget")
     func nonJANGTQLoadFootprintKeepsRawBudget() throws {
         let plain = try makeIsolatedDir()
@@ -243,6 +351,32 @@ struct ModelRuntimeFindDirectoryTests {
         try Data("dummy".utf8).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
         // Should not throw.
         try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "MiniMax-JANGTQ-OK")
+    }
+
+    @Test("MiMo and N2 JANGTQ app load preflight requires sidecar without reading bundle JSON")
+    func mimoAndN2JANGTQSidecarFastPathAvoidsBundleJSONRead() async throws {
+        for name in ["MiMo-V2.5-JANGTQ_2", "Nex-N2-Pro-JANGTQ2"] {
+            let dir = try makeIsolatedDir()
+            // Deliberately malformed: this proves the app-side async preflight
+            // is not synchronously opening/parsing jang_config.json for these
+            // vMLX-owned runtime rows when the sidecar is present.
+            try Data("{".utf8).write(to: dir.appendingPathComponent("jang_config.json"))
+            try Data("dummy".utf8).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
+
+            try await ModelRuntime.ensureJANGTQSidecar(at: dir, modelId: name, name: name)
+        }
+    }
+
+    @Test("MiMo and N2 JANGTQ app load preflight refuses missing sidecar")
+    func mimoAndN2JANGTQSidecarFastPathStillRejectsMissingSidecar() async throws {
+        for name in ["MiMo-V2.5-JANGTQ_2", "Nex-N2-Pro-JANGTQ2"] {
+            let dir = try makeIsolatedDir()
+            try Data("{".utf8).write(to: dir.appendingPathComponent("jang_config.json"))
+
+            await #expect(throws: Error.self) {
+                try await ModelRuntime.ensureJANGTQSidecar(at: dir, modelId: name, name: name)
+            }
+        }
     }
 
     @Test("Non-JANGTQ jang_config is passed through (no sidecar required)")

@@ -297,6 +297,11 @@ struct MLXModel: Identifiable, Codable {
         {
             return false
         }
+        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(id)
+            || ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(name)
+        {
+            return false
+        }
         if isDownloaded { return VLMDetection.isVLM(at: localDirectory) }
         if let mt = modelType { return VLMDetection.isVLM(modelType: mt) }
         return VLMDetection.isVLM(modelId: id)
