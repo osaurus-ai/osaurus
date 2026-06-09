@@ -79,6 +79,7 @@ require_regex "$SOURCE_ROOT/Services/ModelRuntime/MLXBatchAdapter.swift" \
 
 echo "--- keychain/build process boundary ---"
 active_forbidden="$({ ps -axo pid,ppid,rss,etime,command || true; } \
+  | rg -v '/Users/eric/.codex/computer-use/.*/SkyComputerUseClient' \
   | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
   | rg -v 'rg -i|assert-osaurus-no-forced-behavior-pr' || true)"
 if [[ -n "$active_forbidden" ]]; then

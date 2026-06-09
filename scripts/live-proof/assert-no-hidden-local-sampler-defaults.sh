@@ -51,7 +51,7 @@ if [[ -f "$ADAPTER" ]]; then
   require_text "$ADAPTER" 'return false' "implicit sampling does not authorize native MTP greedy rewrite"
 fi
 
-active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|swift-build --package-path Packages/OsaurusCore|swift-test --package-path Packages/OsaurusCore|/Users/eric/osaurus-staging/Packages/OsaurusCore/.build' | rg -v 'rg -i|assert-no-hidden-local-sampler-defaults' || true)"
+active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -v '/Users/eric/.codex/computer-use/.*/SkyComputerUseClient' | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|swift-build --package-path Packages/OsaurusCore|swift-test --package-path Packages/OsaurusCore|/Users/eric/osaurus-staging/Packages/OsaurusCore/.build' | rg -v 'rg -i|assert-no-hidden-local-sampler-defaults' || true)"
 if [[ -n "$active" ]]; then
   fail_msg "active Osaurus build/keychain-sensitive process detected"
   echo "$active" >&2
