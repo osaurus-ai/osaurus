@@ -225,6 +225,109 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(effective == 24 * 1024 * 1024 * 1024)
     }
 
+    @Test("Plain MiMo JANG config-side routed metadata uses hot working set")
+    func plainMiMoJANGConfigRoutedMetadataUsesCompressionHotSet() throws {
+        let dir = try makeIsolatedDir()
+        let config = """
+            {
+              "model_type": "mimo_v2",
+              "n_routed_experts": 256,
+              "num_experts_per_tok": 8,
+              "jang_profile": "JANG_2L_322_D3E16",
+              "routed_expert_bits": {
+                "gate_proj": 3,
+                "up_proj": 2,
+                "down_proj": 2
+              },
+              "quantization": {
+                "routed_experts": "tq_prestacked_switch_mlp"
+              }
+            }
+            """
+        let jang = """
+            {
+              "format": "jang",
+              "profile": "JANG_2L_322_D3E16",
+              "num_experts": 256,
+              "expert_layout": "stacked_affine_switch_mlp",
+              "routed_expert_bits": {
+                "gate_proj": 3,
+                "up_proj": 2,
+                "down_proj": 2
+              }
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+        try Data(jang.utf8).write(to: dir.appendingPathComponent("jang_config.json"))
+
+        let raw: Int64 = 105 * 1024 * 1024 * 1024
+        let effective = ModelRuntime.effectiveLoadFootprintBytes(
+            rawWeightsBytes: raw,
+            modelDirectory: dir,
+            modelName: "mimo-v2.5-jang_2l"
+        )
+
+        #expect(effective == Int64(Double(raw) * 0.30))
+    }
+
+    @Test("Plain N2 JANG nested text-config routed metadata uses hot working set")
+    func plainN2JANGNestedTextConfigRoutedMetadataUsesCompressionHotSet() throws {
+        let dir = try makeIsolatedDir()
+        let config = """
+            {
+              "model_type": "qwen3_5_moe",
+              "text_config": {
+                "model_type": "qwen3_5_moe_text",
+                "num_experts": 512,
+                "num_experts_per_tok": 10,
+                "full_attention_interval": 4
+              }
+            }
+            """
+        let jang = """
+            {
+              "format": "jang",
+              "quantization": {
+                "profile": "JANG_1L",
+                "actual_bits": 2.13
+              },
+              "architecture": {
+                "has_moe": true,
+                "has_ssm": true
+              }
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+        try Data(jang.utf8).write(to: dir.appendingPathComponent("jang_config.json"))
+
+        let raw: Int64 = 111 * 1024 * 1024 * 1024
+        let effective = ModelRuntime.effectiveLoadFootprintBytes(
+            rawWeightsBytes: raw,
+            modelDirectory: dir,
+            modelName: "nex-n2-pro-jang_1l"
+        )
+
+        #expect(effective == Int64(Double(raw) * 0.30))
+    }
+
+    @Test("Known MiMo and N2 plain JANG names use hot working set without config JSON")
+    func knownPlainMiMoAndN2JANGNamesAvoidBundleJSONRead() throws {
+        for name in ["MiMo-V2.5-JANG_2L", "Nex-N2-Pro-JANG_1L"] {
+            let dir = try makeIsolatedDir()
+            try Data("{".utf8).write(to: dir.appendingPathComponent("config.json"))
+            try Data("{".utf8).write(to: dir.appendingPathComponent("jang_config.json"))
+
+            let raw: Int64 = 100 * 1024 * 1024 * 1024
+            let effective = ModelRuntime.effectiveLoadFootprintBytes(
+                rawWeightsBytes: raw,
+                modelDirectory: dir,
+                modelName: name
+            )
+
+            #expect(effective == 30 * 1024 * 1024 * 1024)
+        }
+    }
+
     @Test("MiMo and N2 JANGTQ known names use hot working set without config JSON")
     func mimoAndN2JANGTQKnownNameLoadFootprintAvoidsBundleJSONRead() throws {
         for name in ["MiMo-V2.5-JANGTQ_2", "Nex-N2-Pro-JANGTQ2"] {

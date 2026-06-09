@@ -2833,15 +2833,16 @@ public actor ModelRuntime {
         modelName: String? = nil
     ) -> Int64 {
         guard rawWeightsBytes > 0, let modelDirectory else { return rawWeightsBytes }
-        guard isRoutedJANGTQCompressionLoad(at: modelDirectory, modelName: modelName) else {
+        guard isRoutedJANGCompressionLoad(at: modelDirectory, modelName: modelName) else {
             return rawWeightsBytes
         }
 
-        // vMLX `.osaurusProduction` loads routed JANGTQ through mmap-backed
-        // safetensors and MLXPress compression-first residency. The default
-        // compression policy advises 70% of routed weights cold, so the
-        // pre-load crash-prevention gate should budget the hot working set,
-        // not require the entire routed shard total to be immediately free.
+        // vMLX `.osaurusProduction` loads routed JANG/JANGTQ through
+        // mmap-backed safetensors and MLXPress compression-first residency.
+        // The default compression policy advises 70% of routed weights cold,
+        // so the pre-load crash-prevention gate should budget the hot working
+        // set, not require the entire routed shard total to be immediately
+        // free.
         let hotFraction = 0.30
         let floor: Int64 = 4 * 1024 * 1024 * 1024
         let estimated = Int64(Double(rawWeightsBytes) * hotFraction)
@@ -2849,14 +2850,27 @@ public actor ModelRuntime {
     }
 
     private static func isRoutedJANGTQCompressionLoad(at directory: URL, modelName: String?) -> Bool {
+        isRoutedJANGCompressionLoad(at: directory, modelName: modelName, requireJANGTQ: true)
+    }
+
+    private static func isRoutedJANGCompressionLoad(
+        at directory: URL,
+        modelName: String?,
+        requireJANGTQ: Bool = false
+    ) -> Bool {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: directory.appendingPathComponent("jangtq_runtime.safetensors").path)
-        else { return false }
+        let hasJANGTQSidecar = fm.fileExists(
+            atPath: directory.appendingPathComponent("jangtq_runtime.safetensors").path
+        )
         if let modelName,
             ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName),
-            modelName.lowercased().contains("jangtq")
+            fm.fileExists(atPath: directory.appendingPathComponent("jang_config.json").path)
         {
-            return true
+            let normalized = modelName.lowercased().replacingOccurrences(of: "_", with: "-")
+            if normalized.contains("jangtq") {
+                return hasJANGTQSidecar
+            }
+            return !requireJANGTQ
         }
 
         let config = Self.readJSONObject(at: directory.appendingPathComponent("config.json"))
@@ -2871,17 +2885,31 @@ public actor ModelRuntime {
             ((jang["quantization"] as? [String: Any]).flatMap { Self.stringValue($0["profile"]) }
                 ?? Self.stringValue(jang["profile"])
                 ?? "")
+        let format =
+            (Self.stringValue(jang["format"])
+                ?? Self.stringValue(config["format"])
+                ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         let declaresJANGTQ =
             weightFormat.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "mxtq"
             || profile.lowercased().contains("jangtq")
             || (modelName?.lowercased().contains("jangtq") ?? false)
-        guard declaresJANGTQ else { return false }
+        if declaresJANGTQ, !hasJANGTQSidecar { return false }
+        guard !requireJANGTQ || declaresJANGTQ else { return false }
+        let declaresJANG =
+            declaresJANGTQ
+            || format == "jang"
+            || profile.lowercased().contains("jang")
+            || (modelName?.lowercased().contains("jang") ?? false)
+        guard declaresJANG else { return false }
 
         let routedExperts =
             Self.intValue(config["n_routed_experts"])
             ?? Self.intValue(config["num_routed_experts"])
             ?? Self.intValue(config["num_experts"])
             ?? Self.intValue(config["num_local_experts"])
+            ?? Self.intValue((config["text_config"] as? [String: Any])?["num_experts"])
         if (routedExperts ?? 0) > 0 { return true }
 
         if let actions = (jang["quantization"] as? [String: Any])?["actions"] as? [String: Any],
@@ -2896,7 +2924,20 @@ public actor ModelRuntime {
         {
             return true
         }
+        if config["routed_expert_bits"] != nil
+            || jang["routed_expert_bits"] != nil
+            || config["routed_expert_bit_plan"] != nil
+            || jang["routed_expert_bit_plan"] != nil
+        {
+            return true
+        }
         if Self.stringValue((config["quantization"] as? [String: Any])?["routed_experts"]) != nil {
+            return true
+        }
+        if let architecture = jang["architecture"] as? [String: Any],
+            let hasMoE = architecture["has_moe"] as? Bool,
+            hasMoE
+        {
             return true
         }
         return false
