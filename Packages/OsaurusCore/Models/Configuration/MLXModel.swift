@@ -130,14 +130,23 @@ struct MLXModel: Identifiable, Codable {
         )
     }
 
-    /// Formatted download size string (e.g., "3.9 GB")
-    var formattedDownloadSize: String? {
-        guard let bytes = totalSizeEstimateBytes else { return nil }
+    /// Shared formatter for `formattedDownloadSize`. `ByteCountFormatter` is
+    /// expensive to allocate, and the size string is read from SwiftUI body
+    /// getters once per model row, so reuse a single configured instance
+    /// instead of building one per call. Only read from the main actor during
+    /// view rendering.
+    private static let downloadSizeFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         formatter.allowedUnits = [.useGB, .useMB]
         formatter.includesUnit = true
-        return formatter.string(fromByteCount: bytes)
+        return formatter
+    }()
+
+    /// Formatted download size string (e.g., "3.9 GB")
+    var formattedDownloadSize: String? {
+        guard let bytes = totalSizeEstimateBytes else { return nil }
+        return Self.downloadSizeFormatter.string(fromByteCount: bytes)
     }
 
     /// Abbreviated HF Hub download (popularity) count for the card footer
