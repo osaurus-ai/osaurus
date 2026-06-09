@@ -282,9 +282,8 @@ final class DirectoryPickerService: ObservableObject {
     /// cached; this performs the filesystem work on every invocation.
     nonisolated private static func resolveDefaultModelsDirectory() -> URL {
         let fileManager = FileManager.default
-        if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
-            let expanded = (override as NSString).expandingTildeInPath
-            return URL(fileURLWithPath: expanded, isDirectory: true)
+        if let override = modelsDirectoryEnvironmentOverride() {
+            return override
         }
         let homeURL = fileManager.homeDirectoryForCurrentUser
         let newDefault = homeURL.appendingPathComponent("MLXModels")
@@ -313,8 +312,8 @@ final class DirectoryPickerService: ObservableObject {
         // when the user's app has a saved bookmark. Treat an explicit env
         // override as stronger than persisted UI state so probes are
         // deterministic and do not accidentally scan a stale volume.
-        if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
-            return defaultModelsDirectory()
+        if let override = modelsDirectoryEnvironmentOverride() {
+            return override
         }
 
         // Use cached bookmark URL to avoid expensive IPC
@@ -324,6 +323,14 @@ final class DirectoryPickerService: ObservableObject {
 
         // Fallback precedence matches instance property
         return defaultModelsDirectory()
+    }
+
+    nonisolated private static func modelsDirectoryEnvironmentOverride() -> URL? {
+        guard let raw = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty
+        else { return nil }
+        return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath, isDirectory: true)
     }
 
     /// Reset directory selection
