@@ -205,33 +205,9 @@ private struct ProviderCardView: View {
 
     @State private var showDeleteConfirm = false
     @State private var isHovered = false
-    @State private var apiKeyPresent = false
-    @State private var oauthTokensPresent = false
 
     private var isConnected: Bool { state?.isConnected ?? false }
     private var isConnecting: Bool { state?.isConnecting ?? false }
-    private var diagnosticsReport: ProviderDiagnosticReport {
-        ProviderNetworkDiagnostics.remoteProviderReport(
-            provider: provider,
-            state: state,
-            proxy: GlobalProxySettings.currentDiagnostic(),
-            apiKeyPresent: apiKeyPresent,
-            oauthTokensPresent: oauthTokensPresent
-        )
-    }
-
-    @MainActor
-    private func refreshCredentialState() async {
-        let providerID = provider.id
-        let credentials = await RemoteProviderKeychain.runOffCooperativeExecutor {
-            (
-                RemoteProviderKeychain.hasAPIKey(for: providerID),
-                RemoteProviderKeychain.hasOAuthTokens(for: providerID)
-            )
-        }
-        apiKeyPresent = credentials.0
-        oauthTokensPresent = credentials.1
-    }
 
     /// Match to a known preset for icon/color
     private var matchedPreset: ProviderPreset? {
@@ -350,11 +326,6 @@ private struct ProviderCardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(theme.errorColor.opacity(0.05))
             }
-
-            Divider()
-                .background(theme.primaryBorder.opacity(0.5))
-
-            ProviderDiagnosticsRowsView(report: diagnosticsReport, maxRows: 4)
         }
         .background(
             RoundedRectangle(cornerRadius: 14)
@@ -371,12 +342,6 @@ private struct ProviderCardView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
         .onHover { hovering in
             isHovered = hovering
-        }
-        .task(id: provider.id) {
-            await refreshCredentialState()
-        }
-        .onChange(of: provider.authType) { _, _ in
-            Task { await refreshCredentialState() }
         }
         .themedAlert(
             "Delete Provider?",

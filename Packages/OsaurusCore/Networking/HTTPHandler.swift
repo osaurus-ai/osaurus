@@ -803,12 +803,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let hasZayaCCACompanion =
                     (summary.cacheTopology?.zayaCCALayerCount ?? 0) > 0
                 if hasZayaCCACompanion, let diskStats = stats.diskStats {
-                    row["zaya_cca_disk_payload_restore"] = [
-                        "hits": diskStats.hits,
-                        "misses": diskStats.misses,
-                        "stores": diskStats.stores,
-                        "embedded_state": true,
-                    ] as [String: Any]
+                    row["zaya_cca_disk_payload_restore"] =
+                        [
+                            "hits": diskStats.hits,
+                            "misses": diskStats.misses,
+                            "stores": diskStats.stores,
+                            "embedded_state": true,
+                        ] as [String: Any]
                     aggregate["zaya_cca_disk_payload_hits", default: 0] += diskStats.hits
                     aggregate["zaya_cca_disk_payload_misses", default: 0] += diskStats.misses
                     aggregate["zaya_cca_disk_payload_stores", default: 0] += diskStats.stores

@@ -2887,8 +2887,8 @@ public actor ModelRuntime {
                 ?? "")
         let format =
             (Self.stringValue(jang["format"])
-                ?? Self.stringValue(config["format"])
-                ?? "")
+            ?? Self.stringValue(config["format"])
+            ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         let declaresJANGTQ =

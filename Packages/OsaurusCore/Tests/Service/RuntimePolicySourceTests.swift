@@ -1763,7 +1763,9 @@ struct RuntimePolicySourceTests {
         // because the pre-load RAM-feasibility gate and the in-flight-load
         // reservation both need the incoming bundle's footprint up front.
         #expect(loadPreflight.contains("if policy == .manualMultiModel"))
-        #expect(loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)"))
+        #expect(
+            loadPreflight.contains("let weightsBytes = Self.computeWeightsSizeBytes(at: localURL, modelName: name)")
+        )
         #expect(
             loadPreflight.contains("let loadFootprintBytes = Self.effectiveLoadFootprintBytes("),
             "Routed mmap/JANGTQ loads must feed the RAM gate with vMLX's effective hot working set, not the whole safetensors shard total."
@@ -2379,9 +2381,13 @@ struct RuntimePolicySourceTests {
     func mimoAndN2ToolPreflightAvoidsExternalBundleWalk() throws {
         let service = try Self.source("Services/Inference/MLXService.swift")
         let support = try #require(service.range(of: "nonisolated static func supportsLocalToolCalling"))
-        let end = service.range(of: "private nonisolated static func localModelDirectory", range: support.lowerBound..<service.endIndex)
+        let end =
+            service.range(
+                of: "private nonisolated static func localModelDirectory",
+                range: support.lowerBound ..< service.endIndex
+            )
             .map(\.lowerBound) ?? service.endIndex
-        let body = String(service[support.lowerBound..<end])
+        let body = String(service[support.lowerBound ..< end])
         let jangFastPath = try #require(body.range(of: "isKnownTextOnlyJANGRuntimeFamily"))
         let bundleLookup = try #require(body.range(of: "localModelDirectory(modelId: modelId)"))
 

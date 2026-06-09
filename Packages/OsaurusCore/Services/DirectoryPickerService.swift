@@ -326,8 +326,9 @@ final class DirectoryPickerService: ObservableObject {
     }
 
     nonisolated private static func modelsDirectoryEnvironmentOverride() -> URL? {
-        guard let raw = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
+        guard
+            let raw = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
             !raw.isEmpty
         else { return nil }
         return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath, isDirectory: true)

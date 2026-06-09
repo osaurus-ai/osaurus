@@ -26981,6 +26981,7 @@
       }
     },
     "Needs Permission" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

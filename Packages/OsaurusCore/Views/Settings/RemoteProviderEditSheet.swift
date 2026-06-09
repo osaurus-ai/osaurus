@@ -1561,6 +1561,16 @@ private struct EditProviderFlow: View {
         ProviderPreset.matching(provider: provider)
     }
 
+    private var diagnosticsReport: ProviderDiagnosticReport {
+        ProviderNetworkDiagnostics.remoteProviderReport(
+            provider: provider,
+            state: RemoteProviderManager.shared.providerStates[provider.id],
+            proxy: GlobalProxySettings.currentDiagnostic(),
+            apiKeyPresent: apiKeyPresent,
+            oauthTokensPresent: oauthTokensPresent
+        )
+    }
+
     // Basic settings (only shown in advanced for known providers)
     @State private var name: String = ""
     @State private var host: String = ""
@@ -1585,6 +1595,10 @@ private struct EditProviderFlow: View {
     @State private var isTesting = false
     @State private var testResult: ProviderTestResult?
     @State private var hasAppeared = false
+
+    // Diagnostics credential presence (drives the diagnostics report)
+    @State private var apiKeyPresent = false
+    @State private var oauthTokensPresent = false
 
     // OpenRouter re-authorization. Collapsed to a single state so we can't
     // accidentally render both "succeeded" and "failed" feedback at once.
@@ -1613,6 +1627,11 @@ private struct EditProviderFlow: View {
                     } else {
                         customProviderEditContent
                     }
+
+                    // Cancel the surrounding 24pt inset so diagnostics rows span
+                    // the full sheet width (they carry their own internal padding).
+                    ProviderDiagnosticsRowsView(report: diagnosticsReport, maxRows: nil)
+                        .padding(.horizontal, -24)
                 }
                 .padding(24)
             }
@@ -1631,6 +1650,7 @@ private struct EditProviderFlow: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
         .onAppear {
             loadProvider()
+            Task { await refreshCredentialState() }
             withAnimation { hasAppeared = true }
         }
         .themedAlert(
@@ -2398,6 +2418,19 @@ private struct EditProviderFlow: View {
         for key in provider.secretHeaderKeys {
             customHeaders.append(HeaderEntry(key: key, value: "", isSecret: true))
         }
+    }
+
+    @MainActor
+    private func refreshCredentialState() async {
+        let providerID = provider.id
+        let credentials = await RemoteProviderKeychain.runOffCooperativeExecutor {
+            (
+                RemoteProviderKeychain.hasAPIKey(for: providerID),
+                RemoteProviderKeychain.hasOAuthTokens(for: providerID)
+            )
+        }
+        apiKeyPresent = credentials.0
+        oauthTokensPresent = credentials.1
     }
 
     func testConnection() {
