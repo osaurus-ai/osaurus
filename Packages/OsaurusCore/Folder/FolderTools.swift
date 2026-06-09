@@ -539,7 +539,7 @@ struct FileTreeTool: OsaurusTool {
     /// Character ceiling for the rendered tree. A wide/deep layout (many
     /// directories, which don't count toward `maxFiles`) can still bloat the
     /// retained context across every later request, so cap the raw output too.
-    private static let maxOutputChars = 8000
+    private static let maxOutputChars = ToolOutputCaps.tree
     /// Per-directory file ceiling. A flat media folder (hundreds of
     /// screenshots) is collapsed past this so the listing — and the retained
     /// context on every later turn — stays readable. Directories are never
@@ -696,8 +696,8 @@ struct FileReadTool: OsaurusTool {
     }
 
     /// Maximum characters for file_read output to prevent context window exhaustion.
-    /// Consistent with truncation limits on shell_run (10k) and git_diff (20k).
-    private static let maxOutputChars = 15_000
+    /// Tiered against shell_run / git_diff via `ToolOutputCaps`.
+    private static let maxOutputChars = ToolOutputCaps.fileRead
 
     /// Maximum raw bytes read for plain text / source / CSV before
     /// decoding. Rich documents and XLSX previews have their own adapter
@@ -2406,7 +2406,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         }
     }
 
-    private func truncateOutput(_ output: String, maxLength: Int = 10000) -> String {
+    private func truncateOutput(_ output: String, maxLength: Int = ToolOutputCaps.shellOutput) -> String {
         if output.count > maxLength {
             return String(output.prefix(maxLength)) + "\n... (truncated)"
         }
@@ -2612,8 +2612,8 @@ struct GitDiffTool: OsaurusTool {
 
         // Truncate if too long
         let text: String
-        if output.count > 20000 {
-            text = String(output.prefix(20000)) + "\n... (diff truncated)"
+        if output.count > ToolOutputCaps.gitDiff {
+            text = String(output.prefix(ToolOutputCaps.gitDiff)) + "\n... (diff truncated)"
         } else {
             text = output.isEmpty ? "No differences" : output
         }

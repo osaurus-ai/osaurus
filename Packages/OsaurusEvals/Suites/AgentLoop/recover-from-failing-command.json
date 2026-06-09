@@ -1,0 +1,27 @@
+{
+  "id": "agent_loop.recover-from-failing-command",
+  "domain": "agent_loop",
+  "label": "agent loop • recover from a failing command",
+  "query": "Run the script check.sh in this folder with 'zsh check.sh'. If it fails, figure out why, fix the problem, and re-run it until it succeeds.",
+  "notes": "The script fails because config.txt is missing. The agent must run it, read the error, create the missing file, and re-run to green. Scored on the post-run exit code, so any correct recovery passes.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "check.sh",
+        "contents": "#!/bin/zsh\nif [ ! -f config.txt ]; then\n  echo \"error: config.txt not found — create it with the line 'mode=production'\" >&2\n  exit 1\nfi\ngrep -q 'mode=production' config.txt || { echo 'error: config.txt must contain mode=production' >&2; exit 1; }\necho ok\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": ["shell_run"],
+      "files": [
+        { "path": "config.txt", "contains": "mode=production" }
+      ],
+      "commands": [
+        { "command": "zsh check.sh", "expectExitCode": 0 }
+      ]
+    }
+  }
+}

@@ -1149,22 +1149,20 @@ final class PluginHostContext: @unchecked Sendable {
     ) async -> ContextBudgetManager? {
         guard maxIterations > 1 else { return nil }
 
-        let contextLength: Int
-        if let info = ModelInfo.load(modelId: inf.request.model), let ctx = info.model.contextLength {
-            contextLength = ctx
-        } else {
-            contextLength = await MainActor.run { ChatConfigurationStore.load().contextLength ?? 128_000 }
-        }
+        // Window resolution + reservations are shared with the chat and
+        // HTTP loop surfaces via `AgentLoopBudget`.
+        let contextLength = await AgentLoopBudget.resolveContextWindow(modelId: inf.request.model)
         let toolTokens = await MainActor.run {
             ToolRegistry.shared.totalEstimatedTokens()
         }
         let sysChars = inf.request.messages.first(where: { $0.role == "system" })?.content?.count ?? 0
 
-        var mgr = ContextBudgetManager(contextLength: contextLength)
-        mgr.reserveByCharCount(.systemPrompt, characters: sysChars)
-        mgr.reserve(.tools, tokens: toolTokens)
-        mgr.reserve(.response, tokens: inf.request.max_tokens ?? 4096)
-        return mgr
+        return AgentLoopBudget.makeBudgetManager(
+            contextWindow: contextLength,
+            systemPromptChars: sysChars,
+            toolTokens: toolTokens,
+            maxResponseTokens: inf.request.max_tokens
+        )
     }
 
     // MARK: Tool Execution
@@ -1310,6 +1308,12 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: complete (non-streaming)
 
+    /// Internal abort signals thrown out of the shared-loop hooks so the
+    /// plugin entrypoints can map them to their historical error envelopes.
+    private enum PluginLoopAbort: Error {
+        case noChoices
+    }
+
     func complete(requestJSON: String) -> String {
         guard tryEnterInflightInference() else {
             return Self.pluginBusyJSON(kind: "complete")
@@ -1352,108 +1356,141 @@ final class PluginHostContext: @unchecked Sendable {
             // Per-invocation harness state (plugin completions are one-shot
             // across requests). Provides within-run dedupe + post-listing nudge.
             let taskState = AgentTaskState()
+            // Run-scoped sticky compaction: trims stay monotonic across this
+            // completion's iterations (KV-prefix-stable transcript).
+            let compactionWatermark = CompactionWatermark()
+            // The final model response, stashed by the modelStep hook when the
+            // completion carries no executable tool calls (or the iteration
+            // budget says to stop executing).
+            var finalResponse: ChatCompletionResponse?
 
-            for iteration in 1 ... prep.options.maxIterations {
-                let effective = prep.budgetManager?.trimMessages(messages) ?? messages
-                let iterReq = Self.iterationRequest(
-                    from: prep.enriched.request,
-                    messages: effective,
-                    tools: toolSpecs
-                )
-
-                do {
+            // Canonical loop skeleton lives in `AgentToolLoop`; these hooks
+            // carry the plugin host's non-streaming specifics — message-array
+            // history, budget-managed trimming, and `processToolCall`
+            // post-processing (share_artifact / capabilities_load).
+            let hooks = AgentLoopHooks(
+                buildMessages: { notices in
+                    // Driver-staged notices (budget warning, next-step bias)
+                    // persist into the running history, matching the
+                    // historical behavior of appending the bias in-line.
+                    for notice in notices {
+                        messages.append(ChatMessage(role: "user", content: notice))
+                    }
+                    return prep.budgetManager?.trimMessages(messages, watermark: compactionWatermark)
+                        ?? messages
+                },
+                modelStep: { effective, iteration in
+                    let iterReq = Self.iterationRequest(
+                        from: prep.enriched.request,
+                        messages: effective,
+                        tools: toolSpecs
+                    )
                     let response = try await prep.engine.completeChat(request: iterReq)
                     guard let choice = response.choices.first else {
-                        return Self.jsonString(["error": "inference_error", "message": "No choices returned"])
+                        throw PluginLoopAbort.noChoices
                     }
 
                     if let calls = choice.message.tool_calls, !calls.isEmpty,
                         choice.finish_reason == "tool_calls",
                         iteration < prep.options.maxIterations
                     {
-                        // The non-streaming path already appends the full
-                        // assistant message (with all tool_calls) once,
-                        // then appends only the tool-result messages per call.
+                        // The non-streaming path appends the full assistant
+                        // message (with all tool_calls) once; the per-call
+                        // hooks then append only the tool-result messages.
                         messages.append(choice.message)
-                        for tc in calls {
-                            // Dedupe a still-fresh re-read: replay the exact
-                            // held envelope instead of re-running the read.
-                            if let held = taskState.heldResult(
-                                name: tc.function.name,
-                                argsJSON: tc.function.arguments
-                            ) {
-                                messages.append(
-                                    ChatMessage(
-                                        role: "tool",
-                                        content: held,
-                                        tool_calls: nil,
-                                        tool_call_id: tc.id
-                                    )
+                        return .toolCalls(
+                            calls.map {
+                                ServiceToolInvocation(
+                                    toolName: $0.function.name,
+                                    jsonArguments: $0.function.arguments,
+                                    toolCallId: $0.id
                                 )
-                                continue
                             }
-                            let processed = await Self.processToolCall(
-                                toolName: tc.function.name,
-                                argumentsJSON: tc.function.arguments,
-                                callId: tc.id,
-                                priorAssistantContent: "",
-                                prep: prep,
-                                toolSpecs: &toolSpecs
-                            )
-                            // assistantMessage from processToolCall is unused
-                            // here because choice.message already represents
-                            // the full assistant turn for this iteration.
-                            if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
-                            messages.append(processed.toolMessage)
-                            toolCallsExecuted.append(processed.toolCallExecuted)
-                            taskState.record(
-                                name: tc.function.name,
-                                argsJSON: tc.function.arguments,
-                                result: processed.toolMessage.content ?? ""
-                            )
-                        }
-                        // System-attributed next-step nudge for the next
-                        // iteration (non-load-bearing).
-                        if let bias = taskState.nextStepBias() {
-                            messages.append(
-                                ChatMessage(role: "user", content: "[System Notice] " + bias)
-                            )
-                        }
-                        continue
+                        )
                     }
 
-                    // Persist the final assistant turn into the chat-history
-                    // SQLite so this conversation is browsable in the sidebar.
-                    var persistedMessages = messages
-                    persistedMessages.append(choice.message)
-                    Self.persistInference(
-                        pluginId: pid,
-                        agentId: prep.agentId,
-                        externalSessionKey: prep.enriched.request.session_id,
-                        finalMessages: persistedMessages,
-                        model: prep.enriched.request.model
+                    // Final answer (or a last-iteration tool call, which is
+                    // returned to the plugin as-is rather than executed —
+                    // preserving the historical budget semantics).
+                    finalResponse = response
+                    return .finalResponse
+                },
+                onDedupedResult: { _, callId, held in
+                    // Dedupe a still-fresh re-read: replay the exact held
+                    // envelope instead of re-running the read. The assistant
+                    // message with the tool_calls is already in history.
+                    messages.append(
+                        ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
                     )
-
-                    guard let encoded = try? JSONEncoder.osaurusCanonical().encode(response),
-                        var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
-                    else {
-                        return Self.jsonString([
-                            "error": "serialization_error", "message": "Failed to serialize response",
-                        ])
-                    }
-                    if !toolCallsExecuted.isEmpty { json["tool_calls_executed"] = toolCallsExecuted }
-                    if !sharedArtifacts.isEmpty { json["shared_artifacts"] = sharedArtifacts }
-                    return Self.jsonString(json)
-
-                } catch {
-                    return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
+                },
+                executeTool: { inv, callId in
+                    let processed = await Self.processToolCall(
+                        toolName: inv.toolName,
+                        argumentsJSON: inv.jsonArguments,
+                        callId: callId,
+                        priorAssistantContent: "",
+                        prep: prep,
+                        toolSpecs: &toolSpecs
+                    )
+                    // assistantMessage from processToolCall is unused here
+                    // because choice.message already represents the full
+                    // assistant turn for this iteration.
+                    if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
+                    messages.append(processed.toolMessage)
+                    toolCallsExecuted.append(processed.toolCallExecuted)
+                    return AgentLoopToolExecution(result: processed.result)
                 }
+            )
+
+            let exit: AgentToolLoop.Exit
+            do {
+                let runResult = try await AgentToolLoop.run(
+                    policy: AgentLoopPolicy(
+                        maxIterations: prep.options.maxIterations,
+                        stopOnToolRejection: false,
+                        dedupeNoticeEnabled: false
+                    ),
+                    state: taskState,
+                    hooks: hooks
+                )
+                exit = runResult.exit
+            } catch PluginLoopAbort.noChoices {
+                return Self.jsonString(["error": "inference_error", "message": "No choices returned"])
+            } catch {
+                return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
             }
 
-            return Self.jsonString([
-                "error": "max_iterations_reached",
-                "message": "Reached max iterations (\(prep.options.maxIterations)) without a final response",
-            ])
+            guard exit == .finalResponse, let response = finalResponse,
+                let choice = response.choices.first
+            else {
+                return Self.jsonString([
+                    "error": "max_iterations_reached",
+                    "message": "Reached max iterations (\(prep.options.maxIterations)) without a final response",
+                ])
+            }
+
+            // Persist the final assistant turn into the chat-history
+            // SQLite so this conversation is browsable in the sidebar.
+            var persistedMessages = messages
+            persistedMessages.append(choice.message)
+            Self.persistInference(
+                pluginId: pid,
+                agentId: prep.agentId,
+                externalSessionKey: prep.enriched.request.session_id,
+                finalMessages: persistedMessages,
+                model: prep.enriched.request.model
+            )
+
+            guard let encoded = try? JSONEncoder.osaurusCanonical().encode(response),
+                var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
+            else {
+                return Self.jsonString([
+                    "error": "serialization_error", "message": "Failed to serialize response",
+                ])
+            }
+            if !toolCallsExecuted.isEmpty { json["tool_calls_executed"] = toolCallsExecuted }
+            if !sharedArtifacts.isEmpty { json["shared_artifacts"] = sharedArtifacts }
+            return Self.jsonString(json)
         }
     }
 
@@ -1549,6 +1586,9 @@ final class PluginHostContext: @unchecked Sendable {
             // Per-invocation harness state (plugin completions are one-shot
             // across requests). Provides within-run dedupe + post-listing nudge.
             let taskState = AgentTaskState()
+            // Run-scoped sticky compaction: trims stay monotonic across this
+            // stream's iterations (KV-prefix-stable transcript).
+            let compactionWatermark = CompactionWatermark()
             // Captured token-usage stats from the underlying inference layer
             // so the final stream result mirrors non-stream `complete`'s
             // usage block, and so the last `usage` delta the plugin sees
@@ -1559,166 +1599,274 @@ final class PluginHostContext: @unchecked Sendable {
                 Self.emitChunk(payload, callback: onChunk, userData: userData)
             }
 
-            for iteration in 1 ... prep.options.maxIterations {
-                let effective = prep.budgetManager?.trimMessages(messages) ?? messages
-                let iterReq = Self.iterationRequest(
-                    from: prep.enriched.request,
-                    messages: effective,
-                    tools: toolSpecs
+            // Terminal envelope stashed by the modelStep hook (natural finish,
+            // mid-stream cancellation, last-iteration tool call). When set,
+            // the driver exits `.finalResponse` and we return it verbatim.
+            var terminalEnvelope: String?
+
+            // Persist whatever we have so far — shared by every terminal path.
+            let persistPartial: (String) -> Void = { assistantContent in
+                Self.persistStreamingInference(
+                    pluginId: pid,
+                    agentId: prep.agentId,
+                    externalSessionKey: prep.enriched.request.session_id,
+                    priorMessages: messages,
+                    assistantContent: assistantContent,
+                    model: prep.enriched.request.model
                 )
-
-                do {
-                    let stream = try await prep.engine.streamChat(request: iterReq)
-                    var iterContent = ""
-                    var iterFinishReason = "stop"
-
-                    for try await delta in stream {
-                        // Cancellation check: plugin called `complete_cancel`
-                        // with our stream id. Emit a final chunk with
-                        // `finish_reason: "cancelled"` and unwind to the
-                        // post-loop branch which returns the cancelled
-                        // envelope.
-                        if isCancelled(streamId) {
-                            emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
-                            Self.persistStreamingInference(
-                                pluginId: pid,
-                                agentId: prep.agentId,
-                                externalSessionKey: prep.enriched.request.session_id,
-                                priorMessages: messages,
-                                assistantContent: lastContent,
-                                model: prep.enriched.request.model
-                            )
-                            return Self.cancelledStreamEnvelope(
-                                id: cid,
-                                streamId: streamId,
-                                model: prep.enriched.request.model,
-                                partialContent: lastContent,
-                                toolCallsExecuted: toolCallsExecuted,
-                                sharedArtifacts: sharedArtifacts,
-                                usage: lastUsage
-                            )
-                        }
-                        // Reasoning and stats sentinels must be decoded
-                        // BEFORE the generic `isSentinel` filter, otherwise
-                        // these payloads get dropped together with tool
-                        // hints and the plugin loses both reasoning text
-                        // and token-usage metering.
-                        if let reasoning = StreamingReasoningHint.decode(delta) {
-                            emit(Self.chunkPayload(id: cid, delta: ["reasoning_content": reasoning]))
-                            continue
-                        }
-                        if let stats = StreamingStatsHint.decode(delta) {
-                            // Forward usage to the plugin as an OpenAI-style
-                            // usage delta and remember it for the aggregated
-                            // return so non-stream and stream paths surface
-                            // the same metering shape.
-                            if let stopReason = stats.stopReason {
-                                iterFinishReason = stopReason
-                            }
-                            let usage: [String: Any] = [
-                                "completion_tokens": stats.tokenCount,
-                                "tokens_per_second": stats.tokensPerSecond,
-                                "unclosed_reasoning": stats.unclosedReasoning,
-                            ]
-                            lastUsage = usage
-                            emit(Self.chunkPayload(id: cid, delta: ["usage": usage]))
-                            continue
-                        }
-                        if StreamingToolHint.isSentinel(delta) { continue }
-                        iterContent += delta
-                        lastContent += delta
-                        emit(Self.chunkPayload(id: cid, delta: ["content": delta]))
-                    }
-
-                    if !iterContent.isEmpty {
-                        messages.append(ChatMessage(role: "assistant", content: iterContent))
-                    }
-                    emit(Self.chunkPayload(id: cid, delta: [:], finishReason: iterFinishReason))
-                    Self.persistStreamingInference(
-                        pluginId: pid,
-                        agentId: prep.agentId,
-                        externalSessionKey: prep.enriched.request.session_id,
-                        priorMessages: messages,
-                        assistantContent: "",
-                        model: prep.enriched.request.model
-                    )
-                    return Self.buildStreamResult(
-                        id: cid,
-                        model: prep.enriched.request.model,
-                        content: lastContent,
-                        toolCallsExecuted: toolCallsExecuted,
-                        sharedArtifacts: sharedArtifacts,
-                        usage: lastUsage,
-                        finishReason: iterFinishReason
-                    )
-
-                } catch let invs as ServiceToolInvocations {
-                    guard iteration < prep.options.maxIterations else {
-                        // Last-iteration tool call: emit a finish_reason
-                        // chunk that is honest about why we stopped, then
-                        // return a structured `max_iterations_reached`
-                        // envelope (matches non-stream `complete` exactly).
-                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "max_iterations"))
-                        break
-                    }
-                    await Self.processInvocationBatch(
-                        invs.invocations,
-                        cid: cid,
-                        lastContent: &lastContent,
-                        messages: &messages,
-                        toolSpecs: &toolSpecs,
-                        toolCallsExecuted: &toolCallsExecuted,
-                        sharedArtifacts: &sharedArtifacts,
-                        prep: prep,
-                        taskState: taskState,
-                        emit: emit
-                    )
-                    continue
-
-                } catch let inv as ServiceToolInvocation {
-                    guard iteration < prep.options.maxIterations else {
-                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "max_iterations"))
-                        break
-                    }
-                    await Self.processInvocationBatch(
-                        [inv],
-                        cid: cid,
-                        lastContent: &lastContent,
-                        messages: &messages,
-                        toolSpecs: &toolSpecs,
-                        toolCallsExecuted: &toolCallsExecuted,
-                        sharedArtifacts: &sharedArtifacts,
-                        prep: prep,
-                        taskState: taskState,
-                        emit: emit
-                    )
-                    continue
-
-                } catch {
-                    return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
-                }
+            }
+            let maxIterationsEnvelope: () -> String = {
+                Self.jsonString([
+                    "error": "max_iterations_reached",
+                    "message":
+                        "Plugin streaming completion exhausted \(prep.options.maxIterations) iterations without converging on a final answer.",
+                    "partial_content": lastContent,
+                    "tool_calls_executed": toolCallsExecuted,
+                    "shared_artifacts": sharedArtifacts,
+                    "model": prep.enriched.request.model,
+                    "id": cid,
+                ])
             }
 
-            // Persist whatever we have before returning, even on max-iterations
-            // exit, so the user can still see the partial conversation.
-            Self.persistStreamingInference(
-                pluginId: pid,
-                agentId: prep.agentId,
-                externalSessionKey: prep.enriched.request.session_id,
-                priorMessages: messages,
-                assistantContent: lastContent,
-                model: prep.enriched.request.model
+            // Canonical loop skeleton lives in `AgentToolLoop`; these hooks
+            // carry the streaming plugin host's specifics — chunk emission,
+            // budget-managed trimming, cancellation via `complete_cancel`,
+            // and `processToolCall` post-processing.
+            let hooks = AgentLoopHooks(
+                isCancelled: { isCancelled(streamId) },
+                buildMessages: { notices in
+                    // Driver-staged notices (budget warning, next-step bias)
+                    // persist into the running history, matching the
+                    // historical behavior of appending the bias in-line.
+                    for notice in notices {
+                        messages.append(ChatMessage(role: "user", content: notice))
+                    }
+                    return prep.budgetManager?.trimMessages(messages, watermark: compactionWatermark)
+                        ?? messages
+                },
+                modelStep: { effective, iteration in
+                    let iterReq = Self.iterationRequest(
+                        from: prep.enriched.request,
+                        messages: effective,
+                        tools: toolSpecs
+                    )
+                    do {
+                        let stream = try await prep.engine.streamChat(request: iterReq)
+                        var iterContent = ""
+                        var iterFinishReason = "stop"
+
+                        for try await delta in stream {
+                            // Cancellation check: plugin called `complete_cancel`
+                            // with our stream id. Emit a final chunk with
+                            // `finish_reason: "cancelled"` and stash the
+                            // cancelled envelope as the terminal result.
+                            if isCancelled(streamId) {
+                                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
+                                persistPartial(lastContent)
+                                terminalEnvelope = Self.cancelledStreamEnvelope(
+                                    id: cid,
+                                    streamId: streamId,
+                                    model: prep.enriched.request.model,
+                                    partialContent: lastContent,
+                                    toolCallsExecuted: toolCallsExecuted,
+                                    sharedArtifacts: sharedArtifacts,
+                                    usage: lastUsage
+                                )
+                                return .finalResponse
+                            }
+                            // Reasoning and stats sentinels must be decoded
+                            // BEFORE the generic `isSentinel` filter, otherwise
+                            // these payloads get dropped together with tool
+                            // hints and the plugin loses both reasoning text
+                            // and token-usage metering.
+                            if let reasoning = StreamingReasoningHint.decode(delta) {
+                                emit(Self.chunkPayload(id: cid, delta: ["reasoning_content": reasoning]))
+                                continue
+                            }
+                            if let stats = StreamingStatsHint.decode(delta) {
+                                // Forward usage to the plugin as an OpenAI-style
+                                // usage delta and remember it for the aggregated
+                                // return so non-stream and stream paths surface
+                                // the same metering shape.
+                                if let stopReason = stats.stopReason {
+                                    iterFinishReason = stopReason
+                                }
+                                let usage: [String: Any] = [
+                                    "completion_tokens": stats.tokenCount,
+                                    "tokens_per_second": stats.tokensPerSecond,
+                                    "unclosed_reasoning": stats.unclosedReasoning,
+                                ]
+                                lastUsage = usage
+                                emit(Self.chunkPayload(id: cid, delta: ["usage": usage]))
+                                continue
+                            }
+                            if StreamingToolHint.isSentinel(delta) { continue }
+                            iterContent += delta
+                            lastContent += delta
+                            emit(Self.chunkPayload(id: cid, delta: ["content": delta]))
+                        }
+
+                        if !iterContent.isEmpty {
+                            messages.append(ChatMessage(role: "assistant", content: iterContent))
+                        }
+                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: iterFinishReason))
+                        persistPartial("")
+                        terminalEnvelope = Self.buildStreamResult(
+                            id: cid,
+                            model: prep.enriched.request.model,
+                            content: lastContent,
+                            toolCallsExecuted: toolCallsExecuted,
+                            sharedArtifacts: sharedArtifacts,
+                            usage: lastUsage,
+                            finishReason: iterFinishReason
+                        )
+                        return .finalResponse
+
+                    } catch let invs as ServiceToolInvocations {
+                        guard iteration < prep.options.maxIterations else {
+                            // Last-iteration tool call: emit a finish_reason
+                            // chunk that is honest about why we stopped, then
+                            // return a structured `max_iterations_reached`
+                            // envelope WITHOUT executing the batch (matches
+                            // the historical budget semantics).
+                            emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "max_iterations"))
+                            persistPartial(lastContent)
+                            terminalEnvelope = maxIterationsEnvelope()
+                            return .finalResponse
+                        }
+                        return .toolCalls(invs.invocations)
+
+                    } catch let inv as ServiceToolInvocation {
+                        guard iteration < prep.options.maxIterations else {
+                            emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "max_iterations"))
+                            persistPartial(lastContent)
+                            terminalEnvelope = maxIterationsEnvelope()
+                            return .finalResponse
+                        }
+                        return .toolCalls([inv])
+                    }
+                },
+                willProcessCall: { inv, callId in
+                    // Surface the tool call to the plugin before the dedupe
+                    // check, exactly as the historical batch processor did.
+                    let tcDelta: [String: Any] = [
+                        "tool_calls": [
+                            [
+                                "id": callId,
+                                "function": ["name": inv.toolName, "arguments": inv.jsonArguments],
+                            ]
+                        ]
+                    ]
+                    emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
+                },
+                onDedupedResult: { inv, callId, held in
+                    // Dedupe a still-fresh re-read: replay the exact held
+                    // envelope instead of re-running the read. Still pair an
+                    // assistant tool_call message with the tool result so
+                    // history stays valid.
+                    emit(
+                        Self.chunkPayload(
+                            id: cid,
+                            delta: ["role": "tool", "tool_call_id": callId, "content": held]
+                        )
+                    )
+                    messages.append(
+                        ChatMessage(
+                            role: "assistant",
+                            content: lastContent.isEmpty ? nil : lastContent,
+                            tool_calls: [
+                                ToolCall(
+                                    id: callId,
+                                    type: "function",
+                                    function: ToolCallFunction(
+                                        name: inv.toolName,
+                                        arguments: inv.jsonArguments
+                                    )
+                                )
+                            ],
+                            tool_call_id: nil
+                        )
+                    )
+                    messages.append(
+                        ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
+                    )
+                    lastContent = ""
+                },
+                executeTool: { inv, callId in
+                    let processed = await Self.processToolCall(
+                        toolName: inv.toolName,
+                        argumentsJSON: inv.jsonArguments,
+                        callId: callId,
+                        priorAssistantContent: lastContent,
+                        prep: prep,
+                        toolSpecs: &toolSpecs
+                    )
+                    if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
+
+                    emit(
+                        Self.chunkPayload(
+                            id: cid,
+                            delta: [
+                                "role": "tool", "tool_call_id": callId, "content": processed.result,
+                            ]
+                        )
+                    )
+
+                    toolCallsExecuted.append(processed.toolCallExecuted)
+                    messages.append(processed.assistantMessage)
+                    messages.append(processed.toolMessage)
+                    // Only the FIRST invocation in the batch consumes the
+                    // streamed assistant prose — subsequent calls in the same
+                    // completion share the same response, so we clear
+                    // lastContent after the first tool to avoid duplicating
+                    // prose into every assistant tool-call message.
+                    lastContent = ""
+                    return AgentLoopToolExecution(result: processed.result)
+                }
             )
-            return Self.jsonString([
-                "error": "max_iterations_reached",
-                "message":
-                    "Plugin streaming completion exhausted \(prep.options.maxIterations) iterations without converging on a final answer.",
-                "partial_content": lastContent,
-                "tool_calls_executed": toolCallsExecuted,
-                "shared_artifacts": sharedArtifacts,
-                "model": prep.enriched.request.model,
-                "id": cid,
-            ])
+
+            let exit: AgentToolLoop.Exit
+            do {
+                let runResult = try await AgentToolLoop.run(
+                    policy: AgentLoopPolicy(
+                        maxIterations: prep.options.maxIterations,
+                        stopOnToolRejection: false,
+                        dedupeNoticeEnabled: false
+                    ),
+                    state: taskState,
+                    hooks: hooks
+                )
+                exit = runResult.exit
+            } catch {
+                return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
+            }
+
+            if exit == .cancelled {
+                // Cancellation detected at an iteration boundary (between
+                // tool calls) rather than mid-stream. Emit the same final
+                // chunk and envelope the mid-stream path produces.
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
+                persistPartial(lastContent)
+                return Self.cancelledStreamEnvelope(
+                    id: cid,
+                    streamId: streamId,
+                    model: prep.enriched.request.model,
+                    partialContent: lastContent,
+                    toolCallsExecuted: toolCallsExecuted,
+                    sharedArtifacts: sharedArtifacts,
+                    usage: lastUsage
+                )
+            }
+
+            if let envelope = terminalEnvelope {
+                return envelope
+            }
+
+            // Iteration budget exhausted while the model was still requesting
+            // tools. Persist whatever we have before returning so the user
+            // can still see the partial conversation.
+            persistPartial(lastContent)
+            return maxIterationsEnvelope()
         }
     }
 
@@ -1735,108 +1883,6 @@ final class PluginHostContext: @unchecked Sendable {
         let toolMessage: ChatMessage
         let toolCallExecuted: [String: String]
         let artifactDict: [String: Any]?
-    }
-
-    /// Execute every tool in a `ServiceToolInvocations` batch and append the
-    /// assistant + tool messages in order. Mirrors the `complete()`
-    /// non-streaming path so a single completion that emits multiple
-    /// `<tool_call>` blocks runs all of them in one streaming round.
-    private static func processInvocationBatch(
-        _ invocations: [ServiceToolInvocation],
-        cid: String,
-        lastContent: inout String,
-        messages: inout [ChatMessage],
-        toolSpecs: inout [Tool]?,
-        toolCallsExecuted: inout [[String: String]],
-        sharedArtifacts: inout [[String: Any]],
-        prep: PreparedInference,
-        taskState: AgentTaskState,
-        emit: ([String: Any]) -> Void
-    ) async {
-        for inv in invocations {
-            let callId =
-                inv.toolCallId
-                ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
-
-            let tcDelta: [String: Any] = [
-                "tool_calls": [
-                    ["id": callId, "function": ["name": inv.toolName, "arguments": inv.jsonArguments]]
-                ]
-            ]
-            emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
-
-            // Dedupe a still-fresh re-read: replay the exact held envelope
-            // instead of re-running the read. Still pair an assistant
-            // tool_call message with the tool result so history stays valid.
-            if let held = taskState.heldResult(name: inv.toolName, argsJSON: inv.jsonArguments) {
-                emit(
-                    Self.chunkPayload(
-                        id: cid,
-                        delta: ["role": "tool", "tool_call_id": callId, "content": held]
-                    )
-                )
-                messages.append(
-                    ChatMessage(
-                        role: "assistant",
-                        content: lastContent.isEmpty ? nil : lastContent,
-                        tool_calls: [
-                            ToolCall(
-                                id: callId,
-                                type: "function",
-                                function: ToolCallFunction(
-                                    name: inv.toolName,
-                                    arguments: inv.jsonArguments
-                                )
-                            )
-                        ],
-                        tool_call_id: nil
-                    )
-                )
-                messages.append(
-                    ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
-                )
-                lastContent = ""
-                continue
-            }
-
-            let processed = await Self.processToolCall(
-                toolName: inv.toolName,
-                argumentsJSON: inv.jsonArguments,
-                callId: callId,
-                priorAssistantContent: lastContent,
-                prep: prep,
-                toolSpecs: &toolSpecs
-            )
-            if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
-
-            emit(
-                Self.chunkPayload(
-                    id: cid,
-                    delta: [
-                        "role": "tool", "tool_call_id": callId, "content": processed.result,
-                    ]
-                )
-            )
-
-            toolCallsExecuted.append(processed.toolCallExecuted)
-            messages.append(processed.assistantMessage)
-            messages.append(processed.toolMessage)
-            taskState.record(
-                name: inv.toolName,
-                argsJSON: inv.jsonArguments,
-                result: processed.result
-            )
-            // Only the FIRST invocation in the batch consumes the streamed
-            // assistant prose — subsequent calls in the same completion
-            // share the same response, so we clear lastContent after the
-            // first tool to avoid duplicating prose into every assistant
-            // tool-call message.
-            lastContent = ""
-        }
-        // System-attributed next-step nudge for the next iteration.
-        if let bias = taskState.nextStepBias() {
-            messages.append(ChatMessage(role: "user", content: "[System Notice] " + bias))
-        }
     }
 
     /// Execute one tool call, post-process the result, and produce the

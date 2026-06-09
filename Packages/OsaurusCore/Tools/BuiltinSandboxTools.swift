@@ -94,6 +94,13 @@ enum BuiltinSandboxTools {
             SandboxInstallTool(agentId: agentId, agentName: agentName, home: home),
             runtimeManaged: true
         )
+        // Reduction subagent: read-heavy investigation in a nested,
+        // context-isolated loop that returns only a digest. Gated with the
+        // exec tools because its child loop can run `sandbox_exec`.
+        registry.registerSandboxTool(
+            SandboxReduceTool(agentId: agentId, agentName: agentName, home: home),
+            runtimeManaged: true
+        )
 
         // Secret management tools
         registry.registerSandboxTool(
@@ -790,12 +797,12 @@ private func jsonResult(_ dict: [String: Any]) -> String {
 /// happened. Tail bias matters because the final lines of a process
 /// (errors, summary prints) are usually the most important.
 ///
-/// Default budget is 50_000 chars (~12.5K tokens). When the input fits
-/// under the budget the text is returned untouched.
+/// Default budget is `ToolOutputCaps.execStdout` (~12.5K tokens). When
+/// the input fits under the budget the text is returned untouched.
 ///
 /// Internal — `SandboxPluginTool` shares this so user-created plugin
 /// runs cap their stdout/stderr the same way the built-in shell tools do.
-internal func truncateForModel(_ text: String, maxChars: Int = 50_000) -> String {
+internal func truncateForModel(_ text: String, maxChars: Int = ToolOutputCaps.execStdout) -> String {
     if text.count <= maxChars { return text }
     let headChars = Int(Double(maxChars) * 0.4)
     let tailChars = maxChars - headChars
@@ -1027,7 +1034,10 @@ private func installResultEnvelope(
         if retried { payload["retried"] = true }
         return ToolEnvelope.success(tool: tool, result: payload)
     }
-    let combined = truncateForModel(result.stdout + result.stderr, maxChars: 20_000)
+    let combined = truncateForModel(
+        result.stdout + result.stderr,
+        maxChars: ToolOutputCaps.execRetryCombined
+    )
     let stage = retried ? "after retry" : ""
     let header =
         stage.isEmpty
@@ -1057,7 +1067,7 @@ private func installCleanupFailureEnvelope(
 ) -> String {
     let firstCombined = truncateForModel(
         firstAttempt.stdout + firstAttempt.stderr,
-        maxChars: 10_000
+        maxChars: ToolOutputCaps.execFirstAttemptCombined
     )
     return ToolEnvelope.failure(
         kind: .executionError,
@@ -2001,7 +2011,7 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
 
         var payload: [String: Any] = [
             "stdout": truncateForModel(result.stdout),
-            "stderr": truncateForModel(result.stderr, maxChars: 10_000),
+            "stderr": truncateForModel(result.stderr, maxChars: ToolOutputCaps.execStderr),
             "exit_code": Int(result.exitCode),
             "cwd": cwd,
         ]

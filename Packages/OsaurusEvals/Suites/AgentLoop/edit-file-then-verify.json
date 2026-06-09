@@ -1,0 +1,23 @@
+{
+  "id": "agent_loop.edit-file-then-verify",
+  "domain": "agent_loop",
+  "label": "agent loop • edit a file then verify the change",
+  "query": "The file greeting.txt contains a typo: 'wrold' should be 'world'. Fix it, then read the file back to confirm the fix.",
+  "notes": "The canonical write-path smoke: read → edit → re-read. Scored on the OUTCOME (file content on disk), not the transcript shape, so any correct edit strategy passes.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "greeting.txt", "contents": "Hello, wrold!\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "files": [
+        { "path": "greeting.txt", "contains": "world" }
+      ],
+      "commands": [
+        { "command": "grep -q wrold greeting.txt", "expectExitCode": 1 }
+      ]
+    }
+  }
+}

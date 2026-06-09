@@ -1,0 +1,23 @@
+{
+  "id": "agent_loop.listing-navigation-discipline",
+  "domain": "agent_loop",
+  "label": "agent loop • answer a targeted question without browsing the tree",
+  "query": "What version number is declared in the VERSION file? Reply with just the version.",
+  "notes": "The folder tree is already in the system prompt, so the answer needs at most one targeted read. The maxToolCalls cap fails models that list directories or read unrelated files before answering.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "VERSION", "contents": "3.14.2\n" },
+      { "path": "README.md", "contents": "# Demo project\n\nSee VERSION for the release number.\n" },
+      { "path": "src/main.py", "contents": "print(\"hello\")\n" },
+      { "path": "src/util.py", "contents": "def add(a, b):\n    return a + b\n" },
+      { "path": "docs/changelog.md", "contents": "## 3.14.2\n- maintenance release\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "maxToolCalls": 3,
+      "finalTextContains": ["3.14.2"]
+    }
+  }
+}

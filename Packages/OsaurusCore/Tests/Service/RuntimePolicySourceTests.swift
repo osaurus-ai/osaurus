@@ -1247,7 +1247,7 @@ struct RuntimePolicySourceTests {
         }
 
         let agentRun = handler[start.lowerBound ..< end.lowerBound]
-        #expect(agentRun.contains("runToolBatchInParallel"))
+        #expect(agentRun.contains("AgentToolLoop.runBatchInParallel"))
         #expect(
             !agentRun.contains("StreamingToolHint.encode(")
                 && !agentRun.contains("StreamingToolHint.encodeArgs")
@@ -2118,7 +2118,7 @@ struct RuntimePolicySourceTests {
         #expect(
             chatView.contains("tools: toolSpecs,")
                 && chatView.contains("userText: trimmed,")
-                && chatView.contains("attempt: attempts"),
+                && chatView.contains("attempt: attempt"),
             "Chat UI tool-choice policy must see the resolved tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
         )
         #expect(

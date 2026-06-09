@@ -139,6 +139,8 @@ public enum EvalRunner {
             )
         case "capability_claims":
             return await runCapabilityClaimsCase(testCase, modelId: modelId)
+        case "agent_loop":
+            return await runAgentLoopCase(testCase, modelId: modelId)
         case "tools", "streaming", "contract":
             // Scaffolded domains — runner implementation lives in a
             // follow-up so cases can be authored against the format

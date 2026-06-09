@@ -517,4 +517,111 @@ struct AgentTaskStateTests {
         #expect(msg1Iterations + msg2Iterations <= 4, "<= 4 total tool iterations")
         #expect(replays == 0, "no duplicate executions")
     }
+
+    // MARK: - Repeated write/exec call detector
+
+    private func execFailureEnvelope(_ message: String = "command failed") -> String {
+        ToolEnvelope.failure(kind: .executionError, message: message, tool: "sandbox_exec")
+    }
+
+    /// The 3rd identical non-read call arms the repeated-call nudge; the
+    /// first two stay silent (a legitimate retry shouldn't be nagged).
+    @Test func repeatedCall_thirdIdenticalExecArmsNudge() {
+        let state = AgentTaskState()
+        let args = #"{"command":"swift build"}"#
+
+        state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        #expect(state.nextStepBias() == nil, "first call: no nudge")
+
+        state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        #expect(state.nextStepBias() == nil, "second call: no nudge")
+
+        state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("sandbox_exec"), "third call: nudge names the tool")
+        #expect(bias.contains("change your approach"), "nudge asks for a different approach")
+    }
+
+    /// Argument canonicalization applies: key order must not defeat the
+    /// detector.
+    @Test func repeatedCall_keyOrderInsensitive() {
+        let state = AgentTaskState()
+        state.record(
+            name: "file_write", argsJSON: #"{"path":"a.txt","content":"x"}"#,
+            result: execFailureEnvelope())
+        state.record(
+            name: "file_write", argsJSON: #"{"content":"x","path":"a.txt"}"#,
+            result: execFailureEnvelope())
+        state.record(
+            name: "file_write", argsJSON: #"{"path":"a.txt","content":"x"}"#,
+            result: execFailureEnvelope())
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("file_write"))
+    }
+
+    /// A different call between repeats disarms the pending nudge — the
+    /// notice describes the MOST RECENT call only.
+    @Test func repeatedCall_differentCallDisarms() {
+        let state = AgentTaskState()
+        let args = #"{"command":"make test"}"#
+        state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        // Now a different command runs — the nudge must not fire for it.
+        state.record(
+            name: "sandbox_exec", argsJSON: #"{"command":"ls"}"#,
+            result: ToolEnvelope.success(tool: "sandbox_exec", text: "ok"))
+        #expect(state.nextStepBias() == nil)
+    }
+
+    /// Read tools never reach the counter — they are covered by the dedupe
+    /// replay (`heldResult`) instead.
+    @Test func repeatedCall_readToolsExcluded() {
+        let state = AgentTaskState()
+        // Failed reads re-execute (no fresh-read entry), so the same read can
+        // genuinely repeat — and must not trip the write/exec detector.
+        let notFound = ToolEnvelope.failure(kind: .notFound, message: "missing", tool: "file_read")
+        let args = #"{"path":"ghost.txt"}"#
+        state.record(name: "file_read", argsJSON: args, result: notFound)
+        state.record(name: "file_read", argsJSON: args, result: notFound)
+        state.record(name: "file_read", argsJSON: args, result: notFound)
+        let bias = state.nextStepBias() ?? ""
+        #expect(!bias.contains("identical arguments"), "read repeats use the not_found nudge, not the repeat detector")
+    }
+
+    /// `beginMessage` resets the counters: repeats across user messages are
+    /// not loops.
+    @Test func repeatedCall_beginMessageResets() {
+        let state = AgentTaskState()
+        let args = #"{"command":"git status"}"#
+        state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        state.beginMessage()
+        state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        #expect(state.nextStepBias() == nil, "count restarts after beginMessage")
+    }
+
+    /// The detector keeps firing while the model stays stuck (4th, 5th, …
+    /// identical calls) — no premature silence.
+    @Test func repeatedCall_keepsFiringWhileStuck() {
+        let state = AgentTaskState()
+        let args = #"{"command":"swift build"}"#
+        for _ in 0 ..< 5 {
+            state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        }
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("sandbox_exec"))
+    }
+
+    /// Advisory only: nothing in the state machine blocks the call — the
+    /// envelope recorded is whatever the execution produced.
+    @Test func repeatedCall_neverHardBlocks() {
+        let state = AgentTaskState()
+        let args = #"{"command":"swift build"}"#
+        for _ in 0 ..< 4 {
+            state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
+        }
+        // The dedupe path still declines to short-circuit non-read tools.
+        #expect(state.heldResult(name: "sandbox_exec", argsJSON: args) == nil)
+    }
 }

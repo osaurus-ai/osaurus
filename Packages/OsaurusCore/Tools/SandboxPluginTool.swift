@@ -336,7 +336,7 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
     ) -> String {
         let payload: [String: Any] = [
             "stdout": truncateForModel(stdout),
-            "stderr": truncateForModel(stderr, maxChars: 10_000),
+            "stderr": truncateForModel(stderr, maxChars: ToolOutputCaps.execStderr),
             "exit_code": Int(exitCode),
         ]
         if exitCode == 0 {

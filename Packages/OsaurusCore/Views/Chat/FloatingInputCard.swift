@@ -235,6 +235,15 @@ struct FloatingInputCard: View {
         // While the slash command popup is visible, Enter selects a command — not sends
         guard !showSlashPopup else { return false }
 
+        // Hard token gate: when the NON-compactable prefix alone (system
+        // prompt + tools + memory + input + response reservation) can't
+        // fit the model window, the request would fail no matter how much
+        // history compaction trims. Block the send and let the context
+        // chip explain, instead of letting the model error mid-stream.
+        // History-driven growth is deliberately NOT gated — compaction
+        // handles that.
+        guard !isContextHardOverflow else { return false }
+
         let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasContent = hasText || !pendingAttachments.isEmpty
         // During streaming, "send" enqueues the payload (handled by the
@@ -281,6 +290,34 @@ struct FloatingInputCard: View {
             return ctx
         }
         return nil
+    }
+
+    // MARK: - Context budget gating
+
+    /// Estimated fraction of the model window the next send occupies
+    /// (typing included). nil when the window is unknown.
+    private var contextUsageRatio: Double? {
+        guard let maxCtx = maxContextTokens, maxCtx > 0, displayContextTokens > 0 else { return nil }
+        return Double(displayContextTokens) / Double(maxCtx)
+    }
+
+    /// Soft warning threshold: at ≥85% of the window the context chip
+    /// turns amber. Sends still go through — mid-run compaction is the
+    /// overflow handler — but the user should know quality may degrade.
+    private var isContextNearLimit: Bool {
+        (contextUsageRatio ?? 0) >= 0.85
+    }
+
+    /// Hard overflow: the non-compactable prefix alone — everything
+    /// EXCEPT the conversation history (system prompt, tools, memory,
+    /// input, response reservation) — exceeds the model window. History
+    /// can be compacted mid-run; this can't, so the send is blocked with
+    /// a clear signal instead of a guaranteed model failure.
+    private var isContextHardOverflow: Bool {
+        guard let maxCtx = maxContextTokens, maxCtx > 0 else { return false }
+        let bd = displayContextBreakdown
+        let conversationTokens = bd.messages.first { $0.id == "conversation" }?.tokens ?? 0
+        return bd.total - conversationTokens > maxCtx
     }
 
     private var isVoiceConfigured: Bool {
@@ -1214,8 +1251,10 @@ extension FloatingInputCard {
 
     // MARK: - Queued Send Chip
 
-    /// Compact chip preview of the message that's queued to flush when the
-    /// active run finishes (or be dispatched immediately via Send Now).
+    /// Compact chip preview of the queued message. Text-only payloads
+    /// join the active run at the next iteration boundary (mid-run
+    /// steering); payloads with attachments or a one-off skill flush when
+    /// the run finishes (or dispatch immediately via Send Now).
     /// Visible only when `queuedSend != nil`.
     @ViewBuilder
     private var queuedSendChipView: some View {
@@ -1483,6 +1522,23 @@ extension FloatingInputCard {
     @ViewBuilder
     private var contextIndicatorChip: some View {
         HStack(spacing: 4) {
+            // Budget-state tinting: amber at ≥85% of the window (soft
+            // warning — compaction will engage), red when the
+            // non-compactable prefix alone can't fit (send is gated).
+            let warningColor: Color? =
+                isContextHardOverflow ? .red : (isContextNearLimit ? .orange : nil)
+
+            if let warningColor {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: CGFloat(theme.captionSize) - 2))
+                    .foregroundColor(warningColor)
+                    .localizedHelp(
+                        isContextHardOverflow
+                            ? "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model."
+                            : "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality."
+                    )
+            }
+
             let prefix = isStreaming ? "" : "~"
             let tokenText =
                 if let maxCtx = maxContextTokens {
@@ -1492,7 +1548,9 @@ extension FloatingInputCard {
                 }
             Text(tokenText)
                 .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                .foregroundColor(isStreaming ? theme.secondaryText : theme.tertiaryText)
+                .foregroundColor(
+                    warningColor ?? (isStreaming ? theme.secondaryText : theme.tertiaryText)
+                )
 
             if !isCompact {
                 Text("tokens", bundle: .module)

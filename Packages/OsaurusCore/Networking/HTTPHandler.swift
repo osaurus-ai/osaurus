@@ -3315,13 +3315,36 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 ChatConfigurationStore.load().maxToolAttempts ?? 30
             }
             let maxIterations = max(1, min(configuredMaxToolAttempts, 120))
-            var iteration = 0
             let requestId = UUID().uuidString
             // Per-request harness state. The agent-run endpoint is stateless
             // across requests by design (see the divergence note above), so a
             // per-request instance is correct — there is no prior listing to
             // survive. Provides within-request dedupe + post-listing nudge.
             let taskState = AgentTaskState()
+
+            // KV-cache-aware history compaction: shared window resolution +
+            // reservations via `AgentLoopBudget` (parity with the plugin
+            // host's budget manager). The leading system message stays
+            // byte-stable; only the conversation tail is trimmed.
+            let budgetManager: ContextBudgetManager? = await {
+                guard maxIterations > 1 else { return nil }
+                let contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: model)
+                let toolTokens = await MainActor.run {
+                    ToolRegistry.shared.totalEstimatedTokens(for: tools)
+                }
+                let sysChars =
+                    messages.first(where: { $0.role == "system" })?.content?.count ?? 0
+                return AgentLoopBudget.makeBudgetManager(
+                    contextWindow: contextWindow,
+                    systemPromptChars: sysChars,
+                    toolTokens: toolTokens,
+                    maxResponseTokens: req.resolvedMaxTokens
+                )
+            }()
+            // Request-scoped sticky compaction: trims stay monotonic across
+            // the run's iterations so the token prefix is byte-stable for
+            // paged-KV reuse.
+            let compactionWatermark = CompactionWatermark()
 
             hop {
                 writerBound.value.writeRole(
@@ -3334,65 +3357,111 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             }
 
-            while iteration < maxIterations {
-                // Client hung up between iterations — stop the agent loop. The
-                // close hook already cancelled the model's generation.
-                if disconnected.value { break }
-                iteration += 1
+            // Per-iteration assistant prose captured by the modelStep hook so
+            // the post-batch framing can attach it to the assistant
+            // tool_calls message (mirrors the historical loop local).
+            var responseContent = ""
 
-                var iterationReq = ChatCompletionRequest(
-                    model: model,
-                    messages: messages,
-                    temperature: req.temperature,
-                    max_tokens: req.resolvedMaxTokens,
-                    stream: true,
-                    top_p: req.top_p,
-                    frequency_penalty: req.frequency_penalty,
-                    presence_penalty: req.presence_penalty,
-                    stop: req.stop,
-                    n: nil,
-                    tools: tools.isEmpty ? nil : tools,
-                    tool_choice: resolvedToolChoice,
-                    session_id: req.session_id,
-                    seed: req.seed,
-                    response_format: req.response_format,
-                    stream_options: req.stream_options
-                )
-                if let enable = req.enable_thinking {
-                    var opts = iterationReq.modelOptions ?? [:]
-                    opts["disableThinking"] = .bool(!enable)
-                    iterationReq.modelOptions = opts
-                    iterationReq.enable_thinking = enable
-                }
-                iterationReq.reasoning_effort = req.reasoning_effort
-                // Label the turn agent-driven for `message_sent` telemetry.
-                // Only the first iteration (trailing `user` message) actually
-                // emits; later tool-result iterations are skipped by the
-                // engine's de-dup rule.
-                iterationReq.isAgentRequest = true
+            // Canonical loop skeleton lives in `AgentToolLoop` (slotting mode:
+            // dedupe pass + parallel batch execution). These hooks carry the
+            // HTTP surface's specifics — SSE forwarding via the writer, the
+            // message-array history, and client-disconnect cancellation.
+            let hooks = AgentLoopHooks(
+                isCancelled: {
+                    // Client hung up between iterations — stop the agent loop.
+                    // The close hook already cancelled the model's generation.
+                    disconnected.value
+                },
+                buildMessages: { notices in
+                    // Driver-staged notices (budget warning, next-step bias)
+                    // persist into the running history, matching the
+                    // historical behavior of appending the bias in-line.
+                    for notice in notices {
+                        messages.append(ChatMessage(role: "user", content: notice))
+                    }
+                    guard let budgetManager else { return messages }
+                    return AgentLoopBudget.trimPreservingSystemPrefix(
+                        messages,
+                        with: budgetManager,
+                        watermark: compactionWatermark
+                    )
+                },
+                modelStep: { msgs, _ in
+                    var iterationReq = ChatCompletionRequest(
+                        model: model,
+                        messages: msgs,
+                        temperature: req.temperature,
+                        max_tokens: req.resolvedMaxTokens,
+                        stream: true,
+                        top_p: req.top_p,
+                        frequency_penalty: req.frequency_penalty,
+                        presence_penalty: req.presence_penalty,
+                        stop: req.stop,
+                        n: nil,
+                        tools: tools.isEmpty ? nil : tools,
+                        tool_choice: resolvedToolChoice,
+                        session_id: req.session_id,
+                        seed: req.seed,
+                        response_format: req.response_format,
+                        stream_options: req.stream_options
+                    )
+                    if let enable = req.enable_thinking {
+                        var opts = iterationReq.modelOptions ?? [:]
+                        opts["disableThinking"] = .bool(!enable)
+                        iterationReq.modelOptions = opts
+                        iterationReq.enable_thinking = enable
+                    }
+                    iterationReq.reasoning_effort = req.reasoning_effort
+                    // Label the turn agent-driven for `message_sent` telemetry.
+                    // Only the first iteration (trailing `user` message) actually
+                    // emits; later tool-result iterations are skipped by the
+                    // engine's de-dup rule.
+                    iterationReq.isAgentRequest = true
 
-                var responseContent = ""
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
-                // Local models can emit multiple tool calls in a single
-                // completion; ServiceToolInvocations carries the full batch.
-                var pendingInvocations: [ServiceToolInvocation] = []
+                    responseContent = ""
+                    var contentCoalescer = Self.StreamDeltaCoalescer(
+                        interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
+                    )
 
-                do {
-                    let stream = try await chatEngine.streamChat(request: iterationReq)
-                    if disconnected.value { throw CancellationError() }
-                    for try await delta in stream {
+                    do {
+                        let stream = try await chatEngine.streamChat(request: iterationReq)
                         if disconnected.value { throw CancellationError() }
-                        // Reasoning sentinel must be decoded BEFORE the
-                        // generic `isSentinel` filter; emit it on the
-                        // OpenAI extended `reasoning_content` channel
-                        // and do NOT mix it into `responseContent`.
-                        if let reasoning = StreamingReasoningHint.decode(delta) {
-                            if let pending = contentCoalescer.flush() {
+                        for try await delta in stream {
+                            if disconnected.value { throw CancellationError() }
+                            // Reasoning sentinel must be decoded BEFORE the
+                            // generic `isSentinel` filter; emit it on the
+                            // OpenAI extended `reasoning_content` channel
+                            // and do NOT mix it into `responseContent`.
+                            if let reasoning = StreamingReasoningHint.decode(delta) {
+                                if let pending = contentCoalescer.flush() {
+                                    hop {
+                                        writerBound.value.writeContent(
+                                            pending,
+                                            model: model,
+                                            responseId: responseId,
+                                            created: created,
+                                            context: ctx.value
+                                        )
+                                    }
+                                }
+                                hop {
+                                    writerBound.value.writeReasoning(
+                                        reasoning,
+                                        model: model,
+                                        responseId: responseId,
+                                        created: created,
+                                        context: ctx.value
+                                    )
+                                }
+                                continue
+                            }
+                            if StreamingStatsHint.decode(delta) != nil { continue }
+                            if StreamingToolHint.isSentinel(delta) { continue }
+                            responseContent += delta
+                            if let chunk = contentCoalescer.append(delta) {
                                 hop {
                                     writerBound.value.writeContent(
-                                        pending,
+                                        chunk,
                                         model: model,
                                         responseId: responseId,
                                         created: created,
@@ -3400,24 +3469,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                     )
                                 }
                             }
-                            hop {
-                                writerBound.value.writeReasoning(
-                                    reasoning,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                            continue
                         }
-                        if StreamingStatsHint.decode(delta) != nil { continue }
-                        if StreamingToolHint.isSentinel(delta) { continue }
-                        responseContent += delta
-                        if let chunk = contentCoalescer.append(delta) {
+                        if let pending = contentCoalescer.flush() {
                             hop {
                                 writerBound.value.writeContent(
-                                    chunk,
+                                    pending,
                                     model: model,
                                     responseId: responseId,
                                     created: created,
@@ -3425,144 +3481,118 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 )
                             }
                         }
+                    } catch let invs as ServiceToolInvocations {
+                        // Local models can emit multiple tool calls in a single
+                        // completion; ServiceToolInvocations carries the batch.
+                        return .toolCalls(invs.invocations)
+                    } catch let inv as ServiceToolInvocation {
+                        return .toolCalls([inv])
                     }
-                    if let pending = contentCoalescer.flush() {
-                        hop {
-                            writerBound.value.writeContent(
-                                pending,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
-                        }
-                    }
-                } catch let invs as ServiceToolInvocations {
-                    pendingInvocations = invs.invocations
-                } catch let inv as ServiceToolInvocation {
-                    pendingInvocations = [inv]
-                } catch {
-                    // SSE response head was already written as 200 — the
-                    // failure surfaces as an in-band SSE error chunk. Log
-                    // the actual on-wire status (200) so dashboards don't
-                    // mis-attribute a delivered stream as a 500.
-                    hop {
-                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
-                        writerBound.value.writeEnd(ctx.value)
-                    }
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: path,
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseStatus: 200,
-                        startTime: logStartTime,
-                        errorMessage: error.localizedDescription
-                    )
-                    return
-                }
 
-                if pendingInvocations.isEmpty {
                     // Final text response — done
                     messages.append(ChatMessage(role: "assistant", content: responseContent))
-                    break
-                }
-
-                // Consecutive-identical dedupe across iterations: replay the
-                // exact held envelope for a back-to-back re-issue instead of
-                // re-executing. Index-preserving so SSE framing order and the
-                // assistant tool_call <-> tool result pairing stay intact.
-                var slottedOutcomes: [ToolOutcome?] = Array(
-                    repeating: nil,
-                    count: pendingInvocations.count
-                )
-                var toExecute: [(slot: Int, invocation: ServiceToolInvocation)] = []
-                for (i, inv) in pendingInvocations.enumerated() {
-                    if let held = taskState.heldResult(
-                        name: inv.toolName,
-                        argsJSON: inv.jsonArguments
-                    ) {
-                        slottedOutcomes[i] = ToolOutcome(
-                            invocation: inv,
-                            callId: inv.toolCallId ?? Self.shortId(prefix: "call_"),
-                            result: held
-                        )
-                    } else {
-                        toExecute.append((i, inv))
-                    }
-                }
-                // Execute the non-duplicate calls in parallel via a TaskGroup
-                // so wall-clock time stays proportional to the slowest call
-                // rather than the sum. Per-call errors land as
-                // `ToolEnvelope.fromError` so a single bad call never aborts
-                // the rest of the batch.
-                if !toExecute.isEmpty {
-                    let executed = await Self.runToolBatchInParallel(
-                        toExecute.map { $0.invocation },
-                        requestId: requestId,
+                    return .finalResponse
+                },
+                executeTool: { inv, callId in
+                    // Single-call fallback; the batch executor below is the
+                    // normal path for this surface.
+                    let executions = await AgentToolLoop.runBatchInParallel(
+                        [(invocation: inv, callId: callId)],
+                        sessionId: requestId,
                         agentId: agentId
                     )
-                    for (entry, outcome) in zip(toExecute, executed) {
-                        slottedOutcomes[entry.slot] = outcome
-                    }
-                }
-                let outcomes = slottedOutcomes.compactMap { $0 }
-
-                // Feed results into the harness state machine (in order) and
-                // stage the next-step nudge for the following iteration.
-                for outcome in outcomes {
-                    taskState.record(
-                        name: outcome.invocation.toolName,
-                        argsJSON: outcome.invocation.jsonArguments,
-                        result: outcome.result
+                    return executions.first
+                        ?? AgentLoopToolExecution(
+                            result: ToolEnvelope.failure(
+                                kind: .executionError,
+                                message: "Tool batch returned no result.",
+                                tool: inv.toolName
+                            ),
+                            isError: true
+                        )
+                },
+                executeBatch: { calls in
+                    // The loop's default batch executor: non-duplicate calls
+                    // run in parallel via a TaskGroup so wall-clock time
+                    // stays proportional to the slowest call rather than
+                    // the sum; results come back in model order.
+                    await AgentToolLoop.runBatchInParallel(
+                        calls,
+                        sessionId: requestId,
+                        agentId: agentId
                     )
-                }
-                let stateBias = taskState.nextStepBias()
-
-                var assistantToolCalls: [ToolCall] = []
-                var toolResultsByCallId: [(String, String)] = []
-                for outcome in outcomes {
-                    let invocation = outcome.invocation
-                    let callId = outcome.callId
-                    assistantToolCalls.append(
-                        ToolCall(
-                            id: callId,
-                            type: "function",
-                            function: ToolCallFunction(
-                                name: invocation.toolName,
-                                arguments: invocation.jsonArguments
+                },
+                onBatchComplete: { outcomes in
+                    var assistantToolCalls: [ToolCall] = []
+                    var toolResultsByCallId: [(String, String)] = []
+                    for outcome in outcomes {
+                        assistantToolCalls.append(
+                            ToolCall(
+                                id: outcome.callId,
+                                type: "function",
+                                function: ToolCallFunction(
+                                    name: outcome.invocation.toolName,
+                                    arguments: outcome.invocation.jsonArguments
+                                )
                             )
                         )
-                    )
-                    toolResultsByCallId.append((callId, outcome.result))
-                }
+                        toolResultsByCallId.append((outcome.callId, outcome.result))
+                    }
 
-                messages.append(
-                    ChatMessage(
-                        role: "assistant",
-                        content: responseContent.isEmpty ? nil : responseContent,
-                        tool_calls: assistantToolCalls,
-                        tool_call_id: nil
-                    )
-                )
-                for (callId, result) in toolResultsByCallId {
                     messages.append(
-                        ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
+                        ChatMessage(
+                            role: "assistant",
+                            content: responseContent.isEmpty ? nil : responseContent,
+                            tool_calls: assistantToolCalls,
+                            tool_call_id: nil
+                        )
                     )
+                    for (callId, result) in toolResultsByCallId {
+                        messages.append(
+                            ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
+                        )
+                    }
                 }
-                // System-attributed nudge (e.g. post-listing) for the next
-                // iteration. Non-load-bearing; the structured results carry it.
-                if let bias = stateBias {
-                    messages.append(ChatMessage(role: "user", content: "[System Notice] " + bias))
+            )
+
+            let exitState: AgentToolLoop.Exit
+            do {
+                let runResult = try await AgentToolLoop.run(
+                    policy: AgentLoopPolicy(
+                        maxIterations: maxIterations,
+                        stopOnToolRejection: false,
+                        dedupeNoticeEnabled: false
+                    ),
+                    state: taskState,
+                    hooks: hooks
+                )
+                exitState = runResult.exit
+            } catch {
+                // SSE response head was already written as 200 — the
+                // failure surfaces as an in-band SSE error chunk. Log
+                // the actual on-wire status (200) so dashboards don't
+                // mis-attribute a delivered stream as a 500.
+                hop {
+                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
                 }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    errorMessage: error.localizedDescription
+                )
+                return
             }
 
             // If we exited via the iteration cap without producing a
             // final text turn (i.e. the last loop body still required
             // tools), stream a synthetic notice so the client sees a
             // reason instead of a silent stop.
-            let exitedAtCap = (iteration >= maxIterations)
-            if exitedAtCap, let last = messages.last, last.tool_calls?.isEmpty == false {
+            if exitState == .iterationCapReached {
                 let notice =
                     "Tool-loop budget of \(maxIterations) iterations exhausted without a final answer."
                 hop {
@@ -6018,70 +6048,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
             }
         }
-    }
-
-    // MARK: - Tool batch execution
-
-    /// One executed tool call carrying everything the SSE writer + the
-    /// follow-up assistant/tool message construction need. Returned in
-    /// the same order as the input invocations so the SSE frame order
-    /// matches the model's own tool_call sequence.
-    struct ToolOutcome: Sendable {
-        let invocation: ServiceToolInvocation
-        let callId: String
-        let result: String
-    }
-
-    /// Run every invocation in parallel via a TaskGroup, then restore
-    /// the input order for deterministic SSE framing. Each task scopes
-    /// `ChatExecutionContext` so tools see the same session/agent ids
-    /// they would on a sequential dispatch. Per-call errors are caught
-    /// and converted to `ToolEnvelope.fromError` so a single bad call
-    /// never aborts the rest of the batch.
-    static func runToolBatchInParallel(
-        _ invocations: [ServiceToolInvocation],
-        requestId: String,
-        agentId: UUID
-    ) async -> [ToolOutcome] {
-        // Pre-allocate call ids so the parallel tasks don't race the
-        // shortId generator and reorder ids vs invocation indices.
-        let calls: [(index: Int, callId: String, invocation: ServiceToolInvocation)] =
-            invocations.enumerated().map { idx, inv in
-                (idx, inv.toolCallId ?? shortId(prefix: "call_"), inv)
-            }
-
-        let indexed: [(Int, ToolOutcome)] = await withTaskGroup(
-            of: (Int, ToolOutcome).self
-        ) { group in
-            for call in calls {
-                group.addTask {
-                    let result: String
-                    do {
-                        result = try await ChatExecutionContext.$currentSessionId.withValue(requestId) {
-                            try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
-                                try await ToolRegistry.shared.execute(
-                                    name: call.invocation.toolName,
-                                    argumentsJSON: call.invocation.jsonArguments
-                                )
-                            }
-                        }
-                    } catch {
-                        result = ToolEnvelope.fromError(error, tool: call.invocation.toolName)
-                    }
-                    let outcome = ToolOutcome(
-                        invocation: call.invocation,
-                        callId: call.callId,
-                        result: result
-                    )
-                    return (call.index, outcome)
-                }
-            }
-            var collected: [(Int, ToolOutcome)] = []
-            for await item in group { collected.append(item) }
-            return collected
-        }
-
-        return indexed.sorted { $0.0 < $1.0 }.map { $0.1 }
     }
 
     // MARK: - Request validation

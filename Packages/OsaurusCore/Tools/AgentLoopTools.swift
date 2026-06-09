@@ -178,6 +178,20 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
         }
         return nil
     }
+
+    /// Pull the trimmed `summary` out of a `complete(...)` call's JSON
+    /// arguments. Returns nil when the JSON is malformed or the summary
+    /// is empty; callers fall back to the raw tool result string. Shared
+    /// by the chat-surface intercept and the eval harness so the parsed
+    /// completion text is identical on every surface.
+    public static func parseSummary(from argumentsJSON: String) -> String? {
+        guard let data = argumentsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let summary = dict["summary"] as? String
+        else { return nil }
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 // MARK: - clarify

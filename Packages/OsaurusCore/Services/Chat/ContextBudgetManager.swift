@@ -278,6 +278,115 @@ public struct ContextBudgetManager: Sendable {
 
     // MARK: - Message Trimming
 
+    /// Sticky trim: like `trimMessages(_:recentPairsToKeep:)` but compaction
+    /// decisions persist in `watermark` so the trimmed transcript is
+    /// MONOTONIC across successive calls — once a message is summarized its
+    /// summary is replayed byte-identically, and once a message is dropped
+    /// it stays dropped. The stateless variant recomputes from scratch each
+    /// call, which can rewrite the middle of the message array between
+    /// iterations and bust paged-KV prefix reuse.
+    ///
+    /// The watermark is keyed by index into the caller's UNTRIMMED history,
+    /// which must be append-only between calls (chat turns / HTTP / plugin
+    /// message arrays all are). If a recorded message's identity no longer
+    /// matches (e.g. regeneration rewrote history), the watermark resets and
+    /// decisions are recomputed fresh.
+    func trimMessages(
+        _ messages: [ChatMessage],
+        recentPairsToKeep: Int = 3,
+        watermark: CompactionWatermark
+    ) -> [ChatMessage] {
+        watermark.validate(against: messages)
+
+        // Assemble the visible transcript: replay frozen summaries, skip
+        // dropped indices. Original indices ride along so new decisions key
+        // back to the caller's array.
+        var visible: [(origIndex: Int, message: ChatMessage)] = []
+        visible.reserveCapacity(messages.count)
+        for (i, msg) in messages.enumerated() {
+            switch watermark.decision(at: i) {
+            case .dropped:
+                continue
+            case .summarized(let summary):
+                visible.append(
+                    (
+                        i,
+                        ChatMessage(
+                            role: "tool",
+                            content: summary,
+                            tool_calls: nil,
+                            tool_call_id: msg.tool_call_id
+                        )
+                    )
+                )
+            case .none:
+                visible.append((i, msg))
+            }
+        }
+
+        func render() -> [ChatMessage] {
+            var result = visible.map { $0.message }
+            let droppedCount = watermark.droppedCount
+            if droppedCount > 0, !result.isEmpty {
+                let contextNote = ChatMessage(
+                    role: "user",
+                    content:
+                        "[Note: \(droppedCount) earlier messages were trimmed to fit context window. The original task and recent actions are preserved.]"
+                )
+                result.insert(contextNote, at: 1)
+            }
+            return result
+        }
+
+        let budget = historyBudget
+        if Self.estimateTokens(for: render()) <= budget {
+            return render()
+        }
+
+        // Identify protected regions on the VISIBLE transcript: first
+        // message (original task) + recent pairs.
+        let visibleMessages = visible.map { $0.message }
+        let recentCount = countRecentMessages(in: visibleMessages, pairs: recentPairsToKeep)
+        let protectedTailStart = visible.count - recentCount
+        guard protectedTailStart > 1 else {
+            // Protected regions cover everything — nothing left to trim.
+            return render()
+        }
+
+        // Phase 1: freeze summaries for middle tool results not yet compacted.
+        for slot in 1 ..< protectedTailStart {
+            let (origIndex, msg) = visible[slot]
+            guard msg.role == "tool", let content = msg.content,
+                watermark.decision(at: origIndex) == nil
+            else { continue }
+            let summary = Self.summarizeToolResult(content, toolCallId: msg.tool_call_id)
+            watermark.recordSummary(summary, at: origIndex, original: messages[origIndex])
+            visible[slot] = (
+                origIndex,
+                ChatMessage(role: "tool", content: summary, tool_calls: nil, tool_call_id: msg.tool_call_id)
+            )
+        }
+        if Self.estimateTokens(for: render()) <= budget {
+            return render()
+        }
+
+        // Phase 2: drop oldest middle messages (never the first message,
+        // never the protected tail) until the transcript fits. Drops are
+        // recorded so they persist on every later call. The oldest middle
+        // message always sits at visible[1] (visible[0] is the protected
+        // first message); the protected tail boundary shrinks with each
+        // removal.
+        var tailStart = protectedTailStart
+        while tailStart > 1, Self.estimateTokens(for: render()) > budget {
+            let origIndex = visible[1].origIndex
+            watermark.recordDrop(at: origIndex, original: messages[origIndex])
+            visible.remove(at: 1)
+            tailStart -= 1
+        }
+
+        return render()
+    }
+
     /// Trims messages to fit within the history budget.
     ///
     /// Strategy:
@@ -504,6 +613,19 @@ final class ContextBudgetTracker {
             cumulativeOutputTokens += ContextBudgetManager.estimateOutputTokens(for: turn)
         }
         breakdown?.setTokens(for: "conversation", in: \.messages, tokens: tokens, label: "Conversation", tint: .gray)
+    }
+
+    /// Surface history compaction in the context popover: `savedTokens` is
+    /// the estimate trimmed away from the conversation this iteration.
+    func updateCompaction(savedTokens: Int) {
+        guard savedTokens > 0 else { return }
+        breakdown?.setTokens(
+            for: "compacted",
+            in: \.messages,
+            tokens: savedTokens,
+            label: "Compacted (saved)",
+            tint: .teal
+        )
     }
 
     /// Returns the snapshot with live output tokens, or nil if no snapshot is active.

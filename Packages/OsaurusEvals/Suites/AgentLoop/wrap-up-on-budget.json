@@ -1,0 +1,24 @@
+{
+  "id": "agent_loop.wrap-up-on-budget",
+  "domain": "agent_loop",
+  "label": "agent loop • wrap up before the iteration budget runs out",
+  "query": "Explore this project and write a one-paragraph summary of what it does, mentioning the files you looked at.",
+  "notes": "Open-ended exploration on a deliberately tight iteration budget. The driver's budget-warning notice fires when 3 iterations remain; a model that heeds it produces a final response (exit=finalResponse) instead of being cut off at the cap. iterationCapReached fails the case.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "main.py", "contents": "from converter import celsius_to_fahrenheit\n\nif __name__ == \"__main__\":\n    print(celsius_to_fahrenheit(100))\n" },
+      { "path": "converter.py", "contents": "def celsius_to_fahrenheit(c):\n    return c * 9 / 5 + 32\n\n\ndef fahrenheit_to_celsius(f):\n    return (f - 32) * 5 / 9\n" },
+      { "path": "tests/test_converter.py", "contents": "from converter import celsius_to_fahrenheit\n\n\ndef test_boiling():\n    assert celsius_to_fahrenheit(100) == 212\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "allowedExits": ["finalResponse"],
+      "rubric": [
+        "Summarizes the project as a temperature conversion utility (Celsius/Fahrenheit).",
+        "Mentions at least one of the project's files by name."
+      ]
+    }
+  }
+}

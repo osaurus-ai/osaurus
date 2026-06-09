@@ -189,6 +189,65 @@ struct ChatSessionQueuedSendTests {
             #expect(session.isStreaming == false)
         }
     }
+
+    // MARK: - Mid-run steering (iteration-boundary injection)
+
+    @Test
+    func injectQueuedSteer_appendsUserTurnAndClearsQueue() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.turns.append(ChatTurn(role: .user, content: "first"))
+            session.enqueueSend("actually, check the README too", attachments: [])
+
+            let injected = session.injectQueuedSteerIfEligible()
+
+            #expect(injected)
+            #expect(session.queuedSend == nil)
+            let userTurns = session.turns.filter { $0.role == .user }
+            #expect(userTurns.map(\.content) == ["first", "actually, check the README too"])
+        }
+    }
+
+    @Test
+    func injectQueuedSteer_noOpWhenQueueEmpty() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            #expect(session.injectQueuedSteerIfEligible() == false)
+            #expect(session.turns.isEmpty)
+        }
+    }
+
+    @Test
+    func injectQueuedSteer_attachmentsStayQueuedForFullSendPath() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let attachment = Attachment(kind: .image(Data([0x1])))
+            session.enqueueSend("look at this", attachments: [attachment])
+
+            let injected = session.injectQueuedSteerIfEligible()
+
+            // Attachments need the full send path (media gating), so the
+            // payload must stay queued for the run-end flush / Send Now.
+            #expect(injected == false)
+            #expect(session.queuedSend?.text == "look at this")
+            #expect(session.turns.isEmpty)
+        }
+    }
+
+    @Test
+    func injectQueuedSteer_oneOffSkillStaysQueuedForFullSendPath() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.pendingOneOffSkillId = UUID()
+            session.enqueueSend("use the skill", attachments: [])
+
+            let injected = session.injectQueuedSteerIfEligible()
+
+            #expect(injected == false)
+            #expect(session.queuedSend?.text == "use the skill")
+            #expect(session.turns.isEmpty)
+        }
+    }
 }
 
 // MARK: - Test doubles

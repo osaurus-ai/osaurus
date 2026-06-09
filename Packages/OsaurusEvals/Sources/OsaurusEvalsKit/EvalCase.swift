@@ -107,19 +107,41 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// safely disable a globally-enabled tool, so it SKIPS the case
         /// (with a note) when any of these are currently enabled.
         public let ensureToolsDisabled: [String]?
+        /// Workspace seed files for `agent_loop` cases. The runner
+        /// creates a fresh temp directory per case, writes each entry
+        /// (creating intermediate directories), runs the agent loop with
+        /// `executionMode: .hostFolder(<temp dir>)`, scores the
+        /// `expect.agentLoop` assertions against the resulting tree, and
+        /// deletes the directory afterwards. Other domains ignore this.
+        public let workspaceFiles: [WorkspaceFile]?
 
         public init(
             requirePlugins: [String]? = nil,
             seedMethods: [SeedMethod]? = nil,
             enableSkills: [String]? = nil,
             enableTools: [String]? = nil,
-            ensureToolsDisabled: [String]? = nil
+            ensureToolsDisabled: [String]? = nil,
+            workspaceFiles: [WorkspaceFile]? = nil
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
             self.enableSkills = enableSkills
             self.enableTools = enableTools
             self.ensureToolsDisabled = ensureToolsDisabled
+            self.workspaceFiles = workspaceFiles
+        }
+    }
+
+    /// One file to seed into the per-case temp workspace for
+    /// `agent_loop` cases. `path` is relative to the workspace root and
+    /// may contain directories (`src/main.swift`).
+    public struct WorkspaceFile: Sendable, Codable {
+        public let path: String
+        public let contents: String
+
+        public init(path: String, contents: String) {
+            self.path = path
+            self.contents = contents
         }
     }
 
@@ -195,6 +217,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// ordering) with an LLM-judge rubric the final answer is graded
         /// against. Drives `CapabilityClaimsEvaluator`.
         public let capabilityClaims: CapabilityClaimsExpectations?
+        /// Outcome expectation for `domain == "agent_loop"` cases.
+        /// Drives `AgentLoopEvaluator` against a fixture-seeded temp
+        /// workspace and scores transcript assertions + workspace
+        /// outcomes (file contents, command exit codes) plus an
+        /// optional LLM-judge rubric.
+        public let agentLoop: AgentLoopExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -205,7 +233,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             requestValidation: RequestValidationExpectations? = nil,
             capabilitySearch: CapabilitySearchExpectations? = nil,
             sandboxDiagnostics: SandboxDiagnosticsExpectations? = nil,
-            capabilityClaims: CapabilityClaimsExpectations? = nil
+            capabilityClaims: CapabilityClaimsExpectations? = nil,
+            agentLoop: AgentLoopExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -216,6 +245,112 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.capabilitySearch = capabilitySearch
             self.sandboxDiagnostics = sandboxDiagnostics
             self.capabilityClaims = capabilityClaims
+            self.agentLoop = agentLoop
+        }
+    }
+
+    /// Expectation for `domain == "agent_loop"` cases. The runner seeds
+    /// a temp workspace from `fixtures.workspaceFiles`, drives the
+    /// canonical `AgentToolLoop` via `AgentLoopEvaluator`, then scores:
+    ///   1. **Transcript** — `mustCallTools` / `mustNotCallTools`,
+    ///      `maxToolCalls`, duplicate-call discipline.
+    ///   2. **Workspace outcomes** — `files` content assertions and
+    ///      `commands` exit-code assertions run in the workspace after
+    ///      the loop ends.
+    ///   3. **LLM judge** (optional) — `rubric` conditions graded
+    ///      against the final assistant text.
+    /// A case passes only when every present layer passes.
+    public struct AgentLoopExpectations: Sendable, Codable {
+        /// Loop budget (model steps). nil → evaluator default (10).
+        public let maxIterations: Int?
+        /// Tool names that MUST be called somewhere in the run.
+        public let mustCallTools: [String]?
+        /// Tool names that must NOT be called anywhere in the run.
+        public let mustNotCallTools: [String]?
+        /// Cap on total processed tool calls (executed + deduped). Pins
+        /// listing-navigation discipline ("don't browse the whole tree").
+        public let maxToolCalls: Int?
+        /// When true, no identical (name, arguments) pair may EXECUTE
+        /// more than once — replays through the loop's dedupe are fine
+        /// (that's the mechanism working). Pins duplicate-call avoidance.
+        public let noDuplicateExecutedCalls: Bool?
+        /// Exits that pass. Default: `["finalResponse"]`. A
+        /// wrap-up-on-budget case can accept `iterationCapReached`.
+        public let allowedExits: [String]?
+        /// Workspace file assertions, checked after the loop ends.
+        public let files: [FileAssertion]?
+        /// Commands run in the workspace after the loop ends; each must
+        /// exit with its `expectExitCode`.
+        public let commands: [CommandAssertion]?
+        /// Substrings the final assistant text must contain (cheap
+        /// deterministic check; use `rubric` for semantic grading).
+        public let finalTextContains: [String]?
+        /// Natural-language conditions for the LLM judge.
+        public let rubric: [String]?
+        /// When set, the loop's budget manager is built against this
+        /// context window instead of the model's real one — the
+        /// compaction-stress lever.
+        public let contextWindowOverride: Int?
+
+        public init(
+            maxIterations: Int? = nil,
+            mustCallTools: [String]? = nil,
+            mustNotCallTools: [String]? = nil,
+            maxToolCalls: Int? = nil,
+            noDuplicateExecutedCalls: Bool? = nil,
+            allowedExits: [String]? = nil,
+            files: [FileAssertion]? = nil,
+            commands: [CommandAssertion]? = nil,
+            finalTextContains: [String]? = nil,
+            rubric: [String]? = nil,
+            contextWindowOverride: Int? = nil
+        ) {
+            self.maxIterations = maxIterations
+            self.mustCallTools = mustCallTools
+            self.mustNotCallTools = mustNotCallTools
+            self.maxToolCalls = maxToolCalls
+            self.noDuplicateExecutedCalls = noDuplicateExecutedCalls
+            self.allowedExits = allowedExits
+            self.files = files
+            self.commands = commands
+            self.finalTextContains = finalTextContains
+            self.rubric = rubric
+            self.contextWindowOverride = contextWindowOverride
+        }
+
+        /// One workspace-file assertion. `path` is relative to the
+        /// workspace root. `exists` defaults to true; set false to
+        /// assert a file was NOT created. `contains` / `equals` imply
+        /// existence.
+        public struct FileAssertion: Sendable, Codable {
+            public let path: String
+            public let exists: Bool?
+            public let contains: String?
+            public let equals: String?
+
+            public init(
+                path: String,
+                exists: Bool? = nil,
+                contains: String? = nil,
+                equals: String? = nil
+            ) {
+                self.path = path
+                self.exists = exists
+                self.contains = contains
+                self.equals = equals
+            }
+        }
+
+        /// One post-run command assertion. `command` runs via
+        /// `/bin/zsh -c` with the workspace as the working directory.
+        public struct CommandAssertion: Sendable, Codable {
+            public let command: String
+            public let expectExitCode: Int
+
+            public init(command: String, expectExitCode: Int) {
+                self.command = command
+                self.expectExitCode = expectExitCode
+            }
         }
     }
 

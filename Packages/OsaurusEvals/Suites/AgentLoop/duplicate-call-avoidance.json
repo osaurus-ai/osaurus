@@ -1,0 +1,19 @@
+{
+  "id": "agent_loop.duplicate-call-avoidance",
+  "domain": "agent_loop",
+  "label": "agent loop • no repeated identical executions",
+  "query": "Read data.txt and report the sum of the number on the first line and the number on the last line.",
+  "notes": "Tempts a model into re-reading the same file for each number. The loop's consecutive-identical dedupe replays held results instead of re-executing — replays (wasDeduped) are fine, repeated REAL executions of an identical call fail the case.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "data.txt", "contents": "41\n7\n13\n9" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "noDuplicateExecutedCalls": true,
+      "finalTextContains": ["50"]
+    }
+  }
+}

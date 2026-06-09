@@ -1,0 +1,30 @@
+{
+  "id": "agent_loop.compaction-stress",
+  "domain": "agent_loop",
+  "label": "agent loop • long tool outputs on a small context window",
+  "query": "Read each of the three log files (log1.txt, log2.txt, log3.txt) and tell me which one contains the word ERROR.",
+  "notes": "Three multi-KB reads against an 8K-token window override force the sticky compaction path mid-run. The case passes when the run completes with a correct final answer instead of overflowing the window — compaction working is the implicit assertion.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "log1.txt",
+        "contents": "[boot] service started\n[info] heartbeat ok 0001\n[info] heartbeat ok 0002\n[info] heartbeat ok 0003\n[info] heartbeat ok 0004\n[info] heartbeat ok 0005\n[info] heartbeat ok 0006\n[info] heartbeat ok 0007\n[info] heartbeat ok 0008\n[info] heartbeat ok 0009\n[info] heartbeat ok 0010\n[info] heartbeat ok 0011\n[info] heartbeat ok 0012\n[info] heartbeat ok 0013\n[info] heartbeat ok 0014\n[info] heartbeat ok 0015\n[info] heartbeat ok 0016\n[info] heartbeat ok 0017\n[info] heartbeat ok 0018\n[info] heartbeat ok 0019\n[info] heartbeat ok 0020\n[info] heartbeat ok 0021\n[info] heartbeat ok 0022\n[info] heartbeat ok 0023\n[info] heartbeat ok 0024\n[info] heartbeat ok 0025\n[info] heartbeat ok 0026\n[info] heartbeat ok 0027\n[info] heartbeat ok 0028\n[info] heartbeat ok 0029\n[info] heartbeat ok 0030\n[info] heartbeat ok 0031\n[info] heartbeat ok 0032\n[info] heartbeat ok 0033\n[info] heartbeat ok 0034\n[info] heartbeat ok 0035\n[info] heartbeat ok 0036\n[info] heartbeat ok 0037\n[info] heartbeat ok 0038\n[info] heartbeat ok 0039\n[info] heartbeat ok 0040\n[shutdown] clean exit\n"
+      },
+      {
+        "path": "log2.txt",
+        "contents": "[boot] service started\n[info] request served /api/a 0001\n[info] request served /api/b 0002\n[info] request served /api/c 0003\n[info] request served /api/a 0004\n[info] request served /api/b 0005\n[info] request served /api/c 0006\n[info] request served /api/a 0007\n[info] request served /api/b 0008\n[info] request served /api/c 0009\n[info] request served /api/a 0010\n[info] request served /api/b 0011\n[info] request served /api/c 0012\n[info] request served /api/a 0013\n[info] request served /api/b 0014\n[info] request served /api/c 0015\n[info] request served /api/a 0016\n[info] request served /api/b 0017\n[info] request served /api/c 0018\nERROR disk write failed on volume /data\n[info] request served /api/a 0019\n[info] request served /api/b 0020\n[info] request served /api/c 0021\n[info] request served /api/a 0022\n[info] request served /api/b 0023\n[info] request served /api/c 0024\n[shutdown] clean exit\n"
+      },
+      {
+        "path": "log3.txt",
+        "contents": "[boot] service started\n[debug] cache warm 0001\n[debug] cache warm 0002\n[debug] cache warm 0003\n[debug] cache warm 0004\n[debug] cache warm 0005\n[debug] cache warm 0006\n[debug] cache warm 0007\n[debug] cache warm 0008\n[debug] cache warm 0009\n[debug] cache warm 0010\n[debug] cache warm 0011\n[debug] cache warm 0012\n[debug] cache warm 0013\n[debug] cache warm 0014\n[debug] cache warm 0015\n[debug] cache warm 0016\n[debug] cache warm 0017\n[debug] cache warm 0018\n[debug] cache warm 0019\n[debug] cache warm 0020\n[debug] cache warm 0021\n[debug] cache warm 0022\n[debug] cache warm 0023\n[debug] cache warm 0024\n[debug] cache warm 0025\n[debug] cache warm 0026\n[debug] cache warm 0027\n[debug] cache warm 0028\n[debug] cache warm 0029\n[debug] cache warm 0030\n[shutdown] clean exit\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "contextWindowOverride": 8000,
+      "finalTextContains": ["log2"]
+    }
+  }
+}

@@ -16,6 +16,7 @@ Packages/OsaurusEvals/
     OsaurusEvalsKit/    — library (case schema, runner, scorers, model override)
     OsaurusEvalsCLI/    — `osaurus-evals` executable
   Suites/
+    AgentLoop/          — E2E agentic outcomes in a seeded workspace (LLM)
     ArgumentCoercion/   — ArgumentCoercion.{stringArray,int,bool} pinning
     CapabilityClaims/   — agent-loop "do you have X" behaviour + LLM judge (LLM)
     CapabilitySearch/   — index-only recall measurements (no LLM)
@@ -74,10 +75,11 @@ Exit codes:
 
 ## Case schema
 
-Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Nine domains exist today:
+Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Ten domains exist today:
 
 | Domain | Hits LLM? | Runner branch | Required expectation block |
 |---|---|---|---|
+| `agent_loop` | yes | `runAgentLoopCase` | `expect.agentLoop` |
 | `capability_claims` | yes | `runCapabilityClaimsCase` | `expect.capabilityClaims` |
 | `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
 | `schema` | no | `runSchemaCase` | `expect.schema` |
@@ -165,6 +167,48 @@ The suite covers six scenarios under `Suites/CapabilityClaims/`: `confirm` (conf
 
 The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator.
 
+### `agent_loop` domain
+
+End-to-end agentic evals over the canonical `AgentToolLoop` — the same driver the chat UI, HTTP `/agents/{id}/run`, and plugin host run on (`AgentTaskState` dedupe, next-step bias, budget notices, sticky compaction included). The runner seeds a fresh temp workspace from `fixtures.workspaceFiles`, drives `AgentLoopEvaluator` in `executionMode: .hostFolder(...)` (so the model gets the real `file_read` / `file_write` / `file_search` / `shell_run` folder tools), then scores **outcomes**: file contents on disk, post-run command exit codes, transcript assertions, and an optional LLM-judge rubric. The workspace is deleted after each case. LLM-burning AND filesystem-touching (commands run via `/bin/zsh -c` inside the temp workspace); keep off CI.
+
+```json
+{
+  "id": "agent_loop.edit-file-then-verify",
+  "domain": "agent_loop",
+  "query": "The file greeting.txt contains a typo: 'wrold' should be 'world'. Fix it.",
+  "fixtures": {
+    "workspaceFiles": [{ "path": "greeting.txt", "contents": "Hello, wrold!\n" }]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "mustCallTools": ["file_write"],
+      "files": [{ "path": "greeting.txt", "contains": "world" }],
+      "commands": [{ "command": "grep -q wrold greeting.txt", "expectExitCode": 1 }]
+    }
+  }
+}
+```
+
+Field notes:
+
+- `fixtures.workspaceFiles` — `{ path, contents }` entries written into the per-case temp workspace (intermediate directories created). `path` is workspace-relative.
+- `expect.agentLoop.files` — `{ path, exists?, contains?, equals? }` assertions on the workspace after the loop ends. `exists` defaults to true; set `false` to pin that a file was NOT created.
+- `expect.agentLoop.commands` — `{ command, expectExitCode }` verification commands run in the workspace after the loop ends (e.g. `grep`, a test runner).
+- `expect.agentLoop.mustCallTools` / `mustNotCallTools` / `maxToolCalls` — deterministic transcript assertions. `maxToolCalls` counts processed calls (executed + deduped) and pins navigation discipline.
+- `expect.agentLoop.noDuplicateExecutedCalls` — no identical `(name, arguments)` pair may *execute* twice; dedupe replays are fine (that's the loop's dedupe working).
+- `expect.agentLoop.allowedExits` — accepted loop exits (default `["finalResponse"]`). A wrap-up-on-budget case keeps the default to assert the budget-warning notice actually lands.
+- `expect.agentLoop.contextWindowOverride` — build the loop's budget manager against this window instead of the model's real one. The compaction-stress lever: long tool outputs on an 8K override force the sticky-watermark trimming path mid-run.
+- `expect.agentLoop.finalTextContains` / `rubric` — cheap substring checks vs. LLM-judge grading of the final answer (same `JUDGE_MODEL` override as `capability_claims`).
+
+The suite covers eight scenarios under `Suites/AgentLoop/`: `edit-file-then-verify`, `search-then-multi-file-edit`, `write-new-file`, `recover-from-failing-command`, `listing-navigation-discipline`, `duplicate-call-avoidance`, `compaction-stress`, and `wrap-up-on-budget`. This suite is the proof lane for "small local → frontier": run it per model family, e.g.
+
+```bash
+make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=foundation
+make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=mlx-community/Qwen3-4B-MLX-4bit
+make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=openai/gpt-4o-mini JUDGE_MODEL=openai/gpt-4o
+```
+
 ### Other domains
 
 The five pure-data domains (`schema`, `tool_envelope`, `streaming_hint`, `prefix_hash`, `argument_coercion`, `request_validation`) follow the same shape — pick one of the existing `Suites/<domain>/*.json` cases as a template and copy it.
@@ -198,4 +242,4 @@ This package is a **separate Swift package**. CI / Xcode builds run `swift build
 - `osaurus-evals diff baseline.json current.json` — regression check against a stored baseline.
 - Per-model scoreboards under `reports/<model>/<date>.json`.
 - Auto-run on new model release (CI workflow listening for HF releases).
-- Domain growth: `Suites/AgentLoop/`, `Suites/ToolCalling/`, `Suites/SkillInjection/`.
+- Domain growth: `Suites/ToolCalling/`, `Suites/SkillInjection/`.

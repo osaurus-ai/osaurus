@@ -70,6 +70,19 @@ public enum ChatExecutionContext {
     /// mode.
     @TaskLocal public static var hostReadOnlyScope: URL?
 
+    /// Headless auto-approval for `.ask`-gated tools. Bound `true` only by
+    /// the eval harness (`AgentLoopEvaluator`), whose runs operate on
+    /// isolated temp workspaces with no UI run loop — presenting the
+    /// approval `NSPanel` from the eval CLI would hang the run on a card
+    /// nobody can click. Never bound by chat/HTTP/plugin surfaces.
+    ///
+    /// Scope is deliberately narrow: it skips ONLY the `.ask` user prompt
+    /// in `ToolRegistry.runPermissionGate`. `.deny` policies still throw,
+    /// and missing system permissions (automation/accessibility) still
+    /// block. Module-internal so out-of-module callers (HTTP clients,
+    /// plugins, eval kit) cannot bind it.
+    @TaskLocal static var autoApproveToolPrompts: Bool = false
+
     /// Per-session override that relaxes the combined-mode secret-file
     /// refusal in `file_read`. Defaults to `false` (refuse secret files
     /// inside the read-only host workspace). A future per-session

@@ -322,41 +322,23 @@ final class ToolRegistry: ObservableObject {
         }
     }
 
-    /// Execute a tool by name with raw JSON arguments. Access control
-    /// happens upstream (alwaysLoadedSpecs + capabilities_load decides
-    /// which tools are visible to the model).
+    /// Resolve the permission gate (missing system permissions, ask/deny
+    /// policy, auto-grants) for one tool call without executing it. Throws
+    /// the same errors `execute` would on denial. Unknown tools are a
+    /// no-op — `execute` produces the structured `toolNotFound` envelope.
     ///
-    /// Unknown tools return `kind: .toolNotFound` with no "did you mean"
-    /// list — listing other tool names triggers hallucinations (the model
-    /// treats the suggestion as proof a tool exists and invents siblings).
-    /// One exception: sandbox tools that race the container startup get a
-    /// `kind: .unavailable` "still initializing" notice so the model knows
-    /// to retry rather than pivot.
-    func execute(name: String, argumentsJSON: String) async throws -> String {
-        guard let tool = toolsByName[name] else {
-            if name.hasPrefix("sandbox_") {
-                return ToolErrorEnvelope(
-                    kind: .unavailable,
-                    reason:
-                        "Sandbox is still initializing — \(name) isn't registered yet. "
-                        + "Wait a moment and try again.",
-                    toolName: name,
-                    retryable: true
-                ).toJSONString()
-            }
-            return ToolErrorEnvelope(
-                kind: .toolNotFound,
-                reason: "Tool '\(name)' is not available in this session.",
-                toolName: name
-            ).toJSONString()
-        }
-        if let invalidArguments = Self.invalidToolArgumentsEnvelope(
-            argumentsJSON,
-            toolName: name
-        ) {
-            return invalidArguments
-        }
-        // Permission gating
+    /// Used by parallel tool batches: approvals resolve serially in model
+    /// order first, then the approved set executes concurrently with
+    /// `execute(..., permissionGateResolved: true)`.
+    func resolvePermissionGate(name: String, argumentsJSON: String) async throws {
+        guard let tool = toolsByName[name] else { return }
+        try await runPermissionGate(tool: tool, name: name, argumentsJSON: argumentsJSON)
+    }
+
+    /// The permission gate shared by `execute` and `resolvePermissionGate`:
+    /// system-permission prompts, the per-tool ask/deny/auto policy
+    /// (including the user approval prompt), and `.auto` grant backfill.
+    private func runPermissionGate(tool: OsaurusTool, name: String, argumentsJSON: String) async throws {
         if let permissioned = tool as? PermissionedTool {
             let requirements = permissioned.requirements
 
@@ -388,11 +370,16 @@ final class ToolRegistry: ObservableObject {
                     userInfo: [NSLocalizedDescriptionKey: "Execution denied by policy for tool: \(name)"]
                 )
             case .ask:
-                let approved = await ToolPermissionPromptService.requestApproval(
-                    toolName: name,
-                    description: tool.description,
-                    argumentsJSON: argumentsJSON
-                )
+                let approved: Bool
+                if ChatExecutionContext.autoApproveToolPrompts {
+                    approved = true
+                } else {
+                    approved = await ToolPermissionPromptService.requestApproval(
+                        toolName: name,
+                        description: tool.description,
+                        argumentsJSON: argumentsJSON
+                    )
+                }
                 if !approved {
                     throw NSError(
                         domain: "ToolRegistry",
@@ -422,11 +409,16 @@ final class ToolRegistry: ObservableObject {
                     userInfo: [NSLocalizedDescriptionKey: "Execution denied by policy for tool: \(name)"]
                 )
             } else if effectivePolicy == .ask {
-                let approved = await ToolPermissionPromptService.requestApproval(
-                    toolName: name,
-                    description: tool.description,
-                    argumentsJSON: argumentsJSON
-                )
+                let approved: Bool
+                if ChatExecutionContext.autoApproveToolPrompts {
+                    approved = true
+                } else {
+                    approved = await ToolPermissionPromptService.requestApproval(
+                        toolName: name,
+                        description: tool.description,
+                        argumentsJSON: argumentsJSON
+                    )
+                }
                 if !approved {
                     throw NSError(
                         domain: "ToolRegistry",
@@ -435,6 +427,53 @@ final class ToolRegistry: ObservableObject {
                     )
                 }
             }
+        }
+    }
+
+    /// Execute a tool by name with raw JSON arguments. Access control
+    /// happens upstream (alwaysLoadedSpecs + capabilities_load decides
+    /// which tools are visible to the model).
+    ///
+    /// Unknown tools return `kind: .toolNotFound` with no "did you mean"
+    /// list — listing other tool names triggers hallucinations (the model
+    /// treats the suggestion as proof a tool exists and invents siblings).
+    /// One exception: sandbox tools that race the container startup get a
+    /// `kind: .unavailable` "still initializing" notice so the model knows
+    /// to retry rather than pivot.
+    func execute(
+        name: String,
+        argumentsJSON: String,
+        permissionGateResolved: Bool = false
+    ) async throws -> String {
+        guard let tool = toolsByName[name] else {
+            if name.hasPrefix("sandbox_") {
+                return ToolErrorEnvelope(
+                    kind: .unavailable,
+                    reason:
+                        "Sandbox is still initializing — \(name) isn't registered yet. "
+                        + "Wait a moment and try again.",
+                    toolName: name,
+                    retryable: true
+                ).toJSONString()
+            }
+            return ToolErrorEnvelope(
+                kind: .toolNotFound,
+                reason: "Tool '\(name)' is not available in this session.",
+                toolName: name
+            ).toJSONString()
+        }
+        if let invalidArguments = Self.invalidToolArgumentsEnvelope(
+            argumentsJSON,
+            toolName: name
+        ) {
+            return invalidArguments
+        }
+        // Permission gating. Skipped when the caller already resolved the
+        // gate via `resolvePermissionGate` (parallel batches resolve every
+        // approval serially in model order BEFORE executing concurrently,
+        // so approval prompts never stack or race).
+        if !permissionGateResolved {
+            try await runPermissionGate(tool: tool, name: name, argumentsJSON: argumentsJSON)
         }
         // Coerce + preflight against the tool's schema. Returns either
         // a (possibly rewritten) `argumentsJSON` ready for dispatch, or

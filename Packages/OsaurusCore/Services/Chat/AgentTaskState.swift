@@ -95,6 +95,13 @@ public final class AgentTaskState {
     /// keeps being nudged while it stays stuck (no premature silence).
     private static let listingReactiveThreshold = 2
 
+    /// Repeated-call detector threshold for NON-read tools (write/exec/...):
+    /// on the Nth identical (tool + canonical args) execution the bias notice
+    /// fires. Reads are covered by the dedupe replay instead — they never
+    /// reach this counter. Never hard-blocks: the call still executes, the
+    /// model just gets told it's looping.
+    private static let repeatedCallThreshold = 3
+
     // MARK: State
 
     /// A read result still considered fresh: the canonical path it read and
@@ -118,6 +125,12 @@ public final class AgentTaskState {
     private var freshReads: [CallSignature: FreshRead] = [:]
     /// Listings recorded since the last file read; gates the listing nudge.
     private var consecutiveListingsWithoutRead = 0
+    /// Execution counts per signature for NON-read tools (reads go through
+    /// the dedupe replay instead). Drives the repeated-call nudge.
+    private var nonReadCallCounts: [CallSignature: Int] = [:]
+    /// Set when the most recent recorded call was a non-read tool repeated
+    /// to (or past) `repeatedCallThreshold`; cleared by any other call.
+    private var repeatedCallName: String?
 
     public init(biasEnabled: Bool = true) {
         self.biasEnabled = biasEnabled
@@ -133,6 +146,8 @@ public final class AgentTaskState {
         lastResultEnvelope = nil
         freshReads.removeAll(keepingCapacity: true)
         consecutiveListingsWithoutRead = 0
+        nonReadCallCounts.removeAll(keepingCapacity: true)
+        repeatedCallName = nil
     }
 
     // MARK: Dedupe
@@ -170,6 +185,19 @@ public final class AgentTaskState {
         if Self.writeLikeTools.contains(name), let target = pathArgument(argsJSON) {
             let targetCanonical = Self.canonicalPath(target)
             freshReads = freshReads.filter { $0.value.canonicalPath != targetCanonical }
+        }
+
+        // Repeated-call detector for non-read tools: reads are handled by
+        // the dedupe replay, but an identical write/exec re-executes by
+        // design (it may legitimately differ) — so count it, and once the
+        // model has issued the same call `repeatedCallThreshold` times,
+        // arm the bias nudge. Any different call disarms it.
+        if Self.readLikeTools.contains(name) {
+            repeatedCallName = nil
+        } else {
+            let count = (nonReadCallCounts[sig] ?? 0) + 1
+            nonReadCallCounts[sig] = count
+            repeatedCallName = count >= Self.repeatedCallThreshold ? name : nil
         }
 
         // Wandering counter: a listing is a step that hasn't reached a file
@@ -210,6 +238,14 @@ public final class AgentTaskState {
     /// entirely when `biasEnabled` is false.
     public func nextStepBias() -> String? {
         guard biasEnabled, let last = lastResultClass else { return nil }
+
+        // Repeated identical write/exec call: the strongest stuck signal we
+        // have, so it outranks the result-class nudges. Reactive (3rd
+        // identical call) and advisory only — the call still executed.
+        if let name = repeatedCallName {
+            return
+                "You have now made the exact same `\(name)` call with identical arguments \(Self.repeatedCallThreshold)+ times. Repeating it will not change the outcome — change your approach, or report what is blocking you."
+        }
 
         // Listing nudges are reactive: suppressed until the model is observed
         // wandering (this many listings without an intervening read), so a

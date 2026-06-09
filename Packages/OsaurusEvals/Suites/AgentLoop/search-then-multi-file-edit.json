@@ -1,0 +1,35 @@
+{
+  "id": "agent_loop.search-then-multi-file-edit",
+  "domain": "agent_loop",
+  "label": "agent loop • search then edit across multiple files",
+  "query": "The function fetchDataV1 has been renamed to fetchData. Find every file that references fetchDataV1 and update all of them to use the new name.",
+  "notes": "Forces a search-before-edit workflow across more than one file. Scored on disk state: the old name must be gone from BOTH files and the new name present.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "src/client.py",
+        "contents": "from api import fetchDataV1\n\n\ndef load():\n    return fetchDataV1(\"users\")\n"
+      },
+      {
+        "path": "src/report.py",
+        "contents": "from api import fetchDataV1\n\n\ndef build_report():\n    rows = fetchDataV1(\"sales\")\n    return len(rows)\n"
+      },
+      {
+        "path": "src/api.py",
+        "contents": "def fetchData(table):\n    return []\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "files": [
+        { "path": "src/client.py", "contains": "fetchData" },
+        { "path": "src/report.py", "contains": "fetchData" }
+      ],
+      "commands": [
+        { "command": "grep -rq fetchDataV1 src/", "expectExitCode": 1 }
+      ]
+    }
+  }
+}
