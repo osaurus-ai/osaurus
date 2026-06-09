@@ -413,6 +413,7 @@ final class SSEResponseWriter: ResponseWriter {
     func writeUsageChunk(
         promptTokens: Int,
         completionTokens: Int,
+        tokensPerSecond: Double? = nil,
         model: String,
         responseId: String,
         created: Int,
@@ -428,7 +429,8 @@ final class SSEResponseWriter: ResponseWriter {
         chunk.usage = Usage(
             prompt_tokens: promptTokens,
             completion_tokens: completionTokens,
-            total_tokens: promptTokens + completionTokens
+            total_tokens: promptTokens + completionTokens,
+            tokens_per_second: tokensPerSecond
         )
         writeSSEChunk(chunk, context: context)
     }

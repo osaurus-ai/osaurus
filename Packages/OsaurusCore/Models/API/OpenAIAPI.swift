@@ -798,6 +798,19 @@ struct Usage: Codable, Sendable {
     let prompt_tokens: Int
     let completion_tokens: Int
     let total_tokens: Int
+    let tokens_per_second: Double?
+
+    init(
+        prompt_tokens: Int,
+        completion_tokens: Int,
+        total_tokens: Int,
+        tokens_per_second: Double? = nil
+    ) {
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+        self.total_tokens = total_tokens
+        self.tokens_per_second = tokens_per_second
+    }
 }
 
 /// Chat completion response

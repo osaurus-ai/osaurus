@@ -609,6 +609,7 @@ struct HTTPHandlerChatStreamingTests {
         #expect(status == 200)
         #expect(body.contains("\"content\":\"hello\""))
         #expect(body.contains("\"completion_tokens\":77"))
+        #expect(body.contains("\"tokens_per_second\":12.5"))
         #expect(body.contains("\"finish_reason\":\"length\""))
         #expect(!body.contains("\u{FFFE}"))
     }

@@ -4752,6 +4752,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                     )
                     var authoritativeCompletionTokens: Int?
+                    var authoritativeTokensPerSecond: Double?
                     var streamFinishReason = "stop"
                     for try await delta in stream {
                         try Task.checkCancellation()
@@ -4783,6 +4784,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         if let stats = StreamingStatsHint.decode(delta) {
                             authoritativeCompletionTokens = stats.tokenCount
+                            authoritativeTokensPerSecond = stats.tokensPerSecond
                             if let stopReason = stats.stopReason {
                                 streamFinishReason = stopReason
                             }
@@ -4824,6 +4826,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.set("http_prompt_tokens_estimate", promptTokens)
                     httpTrace.set("http_completion_tokens", completionTokens)
                     let finalStreamFinishReason = streamFinishReason
+                    let finalTokensPerSecond = authoritativeTokensPerSecond
                     hop {
                         writerBound.value.writeFinishWithReason(
                             finalStreamFinishReason,
@@ -4836,6 +4839,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             writerBound.value.writeUsageChunk(
                                 promptTokens: promptTokens,
                                 completionTokens: completionTokens,
+                                tokensPerSecond: finalTokensPerSecond,
                                 model: model,
                                 responseId: responseId,
                                 created: created,
