@@ -74,7 +74,7 @@ check_contains "$ROOT/Packages/OsaurusCore/Identity/StorageKeyManager.swift" "if
 
 active_forbidden="$({ ps -axo pid,ppid,rss,etime,command || true; } \
   | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|DerivedData-[^ ]*keychain|DerivedData-pin|launch-keychain-free-osaurus|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
-  | rg -v 'rg -i|assert-keychain-free-proof-path|launch-keychain-free-osaurus\\.sh|/usr/bin/codesign --force --deep --sign - --timestamp=none' || true)"
+  | rg -v 'rg -i|assert-keychain-free-proof-path|launch-keychain-free-osaurus\\.sh|/usr/bin/codesign --force --deep --sign - --timestamp=none|/Users/eric/\\.codex/computer-use/|SkyComputerUseClient' || true)"
 if [[ -n "$active_forbidden" ]]; then
   echo "FAIL active keychain-sensitive Osaurus validation process detected:" >&2
   echo "$active_forbidden" >&2

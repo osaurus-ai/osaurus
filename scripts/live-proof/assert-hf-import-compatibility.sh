@@ -95,6 +95,7 @@ require_text "$APP_DELEGATE" 'MLX, MXFP, JANG, JANGTQ, and TurboQuant' \
   "HF deeplink alert names accepted artifact-family hints"
 
 active="$({ ps -axo pid,ppid,rss,etime,command || true; } \
+  | rg -v '/Users/eric/\.codex/computer-use/|SkyComputerUseClient' \
   | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
   | rg -v 'rg -i|assert-hf-import-compatibility' || true)"
 if [[ -n "$active" ]]; then

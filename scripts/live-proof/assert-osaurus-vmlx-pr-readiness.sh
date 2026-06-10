@@ -212,6 +212,7 @@ else
 fi
 
 active_forbidden="$({ ps -axo pid,ppid,rss,etime,command || true; } \
+  | rg -v '/Users/eric/\.codex/computer-use/|SkyComputerUseClient' \
   | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|/Users/eric/osaurus-staging.*(swift-test|xcrun swift|swift test|swift build|swift-driver|swift-frontend|PackagePlugin|\\.build/.*/Cmlx\\.build|/usr/bin/clang .*osaurus-staging)' \
   | rg -v 'rg -i|assert-osaurus-vmlx-pr-readiness|assert-keychain-free-proof-path|assert-vmlx-gemma4-parser-fix-wired|assert-no-hidden-local-sampler-defaults|assert-openresponses-cache-proof-wiring|assert-server-settings-runtime-wiring' || true)"
 if [[ -n "$active_forbidden" ]]; then

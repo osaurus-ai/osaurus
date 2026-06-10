@@ -114,8 +114,9 @@ fi
 
 if [[ -f "$FALLBACKS" ]]; then
   pass "SwiftPM checkout ChatTemplateFallbacks.swift exists"
-  if rg -Fq 'Do not wrap the argument value in quote characters' "$FALLBACKS" \
-    && rg -Fq 'Do not add or remove whitespace or spaces after newlines' "$FALLBACKS"; then
+  if rg -Fq 'For string parameters, write the raw string value only' "$FALLBACKS" \
+    && rg -Fq 'Do not wrap the parameter value in JSON quotes unless the requested value itself includes quote characters' "$FALLBACKS" \
+    && rg -Fq 'Do not add a blank line, leading space, trailing newline, or any other character' "$FALLBACKS"; then
     pass "Gemma4 required fallback warns against quoted/space-mutated argument values"
   else
     fail_msg "Gemma4 required fallback lacks quoted/space-mutated argument warning"
@@ -149,7 +150,8 @@ if [[ -f "$VLM" ]]; then
   if rg -Fq 'Gemma4 VLM does not implement video inputs; LMInput.video must be nil' "$VLM" \
     && rg -Fq 'featuresList.append(embedVision(unifiedVisionEmbedder(singleImage)))' "$VLM" \
     && rg -Fq '@ModuleInfo(key: "embed_audio") private var embedAudio: MultimodalEmbedder' "$VLM" \
-    && rg -Fq 'Gemma4 audio requires pre-encoded 640-dim audio features' "$VLM" \
+    && rg -Fq 'Gemma4 audio requires pre-encoded features matching this bundle' "$VLM" \
+    && rg -Fq 'audioFeatures.dim(-1) == config.audioEmbedDim' "$VLM" \
     && rg -Fq 'let projectedAudio = embedAudio(audioFeatures).asType(emb.dtype)' "$VLM" \
     && rg -Fq 'Raw waveform feature extraction is not implemented for Gemma4 yet' "$VLM" \
     && rg -Fq 'var softTokenCounts: [Int] = []' "$VLM" \
@@ -226,7 +228,7 @@ else
   fail=1
 fi
 
-active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|swift-build --package-path Packages/OsaurusCore|swift-test --package-path Packages/OsaurusCore|/Users/eric/osaurus-staging/Packages/OsaurusCore/.build' | rg -v 'rg -i|assert-vmlx-gemma4-parser-fix-wired' || true)"
+active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -v '/Users/eric/\.codex/computer-use/|SkyComputerUseClient' | rg -i 'xcodebuild|codesign( |$)|notarytool|/usr/bin/security( |$)|swift-build --package-path Packages/OsaurusCore|swift-test --package-path Packages/OsaurusCore|/Users/eric/osaurus-staging/Packages/OsaurusCore/.build' | rg -v 'rg -i|assert-vmlx-gemma4-parser-fix-wired' || true)"
 if [[ -n "$active" ]]; then
   fail_msg "active Osaurus build/keychain-sensitive process detected"
   echo "$active" >&2

@@ -76,5 +76,7 @@ and deletes rather than calling `SecItemCopyMatching` / `SecItemAdd` /
   multi-turn output before being called fixed.
 - Do not spawn recursive local "agent" workers, Python subagents, or delegated
   helper agents for Gemma/Osaurus release work unless the user explicitly asks.
-  Work directly in the current session, keep status artifacts current, and use
-  normal shell/tests/proof commands for evidence.
+  Do not use Python or shell wrappers as an orchestration layer to farm work out
+  to Codex, Claude, local LLMs, or other helper agents. Work directly in the
+  current session, keep status artifacts current, and use normal shell, test,
+  build, and proof commands for evidence.

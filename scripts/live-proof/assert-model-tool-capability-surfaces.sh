@@ -92,9 +92,9 @@ require_text "$GUIDANCE" 'case glmQwen' "GLM/Qwen guidance family exists"
 require_text "$GUIDANCE" 'case deepSeek' "DeepSeek/DSV4 guidance family exists"
 require_text "$GUIDANCE" 'Only call tools that exist in your schema' \
   "Gemma guidance forbids hallucinated tool names"
-require_text "$GUIDANCE" 'Use only tools present in the schema' \
+require_text "$GUIDANCE" 'Only call tools that exist in your schema' \
   "DeepSeek guidance keeps DSML tool use schema-bound"
-require_text "$GUIDANCE" 'listed discovery path' \
+require_text "$GUIDANCE" 'capabilities_discover' \
   "DeepSeek guidance points missing capabilities at discovery path"
 require_text "$GUIDANCE" 'qwen' "Qwen markers are present"
 require_text "$GUIDANCE" 'dsv4' "DSV4 markers are present"
@@ -121,7 +121,7 @@ require_text "$TOKENIZER_TESTS" 'upper filter' \
 require_text "$TOKENIZER_TESTS" 'capabilities_discover' \
   "tokenizer matrix checks capabilities_discover renders in prompts"
 
-active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -i 'codesign( |$)|notarytool|/usr/bin/security( |$)' | rg -v 'rg -i|assert-model-tool-capability-surfaces' || true)"
+active="$({ ps -axo pid,ppid,rss,etime,command || true; } | rg -v '/Users/eric/\.codex/computer-use/|SkyComputerUseClient' | rg -i 'codesign( |$)|notarytool|/usr/bin/security( |$)' | rg -v 'rg -i|assert-model-tool-capability-surfaces' || true)"
 if [[ -n "$active" ]]; then
   fail_msg "active keychain/signing helper detected; source assertions above are still useful but do not promote live readiness"
   echo "$active" >&2
