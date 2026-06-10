@@ -1352,6 +1352,27 @@ struct MLXBatchAdapterTests {
         #expect(stepJang2LRequired["enable_thinking"] as? Bool == false)
     }
 
+    @Test func additionalContext_keepsGemmaRequiredToolChoiceAsMetadata() {
+        let generation = GenerationParameters(temperature: nil, maxTokens: 16)
+
+        for modelName in [
+            "gemma-4-e2b-it-qat-mxfp4",
+            "gemma-4-e2b-it-qat-jang_4m",
+            "dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK",
+        ] {
+            let required = MLXBatchAdapter.additionalContext(
+                for: generation,
+                modelName: modelName,
+                toolChoice: .required,
+                toolChoiceName: "get_weather"
+            )
+
+            #expect(required["tool_choice"] as? String == "required")
+            #expect(required["tool_choice_name"] as? String == "get_weather")
+            #expect(required["enable_thinking"] as? Bool == false)
+        }
+    }
+
     @Test func additionalContext_defaultsMiMoN2JANGThinkingOffButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(

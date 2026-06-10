@@ -2390,13 +2390,9 @@ struct RuntimePolicySourceTests {
             "Gemma-family native template runtime errors must not silently fall back to Gemma4 tool/minimal templates."
         )
         #expect(
-            tokenizerLoader.contains("normalizedModelType == \"gemma4_unified\"")
-                && tokenizerLoader.contains("let hasGemma4NativeToolSentinels =")
-                && tokenizerLoader.contains("upstream.convertTokenToId(\"<|tool_call>\") != nil")
-                && tokenizerLoader.contains("upstream.convertTokenToId(\"<|turn>\") != nil")
-                && tokenizerLoader.contains("Self.requiresToolChoice(adjustedContext)")
-                && tokenizerLoader.contains("label: \"Gemma4RequiredTool\""),
-            "Gemma4 unified required/named tool turns must route through the strict Gemma4WithTools fallback in Osaurus's production SwiftTransformersTokenizerLoader; the vMLX macro bridge is not the production path here."
+            !tokenizerLoader.contains("label: \"Gemma4RequiredTool\"")
+                && !tokenizerLoader.contains("Self.requiresToolChoice(adjustedContext),\n            (env[\"VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE\"] ?? \"0\") != \"1\"\n        {\n            return try fallback(\n                label: \"Gemma4"),
+            "Gemma4 required/named tool turns must not bypass the model-bundled native template with an Osaurus-forced Gemma4WithTools fallback."
         )
         #expect(
             reasoningCapability.contains("runtime code must not synthesize")
