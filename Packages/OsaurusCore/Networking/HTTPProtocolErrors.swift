@@ -52,6 +52,9 @@ extension HTTPHandler {
         if error is MLXService.RuntimePolicyError {
             return .badRequest
         }
+        if (error as NSError).domain == "OsaurusToolChoice" {
+            return .badRequest
+        }
         return .internalServerError
     }
 
@@ -60,6 +63,9 @@ extension HTTPHandler {
             return "insufficient_resources"
         }
         if error is MLXService.RuntimePolicyError {
+            return "invalid_request_error"
+        }
+        if (error as NSError).domain == "OsaurusToolChoice" {
             return "invalid_request_error"
         }
         return "internal_error"
@@ -72,6 +78,9 @@ extension HTTPHandler {
         if error is MLXService.RuntimePolicyError {
             return "invalid_request_error"
         }
+        if (error as NSError).domain == "OsaurusToolChoice" {
+            return "invalid_request_error"
+        }
         return "api_error"
     }
 
@@ -82,6 +91,9 @@ extension HTTPHandler {
         if error is MLXService.RuntimePolicyError {
             return "invalid_request_error"
         }
+        if (error as NSError).domain == "OsaurusToolChoice" {
+            return "invalid_request_error"
+        }
         return "api_error"
     }
 
@@ -90,6 +102,9 @@ extension HTTPHandler {
             return "insufficient_resources"
         }
         if error is MLXService.RuntimePolicyError {
+            return "invalid_request_error"
+        }
+        if (error as NSError).domain == "OsaurusToolChoice" {
             return "invalid_request_error"
         }
         return "internal_error"

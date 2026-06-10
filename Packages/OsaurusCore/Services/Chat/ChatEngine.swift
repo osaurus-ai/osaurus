@@ -274,6 +274,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return true
     }
 
+    private static func requiresLocalToolCall(_ toolChoice: ToolChoiceOption?) -> Bool {
+        guard let toolChoice else { return false }
+        switch toolChoice {
+        case .required, .function:
+            return true
+        case .auto, .none:
+            return false
+        }
+    }
+
     static func localToolChoiceForDispatch(
         _ toolChoice: ToolChoiceOption?,
         tools: [Tool]?
@@ -947,6 +957,20 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch)
                     {
                         throw MLXForwardPassError(message: mlxErr)
+                    }
+                    if Self.requiresLocalToolCall(dispatchToolChoice) {
+                        let preview = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        throw NSError(
+                            domain: "OsaurusToolChoice",
+                            code: 422,
+                            userInfo: [
+                                NSLocalizedDescriptionKey:
+                                    "The model did not produce a valid required tool call.",
+                                "model": effectiveModel,
+                                "tool_choice": String(describing: dispatchToolChoice),
+                                "suppressed_content_preview": String(preview.prefix(160)),
+                            ]
+                        )
                     }
                     let outputTokens = TokenEstimator.estimate(text)
                     let choice = ChatChoice(

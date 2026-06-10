@@ -74,3 +74,7 @@ and deletes rather than calling `SecItemCopyMatching` / `SecItemAdd` /
 - Qwen/JANG/JANGTQ RAM regressions require end-to-end Osaurus proof with
   physical footprint, stop status, cache telemetry, token/s, and visible
   multi-turn output before being called fixed.
+- Do not spawn recursive local "agent" workers, Python subagents, or delegated
+  helper agents for Gemma/Osaurus release work unless the user explicitly asks.
+  Work directly in the current session, keep status artifacts current, and use
+  normal shell/tests/proof commands for evidence.

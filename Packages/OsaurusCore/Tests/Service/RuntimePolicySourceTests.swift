@@ -2163,6 +2163,8 @@ struct RuntimePolicySourceTests {
 
     @Test("local decode loop keeps tool schemas for parser-side argument validation")
     func localDecodeLoopKeepsToolSchemasForParserValidation() throws {
+        let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
+        let protocolErrors = try Self.source("Networking/HTTPProtocolErrors.swift")
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
         let registry = try Self.source("Tools/ToolRegistry.swift")
 
@@ -2210,6 +2212,19 @@ struct RuntimePolicySourceTests {
             registry.contains("invalidToolArgumentsEnvelope")
                 && registry.contains("\"invalid_tool_arguments\""),
             "ToolRegistry must turn parser-side invalid tool arguments into a structured invalid_args envelope instead of executing the tool body."
+        )
+        #expect(
+            chatEngine.contains("private static func requiresLocalToolCall")
+                && chatEngine.contains("case .required, .function")
+                && chatEngine.contains("The model did not produce a valid required tool call.")
+                && chatEngine.contains("suppressed_content_preview"),
+            "Required/named local tool_choice turns must fail closed if vMLX reaches EOS without a parsed tool invocation; malformed model prose must not leak as a normal assistant response."
+        )
+        #expect(
+            protocolErrors.contains(#"(error as NSError).domain == "OsaurusToolChoice""#)
+                && protocolErrors.contains("return .badRequest")
+                && protocolErrors.contains(#"return "invalid_request_error""#),
+            "Fail-closed required-tool turns are client/request errors, not generic server crashes."
         )
     }
 
