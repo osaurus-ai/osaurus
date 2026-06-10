@@ -1800,7 +1800,8 @@ struct RuntimePolicySourceTests {
         #expect(
             runtime.contains("ServerRuntimeSettingsStore.modelLoadRAMThresholds()")
                 && !runtime.contains("ramHardThreshold = 0.90")
-                && !runtime.contains("ramSoftThreshold = 0.70"),
+                && !runtime.contains("ramSoftThreshold = 0.70")
+                && !runtime.contains("* 0.70"),
             "RAM load thresholds must come from persisted server configuration, not hidden hardcoded ModelRuntime constants."
         )
         #expect(

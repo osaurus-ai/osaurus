@@ -623,7 +623,8 @@ public actor ModelRuntime {
     }
 
     private static func flexibleResidentBudgetBytes() -> Int64 {
-        Int64(Double(ProcessInfo.processInfo.physicalMemory) * 0.70)
+        let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
+        return Int64(Double(ProcessInfo.processInfo.physicalMemory) * thresholds.soft)
     }
 
     /// Snapshot of the most recent pre-load RAM feasibility assessment.
@@ -991,9 +992,9 @@ public actor ModelRuntime {
     }
 
     /// Flexible mode can keep multiple small models resident, but it must not
-    /// keep a huge model while starting another huge load. The vmlx load path
-    /// applies a 70% MLX memory budget; mirror that budget before entering
-    /// `loadWeights` so Hy3-sized residents do not collide with the next load.
+    /// keep a huge model while starting another huge load. Mirror the
+    /// configured RAM soft threshold before entering `loadWeights` so
+    /// Hy3-sized residents do not collide with the next load.
     private func unloadForFlexibleResidentBudget(
         targetName: String,
         incomingWeightsSizeBytes: Int64
