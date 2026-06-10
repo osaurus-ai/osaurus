@@ -444,8 +444,28 @@ public enum ModelMediaCapabilities {
     }
 
     private static func regexMatches(_ s: String, pattern: String) -> Bool {
-        guard let re = try? NSRegularExpression(pattern: pattern) else { return false }
+        guard let re = regexCache.regex(for: pattern) else { return false }
         let range = NSRange(s.startIndex ..< s.endIndex, in: s)
         return re.firstMatch(in: s, options: [], range: range) != nil
+    }
+
+    // Compile each pattern once. `from(modelId:)` runs inside SwiftUI
+    // body evaluations on the composer's render path, and ICU regex
+    // compilation is slow enough under memory pressure to register as
+    // a main-thread hang.
+    private static let regexCache = RegexCache()
+
+    private final class RegexCache: @unchecked Sendable {
+        private var storage: [String: NSRegularExpression] = [:]
+        private let lock = NSLock()
+
+        func regex(for pattern: String) -> NSRegularExpression? {
+            lock.lock()
+            defer { lock.unlock() }
+            if let hit = storage[pattern] { return hit }
+            guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+            storage[pattern] = re
+            return re
+        }
     }
 }
