@@ -386,58 +386,67 @@ public final class SkillManager {
 
     @discardableResult
     public func importSkillFromZip(_ zipURL: URL) async throws -> Skill {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer {
-            Task.detached {
-                try? FileManager.default.removeItem(at: tempDir)
+        // All filesystem work (unzip, SKILL.md read, nested file copies) runs
+        // off the main actor — a large bundle would otherwise block the UI and
+        // trip an app-hang. Only the trailing `refresh()` (which mutates
+        // observed state) hops back to the main actor.
+        let skill = try await Task.detached(priority: .userInitiated) {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString
+            )
+            defer { try? FileManager.default.removeItem(at: tempDir) }
+
+            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            try await FileManager.default.unzipItem(at: zipURL, to: tempDir)
+
+            guard let skillMdURL = Self.findSkillMd(in: tempDir) else {
+                throw SkillFileError.invalidSkillArchive
             }
-        }
 
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        try await FileManager.default.unzipItem(at: zipURL, to: tempDir)
+            let skillDir = skillMdURL.deletingLastPathComponent()
+            let content = try String(contentsOf: skillMdURL, encoding: .utf8)
+            let parsed = try Skill.parseAnyFormat(from: content)
 
-        guard let skillMdURL = findSkillMd(in: tempDir) else {
-            throw SkillFileError.invalidSkillArchive
-        }
+            let skill = Skill(
+                name: parsed.name,
+                description: parsed.description,
+                version: parsed.version,
+                author: parsed.author,
+                category: parsed.category,
+                enabled: true,
+                instructions: parsed.instructions,
+                directoryName: parsed.xplaceholder_agentSkillsNamex
+            )
 
-        let skillDir = skillMdURL.deletingLastPathComponent()
-        let content = try String(contentsOf: skillMdURL, encoding: .utf8)
-        var skill = try Skill.parseAnyFormat(from: content)
+            await SkillStore.save(skill)
 
-        skill = Skill(
-            name: skill.name,
-            description: skill.description,
-            version: skill.version,
-            author: skill.author,
-            category: skill.category,
-            enabled: true,
-            instructions: skill.instructions,
-            directoryName: skill.xplaceholder_agentSkillsNamex
-        )
+            // Copy associated files
+            let destDir = SkillStore.skillDirectory(for: skill)
+            for subdir in ["references", "assets"] {
+                let sourceSubdir = skillDir.appendingPathComponent(subdir)
+                let destSubdir = destDir.appendingPathComponent(subdir)
 
-        await SkillStore.save(skill)
-
-        // Copy associated files
-        let destDir = SkillStore.skillDirectory(for: skill)
-        for subdir in ["references", "assets"] {
-            let sourceSubdir = skillDir.appendingPathComponent(subdir)
-            let destSubdir = destDir.appendingPathComponent(subdir)
-
-            if FileManager.default.fileExists(atPath: sourceSubdir.path) {
-                try? FileManager.default.createDirectory(at: destSubdir, withIntermediateDirectories: true)
-                if let files = try? FileManager.default.contentsOfDirectory(
-                    at: sourceSubdir,
-                    includingPropertiesForKeys: nil
-                ) {
-                    for file in files {
-                        try? FileManager.default.copyItem(
-                            at: file,
-                            to: destSubdir.appendingPathComponent(file.lastPathComponent)
-                        )
+                if FileManager.default.fileExists(atPath: sourceSubdir.path) {
+                    try? FileManager.default.createDirectory(
+                        at: destSubdir,
+                        withIntermediateDirectories: true
+                    )
+                    if let files = try? FileManager.default.contentsOfDirectory(
+                        at: sourceSubdir,
+                        includingPropertiesForKeys: nil
+                    ) {
+                        for file in files {
+                            try? FileManager.default.copyItem(
+                                at: file,
+                                to: destSubdir.appendingPathComponent(file.lastPathComponent)
+                            )
+                        }
                     }
                 }
             }
-        }
+
+            return skill
+        }.value
 
         await refresh()
 
@@ -445,7 +454,7 @@ public final class SkillManager {
         return skill
     }
 
-    private func findSkillMd(in directory: URL) -> URL? {
+    nonisolated private static func findSkillMd(in directory: URL) -> URL? {
         let rootSkillMd = directory.appendingPathComponent("SKILL.md")
         if FileManager.default.fileExists(atPath: rootSkillMd.path) {
             return rootSkillMd

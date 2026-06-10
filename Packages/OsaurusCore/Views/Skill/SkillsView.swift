@@ -308,7 +308,10 @@ struct SkillsView: View {
                     if url.pathExtension.lowercased() == "zip" {
                         skill = try await skillManager.importSkillFromZip(url)
                     } else {
-                        let content = try String(contentsOf: url, encoding: .utf8)
+                        // Read off the main thread so a large file can't hang the UI.
+                        let content = try await Task.detached(priority: .userInitiated) {
+                            try String(contentsOf: url, encoding: .utf8)
+                        }.value
                         skill = try await skillManager.importSkillFromMarkdown(content)
                     }
                     self.showToast(L("Imported \"\(skill.name)\""))
