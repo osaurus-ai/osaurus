@@ -2694,7 +2694,9 @@ public actor ModelRuntime {
         // Header looks like `audio/wav;base64` or `video/mp4`. Take the part
         // after the slash, before any `;`.
         var ext = defaultExtension
-        let isAudioMime = header.lowercased().hasPrefix("audio/")
+        let lowerHeader = header.lowercased()
+        let isAudioMime = lowerHeader.hasPrefix("audio/")
+        let isVideoMime = lowerHeader.hasPrefix("video/")
         if let slash = header.firstIndex(of: "/") {
             let afterSlash = header[header.index(after: slash)...]
             if let semi = afterSlash.firstIndex(of: ";") {
@@ -2712,6 +2714,12 @@ public actor ModelRuntime {
                 case "x-wav", "wave": ext = "wav"
                 case "mpeg", "mp3", "x-mpeg": ext = "mp3"
                 case "x-m4a", "mp4": ext = "m4a"
+                default: break
+                }
+            }
+            if isVideoMime {
+                switch ext {
+                case "quicktime", "x-quicktime", "qt": ext = "mov"
                 default: break
                 }
             }

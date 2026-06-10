@@ -128,6 +128,18 @@ struct MaterializeMediaDataUrlMCDCTests {
         if let url { try? FileManager.default.removeItem(at: url) }
     }
 
+    @Test("video/quicktime data URL materializes to .mov for AVFoundation")
+    func videoQuickTimeCanonicalizesToMov() {
+        let payload = Data(repeating: 0xEF, count: 16)
+        let b64 = payload.base64EncodedString()
+        let url = mappedURL(forVideoDataURL: "data:video/quicktime;base64,\(b64)")
+        #expect(
+            url?.pathExtension == "mov",
+            "video/quicktime must materialize as .mov so AVFoundation selects the QuickTime decoder"
+        )
+        if let url { try? FileManager.default.removeItem(at: url) }
+    }
+
     @Test("D6 T (audio/mp4): canonicalizes to .m4a (audio path keeps fix's intent)")
     func d6_audioMp4_canonicalizesToM4a() {
         // Audio path with format=mp4 → wraps as data:audio/mp4 → D6=T
