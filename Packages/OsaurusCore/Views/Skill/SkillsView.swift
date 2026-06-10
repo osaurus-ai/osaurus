@@ -282,6 +282,46 @@ struct SkillsView: View {
         }
     }
 
+    // MARK: - Import
+
+    /// Import a third-party skill from disk: either a SKILL.md file or a ZIP
+    /// bundle carrying nested `references/`/`assets/` resources. Uses an
+    /// AppKit `NSOpenPanel` (not SwiftUI `.fileImporter`) to avoid the dialog
+    /// freeze that previously affected the import flow.
+    @MainActor
+    private func importSkill() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.zip, UTType(filenameExtension: "md") ?? .plainText]
+        panel.title = L("Import Skill")
+        panel.message = L("Choose a SKILL.md file or a ZIP bundle to import")
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                self.isProcessing = true
+                defer { self.isProcessing = false }
+                do {
+                    let skill: Skill
+                    if url.pathExtension.lowercased() == "zip" {
+                        skill = try await skillManager.importSkillFromZip(url)
+                    } else {
+                        let content = try String(contentsOf: url, encoding: .utf8)
+                        skill = try await skillManager.importSkillFromMarkdown(content)
+                    }
+                    self.showToast(L("Imported \"\(skill.name)\""))
+                } catch {
+                    self.showToast(
+                        L("Import failed: \(error.localizedDescription)"),
+                        isError: true
+                    )
+                }
+            }
+        }
+    }
+
     // MARK: - Empty State
 
     @ViewBuilder
@@ -320,6 +360,11 @@ struct SkillsView: View {
                     await skillManager.refresh()
                 }
             }
+
+            HeaderIconButton("square.and.arrow.down", help: "Import skill") {
+                importSkill()
+            }
+            .disabled(isProcessing || skillManager.isRefreshing)
 
             HeaderPrimaryButton("Create Skill", icon: "plus") {
                 isCreating = true

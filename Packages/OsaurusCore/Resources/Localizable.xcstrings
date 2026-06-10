@@ -9091,6 +9091,9 @@
         }
       }
     },
+    "Choose a SKILL.md file or a ZIP bundle to import" : {
+
+    },
     "Choose backup destination" : {
       "localizations" : {
         "de" : {
@@ -21460,6 +21463,9 @@
           }
         }
       }
+    },
+    "Import Skill" : {
+
     },
     "Import skills from any GitHub repository" : {
       "localizations" : {
