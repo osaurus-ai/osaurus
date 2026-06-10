@@ -652,11 +652,6 @@ public actor ModelRuntime {
         public let timestamp: Date
     }
 
-    /// Fraction of physical RAM above which a load is flagged `tight` (warn).
-    private static let ramSoftThreshold = 0.70
-    /// Fraction of physical RAM above which a load is `refused`.
-    private static let ramHardThreshold = 0.90
-
     /// Estimated KV-cache + activation headroom an incoming load needs beyond
     /// its static weights.
     ///
@@ -867,8 +862,9 @@ public actor ModelRuntime {
         let available = Self.availableMemoryBytes()
         let requiredAvailable = incomingLoadFootprintBytes + kvHeadroom
         let projected = resident + inflightOther + incomingLoadFootprintBytes + kvHeadroom
-        let softLimit = Int64(Double(physical) * Self.ramSoftThreshold)
-        let hardLimit = Int64(Double(physical) * Self.ramHardThreshold)
+        let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
+        let softLimit = Int64(Double(physical) * thresholds.soft)
+        let hardLimit = Int64(Double(physical) * thresholds.hard)
 
         // Refusal is gated solely on the projected footprint vs. the physical
         // hard ceiling. On unified-memory Macs the OS satisfies a load by

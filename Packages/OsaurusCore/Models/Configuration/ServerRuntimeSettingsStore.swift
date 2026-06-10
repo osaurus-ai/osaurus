@@ -142,6 +142,14 @@ public enum ServerRuntimeSettingsStore {
         cachedSnapshot = nil
     }
 
+    public nonisolated static func modelLoadRAMThresholds() -> (soft: Double, hard: Double) {
+        let configuration = diskBackedServerConfiguration() ?? .default
+        return ServerConfiguration.normalizedModelLoadRAMThresholds(
+            soft: configuration.modelLoadRAMSoftThreshold,
+            hard: configuration.modelLoadRAMHardThreshold
+        )
+    }
+
     private nonisolated static func normalizeLoadedSettings(
         _ settings: VMLXServerRuntimeSettings
     ) -> VMLXServerRuntimeSettings {

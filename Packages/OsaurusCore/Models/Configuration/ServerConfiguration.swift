@@ -24,6 +24,9 @@ public enum AppearanceMode: String, Codable, CaseIterable, Sendable {
 
 /// Configuration settings for the server
 public struct ServerConfiguration: Codable, Equatable, Sendable {
+    public static let defaultModelLoadRAMSoftThreshold = 0.70
+    public static let defaultModelLoadRAMHardThreshold = 0.90
+
     /// Server port (1-65535)
     public var port: Int
 
@@ -64,6 +67,12 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Idle memory residency policy for loaded local models.
     public var modelIdleResidencyPolicy: ModelIdleResidencyPolicy
 
+    /// Projected physical-memory fraction above which a model load is marked tight.
+    public var modelLoadRAMSoftThreshold: Double
+
+    /// Projected physical-memory fraction above which a model load is refused.
+    public var modelLoadRAMHardThreshold: Double
+
     /// Maximum HTTP request body size, in bytes, accepted by the public
     /// server before it returns `413 Payload Too Large`. Caps memory
     /// pressure from unauthenticated clients sending oversized bodies.
@@ -88,6 +97,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case globalProxyURL
         case modelEvictionPolicy
         case modelIdleResidencyPolicy
+        case modelLoadRAMSoftThreshold
+        case modelLoadRAMHardThreshold
         case maxRequestBodyBytes
         case maxPairingBodyBytes
     }
@@ -118,6 +129,18 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.modelIdleResidencyPolicy =
             (try? container.decodeIfPresent(ModelIdleResidencyPolicy.self, forKey: .modelIdleResidencyPolicy))
             ?? defaults.modelIdleResidencyPolicy
+        let decodedSoft =
+            try container.decodeIfPresent(Double.self, forKey: .modelLoadRAMSoftThreshold)
+            ?? defaults.modelLoadRAMSoftThreshold
+        let decodedHard =
+            try container.decodeIfPresent(Double.self, forKey: .modelLoadRAMHardThreshold)
+            ?? defaults.modelLoadRAMHardThreshold
+        let normalized = Self.normalizedModelLoadRAMThresholds(
+            soft: decodedSoft,
+            hard: decodedHard
+        )
+        self.modelLoadRAMSoftThreshold = normalized.soft
+        self.modelLoadRAMHardThreshold = normalized.hard
         self.maxRequestBodyBytes =
             try container.decodeIfPresent(Int.self, forKey: .maxRequestBodyBytes)
             ?? defaults.maxRequestBodyBytes
@@ -140,6 +163,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         try container.encodeIfPresent(globalProxyURL, forKey: .globalProxyURL)
         try container.encode(modelEvictionPolicy, forKey: .modelEvictionPolicy)
         try container.encode(modelIdleResidencyPolicy, forKey: .modelIdleResidencyPolicy)
+        try container.encode(modelLoadRAMSoftThreshold, forKey: .modelLoadRAMSoftThreshold)
+        try container.encode(modelLoadRAMHardThreshold, forKey: .modelLoadRAMHardThreshold)
         try container.encode(maxRequestBodyBytes, forKey: .maxRequestBodyBytes)
         try container.encode(maxPairingBodyBytes, forKey: .maxPairingBodyBytes)
     }
@@ -157,6 +182,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         globalProxyURL: String? = nil,
         modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel,
         modelIdleResidencyPolicy: ModelIdleResidencyPolicy = .defaultWarm,
+        modelLoadRAMSoftThreshold: Double = Self.defaultModelLoadRAMSoftThreshold,
+        modelLoadRAMHardThreshold: Double = Self.defaultModelLoadRAMHardThreshold,
         maxRequestBodyBytes: Int = 32 * 1024 * 1024,
         maxPairingBodyBytes: Int = 64 * 1024
     ) {
@@ -172,6 +199,12 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.globalProxyURL = globalProxyURL
         self.modelEvictionPolicy = modelEvictionPolicy
         self.modelIdleResidencyPolicy = modelIdleResidencyPolicy
+        let normalized = Self.normalizedModelLoadRAMThresholds(
+            soft: modelLoadRAMSoftThreshold,
+            hard: modelLoadRAMHardThreshold
+        )
+        self.modelLoadRAMSoftThreshold = normalized.soft
+        self.modelLoadRAMHardThreshold = normalized.hard
         self.maxRequestBodyBytes = maxRequestBodyBytes
         self.maxPairingBodyBytes = maxPairingBodyBytes
     }
@@ -191,9 +224,22 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             globalProxyURL: nil,
             modelEvictionPolicy: .strictSingleModel,
             modelIdleResidencyPolicy: .defaultWarm,
+            modelLoadRAMSoftThreshold: Self.defaultModelLoadRAMSoftThreshold,
+            modelLoadRAMHardThreshold: Self.defaultModelLoadRAMHardThreshold,
             maxRequestBodyBytes: 32 * 1024 * 1024,
             maxPairingBodyBytes: 64 * 1024
         )
+    }
+
+    public static func normalizedModelLoadRAMThresholds(
+        soft: Double,
+        hard: Double
+    ) -> (soft: Double, hard: Double) {
+        let safeSoft = soft.isFinite ? soft : Self.defaultModelLoadRAMSoftThreshold
+        let safeHard = hard.isFinite ? hard : Self.defaultModelLoadRAMHardThreshold
+        let clampedSoft = min(max(safeSoft, 0.0), 1.0)
+        let clampedHard = min(max(safeHard, 0.0), 1.0)
+        return (min(clampedSoft, clampedHard), max(clampedSoft, clampedHard))
     }
 
     /// Validates if the port is in valid range

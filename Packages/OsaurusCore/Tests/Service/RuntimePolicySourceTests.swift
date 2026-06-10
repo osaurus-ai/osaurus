@@ -994,9 +994,13 @@ struct RuntimePolicySourceTests {
     @Test("Flexible model residency respects load-time memory budget")
     func flexibleModelResidencyEvictsBeforeOversizedLoads() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
+        let serverConfig = try Self.source("Models/Configuration/ServerConfiguration.swift")
+        let runtimeSettings = try Self.source("Models/Configuration/ServerRuntimeSettingsStore.swift")
 
         #expect(runtime.contains("flexibleResidentBudgetBytes"))
-        #expect(runtime.contains("ProcessInfo.processInfo.physicalMemory) * 0.70"))
+        #expect(serverConfig.contains("defaultModelLoadRAMSoftThreshold"))
+        #expect(serverConfig.contains("defaultModelLoadRAMHardThreshold"))
+        #expect(runtimeSettings.contains("modelLoadRAMThresholds()"))
         #expect(runtime.contains("unloadForFlexibleResidentBudget"))
         #expect(runtime.contains("policy == .manualMultiModel"))
         #expect(runtime.contains("flexible budget eviction"))
@@ -1792,6 +1796,12 @@ struct RuntimePolicySourceTests {
         #expect(
             loadPreflight.contains("checkRAMFeasibility("),
             "All policies must pass the pre-load RAM feasibility gate before vmlx starts loading."
+        )
+        #expect(
+            runtime.contains("ServerRuntimeSettingsStore.modelLoadRAMThresholds()")
+                && !runtime.contains("ramHardThreshold = 0.90")
+                && !runtime.contains("ramSoftThreshold = 0.70"),
+            "RAM load thresholds must come from persisted server configuration, not hidden hardcoded ModelRuntime constants."
         )
         #expect(
             runtime.contains("availableMemoryBytes()")

@@ -26,6 +26,8 @@ struct ServerConfigurationStoreTests {
         #expect(decoded.genTopP == defaults.genTopP)
         #expect(decoded.globalProxyURL == nil)
         #expect(decoded.modelIdleResidencyPolicy == defaults.modelIdleResidencyPolicy)
+        #expect(decoded.modelLoadRAMSoftThreshold == defaults.modelLoadRAMSoftThreshold)
+        #expect(decoded.modelLoadRAMHardThreshold == defaults.modelLoadRAMHardThreshold)
     }
 
     @Test @MainActor func storeRoundTrip_readsWhatWasWritten() async throws {
@@ -47,6 +49,8 @@ struct ServerConfigurationStoreTests {
         config.exposeToNetwork = true
         config.genTopP = 0.7
         config.globalProxyURL = "http://proxy.example.com:8080"
+        config.modelLoadRAMSoftThreshold = 0.62
+        config.modelLoadRAMHardThreshold = 0.82
 
         ServerConfigurationStore.save(config)
         let loaded = ServerConfigurationStore.load()
@@ -175,6 +179,19 @@ struct ServerConfigurationStoreTests {
 
         #expect(low.modelIdleResidencyPolicy == .afterSeconds(30))
         #expect(high.modelIdleResidencyPolicy == .afterSeconds(86_400))
+    }
+
+    @Test func modelLoadRAMThresholds_decodeClampAndSort() async throws {
+        let json = """
+            {
+                "modelLoadRAMSoftThreshold": 1.25,
+                "modelLoadRAMHardThreshold": 0.40
+            }
+            """
+        let decoded = try JSONDecoder().decode(ServerConfiguration.self, from: Data(json.utf8))
+
+        #expect(decoded.modelLoadRAMSoftThreshold == 0.40)
+        #expect(decoded.modelLoadRAMHardThreshold == 1.0)
     }
 
     @Test func modelIdleResidencyPolicy_encodesStableJSON() async throws {
